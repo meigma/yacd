@@ -23,18 +23,26 @@ import (
 func TestManagerRBACMatchesControllerGen(t *testing.T) {
 	repoRoot := repoRoot(t)
 	rendered := run(t, repoRoot,
-		"helm", "template", "template-k8s", "charts/template-k8s",
-		"--namespace", "template-k8s-system",
+		"helm", "template", "yacd", "charts/yacd",
+		"--namespace", "yacd-system",
 		"--show-only", "templates/rbac-manager.yaml",
 	)
 
-	chartRole := findObject(t, rendered, "ClusterRole", "template-k8s-manager-role")
+	chartRole := findObject(t, rendered, "ClusterRole", "yacd-manager-role")
 	generatedRoleDir := filepath.Join(t.TempDir(), "rbac")
 	run(t, repoRoot,
 		"controller-gen", "rbac:roleName=manager-role", "paths=./...",
 		"output:rbac:dir="+generatedRoleDir,
 	)
-	generatedRole := readObject(t, filepath.Join(generatedRoleDir, "role.yaml"))
+	generatedRolePath := filepath.Join(generatedRoleDir, "role.yaml")
+	if _, err := os.Stat(generatedRolePath); errors.Is(err, os.ErrNotExist) {
+		if got := canonicalRules(t, chartRole); got != "[]" {
+			t.Fatalf("chart manager RBAC should be empty while no controller RBAC markers exist, got %s", got)
+		}
+		return
+	}
+
+	generatedRole := readObject(t, generatedRolePath)
 
 	if got, want := canonicalRules(t, chartRole), canonicalRules(t, generatedRole); got != want {
 		t.Fatalf("chart manager RBAC drifted from controller-gen output\nchart: %s\ncontroller-gen: %s", got, want)
@@ -47,11 +55,11 @@ func TestManagerRBACMatchesControllerGen(t *testing.T) {
 func TestKyvernoImageVerificationPolicyIsOptional(t *testing.T) {
 	repoRoot := repoRoot(t)
 	rendered := run(t, repoRoot,
-		"helm", "template", "template-k8s", "charts/template-k8s",
-		"--namespace", "template-k8s-system",
+		"helm", "template", "yacd", "charts/yacd",
+		"--namespace", "yacd-system",
 	)
 
-	if policy := findOptionalObject(t, rendered, "ClusterPolicy", "template-k8s-verify-image"); policy != nil {
+	if policy := findOptionalObject(t, rendered, "ClusterPolicy", "yacd-verify-image"); policy != nil {
 		t.Fatalf("expected Kyverno image verification policy to be opt-in, found %s/%s", policy.GetKind(), policy.GetName())
 	}
 }
@@ -62,11 +70,11 @@ func TestKyvernoImageVerificationPolicyIsOptional(t *testing.T) {
 func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing.T) {
 	repoRoot := repoRoot(t)
 	rendered := run(t, repoRoot,
-		"helm", "template", "template-k8s", "charts/template-k8s",
-		"--namespace", "template-k8s-system",
+		"helm", "template", "yacd", "charts/yacd",
+		"--namespace", "yacd-system",
 		"--set", "kyverno.imageVerification.enabled=true",
 	)
-	policy := findObject(t, rendered, "ClusterPolicy", "template-k8s-verify-image")
+	policy := findObject(t, rendered, "ClusterPolicy", "yacd-verify-image")
 
 	requireNestedString(t, policy.Object, "Enforce", "spec", "validationFailureAction")
 	requireNestedInt64(t, policy.Object, 30, "spec", "webhookTimeoutSeconds")
@@ -77,7 +85,7 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	verifyImage := requireFirstMap(t, verifyImages, "verifyImages")
 	requireNestedString(t, verifyImage, "SigstoreBundle", "type")
 	gotRefs := stringSlice(t, requireNestedSlice(t, verifyImage, "imageReferences"))
-	wantRefs := []string{"ghcr.io/meigma/template-k8s:*", "ghcr.io/meigma/template-k8s@*"}
+	wantRefs := []string{"ghcr.io/meigma/yacd:*", "ghcr.io/meigma/yacd@*"}
 	if !reflect.DeepEqual(gotRefs, wantRefs) {
 		t.Fatalf("unexpected imageReferences: got %v, want %v", gotRefs, wantRefs)
 	}
@@ -101,7 +109,7 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	requireNestedString(
 		t,
 		keyless,
-		"^https://github\\.com/meigma/template-k8s/\\.github/workflows/release\\.yml@refs/tags/"+
+		"^https://github\\.com/meigma/yacd/\\.github/workflows/release\\.yml@refs/tags/"+
 			"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$",
 		"subjectRegExp",
 	)

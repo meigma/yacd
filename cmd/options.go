@@ -71,7 +71,7 @@ type managerOptions struct {
 // every call site renders the same usage output.
 func newManagerParser(options *managerOptions) (*kong.Kong, error) {
 	return kong.New(options,
-		kong.Name("manager"),
+		kong.Name("yacd"),
 		kong.Description("Kubernetes controller manager."),
 		kong.UsageOnError(),
 	)

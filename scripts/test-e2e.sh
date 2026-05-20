@@ -4,8 +4,8 @@ set -euo pipefail
 kind_bin="${KIND:-kind}"
 command -v "$kind_bin" >/dev/null
 
-cluster="${KIND_CLUSTER:-template-k8s-test-e2e}"
-manager_image="${IMG:-example.com/template-k8s:v0.0.1}"
+cluster="${KIND_CLUSTER:-yacd-test-e2e}"
+manager_image="${IMG:-example.com/yacd:v0.0.1}"
 kubeconfig_dir="$(mktemp -d)"
 kubeconfig="$kubeconfig_dir/kubeconfig"
 created=0

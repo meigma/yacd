@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-release="${HELM_RELEASE:-template-k8s}"
-namespace="${HELM_NAMESPACE:-template-k8s-system}"
+release="${HELM_RELEASE:-yacd}"
+namespace="${HELM_NAMESPACE:-yacd-system}"
 image="${IMG:-}"
 
-kubectl apply -f charts/template-k8s/crds
+shopt -s nullglob
+crds=(charts/yacd/crds/*.yaml)
+if [ "${#crds[@]}" -gt 0 ]; then
+  kubectl apply -f charts/yacd/crds
+fi
 
 args=(
   upgrade
   --install
   "$release"
-  charts/template-k8s
+  charts/yacd
   --namespace
   "$namespace"
   --create-namespace

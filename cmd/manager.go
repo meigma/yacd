@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
-const leaderElectionID = "8719486c.meigma.io"
+const leaderElectionID = "yacd.meigma.io"
 
 // mustNewManager builds a controller-runtime manager from the given options
 // and exits the process if construction fails.

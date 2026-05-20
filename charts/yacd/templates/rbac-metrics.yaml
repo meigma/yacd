@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "template-k8s.metricsReaderRoleName" . }}
+  name: {{ include "yacd.metricsReaderRoleName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

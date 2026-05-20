@@ -1,7 +1,7 @@
-EXPECTED_CONTEXT = 'kind-template-k8s-dev'
-NAMESPACE = 'template-k8s-system'
-IMAGE = 'ghcr.io/meigma/template-k8s'
-CHART = 'charts/template-k8s'
+EXPECTED_CONTEXT = 'kind-yacd-dev'
+NAMESPACE = 'yacd-system'
+IMAGE = 'ghcr.io/meigma/yacd'
+CHART = 'charts/yacd'
 
 allow_k8s_contexts(EXPECTED_CONTEXT)
 if k8s_context() != EXPECTED_CONTEXT:
@@ -13,7 +13,7 @@ k8s_yaml(blob("""
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: template-k8s-system
+  name: yacd-system
   labels:
     pod-security.kubernetes.io/enforce: restricted
 """))
@@ -21,12 +21,12 @@ metadata:
 custom_build(
     IMAGE,
     './dev/ko-build.sh',
-    deps=['api', 'cmd', 'internal', 'go.mod', 'go.sum', '.ko.yaml'],
+    deps=['cmd', 'go.mod', 'go.sum', '.ko.yaml'],
 )
 
 k8s_yaml(helm(
     CHART,
-    name='template-k8s',
+    name='yacd',
     namespace=NAMESPACE,
     set=[
         'image.repository=%s' % IMAGE,
@@ -37,6 +37,6 @@ k8s_yaml(helm(
 ))
 
 k8s_resource(
-    workload='template-k8s-controller-manager',
+    workload='yacd-controller-manager',
     new_name='controller',
 )

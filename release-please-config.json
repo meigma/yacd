@@ -9,12 +9,12 @@
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     ".": {
-      "package-name": "template-k8s",
+      "package-name": "yacd",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
         {
           "type": "generic",
-          "path": "charts/template-k8s/Chart.yaml"
+          "path": "charts/yacd/Chart.yaml"
         }
       ]
     }

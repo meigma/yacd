@@ -1,39 +1,24 @@
-# <operator-name>
+# YACD
 
-`<operator-name>` is a Kubernetes operator for `<managed system or workload>`.
-It reconciles `<Kind>` custom resources into `<owned Kubernetes resources or
-external system state>` and reports current state through Kubernetes status
-conditions.
+YACD is a Kubernetes-native development environment manager for Cardano. It is
+aimed at builders who need repeatable local or shared development networks, not
+validators, stake pool operators, or production network operators.
 
-Replace bracketed placeholders before publishing this README.
+The repository currently contains the operator foundation only. It has no
+custom resource definitions yet; the first Cardano environment API will land in
+a later prototype slice.
 
-## Contents
+## Current State
 
-- [Features](#features)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Development](#development)
-- [Release](#release)
-- [Contributing](#contributing)
-- [Security](#security)
-- [License](#license)
+- Controller-runtime manager startup with structured logging.
+- Health and readiness probes.
+- Secure metrics serving with Kubernetes authn/authz filters.
+- Helm chart packaging for the manager deployment.
+- Moon tasks for generation, checks, tests, local deployment, and Kind smoke
+  testing.
+- Local Kind/Tilt development stack wiring.
 
-## Features
-
-- Reconciles `<api-group>/<version>` `<Kind>` resources.
-- Manages `<owned resources, external resources, or integration points>`.
-- Publishes operator status with Kubernetes conditions and Events.
-- Ships a controller image and Helm chart for cluster installation.
-
-## Prerequisites
-
-- Go, Kubebuilder tooling, controller-gen, setup-envtest, Helm, kubectl, and
-  Chainsaw from the repository toolchain.
-- Docker or another container runtime for local image builds.
-- A Kubernetes cluster for deployed testing. Kind is recommended for local e2e
-  checks.
+## Development
 
 Enable the pinned local toolchain:
 
@@ -42,108 +27,12 @@ direnv allow
 proto status
 ```
 
-## Installation
-
-Install the released Helm chart:
-
-```sh
-helm install <release-name> oci://ghcr.io/<org>/<repo>/chart \
-  --version <version> \
-  --namespace <namespace> \
-  --create-namespace
-```
-
-Install from a local checkout:
-
-```sh
-moon run root:deploy
-```
-
-Useful local deployment overrides:
-
-```sh
-HELM_RELEASE=<release-name> HELM_NAMESPACE=<namespace> moon run root:deploy
-IMG=ghcr.io/<org>/<repo>:<tag> moon run root:deploy
-LOCAL_IMAGE=true IMG=<local-image>:<tag> moon run root:deploy
-```
-
-Uninstall the local deployment:
-
-```sh
-moon run root:undeploy
-```
-
-## Usage
-
-Create a custom resource:
-
-```sh
-kubectl apply -f - <<'EOF'
-apiVersion: <api-group>/<version>
-kind: <Kind>
-metadata:
-  name: example
-  namespace: <namespace>
-spec:
-  # Add the fields this operator reconciles.
-EOF
-```
-
-Inspect the reconciled resource and its status:
-
-```sh
-kubectl get <resource-plural> example -n <namespace> -o yaml
-kubectl describe <resource-plural> example -n <namespace>
-```
-
-Describe the expected spec fields, owned resources, and status conditions here
-after the project defines its API contract.
-
-## Configuration
-
-Runtime configuration is exposed through the Helm chart values in
-`charts/<chart-directory>/values.yaml`.
-
-Common settings to document for this operator:
-
-- Controller image repository, tag, or digest.
-- Resource requests and limits.
-- Metrics and health probe settings.
-- Leader election settings.
-- Optional Kyverno image verification for the released controller image.
-- Any provider credentials, watched namespaces, or external service endpoints.
-
-If Kyverno is installed in the target cluster, the chart can install an
-optional `ClusterPolicy` that verifies the operator image's GitHub Artifact
-Attestation:
-
-```sh
-helm install <release-name> oci://ghcr.io/<org>/<repo>/chart \
-  --version <version> \
-  --namespace <namespace> \
-  --create-namespace \
-  --set kyverno.imageVerification.enabled=true
-```
-
-## Development
-
-Regenerate code and manifests after API changes:
-
-```sh
-moon run root:generate
-```
-
 Run the normal local checks and tests:
 
 ```sh
 moon run root:check
 moon run root:test
-```
-
-Run the full local e2e smoke path:
-
-```sh
-moon run root:test-e2e
+git diff --check
 ```
 
 Run the local development stack with Kind, ctlptl, Tilt, and ko:
@@ -158,33 +47,36 @@ Stop and delete the local development stack:
 moon run root:dev-down
 ```
 
-## Release
+## Local Install
 
-Releases publish the controller binaries, container image, and Helm chart. Use
-the release workflow and Release Please configuration in this repository as the
-source of truth for versioning and publication.
+Install from a local checkout:
 
-Install released charts from:
-
-```text
-oci://ghcr.io/<org>/<repo>/chart
+```sh
+moon run root:deploy
 ```
 
-## Contributing
+Useful local deployment overrides:
 
-Before opening a pull request:
+```sh
+HELM_RELEASE=yacd HELM_NAMESPACE=yacd-system moon run root:deploy
+IMG=ghcr.io/meigma/yacd:<tag> moon run root:deploy
+LOCAL_IMAGE=true IMG=example.com/yacd:v0.0.1 moon run root:deploy
+```
 
-- Keep generated API code and CRDs up to date.
-- Add envtest coverage for API and reconciler behavior.
-- Add or update Chainsaw coverage only for installed-operator behavior.
-- Run `moon run root:check` and `moon run root:test`.
+Uninstall the local deployment:
 
-## Security
+```sh
+moon run root:undeploy
+```
 
-Report security issues through the project's private disclosure process. Do not
-open public issues for vulnerabilities until maintainers have had a chance to
-triage them.
+## Release Shape
 
-## License
+The repository keeps the normal operator release shape: manager binary,
+container image, and OCI Helm chart. Release Please owns versioning, while the
+release workflow publishes artifacts under `ghcr.io/meigma/yacd`.
 
-TODO: Add the project's license name and license file before publishing.
+## Design
+
+See [DESIGN.md](DESIGN.md) for the current architecture direction. The first
+working slice should stay narrow and let the CRD and controller shape evolve
+from prototype work.

@@ -1,14 +1,14 @@
 apiVersion: ctlptl.dev/v1alpha1
 kind: Registry
-name: template-k8s-registry
+name: yacd-registry
 port: 5005
 listenAddress: 127.0.0.1
 ---
 apiVersion: ctlptl.dev/v1alpha1
 kind: Cluster
-name: kind-template-k8s-dev
+name: kind-yacd-dev
 product: kind
-registry: template-k8s-registry
+registry: yacd-registry
 kindV1Alpha4Cluster:
   nodes:
     - role: control-plane

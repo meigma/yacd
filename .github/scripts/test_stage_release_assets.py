@@ -48,36 +48,36 @@ class StageReleaseAssetsTest(unittest.TestCase):
                 staged,
                 [
                     "checksums.txt",
-                    "template-k8s_1.2.3_darwin_amd64",
-                    "template-k8s_1.2.3_darwin_amd64.sbom.json",
-                    "template-k8s_1.2.3_darwin_arm64",
-                    "template-k8s_1.2.3_darwin_arm64.sbom.json",
-                    "template-k8s_1.2.3_linux_amd64",
-                    "template-k8s_1.2.3_linux_amd64.sbom.json",
-                    "template-k8s_1.2.3_linux_arm64",
-                    "template-k8s_1.2.3_linux_arm64.sbom.json",
+                    "yacd_1.2.3_darwin_amd64",
+                    "yacd_1.2.3_darwin_amd64.sbom.json",
+                    "yacd_1.2.3_darwin_arm64",
+                    "yacd_1.2.3_darwin_arm64.sbom.json",
+                    "yacd_1.2.3_linux_amd64",
+                    "yacd_1.2.3_linux_amd64.sbom.json",
+                    "yacd_1.2.3_linux_arm64",
+                    "yacd_1.2.3_linux_arm64.sbom.json",
                 ],
             )
-            linux_binary = root / "dist/release-assets/template-k8s_1.2.3_linux_amd64"
+            linux_binary = root / "dist/release-assets/yacd_1.2.3_linux_amd64"
             mode = linux_binary.stat().st_mode
             self.assertTrue(mode & stat.S_IXUSR)
-            self.assertIn("dist/release-assets/template-k8s_1.2.3_linux_arm64", stdout)
+            self.assertIn("dist/release-assets/yacd_1.2.3_linux_arm64", stdout)
 
     def test_fails_on_missing_checksum_entry(self) -> None:
-        with fixture(missing_checksum="template-k8s_1.2.3_linux_arm64") as root:
+        with fixture(missing_checksum="yacd_1.2.3_linux_arm64") as root:
             result, _, stderr = run_script(root)
 
             self.assertEqual(result, 1)
             self.assertIn("missing checksum entry", stderr)
-            self.assertIn("template-k8s_1.2.3_linux_arm64", stderr)
+            self.assertIn("yacd_1.2.3_linux_arm64", stderr)
 
     def test_fails_on_checksum_mismatch(self) -> None:
-        override = ("template-k8s_1.2.3_linux_amd64", "0" * 64)
+        override = ("yacd_1.2.3_linux_amd64", "0" * 64)
         with fixture(checksum_override=override) as root:
             result, _, stderr = run_script(root)
 
             self.assertEqual(result, 1)
-            self.assertIn("checksum mismatch for template-k8s_1.2.3_linux_amd64", stderr)
+            self.assertIn("checksum mismatch for yacd_1.2.3_linux_amd64", stderr)
 
     def test_fails_on_invalid_tag(self) -> None:
         with fixture() as root:
@@ -91,7 +91,7 @@ class StageReleaseAssetsTest(unittest.TestCase):
             result, _, stderr = run_script(root)
 
             self.assertEqual(result, 1)
-            self.assertIn("missing expected binary asset template-k8s_1.2.3_linux_arm64", stderr)
+            self.assertIn("missing expected binary asset yacd_1.2.3_linux_arm64", stderr)
 
     def test_fails_on_unexpected_asset_count(self) -> None:
         with fixture(extra_binary=True) as root:
@@ -125,7 +125,7 @@ def fixture(
         artifacts: list[dict[str, str]] = []
         checksum_entries: dict[str, str] = {}
         for goos, goarch in PLATFORMS:
-            binary_name = f"template-k8s_1.2.3_{goos}_{goarch}"
+            binary_name = f"yacd_1.2.3_{goos}_{goarch}"
             sbom_name = f"{binary_name}.sbom.json"
 
             binary_path = root / "dist" / binary_name
@@ -148,7 +148,7 @@ def fixture(
                 })
 
         if extra_binary:
-            extra_name = "template-k8s_1.2.3_freebsd_amd64"
+            extra_name = "yacd_1.2.3_freebsd_amd64"
             extra_path = root / "dist" / extra_name
             extra_path.write_bytes(b"extra\n")
             checksum_entries[extra_name] = sha256(extra_path)

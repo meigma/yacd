@@ -3,8 +3,8 @@ layer: 'application'
 stack: 'backend'
 
 project:
-  title: 'template-k8s'
-  description: 'Meigma Kubernetes operator repository template.'
+  title: 'YACD'
+  description: 'Kubernetes-native Cardano development environment manager.'
   owner: 'meigma'
   maintainers:
     - 'meigma'
@@ -25,7 +25,7 @@ fileGroups:
     - 'go.mod'
     - 'go.sum'
   chartSources:
-    - 'charts/template-k8s/**/*'
+    - 'charts/yacd/**/*'
   chainsawSources:
     - 'test/chainsaw/**/*.yaml'
   devStackSources:
@@ -64,21 +64,23 @@ tasks:
       - '@group(goSources)'
       - '@group(generatorSources)'
       - '@group(toolchainConfig)'
-      - 'charts/template-k8s/crds/**/*'
+      - 'charts/yacd/**/*'
     options:
       cache: false
 
   generate:
     script: |
       set -euo pipefail
-      controller-gen object paths="./..."
-      controller-gen crd paths="./..." output:crd:artifacts:config=charts/template-k8s/crds
+      if [ -d api ]; then
+        controller-gen object paths="./..."
+        controller-gen crd paths="./..." output:crd:artifacts:config=charts/yacd/crds
+      fi
     inputs:
       - '@group(generatorSources)'
       - '@group(toolchainConfig)'
     outputs:
       - 'api/**/zz_generated.deepcopy.go'
-      - 'charts/template-k8s/crds/**/*'
+      - 'charts/yacd/crds/**/*'
     options:
       cache: false
       runInCI: false
@@ -107,8 +109,8 @@ tasks:
     script: |
       set -euo pipefail
       ctlptl apply -f dev/ctlptl.yaml
-      kubectl config use-context kind-template-k8s-dev >/dev/null
-      tilt up --context kind-template-k8s-dev
+      kubectl config use-context kind-yacd-dev >/dev/null
+      tilt up --context kind-yacd-dev
     inputs:
       - '@group(devStackSources)'
       - '@group(chartSources)'
@@ -123,8 +125,8 @@ tasks:
     script: |
       set -euo pipefail
       set +e
-      if kubectl config get-contexts kind-template-k8s-dev >/dev/null 2>&1; then
-        tilt down --context kind-template-k8s-dev --delete-namespaces
+      if kubectl config get-contexts kind-yacd-dev >/dev/null 2>&1; then
+        tilt down --context kind-yacd-dev --delete-namespaces
       fi
       ctlptl delete -f dev/ctlptl.yaml --cascade=true --ignore-not-found
     inputs:

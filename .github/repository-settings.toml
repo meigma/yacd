@@ -8,12 +8,11 @@
 # - Supported settings are applied directly through the GitHub REST API.
 # - Unsupported settings stay in this file so the script can report manual follow-ups.
 # - The branch ruleset follows the repository default branch via ~DEFAULT_BRANCH.
-# - Status checks default to the standard template CI check. Adjust them when
-#   the repository adds more required workflows.
+# - Status checks cover the current YACD CI and release rehearsal paths.
 
 [repository]
 default_branch = "master"
-is_template = true
+is_template = false
 immutable_releases = true
 
 has_wiki = false

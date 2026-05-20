@@ -1,9 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "template-k8s.controllerManagerName" . }}
+  name: {{ include "yacd.controllerManagerName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     control-plane: controller-manager
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
@@ -16,12 +16,12 @@ spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "template-k8s.selectorLabels" . | nindent 6 }}
+      {{- include "yacd.selectorLabels" . | nindent 6 }}
       control-plane: controller-manager
   template:
     metadata:
       labels:
-        {{- include "template-k8s.selectorLabels" . | nindent 8 }}
+        {{- include "yacd.selectorLabels" . | nindent 8 }}
         control-plane: controller-manager
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
@@ -34,7 +34,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      serviceAccountName: {{ include "template-k8s.serviceAccountName" . }}
+      serviceAccountName: {{ include "yacd.serviceAccountName" . }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -45,7 +45,7 @@ spec:
       {{- end }}
       containers:
         - name: manager
-          image: {{ include "template-k8s.image" . | quote }}
+          image: {{ include "yacd.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
             - {{ printf "--health-probe-bind-address=:%d" (int .Values.manager.healthProbe.port) | quote }}

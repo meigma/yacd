@@ -1,11 +1,11 @@
 version: 2
 
-project_name: template-k8s
+project_name: yacd
 
 builds:
-  - id: template-k8s
+  - id: yacd
     main: ./cmd
-    binary: template-k8s
+    binary: yacd
     env:
       - CGO_ENABLED=0
     goos:
@@ -21,9 +21,9 @@ builds:
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:
-  - id: template-k8s
+  - id: yacd
     ids:
-      - template-k8s
+      - yacd
     formats:
       - binary
     name_template: >-

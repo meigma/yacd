@@ -19,10 +19,10 @@ on:
 permissions: {}
 
 env:
-  IMAGE_NAME: ghcr.io/meigma/template-k8s
-  CHART_NAME: ghcr.io/meigma/template-k8s/chart
-  CHART_REF: oci://ghcr.io/meigma/template-k8s/chart
-  CHART_REPOSITORY: oci://ghcr.io/meigma/template-k8s
+  IMAGE_NAME: ghcr.io/meigma/yacd
+  CHART_NAME: ghcr.io/meigma/yacd/chart
+  CHART_REF: oci://ghcr.io/meigma/yacd/chart
+  CHART_REPOSITORY: oci://ghcr.io/meigma/yacd
 
 jobs:
   resolve-release:
@@ -125,7 +125,7 @@ jobs:
           set -euo pipefail
 
           version="${RELEASE_TAG#v}"
-          binary_name="template-k8s"
+          binary_name="yacd"
           host_os="$(go env GOHOSTOS)"
           host_arch="$(go env GOHOSTARCH)"
           bin="dist/release-assets/${binary_name}_${version}_${host_os}_${host_arch}"
@@ -137,13 +137,13 @@ jobs:
           fi
 
           set +e
-          "$bin" --help >/tmp/template-k8s-help.txt 2>&1
+          "$bin" --help >/tmp/yacd-help.txt 2>&1
           rc="$?"
           set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
             exit "$rc"
           fi
-          test -s /tmp/template-k8s-help.txt
+          test -s /tmp/yacd-help.txt
 
       - name: Upload assets to draft release
         env:
@@ -223,8 +223,8 @@ jobs:
           tags: |
             type=raw,value=${{ needs.resolve-release.outputs.tag }}
           labels: |
-            org.opencontainers.image.title=template-k8s
-            org.opencontainers.image.description=Meigma Kubernetes operator repository template
+            org.opencontainers.image.title=yacd
+            org.opencontainers.image.description=Kubernetes-native Cardano development environment manager
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.resolve-release.outputs.version }}
             org.opencontainers.image.revision=${{ steps.image.outputs.commit }}
@@ -239,8 +239,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=template-k8s-release-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=template-k8s-release-${{ matrix.arch }}
+          cache-from: type=gha,scope=yacd-release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=yacd-release-${{ matrix.arch }}
           build-args: |
             VERSION=${{ steps.image.outputs.version }}
             COMMIT=${{ steps.image.outputs.commit }}
@@ -254,13 +254,13 @@ jobs:
           set -euo pipefail
 
           set +e
-          docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" --help >/tmp/template-k8s-image-help.txt 2>&1
+          docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" --help >/tmp/yacd-image-help.txt 2>&1
           rc="$?"
           set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
             exit "$rc"
           fi
-          test -s /tmp/template-k8s-image-help.txt
+          test -s /tmp/yacd-image-help.txt
 
       - name: Export platform digest
         env:
@@ -386,13 +386,13 @@ jobs:
           set -euo pipefail
 
           set +e
-          docker run --rm "${{ steps.manifest.outputs.tag }}" --help >/tmp/template-k8s-image-help.txt 2>&1
+          docker run --rm "${{ steps.manifest.outputs.tag }}" --help >/tmp/yacd-image-help.txt 2>&1
           rc="$?"
           set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
             exit "$rc"
           fi
-          test -s /tmp/template-k8s-image-help.txt
+          test -s /tmp/yacd-image-help.txt
 
       - name: Attest container image
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
@@ -442,7 +442,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          chart="charts/template-k8s"
+          chart="charts/yacd"
           package_dir="$(mktemp -d)"
           metadata="$(helm show chart "$chart")"
           chart_name="$(awk '/^name:/ { print $2; exit }' <<<"$metadata")"
@@ -467,12 +467,12 @@ jobs:
 
           archive="$package_dir/chart-${RELEASE_VERSION}.tgz"
           test -f "$archive"
-          helm template template-k8s "$archive" --namespace template-k8s-system --include-crds >/tmp/template-k8s-chart.yaml
-          grep -Fq "name: template-k8s-controller-manager" /tmp/template-k8s-chart.yaml
-          grep -Fq "app.kubernetes.io/name: template-k8s" /tmp/template-k8s-chart.yaml
-          grep -Fq "helm.sh/chart: chart-${RELEASE_VERSION}" /tmp/template-k8s-chart.yaml
-          grep -Fq "image: \"${IMAGE_NAME}:v${RELEASE_VERSION}\"" /tmp/template-k8s-chart.yaml
-          helm install template-k8s "$archive" --namespace template-k8s-system --dry-run=client --server-side=false >/dev/null
+          helm template yacd "$archive" --namespace yacd-system --include-crds >/tmp/yacd-chart.yaml
+          grep -Fq "name: yacd-controller-manager" /tmp/yacd-chart.yaml
+          grep -Fq "app.kubernetes.io/name: yacd" /tmp/yacd-chart.yaml
+          grep -Fq "helm.sh/chart: chart-${RELEASE_VERSION}" /tmp/yacd-chart.yaml
+          grep -Fq "image: \"${IMAGE_NAME}:v${RELEASE_VERSION}\"" /tmp/yacd-chart.yaml
+          helm install yacd "$archive" --namespace yacd-system --dry-run=client --server-side=false >/dev/null
 
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
 
@@ -555,7 +555,7 @@ jobs:
             echo
             echo '```sh'
             echo "gh release view $RELEASE_TAG --repo $GITHUB_REPOSITORY --json isDraft,assets"
-            echo "asset=\"template-k8s_${RELEASE_VERSION}_\$(go env GOOS)_\$(go env GOARCH)\""
+            echo "asset=\"yacd_${RELEASE_VERSION}_\$(go env GOOS)_\$(go env GOARCH)\""
             echo "gh attestation verify \"dist/release-assets/\${asset}\" --repo \"$GITHUB_REPOSITORY\" --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\" --source-ref \"refs/tags/$RELEASE_TAG\" --deny-self-hosted-runners"
             echo '```'
             echo
@@ -573,7 +573,7 @@ jobs:
             echo '```sh'
             echo "helm show chart \"${CHART_REF}\" --version \"${RELEASE_VERSION}\""
             echo "helm pull \"${CHART_REF}\" --version \"${RELEASE_VERSION}\""
-            echo "helm install template-k8s \"${CHART_REF}\" --version \"${RELEASE_VERSION}\" --namespace template-k8s-system --create-namespace"
+            echo "helm install yacd \"${CHART_REF}\" --version \"${RELEASE_VERSION}\" --namespace yacd-system --create-namespace"
             echo "gh attestation verify \"${CHART_REF}@${CHART_DIGEST}\" --repo \"$GITHUB_REPOSITORY\" --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\" --source-ref \"refs/tags/$RELEASE_TAG\" --deny-self-hosted-runners"
             echo '```'
             echo

@@ -31,7 +31,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--tag", required=True, help="Release tag, for example v1.2.3")
     parser.add_argument("--artifacts", default=Path("dist/artifacts.json"), type=Path)
     parser.add_argument("--output", default=Path("dist/release-assets"), type=Path)
-    parser.add_argument("--binary-name", default="template-k8s")
+    parser.add_argument("--binary-name", default="yacd")
     return parser.parse_args(argv)
 
 
