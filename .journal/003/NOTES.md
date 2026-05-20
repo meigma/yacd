@@ -42,3 +42,20 @@ small runtime/genesis/topology/storage/API knobs needed to reconcile one node
 plus default Ogmios, and defer db-sync, wallet generation, faucet/topup, Yaci
 Store, Kupo, Blockfrost, raw node-config overrides, and multi-node rollback
 mode until their own slices have working evidence.
+
+## 2026-05-20 16:40 — CardanoNetwork CRD draft
+Created Worktrunk branch `feat/cardano-network-crd` and drafted the first
+`CardanoNetwork` API package. The CRD uses `spec.mode: local|public`, requires
+exactly one matching `spec.local` or `spec.public` block, models
+`public.profile: preprod|preview|mainnet|custom`, and gives custom public
+profiles a typed `configSource` union for ConfigMap, Secret, OCI, or HTTP
+bundles. The local block captures the first practical network knobs:
+network magic, era, timing, pool topology/default economics, genesis profile,
+security/max-supply/delegated-supply/protocol-version, shared node settings,
+and default Ogmios chain API settings.
+
+Generated deepcopy code and the Helm CRD under `charts/yacd/crds`, registered
+the API type with the manager scheme, updated the foundation envtest to assert
+the type registration, and refreshed README current state. Verification passed:
+`moon run root:generate`, `moon run root:check`, `moon run root:test`, and
+`git diff --check`.
