@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "template-k8s.leaderElectionRoleName" . }}
+  name: {{ include "yacd.leaderElectionRoleName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -44,18 +44,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "template-k8s.leaderElectionRoleBindingName" . }}
+  name: {{ include "yacd.leaderElectionRoleBindingName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "template-k8s.leaderElectionRoleName" . }}
+  name: {{ include "yacd.leaderElectionRoleName" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "template-k8s.serviceAccountName" . }}
+    name: {{ include "yacd.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

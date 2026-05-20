@@ -2,9 +2,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: {{ include "template-k8s.metricsAuthRoleName" . }}
+  name: {{ include "yacd.metricsAuthRoleName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -25,18 +25,18 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "template-k8s.metricsAuthRoleBindingName" . }}
+  name: {{ include "yacd.metricsAuthRoleBindingName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ include "template-k8s.metricsAuthRoleName" . }}
+  name: {{ include "yacd.metricsAuthRoleName" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "template-k8s.serviceAccountName" . }}
+    name: {{ include "yacd.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- end }}

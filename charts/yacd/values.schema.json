@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "template-k8s chart values",
+  "title": "YACD chart values",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -150,20 +150,10 @@
     "rbac": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["create", "customResourceRoles", "metricsReader"],
+      "required": ["create", "metricsReader"],
       "properties": {
         "create": {
           "type": "boolean"
-        },
-        "customResourceRoles": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["create"],
-          "properties": {
-            "create": {
-              "type": "boolean"
-            }
-          }
         },
         "metricsReader": {
           "type": "object",

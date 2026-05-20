@@ -14,14 +14,14 @@ installed correctly.
 
 ## Repository Overview
 
-This is a Go Kubernetes operator built with Kubebuilder and
-controller-runtime. API types live in `api/`, reconciliation logic lives in
-`internal/controller/`, manager startup lives in `cmd/`, the Helm chart lives
-in `charts/template-k8s/`, and e2e smoke tests live in `test/chainsaw/`.
+YACD is a Go Kubernetes operator foundation built with Kubebuilder and
+controller-runtime. It is intended to become a Kubernetes-native Cardano
+development environment manager.
 
-The current API is `example.meigma.io/v1alpha1` `NginxDeployment`. It owns a
-same-named ConfigMap, Deployment, and ClusterIP Service, and projects fresh
-Deployment readiness into status conditions.
+The repository currently has no custom APIs or reconcilers. Manager startup
+lives in `cmd/`, the Helm chart lives in `charts/yacd/`, and e2e smoke tests
+live in `test/chainsaw/`. Future API types should live in `api/`, and future
+reconciliation logic should live in `internal/controller/`.
 
 ## Local Skills
 
@@ -39,7 +39,7 @@ matching Moon task.
 Keep the Moon task surface small. Prefer extending `root:check`, `root:test`,
 or an existing script over adding narrowly scoped recipes. Add a new Moon task
 only when it is a durable workflow a maintainer should remember and run
-directly; avoid command sprawl that creates recipe fatigue.
+directly.
 
 Common tasks:
 
@@ -68,9 +68,9 @@ moon run root:dev-down
 
 `ctlptl` owns the Kind cluster and local registry described in
 `dev/ctlptl.yaml`; do not create or delete that cluster from the `Tiltfile`.
-`Tiltfile` assumes the current Kubernetes context is `kind-template-k8s-dev`,
-renders the Helm chart, and redeploys changes. `ko` builds the manager image
-from `./cmd` using `.ko.yaml`, and Tilt injects the built image into the
+`Tiltfile` assumes the current Kubernetes context is `kind-yacd-dev`, renders
+the Helm chart, and redeploys changes. `ko` builds the manager image from
+`./cmd` using `.ko.yaml`, and Tilt injects the built image into the
 Helm-rendered Deployment.
 
 ## Manager Startup
@@ -84,50 +84,42 @@ Logging is built from Go `slog` handlers and bridged into controller-runtime's
 `--log-level=debug|info|warn|error` behavior when changing startup code.
 
 Keep health and readiness checks registered through controller-runtime in
-`cmd/setup.go`. Keep metrics/webhook TLS and HTTP/2 behavior in `cmd/manager.go`
-unless the operator's runtime contract intentionally changes.
+`cmd/setup.go`. Keep metrics/webhook TLS and HTTP/2 behavior in
+`cmd/manager.go` unless the operator's runtime contract intentionally changes.
 
 ## Operator Practices
 
-Use controller-runtime ownership and watches deliberately:
+Do not introduce placeholder APIs just to exercise controller-runtime. Add the
+first CRD only when it represents the YACD product direction from `DESIGN.md`.
 
-- owned children should have controller references and `.Owns(...)` watches
-- status should use `metav1.Condition`
-- parent availability must not trust stale child status
-- inline data copied into Kubernetes objects must be bounded or moved behind a
+When APIs and controllers are introduced:
+
+- use controller-runtime ownership and `.Owns(...)` watches deliberately
+- keep status based on `metav1.Condition`
+- do not trust stale child status
+- bound inline data copied into Kubernetes objects or move it behind a
   reference
-- RBAC markers should match the reconciler's actual reads and writes
-
-Generated files are part of the source tree, but should be produced by tools:
-
-- run `moon run root:generate` after API type changes
+- keep RBAC markers aligned with actual reconciler reads and writes
 - run `moon run root:generate` after API marker, CRD, webhook, or manifest
-  changes; generated CRDs are written to `charts/template-k8s/crds`
+  changes
 - do not hand-edit `zz_generated.deepcopy.go` or generated CRDs except to
   diagnose generator output
-- keep operator deployment manifests in the Helm chart; do not restore a
-  second manifest tree
+- keep operator deployment manifests in the Helm chart
 
 ## Testing
 
 Keep the test layers intentionally separate.
 
-Use envtest for the controller/API behavior matrix. Cover owner references,
-labels/selectors, default handling, status freshness, restricted-compatible pod
-settings, rollout hashes, API validation, and update paths near the controller
-code. Include at least one manager-backed envtest case for each controller so
-`.For(...)`, `.Owns(...)`, watches, predicates, and field indexes are exercised
-through controller-runtime rather than only by direct `Reconcile` calls.
+Use envtest for controller/API behavior once custom APIs exist. Include at
+least one manager-backed envtest case for each controller so `.For(...)`,
+`.Owns(...)`, watches, predicates, and field indexes are exercised through
+controller-runtime rather than only by direct `Reconcile` calls.
 
-Use Chainsaw for the Kind-backed install and runtime smoke path. Keep e2e
-coverage focused on chart install/upgrade wiring, manager readiness, RBAC or
-auth paths that only fail in a real cluster, metrics exposure, one
-representative custom resource, the parent condition, and the owned
-workload/service becoming available.
+Use Chainsaw for the Kind-backed install and runtime smoke path. While the
+operator has no CRDs, Chainsaw should stay focused on chart install wiring,
+manager readiness, protected metrics exposure, and cleanup.
 
 Do not duplicate the envtest behavior matrix in Chainsaw. Add a Chainsaw case
 only when the assertion depends on the packaged operator running in a real
 cluster, multiple deployed controllers, Kubernetes workload controllers, or
-cluster networking. Add or extend envtest when the assertion is about
-reconciler output, API validation, status transitions, event routing,
-predicates, indexes, or object ownership.
+cluster networking.

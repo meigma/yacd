@@ -17,8 +17,8 @@ on:
 permissions: {}
 
 env:
-  IMAGE_NAME: ghcr.io/meigma/template-k8s
-  CHART_REF: oci://ghcr.io/meigma/template-k8s/chart
+  IMAGE_NAME: ghcr.io/meigma/yacd
+  CHART_REF: oci://ghcr.io/meigma/yacd/chart
 
 jobs:
   binary-release-dry-run:
@@ -64,7 +64,7 @@ jobs:
           set -euo pipefail
 
           version="0.0.0-dryrun.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
-          binary_name="template-k8s"
+          binary_name="yacd"
           asset_prefix="${binary_name}_"
 
           jq -e --arg asset_prefix "$asset_prefix" '
@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
 
           version="0.0.0-dryrun.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
-          binary_name="template-k8s"
+          binary_name="yacd"
           host_os="$(go env GOHOSTOS)"
           host_arch="$(go env GOHOSTARCH)"
           expected="${binary_name}_${version}_${host_os}_${host_arch}"
@@ -112,13 +112,13 @@ jobs:
           fi
 
           set +e
-          "$bin" --help >/tmp/template-k8s-help.txt 2>&1
+          "$bin" --help >/tmp/yacd-help.txt 2>&1
           rc="$?"
           set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
             exit "$rc"
           fi
-          test -s /tmp/template-k8s-help.txt
+          test -s /tmp/yacd-help.txt
 
   container-image-platform-dry-run:
     name: Container Image Platform Dry Run (${{ matrix.platform }})
@@ -163,11 +163,11 @@ jobs:
           context: .
           push: false
           platforms: ${{ matrix.platform }}
-          outputs: type=oci,dest=/tmp/template-k8s-dry-run-${{ matrix.arch }}.oci
+          outputs: type=oci,dest=/tmp/yacd-dry-run-${{ matrix.arch }}.oci
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=template-k8s-release-dry-run-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=template-k8s-release-dry-run-${{ matrix.arch }}
+          cache-from: type=gha,scope=yacd-release-dry-run-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=yacd-release-dry-run-${{ matrix.arch }}
           build-args: |
             VERSION=${{ steps.dry-run.outputs.version }}
             COMMIT=${{ steps.dry-run.outputs.commit }}
@@ -175,7 +175,7 @@ jobs:
             SOURCE=https://github.com/${{ github.repository }}
 
       - name: Validate platform OCI archive
-        run: test -s /tmp/template-k8s-dry-run-${{ matrix.arch }}.oci
+        run: test -s /tmp/yacd-dry-run-${{ matrix.arch }}.oci
 
   container-image-dry-run:
     name: Container Image Dry Run
@@ -223,9 +223,9 @@ jobs:
           context: .
           load: true
           platforms: linux/amd64
-          tags: template-k8s:dry-run
-          cache-from: type=gha,scope=template-k8s-release-dry-run-amd64
-          cache-to: type=gha,mode=max,scope=template-k8s-release-dry-run-amd64
+          tags: yacd:dry-run
+          cache-from: type=gha,scope=yacd-release-dry-run-amd64
+          cache-to: type=gha,mode=max,scope=yacd-release-dry-run-amd64
           build-args: |
             VERSION=${{ steps.dry-run.outputs.version }}
             COMMIT=${{ steps.dry-run.outputs.commit }}
@@ -237,13 +237,13 @@ jobs:
           set -euo pipefail
 
           set +e
-          docker run --rm template-k8s:dry-run --help >/tmp/template-k8s-image-help.txt 2>&1
+          docker run --rm yacd:dry-run --help >/tmp/yacd-image-help.txt 2>&1
           rc="$?"
           set -e
           if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
             exit "$rc"
           fi
-          test -s /tmp/template-k8s-image-help.txt
+          test -s /tmp/yacd-image-help.txt
 
   helm-chart-dry-run:
     name: Helm Chart Dry Run
@@ -271,7 +271,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          chart="charts/template-k8s"
+          chart="charts/yacd"
           package_dir="$(mktemp -d)"
           metadata="$(helm show chart "$chart")"
           chart_name="$(awk '/^name:/ { print $2; exit }' <<<"$metadata")"
@@ -308,12 +308,12 @@ jobs:
             exit 1
           fi
 
-          helm template template-k8s "$archive" --namespace template-k8s-system --include-crds >/tmp/template-k8s-chart.yaml
-          grep -Fq "name: template-k8s-controller-manager" /tmp/template-k8s-chart.yaml
-          grep -Fq "app.kubernetes.io/name: template-k8s" /tmp/template-k8s-chart.yaml
-          grep -Fq "helm.sh/chart: chart-${DRY_RUN_VERSION}" /tmp/template-k8s-chart.yaml
-          grep -Fq "image: \"${IMAGE_NAME}:v${DRY_RUN_VERSION}\"" /tmp/template-k8s-chart.yaml
-          helm install template-k8s "$archive" --namespace template-k8s-system --dry-run=client --server-side=false >/dev/null
+          helm template yacd "$archive" --namespace yacd-system --include-crds >/tmp/yacd-chart.yaml
+          grep -Fq "name: yacd-controller-manager" /tmp/yacd-chart.yaml
+          grep -Fq "app.kubernetes.io/name: yacd" /tmp/yacd-chart.yaml
+          grep -Fq "helm.sh/chart: chart-${DRY_RUN_VERSION}" /tmp/yacd-chart.yaml
+          grep -Fq "image: \"${IMAGE_NAME}:v${DRY_RUN_VERSION}\"" /tmp/yacd-chart.yaml
+          helm install yacd "$archive" --namespace yacd-system --dry-run=client --server-side=false >/dev/null
 
           echo "Dry-run chart package: $archive"
           echo "Dry-run OCI ref: ${CHART_REF}:${DRY_RUN_VERSION}"

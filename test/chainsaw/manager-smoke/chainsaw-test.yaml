@@ -1,9 +1,9 @@
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: nginxdeployment-smoke
+  name: manager-smoke
 spec:
-  description: Verify the template operator deploys and reconciles the sample NginxDeployment.
+  description: Verify the YACD operator foundation deploys and exposes protected metrics.
   concurrent: false
   failFast: true
   catch:
@@ -14,21 +14,15 @@ spec:
           set +e
           export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
           echo "== controller manager logs =="
-          kubectl logs -n template-k8s-system -l control-plane=controller-manager -c manager --tail=-1 --prefix
+          kubectl logs -n yacd-system -l control-plane=controller-manager -c manager --tail=-1 --prefix
           echo "== manager namespace events =="
-          kubectl get events -n template-k8s-system --sort-by=.lastTimestamp
+          kubectl get events -n yacd-system --sort-by=.lastTimestamp
           echo "== metrics curl logs =="
-          kubectl logs -n template-k8s-system curl-metrics
+          kubectl logs -n yacd-system curl-metrics
           echo "== metrics curl pod =="
-          kubectl describe pod -n template-k8s-system curl-metrics
-          echo "== sample namespace events =="
-          kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
+          kubectl describe pod -n yacd-system curl-metrics
           echo "== controller manager deployment =="
-          kubectl describe deployment -n template-k8s-system template-k8s-controller-manager
-          echo "== sample NginxDeployment =="
-          kubectl describe nginxdeployment -n "$NAMESPACE" nginx-sample
-          echo "== sample Deployment =="
-          kubectl describe deployment -n "$NAMESPACE" nginx-sample
+          kubectl describe deployment -n yacd-system yacd-controller-manager
           exit 0
   steps:
     - name: deploy-controller
@@ -39,14 +33,14 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl create namespace template-k8s-system --dry-run=client -o yaml | kubectl apply -f -
-              kubectl label --overwrite namespace template-k8s-system pod-security.kubernetes.io/enforce=restricted
-              IMG="${IMG:-example.com/template-k8s:v0.0.1}" LOCAL_IMAGE=true moon run root:deploy
+              kubectl create namespace yacd-system --dry-run=client -o yaml | kubectl apply -f -
+              kubectl label --overwrite namespace yacd-system pod-security.kubernetes.io/enforce=restricted
+              IMG="${IMG:-example.com/yacd:v0.0.1}" LOCAL_IMAGE=true moon run root:deploy
         - wait:
             apiVersion: apps/v1
             kind: Deployment
-            namespace: template-k8s-system
-            name: template-k8s-controller-manager
+            namespace: yacd-system
+            name: yacd-controller-manager
             timeout: 3m
             for:
               condition:
@@ -57,8 +51,8 @@ spec:
               apiVersion: v1
               kind: Service
               metadata:
-                namespace: template-k8s-system
-                name: template-k8s-controller-manager-metrics-service
+                namespace: yacd-system
+                name: yacd-controller-manager-metrics-service
         - script:
             timeout: 1m
             workDir: ../../..
@@ -70,26 +64,26 @@ spec:
               kind: ServiceAccount
               metadata:
                 name: metrics-smoke
-                namespace: template-k8s-system
+                namespace: yacd-system
               ---
               apiVersion: rbac.authorization.k8s.io/v1
               kind: ClusterRoleBinding
               metadata:
-                name: template-k8s-metrics-smoke
+                name: yacd-metrics-smoke
               roleRef:
                 apiGroup: rbac.authorization.k8s.io
                 kind: ClusterRole
-                name: template-k8s-metrics-reader
+                name: yacd-metrics-reader
               subjects:
                 - kind: ServiceAccount
                   name: metrics-smoke
-                  namespace: template-k8s-system
+                  namespace: yacd-system
               ---
               apiVersion: v1
               kind: Pod
               metadata:
                 name: curl-metrics
-                namespace: template-k8s-system
+                namespace: yacd-system
               spec:
                 restartPolicy: Never
                 serviceAccountName: metrics-smoke
@@ -113,12 +107,11 @@ spec:
                       - |
                         token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
                         for i in $(seq 1 30); do
-                          status="$(curl -sk -o /tmp/metrics.txt -w '%{http_code}' -H "Authorization: Bearer ${token}" https://template-k8s-controller-manager-metrics-service.template-k8s-system.svc.cluster.local:8443/metrics || true)"
+                          status="$(curl -sk -o /tmp/metrics.txt -w '%{http_code}' -H "Authorization: Bearer ${token}" https://yacd-controller-manager-metrics-service.yacd-system.svc.cluster.local:8443/metrics || true)"
                           echo "metrics status: ${status}"
                           if [ "${status}" = "200" ]; then
                             head -n 20 /tmp/metrics.txt
-                            grep -q "template_k8s_nginxdeployment_child_apply_total" /tmp/metrics.txt
-                            grep -q "template_k8s_nginxdeployment_status_transition_total" /tmp/metrics.txt
+                            grep -q "go_goroutines" /tmp/metrics.txt
                             exit 0
                           fi
                           sleep 2
@@ -138,7 +131,7 @@ spec:
         - wait:
             apiVersion: v1
             kind: Pod
-            namespace: template-k8s-system
+            namespace: yacd-system
             name: curl-metrics
             timeout: 3m
             for:
@@ -150,7 +143,7 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              logs="$(kubectl logs -n template-k8s-system curl-metrics)"
+              logs="$(kubectl logs -n yacd-system curl-metrics)"
               printf '%s\n' "$logs"
               case "$logs" in
                 *"metrics status: 200"*) ;;
@@ -163,54 +156,9 @@ spec:
             content: |
               set +e
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl delete -n "$NAMESPACE" -f test/chainsaw/fixtures/example_v1alpha1_nginxdeployment.yaml --ignore-not-found=true || true
-              kubectl delete pod curl-metrics -n template-k8s-system --ignore-not-found=true || true
-              kubectl delete clusterrolebinding template-k8s-metrics-smoke --ignore-not-found=true || true
-              kubectl delete serviceaccount metrics-smoke -n template-k8s-system --ignore-not-found=true || true
+              kubectl delete pod curl-metrics -n yacd-system --ignore-not-found=true || true
+              kubectl delete clusterrolebinding yacd-metrics-smoke --ignore-not-found=true || true
+              kubectl delete serviceaccount metrics-smoke -n yacd-system --ignore-not-found=true || true
               moon run root:undeploy || true
-              kubectl delete namespace template-k8s-system --ignore-not-found=true || true
+              kubectl delete namespace yacd-system --ignore-not-found=true || true
               exit 0
-    - name: reconcile-sample
-      try:
-        - apply:
-            file: ../fixtures/example_v1alpha1_nginxdeployment.yaml
-        - wait:
-            apiVersion: example.meigma.io/v1alpha1
-            kind: NginxDeployment
-            name: nginx-sample
-            timeout: 3m
-            for:
-              condition:
-                name: Available
-                value: 'true'
-        - wait:
-            apiVersion: apps/v1
-            kind: Deployment
-            name: nginx-sample
-            timeout: 3m
-            for:
-              condition:
-                name: Available
-                value: 'true'
-        - assert:
-            resource:
-              apiVersion: v1
-              kind: Service
-              metadata:
-                name: nginx-sample
-        - script:
-            timeout: 1m
-            content: |
-              set -euo pipefail
-              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              for _ in $(seq 1 30); do
-                reasons="$(kubectl get events -n "$NAMESPACE" \
-                  --field-selector involvedObject.kind=NginxDeployment,involvedObject.name=nginx-sample \
-                  -o jsonpath='{range .items[*]}{.reason}{"\n"}{end}' || true)"
-                case "$reasons" in
-                  *ChildResourcesApplied*|*DeploymentReady*) exit 0 ;;
-                esac
-                sleep 2
-              done
-              kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp
-              exit 1

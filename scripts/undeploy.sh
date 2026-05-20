@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-helm uninstall "${HELM_RELEASE:-template-k8s}" \
-  --namespace "${HELM_NAMESPACE:-template-k8s-system}" \
+helm uninstall "${HELM_RELEASE:-yacd}" \
+  --namespace "${HELM_NAMESPACE:-yacd-system}" \
   --ignore-not-found
 
-kubectl delete --ignore-not-found=true -f charts/template-k8s/crds
+shopt -s nullglob
+crds=(charts/yacd/crds/*.yaml)
+if [ "${#crds[@]}" -gt 0 ]; then
+  kubectl delete --ignore-not-found=true -f charts/yacd/crds
+fi

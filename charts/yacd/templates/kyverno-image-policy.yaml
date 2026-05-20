@@ -3,9 +3,9 @@
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
-  name: {{ include "template-k8s.kyvernoImagePolicyName" . }}
+  name: {{ include "yacd.kyvernoImagePolicyName" . }}
   labels:
-    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- include "yacd.labels" . | nindent 4 }}
     {{- with .Values.commonLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -43,9 +43,9 @@ jobs:
           context: .
           load: true
           platforms: linux/amd64
-          tags: template-k8s:security-scan
-          cache-from: type=gha,scope=template-k8s-security-scan
-          cache-to: type=gha,mode=max,scope=template-k8s-security-scan
+          tags: yacd:security-scan
+          cache-from: type=gha,scope=yacd-security-scan
+          cache-to: type=gha,mode=max,scope=yacd-security-scan
           build-args: |
             VERSION=${{ steps.scan.outputs.version }}
             COMMIT=${{ steps.scan.outputs.commit }}
@@ -56,7 +56,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          image-ref: template-k8s:security-scan
+          image-ref: yacd:security-scan
           scanners: vuln
           vuln-type: os,library
           severity: HIGH,CRITICAL
