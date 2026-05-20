@@ -61,22 +61,6 @@ const (
 	GenesisProfileZeroFeeAndMinUTxOValue GenesisProfile = "zero-fee-and-min-utxo"
 )
 
-// NetworkConfigSourceType selects the storage/distribution mechanism for a
-// custom public profile.
-// +kubebuilder:validation:Enum=ConfigMap;Secret;OCI;HTTP
-type NetworkConfigSourceType string
-
-const (
-	// NetworkConfigSourceTypeConfigMap loads profile files from a ConfigMap.
-	NetworkConfigSourceTypeConfigMap NetworkConfigSourceType = "ConfigMap"
-	// NetworkConfigSourceTypeSecret loads profile files from a Secret.
-	NetworkConfigSourceTypeSecret NetworkConfigSourceType = "Secret"
-	// NetworkConfigSourceTypeOCI loads a versioned profile bundle from an OCI artifact.
-	NetworkConfigSourceTypeOCI NetworkConfigSourceType = "OCI"
-	// NetworkConfigSourceTypeHTTP downloads a profile bundle from an HTTP endpoint.
-	NetworkConfigSourceTypeHTTP NetworkConfigSourceType = "HTTP"
-)
-
 // CardanoNetworkSpec defines the desired state of a Cardano development network.
 // +kubebuilder:validation:XValidation:rule="self.mode == 'local' ? has(self.local) && !has(self.public) : self.mode == 'public' ? has(self.public) && !has(self.local) : false",message="mode must match exactly one of spec.local or spec.public"
 type CardanoNetworkSpec struct {
@@ -286,66 +270,19 @@ type PublicNetworkSpec struct {
 	ConfigSource *NetworkConfigSource `json:"configSource,omitempty"`
 }
 
-// NetworkConfigSource identifies where custom profile files come from. The
-// expected bundle keys are config.json, topology.json, byron-genesis.json,
-// shelley-genesis.json, alonzo-genesis.json, and conway-genesis.json.
-// +kubebuilder:validation:XValidation:rule="self.type == 'ConfigMap' ? has(self.configMapRef) && !has(self.secretRef) && !has(self.oci) && !has(self.http) : self.type == 'Secret' ? has(self.secretRef) && !has(self.configMapRef) && !has(self.oci) && !has(self.http) : self.type == 'OCI' ? has(self.oci) && !has(self.configMapRef) && !has(self.secretRef) && !has(self.http) : self.type == 'HTTP' ? has(self.http) && !has(self.configMapRef) && !has(self.secretRef) && !has(self.oci) : false",message="configSource.type must match exactly one source block"
+// NetworkConfigSource identifies the in-cluster object that supplies custom
+// profile files. The expected bundle keys are config.json, topology.json,
+// byron-genesis.json, shelley-genesis.json, alonzo-genesis.json, and
+// conway-genesis.json.
+// +kubebuilder:validation:XValidation:rule="(has(self.configMapRef) && !has(self.secretRef) && size(self.configMapRef.name) > 0) || (has(self.secretRef) && !has(self.configMapRef) && size(self.secretRef.name) > 0)",message="exactly one of configMapRef or secretRef must be set with a non-empty name"
 type NetworkConfigSource struct {
-	// type selects the source mechanism.
-	// +required
-	Type NetworkConfigSourceType `json:"type"`
-
 	// configMapRef loads profile files from a ConfigMap in the same namespace.
 	// +optional
-	ConfigMapRef *LocalObjectReference `json:"configMapRef,omitempty"`
+	ConfigMapRef *corev1.LocalObjectReference `json:"configMapRef,omitempty"`
 
 	// secretRef loads profile files from a Secret in the same namespace.
 	// +optional
-	SecretRef *LocalObjectReference `json:"secretRef,omitempty"`
-
-	// oci loads profile files from a versioned OCI artifact.
-	// +optional
-	OCI *OCINetworkConfigSource `json:"oci,omitempty"`
-
-	// http downloads profile files from an HTTP endpoint.
-	// +optional
-	HTTP *HTTPNetworkConfigSource `json:"http,omitempty"`
-}
-
-// LocalObjectReference references an object in the same namespace.
-type LocalObjectReference struct {
-	// name is the referenced object's name.
-	// +required
-	Name string `json:"name"`
-
-	// keyPrefix optionally scopes profile files under keys with this prefix.
-	// +optional
-	KeyPrefix *string `json:"keyPrefix,omitempty"`
-}
-
-// OCINetworkConfigSource identifies an OCI profile artifact.
-type OCINetworkConfigSource struct {
-	// image is the OCI artifact reference.
-	// +required
-	Image string `json:"image"`
-
-	// digest pins the expected artifact digest. Controllers should require this
-	// before fetching untrusted registries.
-	// +optional
-	Digest *string `json:"digest,omitempty"`
-}
-
-// HTTPNetworkConfigSource identifies an HTTP profile bundle.
-type HTTPNetworkConfigSource struct {
-	// url is the HTTP(S) URL for the profile bundle.
-	// +kubebuilder:validation:Pattern=`^https?://`
-	// +required
-	URL string `json:"url"`
-
-	// sha256 is the expected lowercase hex SHA-256 digest of the bundle.
-	// +kubebuilder:validation:Pattern=`^[a-f0-9]{64}$`
-	// +required
-	SHA256 string `json:"sha256"`
+	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 }
 
 // ChainAPISpec configures APIs exposed for clients and supporting services.

@@ -404,82 +404,39 @@ spec:
                         description: configMapRef loads profile files from a ConfigMap
                           in the same namespace.
                         properties:
-                          keyPrefix:
-                            description: keyPrefix optionally scopes profile files
-                              under keys with this prefix.
-                            type: string
                           name:
-                            description: name is the referenced object's name.
-                            type: string
-                        required:
-                        - name
-                        type: object
-                      http:
-                        description: http downloads profile files from an HTTP endpoint.
-                        properties:
-                          sha256:
-                            description: sha256 is the expected lowercase hex SHA-256
-                              digest of the bundle.
-                            pattern: ^[a-f0-9]{64}$
-                            type: string
-                          url:
-                            description: url is the HTTP(S) URL for the profile bundle.
-                            pattern: ^https?://
-                            type: string
-                        required:
-                        - sha256
-                        - url
-                        type: object
-                      oci:
-                        description: oci loads profile files from a versioned OCI
-                          artifact.
-                        properties:
-                          digest:
+                            default: ""
                             description: |-
-                              digest pins the expected artifact digest. Controllers should require this
-                              before fetching untrusted registries.
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
                             type: string
-                          image:
-                            description: image is the OCI artifact reference.
-                            type: string
-                        required:
-                        - image
                         type: object
+                        x-kubernetes-map-type: atomic
                       secretRef:
                         description: secretRef loads profile files from a Secret in
                           the same namespace.
                         properties:
-                          keyPrefix:
-                            description: keyPrefix optionally scopes profile files
-                              under keys with this prefix.
-                            type: string
                           name:
-                            description: name is the referenced object's name.
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
                             type: string
-                        required:
-                        - name
                         type: object
-                      type:
-                        description: type selects the source mechanism.
-                        enum:
-                        - ConfigMap
-                        - Secret
-                        - OCI
-                        - HTTP
-                        type: string
-                    required:
-                    - type
+                        x-kubernetes-map-type: atomic
                     type: object
                     x-kubernetes-validations:
-                    - message: configSource.type must match exactly one source block
-                      rule: 'self.type == ''ConfigMap'' ? has(self.configMapRef) &&
-                        !has(self.secretRef) && !has(self.oci) && !has(self.http)
-                        : self.type == ''Secret'' ? has(self.secretRef) && !has(self.configMapRef)
-                        && !has(self.oci) && !has(self.http) : self.type == ''OCI''
-                        ? has(self.oci) && !has(self.configMapRef) && !has(self.secretRef)
-                        && !has(self.http) : self.type == ''HTTP'' ? has(self.http)
-                        && !has(self.configMapRef) && !has(self.secretRef) && !has(self.oci)
-                        : false'
+                    - message: exactly one of configMapRef or secretRef must be set
+                        with a non-empty name
+                      rule: (has(self.configMapRef) && !has(self.secretRef) && size(self.configMapRef.name)
+                        > 0) || (has(self.secretRef) && !has(self.configMapRef) &&
+                        size(self.secretRef.name) > 0)
                   profile:
                     description: profile selects the public network profile.
                     enum:
