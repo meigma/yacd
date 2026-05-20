@@ -1,0 +1,32 @@
+name = "kubectl"
+type = "cli"
+
+[platform.macos]
+download-file = "bin/darwin/{arch}/kubectl"
+checksum-file = "bin/darwin/{arch}/kubectl.sha256"
+exe-path = "kubectl"
+
+[platform.linux]
+download-file = "bin/linux/{arch}/kubectl"
+checksum-file = "bin/linux/{arch}/kubectl.sha256"
+exe-path = "kubectl"
+
+[platform.windows]
+download-file = "bin/windows/{arch}/kubectl.exe"
+checksum-file = "bin/windows/{arch}/kubectl.exe.sha256"
+exe-path = "kubectl"
+
+[install]
+download-url = "https://dl.k8s.io/release/v{version}/{download_file}"
+checksum-url = "https://dl.k8s.io/release/v{version}/{checksum_file}"
+
+[install.arch]
+aarch64 = "arm64"
+x86_64 = "amd64"
+
+[install.exes.kubectl]
+exe-path = "kubectl"
+primary = true
+
+[resolve]
+git-url = "https://github.com/kubernetes/kubernetes"

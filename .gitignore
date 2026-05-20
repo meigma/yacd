@@ -1,0 +1,21 @@
+# Local environment/runtime state
+.direnv/
+.moon/cache/
+.moon/docker/
+.journal/
+.wt/
+
+# Build/test outputs
+bin/
+dist/
+cover.out
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# OS/editor noise
+.DS_Store
+.idea/
+.vscode/
+*.swp

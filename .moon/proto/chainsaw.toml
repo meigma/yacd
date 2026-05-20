@@ -1,0 +1,31 @@
+name = "chainsaw"
+type = "cli"
+
+[platform.macos]
+download-file = "chainsaw_darwin_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "chainsaw"
+
+[platform.linux]
+download-file = "chainsaw_linux_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "chainsaw"
+
+[platform.windows]
+download-file = "chainsaw_windows_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "chainsaw.exe"
+
+[install]
+download-url = "https://github.com/kyverno/chainsaw/releases/download/v{version}/{download_file}"
+checksum-url = "https://github.com/kyverno/chainsaw/releases/download/v{version}/{checksum_file}"
+
+[install.arch]
+aarch64 = "arm64"
+x86_64 = "amd64"
+
+[install.exes.chainsaw]
+primary = true
+
+[resolve]
+git-url = "https://github.com/kyverno/chainsaw"

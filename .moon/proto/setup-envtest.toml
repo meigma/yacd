@@ -1,0 +1,28 @@
+name = "setup-envtest"
+type = "cli"
+
+[platform.macos]
+download-file = "setup-envtest-darwin-{arch}"
+exe-path = "setup-envtest"
+
+[platform.linux]
+download-file = "setup-envtest-linux-{arch}"
+exe-path = "setup-envtest"
+
+[platform.windows]
+download-file = "setup-envtest-windows-{arch}.exe"
+exe-path = "setup-envtest"
+
+[install]
+download-url = "https://github.com/kubernetes-sigs/controller-runtime/releases/download/v{version}/{download_file}"
+
+[install.arch]
+aarch64 = "arm64"
+x86_64 = "amd64"
+
+[install.exes.setup-envtest]
+exe-path = "setup-envtest"
+primary = true
+
+[resolve]
+git-url = "https://github.com/kubernetes-sigs/controller-runtime"

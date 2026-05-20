@@ -1,0 +1,13 @@
+.git/
+.journal/
+.wt/
+.direnv/
+.moon/cache/
+.moon/docker/
+bin/
+dist/
+cover.out
+coverage.out
+coverage.html
+*.test
+*.prof

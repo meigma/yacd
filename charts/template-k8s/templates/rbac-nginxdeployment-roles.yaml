@@ -1,0 +1,78 @@
+{{- if and .Values.rbac.create .Values.rbac.customResourceRoles.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "template-k8s.nginxDeploymentAdminRoleName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+rules:
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments
+    verbs:
+      - "*"
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "template-k8s.nginxDeploymentEditorRoleName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+rules:
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments/status
+    verbs:
+      - get
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "template-k8s.nginxDeploymentViewerRoleName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+rules:
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - example.meigma.io
+    resources:
+      - nginxdeployments/status
+    verbs:
+      - get
+{{- end }}

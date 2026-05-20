@@ -1,0 +1,30 @@
+name = "ko"
+type = "cli"
+
+[platform.macos]
+download-file = "ko_{version}_Darwin_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "ko"
+
+[platform.linux]
+download-file = "ko_{version}_Linux_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "ko"
+
+[platform.windows]
+download-file = "ko_{version}_Windows_{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "ko.exe"
+
+[install]
+download-url = "https://github.com/ko-build/ko/releases/download/v{version}/{download_file}"
+checksum-url = "https://github.com/ko-build/ko/releases/download/v{version}/{checksum_file}"
+
+[install.arch]
+aarch64 = "arm64"
+
+[install.exes.ko]
+primary = true
+
+[resolve]
+git-url = "https://github.com/ko-build/ko"

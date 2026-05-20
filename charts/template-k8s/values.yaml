@@ -1,0 +1,106 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/meigma/template-k8s
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+commonLabels: {}
+commonAnnotations: {}
+
+kyverno:
+  imageVerification:
+    enabled: false
+    name: ""
+    validationFailureAction: Enforce
+    webhookTimeoutSeconds: 30
+    imageReferences: []
+    attestor:
+      issuer: https://token.actions.githubusercontent.com
+      subject: ""
+      subjectRegExp: ^https://github\.com/meigma/template-k8s/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$
+      rekor:
+        url: https://rekor.sigstore.dev
+    attestation:
+      type: https://slsa.dev/provenance/v1
+      buildType: https://actions.github.io/buildtypes/workflow/v1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+  customResourceRoles:
+    create: true
+  metricsReader:
+    create: true
+
+leaderElection:
+  enabled: true
+
+manager:
+  logFormat: json
+  logLevel: info
+  enableHTTP2: false
+  healthProbe:
+    port: 8081
+  extraArgs: []
+
+metrics:
+  enabled: true
+  port: 8443
+  secure: true
+  service:
+    create: true
+    port: 8443
+    annotations: {}
+  tls:
+    secretName: ""
+    certPath: /certs/metrics
+    certName: tls.crt
+    keyName: tls.key
+
+webhook:
+  tls:
+    secretName: ""
+    certPath: /certs/webhook
+    certName: tls.crt
+    keyName: tls.key
+
+deploymentAnnotations: {}
+podLabels: {}
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+extraVolumes: []
+extraVolumeMounts: []

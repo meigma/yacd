@@ -1,0 +1,60 @@
+{{- if .Values.kyverno.imageVerification.enabled }}
+{{- $verification := .Values.kyverno.imageVerification -}}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "template-k8s.kyvernoImagePolicyName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+    policies.kyverno.io/title: Verify Operator Image Attestation
+    policies.kyverno.io/category: Software Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    {{- with .Values.commonAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  background: false
+  validationFailureAction: {{ $verification.validationFailureAction }}
+  webhookTimeoutSeconds: {{ int $verification.webhookTimeoutSeconds }}
+  rules:
+    - name: verify-operator-image-attestation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        - imageReferences:
+            {{- $imageReferences := $verification.imageReferences }}
+            {{- if not $imageReferences }}
+            {{- $imageReferences = list (printf "%s:*" .Values.image.repository) (printf "%s@*" .Values.image.repository) }}
+            {{- end }}
+            {{- range $imageReferences }}
+            - {{ . | quote }}
+            {{- end }}
+          type: SigstoreBundle
+          attestations:
+            - type: {{ $verification.attestation.type | quote }}
+              attestors:
+                - entries:
+                    - keyless:
+                        issuer: {{ $verification.attestor.issuer | quote }}
+                        {{- if $verification.attestor.subject }}
+                        subject: {{ $verification.attestor.subject | quote }}
+                        {{- else }}
+                        subjectRegExp: {{ required "kyverno.imageVerification.attestor.subjectRegExp must be set when subject is empty" $verification.attestor.subjectRegExp | quote }}
+                        {{- end }}
+                        rekor:
+                          url: {{ $verification.attestor.rekor.url | quote }}
+              conditions:
+                - all:
+                    - key: {{ "{{ buildDefinition.buildType }}" | quote }}
+                      operator: Equals
+                      value: {{ $verification.attestation.buildType | quote }}
+{{- end }}

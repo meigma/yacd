@@ -1,0 +1,150 @@
+language: 'go'
+layer: 'application'
+stack: 'backend'
+
+project:
+  title: 'template-k8s'
+  description: 'Meigma Kubernetes operator repository template.'
+  owner: 'meigma'
+  maintainers:
+    - 'meigma'
+
+fileGroups:
+  goSources:
+    - 'api/**/*.go'
+    - 'cmd/**/*.go'
+    - 'internal/**/*.go'
+    - 'test/**/*.go'
+    - 'go.mod'
+    - 'go.sum'
+  generatorSources:
+    - 'api/**/*.go'
+    - 'cmd/**/*.go'
+    - 'internal/**/*.go'
+    - 'PROJECT'
+    - 'go.mod'
+    - 'go.sum'
+  chartSources:
+    - 'charts/template-k8s/**/*'
+  chainsawSources:
+    - 'test/chainsaw/**/*.yaml'
+  devStackSources:
+    - '.ko.yaml'
+    - '.tiltignore'
+    - 'Tiltfile'
+    - 'dev/ctlptl.yaml'
+    - 'dev/ko-build.sh'
+  toolchainConfig:
+    - '.prototools'
+    - '.moon/proto/**/*.toml'
+
+workspace:
+  inheritedTasks:
+    include: []
+
+tasks:
+  check:
+    command: 'bash scripts/check.sh'
+    inputs:
+      - '@group(goSources)'
+      - '@group(generatorSources)'
+      - '@group(chartSources)'
+      - '@group(chainsawSources)'
+      - '@group(toolchainConfig)'
+      - '.golangci.yml'
+      - 'scripts/check.sh'
+    options:
+      cache: false
+
+  test:
+    script: |
+      set -euo pipefail
+      KUBEBUILDER_ASSETS="$(setup-envtest use 1.35.x -p path)" go test ./...
+    inputs:
+      - '@group(goSources)'
+      - '@group(generatorSources)'
+      - '@group(toolchainConfig)'
+      - 'charts/template-k8s/crds/**/*'
+    options:
+      cache: false
+
+  generate:
+    script: |
+      set -euo pipefail
+      controller-gen object paths="./..."
+      controller-gen crd paths="./..." output:crd:artifacts:config=charts/template-k8s/crds
+    inputs:
+      - '@group(generatorSources)'
+      - '@group(toolchainConfig)'
+    outputs:
+      - 'api/**/zz_generated.deepcopy.go'
+      - 'charts/template-k8s/crds/**/*'
+    options:
+      cache: false
+      runInCI: false
+
+  deploy:
+    command: 'bash scripts/deploy.sh'
+    inputs:
+      - '@group(chartSources)'
+      - '@group(toolchainConfig)'
+      - 'scripts/deploy.sh'
+    options:
+      cache: false
+      runInCI: false
+
+  undeploy:
+    command: 'bash scripts/undeploy.sh'
+    inputs:
+      - '@group(chartSources)'
+      - '@group(toolchainConfig)'
+      - 'scripts/undeploy.sh'
+    options:
+      cache: false
+      runInCI: false
+
+  dev-up:
+    script: |
+      set -euo pipefail
+      ctlptl apply -f dev/ctlptl.yaml
+      kubectl config use-context kind-template-k8s-dev >/dev/null
+      tilt up --context kind-template-k8s-dev
+    inputs:
+      - '@group(devStackSources)'
+      - '@group(chartSources)'
+      - '@group(goSources)'
+      - '@group(toolchainConfig)'
+    options:
+      cache: false
+      interactive: true
+      runInCI: false
+
+  dev-down:
+    script: |
+      set -euo pipefail
+      set +e
+      if kubectl config get-contexts kind-template-k8s-dev >/dev/null 2>&1; then
+        tilt down --context kind-template-k8s-dev --delete-namespaces
+      fi
+      ctlptl delete -f dev/ctlptl.yaml --cascade=true --ignore-not-found
+    inputs:
+      - '@group(devStackSources)'
+      - '@group(toolchainConfig)'
+    options:
+      cache: false
+      runInCI: false
+
+  test-e2e:
+    command: 'bash scripts/test-e2e.sh'
+    inputs:
+      - '@group(goSources)'
+      - '@group(chartSources)'
+      - '@group(chainsawSources)'
+      - '@group(toolchainConfig)'
+      - 'Dockerfile'
+      - 'scripts/deploy.sh'
+      - 'scripts/undeploy.sh'
+      - 'scripts/test-e2e.sh'
+    options:
+      cache: false
+      runInCI: false

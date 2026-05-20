@@ -1,0 +1,27 @@
+name = "kubebuilder"
+type = "cli"
+
+[platform.macos]
+download-file = "kubebuilder_darwin_{arch}"
+checksum-file = "checksums.txt"
+exe-path = "kubebuilder"
+
+[platform.linux]
+download-file = "kubebuilder_linux_{arch}"
+checksum-file = "checksums.txt"
+exe-path = "kubebuilder"
+
+[install]
+checksum-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v{version}/{checksum_file}"
+download-url = "https://github.com/kubernetes-sigs/kubebuilder/releases/download/v{version}/{download_file}"
+
+[install.arch]
+aarch64 = "arm64"
+x86_64 = "amd64"
+
+[install.exes.kubebuilder]
+exe-path = "kubebuilder"
+primary = true
+
+[resolve]
+git-url = "https://github.com/kubernetes-sigs/kubebuilder"

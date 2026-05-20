@@ -1,0 +1,4 @@
+interface:
+  display_name: "Helm Charts"
+  short_description: "Build safe Helm v4 charts"
+  default_prompt: "Use $helm to build or review a maintainable Helm v4 chart."

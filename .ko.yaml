@@ -1,0 +1,6 @@
+defaultBaseImage: gcr.io/distroless/static:nonroot
+defaultEnv:
+  - CGO_ENABLED=0
+builds:
+  - id: manager
+    main: ./cmd

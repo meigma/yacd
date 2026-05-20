@@ -1,0 +1,352 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "template-k8s chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array"
+    },
+    "nameOverride": {
+      "$ref": "#/definitions/dnsLabelName"
+    },
+    "fullnameOverride": {
+      "$ref": "#/definitions/dnsLabelName"
+    },
+    "commonLabels": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "commonAnnotations": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "kyverno": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["imageVerification"],
+      "properties": {
+        "imageVerification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "enabled",
+            "name",
+            "validationFailureAction",
+            "webhookTimeoutSeconds",
+            "imageReferences",
+            "attestor",
+            "attestation"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "name": {
+              "$ref": "#/definitions/dnsLabelName"
+            },
+            "validationFailureAction": {
+              "type": "string",
+              "enum": ["Audit", "Enforce"]
+            },
+            "webhookTimeoutSeconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30
+            },
+            "imageReferences": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "attestor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["issuer", "subject", "subjectRegExp", "rekor"],
+              "properties": {
+                "issuer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "subject": {
+                  "type": "string"
+                },
+                "subjectRegExp": {
+                  "type": "string"
+                },
+                "rekor": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["url"],
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            },
+            "attestation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["type", "buildType"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "buildType": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "name", "annotations"],
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/definitions/dnsLabelName"
+        },
+        "annotations": {
+          "$ref": "#/definitions/stringMap"
+        }
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "customResourceRoles", "metricsReader"],
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "customResourceRoles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["create"],
+          "properties": {
+            "create": {
+              "type": "boolean"
+            }
+          }
+        },
+        "metricsReader": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["create"],
+          "properties": {
+            "create": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "leaderElection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "manager": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logFormat", "logLevel", "enableHTTP2", "healthProbe", "extraArgs"],
+      "properties": {
+        "logFormat": {
+          "type": "string",
+          "enum": ["json", "text"]
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "enableHTTP2": {
+          "type": "boolean"
+        },
+        "healthProbe": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["port"],
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "port", "secure", "service", "tls"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "secure": {
+          "type": "boolean"
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["create", "port", "annotations"],
+          "properties": {
+            "create": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "annotations": {
+              "$ref": "#/definitions/stringMap"
+            }
+          }
+        },
+        "tls": {
+          "$ref": "#/definitions/tlsMount"
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tls"],
+      "properties": {
+        "tls": {
+          "$ref": "#/definitions/tlsMount"
+        }
+      }
+    },
+    "deploymentAnnotations": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "podLabels": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "podAnnotations": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "containerSecurityContext": {
+      "type": "object"
+    },
+    "resources": {
+      "type": "object"
+    },
+    "nodeSelector": {
+      "$ref": "#/definitions/stringMap"
+    },
+    "tolerations": {
+      "type": "array"
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "topologySpreadConstraints": {
+      "type": "array"
+    },
+    "extraVolumes": {
+      "type": "array"
+    },
+    "extraVolumeMounts": {
+      "type": "array"
+    }
+  },
+  "definitions": {
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tlsMount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretName", "certPath", "certName", "keyName"],
+      "properties": {
+        "secretName": {
+          "$ref": "#/definitions/dnsSubdomainName"
+        },
+        "certPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "certName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "dnsLabelName": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "dnsSubdomainName": {
+      "type": "string",
+      "maxLength": 253,
+      "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+    }
+  }
+}

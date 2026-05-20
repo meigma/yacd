@@ -1,0 +1,30 @@
+name = "tilt"
+type = "cli"
+
+[platform.macos]
+download-file = "tilt.{version}.mac.{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "tilt"
+
+[platform.linux]
+download-file = "tilt.{version}.linux.{arch}.tar.gz"
+checksum-file = "checksums.txt"
+exe-path = "tilt"
+
+[platform.windows]
+download-file = "tilt.{version}.windows.{arch}.zip"
+checksum-file = "checksums.txt"
+exe-path = "tilt.exe"
+
+[install]
+download-url = "https://github.com/tilt-dev/tilt/releases/download/v{version}/{download_file}"
+checksum-url = "https://github.com/tilt-dev/tilt/releases/download/v{version}/{checksum_file}"
+
+[install.arch]
+aarch64 = "arm64"
+
+[install.exes.tilt]
+primary = true
+
+[resolve]
+git-url = "https://github.com/tilt-dev/tilt"

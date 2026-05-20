@@ -1,0 +1,28 @@
+name = "controller-gen"
+type = "cli"
+
+[platform.macos]
+download-file = "controller-gen-darwin-{arch}"
+exe-path = "controller-gen"
+
+[platform.linux]
+download-file = "controller-gen-linux-{arch}"
+exe-path = "controller-gen"
+
+[platform.windows]
+download-file = "controller-gen-windows-{arch}.exe"
+exe-path = "controller-gen"
+
+[install]
+download-url = "https://github.com/kubernetes-sigs/controller-tools/releases/download/v{version}/{download_file}"
+
+[install.arch]
+aarch64 = "arm64"
+x86_64 = "amd64"
+
+[install.exes.controller-gen]
+exe-path = "controller-gen"
+primary = true
+
+[resolve]
+git-url = "https://github.com/kubernetes-sigs/controller-tools"

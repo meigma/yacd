@@ -1,0 +1,155 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "template-k8s.controllerManagerName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    control-plane: controller-manager
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge .Values.deploymentAnnotations .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "template-k8s.selectorLabels" . | nindent 6 }}
+      control-plane: controller-manager
+  template:
+    metadata:
+      labels:
+        {{- include "template-k8s.selectorLabels" . | nindent 8 }}
+        control-plane: controller-manager
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.commonLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge .Values.podAnnotations .Values.commonAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "template-k8s.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: manager
+          image: {{ include "template-k8s.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - {{ printf "--health-probe-bind-address=:%d" (int .Values.manager.healthProbe.port) | quote }}
+            {{- if .Values.metrics.enabled }}
+            - {{ printf "--metrics-bind-address=:%d" (int .Values.metrics.port) | quote }}
+            - {{ printf "--metrics-secure=%t" .Values.metrics.secure | quote }}
+            {{- else }}
+            - "--metrics-bind-address=0"
+            {{- end }}
+            {{- if .Values.leaderElection.enabled }}
+            - "--leader-elect"
+            {{- end }}
+            {{- if .Values.manager.enableHTTP2 }}
+            - "--enable-http2"
+            {{- end }}
+            - {{ printf "--log-format=%s" .Values.manager.logFormat | quote }}
+            - {{ printf "--log-level=%s" .Values.manager.logLevel | quote }}
+            {{- if .Values.metrics.tls.secretName }}
+            - {{ printf "--metrics-cert-path=%s" .Values.metrics.tls.certPath | quote }}
+            - {{ printf "--metrics-cert-name=%s" .Values.metrics.tls.certName | quote }}
+            - {{ printf "--metrics-cert-key=%s" .Values.metrics.tls.keyName | quote }}
+            {{- end }}
+            {{- if .Values.webhook.tls.secretName }}
+            - {{ printf "--webhook-cert-path=%s" .Values.webhook.tls.certPath | quote }}
+            - {{ printf "--webhook-cert-name=%s" .Values.webhook.tls.certName | quote }}
+            - {{ printf "--webhook-cert-key=%s" .Values.webhook.tls.keyName | quote }}
+            {{- end }}
+            {{- range .Values.manager.extraArgs }}
+            - {{ . | quote }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: {{ .Values.manager.healthProbe.port }}
+              protocol: TCP
+            {{- if .Values.metrics.enabled }}
+            - name: metrics
+              containerPort: {{ .Values.metrics.port }}
+              protocol: TCP
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if or .Values.metrics.tls.secretName .Values.webhook.tls.secretName .Values.extraVolumeMounts }}
+          volumeMounts:
+            {{- if .Values.metrics.tls.secretName }}
+            - name: metrics-certs
+              mountPath: {{ .Values.metrics.tls.certPath }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.webhook.tls.secretName }}
+            - name: webhook-certs
+              mountPath: {{ .Values.webhook.tls.certPath }}
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- end }}
+      {{- if or .Values.metrics.tls.secretName .Values.webhook.tls.secretName .Values.extraVolumes }}
+      volumes:
+        {{- if .Values.metrics.tls.secretName }}
+        - name: metrics-certs
+          secret:
+            secretName: {{ .Values.metrics.tls.secretName }}
+        {{- end }}
+        {{- if .Values.webhook.tls.secretName }}
+        - name: webhook-certs
+          secret:
+            secretName: {{ .Values.webhook.tls.secretName }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

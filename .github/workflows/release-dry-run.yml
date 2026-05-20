@@ -1,0 +1,319 @@
+# This workflow rehearses the release paths without uploading GitHub release
+# assets or publishing OCI artifacts. It is intended for release PRs and manual
+# checks before changing release automation.
+#
+# Keep the pull_request trigger broad so required check contexts still report
+# on normal PRs. The jobs intentionally skip unless the PR head branch is a
+# Release Please branch, which avoids spending runner time on routine changes.
+
+name: Release Dry Run
+
+on:
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  IMAGE_NAME: ghcr.io/meigma/template-k8s
+  CHART_REF: oci://ghcr.io/meigma/template-k8s/chart
+
+jobs:
+  binary-release-dry-run:
+    name: Binary Release Dry Run
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: .go-version
+          cache: true
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Create synthetic release tag
+        env:
+          DRY_RUN_TAG: v0.0.0-dryrun.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          git tag -f "$DRY_RUN_TAG"
+
+      - name: Run GoReleaser without publishing
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean --skip=publish
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GORELEASER_CURRENT_TAG: v0.0.0-dryrun.${{ github.run_id }}.${{ github.run_attempt }}
+
+      - name: Validate dry-run artifacts
+        run: |
+          set -euo pipefail
+
+          version="0.0.0-dryrun.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          binary_name="template-k8s"
+          asset_prefix="${binary_name}_"
+
+          jq -e --arg asset_prefix "$asset_prefix" '
+            [
+              .[]
+              | select(
+                  (.type == "Binary" and (.name | startswith($asset_prefix))) or
+                  (.type == "SBOM" and (.name | startswith($asset_prefix))) or
+                  (.type == "Checksum" and .name == "checksums.txt")
+                )
+            ] as $artifacts
+            | ($artifacts | map(select(.type == "Binary")) | length) == 4
+            and ($artifacts | map(select(.type == "SBOM")) | length) == 4
+            and ($artifacts | map(select(.type == "Checksum")) | length) == 1
+          ' dist/artifacts.json
+
+          test -f dist/checksums.txt
+
+          for os in darwin linux; do
+            for arch in amd64 arm64; do
+              expected="${binary_name}_${version}_${os}_${arch}"
+              expected_sbom="${expected}.sbom.json"
+
+              jq -e --arg name "$expected" '.[] | select(.type == "Binary" and .name == $name)' dist/artifacts.json >/dev/null
+              jq -e --arg name "$expected_sbom" '.[] | select(.type == "SBOM" and .name == $name)' dist/artifacts.json >/dev/null
+              awk -v name="$expected" '$2 == name && length($1) == 64 && $1 ~ /^[[:xdigit:]]+$/ { found = 1 } END { exit(found ? 0 : 1) }' dist/checksums.txt
+            done
+          done
+
+      - name: Smoke test dry-run binary
+        run: |
+          set -euo pipefail
+
+          version="0.0.0-dryrun.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          binary_name="template-k8s"
+          host_os="$(go env GOHOSTOS)"
+          host_arch="$(go env GOHOSTARCH)"
+          expected="${binary_name}_${version}_${host_os}_${host_arch}"
+          bin="$(jq -r --arg name "$expected" '.[] | select(.type == "Binary" and .name == $name) | .path' dist/artifacts.json)"
+
+          if [ -z "$bin" ] || [ "$bin" = "null" ] || [ ! -f "$bin" ]; then
+            echo "failed to locate host binary artifact $expected" >&2
+            jq . dist/artifacts.json >&2
+            exit 1
+          fi
+
+          set +e
+          "$bin" --help >/tmp/template-k8s-help.txt 2>&1
+          rc="$?"
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            exit "$rc"
+          fi
+          test -s /tmp/template-k8s-help.txt
+
+  container-image-platform-dry-run:
+    name: Container Image Platform Dry Run (${{ matrix.platform }})
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve dry-run metadata
+        id: dry-run
+        env:
+          DRY_RUN_VERSION: 0.0.0-dryrun.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          echo "version=${DRY_RUN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build platform OCI archive
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          push: false
+          platforms: ${{ matrix.platform }}
+          outputs: type=oci,dest=/tmp/template-k8s-dry-run-${{ matrix.arch }}.oci
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=template-k8s-release-dry-run-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=template-k8s-release-dry-run-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ steps.dry-run.outputs.version }}
+            COMMIT=${{ steps.dry-run.outputs.commit }}
+            DATE=${{ steps.dry-run.outputs.date }}
+            SOURCE=https://github.com/${{ github.repository }}
+
+      - name: Validate platform OCI archive
+        run: test -s /tmp/template-k8s-dry-run-${{ matrix.arch }}.oci
+
+  container-image-dry-run:
+    name: Container Image Dry Run
+    needs:
+      - container-image-platform-dry-run
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--')) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check platform dry-run result
+        env:
+          PLATFORM_RESULT: ${{ needs.container-image-platform-dry-run.result }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PLATFORM_RESULT" != "success" ]; then
+            echo "container platform dry-run result was $PLATFORM_RESULT" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Resolve dry-run metadata
+        id: dry-run
+        env:
+          DRY_RUN_VERSION: 0.0.0-dryrun.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          echo "version=${DRY_RUN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build local smoke-test image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: template-k8s:dry-run
+          cache-from: type=gha,scope=template-k8s-release-dry-run-amd64
+          cache-to: type=gha,mode=max,scope=template-k8s-release-dry-run-amd64
+          build-args: |
+            VERSION=${{ steps.dry-run.outputs.version }}
+            COMMIT=${{ steps.dry-run.outputs.commit }}
+            DATE=${{ steps.dry-run.outputs.date }}
+            SOURCE=https://github.com/${{ github.repository }}
+
+      - name: Smoke test local image
+        run: |
+          set -euo pipefail
+
+          set +e
+          docker run --rm template-k8s:dry-run --help >/tmp/template-k8s-image-help.txt 2>&1
+          rc="$?"
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+            exit "$rc"
+          fi
+          test -s /tmp/template-k8s-image-help.txt
+
+  helm-chart-dry-run:
+    name: Helm Chart Dry Run
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Moon toolchain
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+          auto-setup: true
+          cache-base: ${{ github.event.repository.default_branch }}
+
+      - name: Package chart without publishing
+        env:
+          DRY_RUN_VERSION: 0.0.0-dryrun.${{ github.run_id }}.${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+
+          chart="charts/template-k8s"
+          package_dir="$(mktemp -d)"
+          metadata="$(helm show chart "$chart")"
+          chart_name="$(awk '/^name:/ { print $2; exit }' <<<"$metadata")"
+
+          if [ "$chart_name" != "chart" ]; then
+            echo "Chart.yaml name must be chart for ${CHART_REF}, got $chart_name" >&2
+            exit 1
+          fi
+
+          helm lint "$chart"
+          helm package "$chart" \
+            --version "$DRY_RUN_VERSION" \
+            --app-version "v${DRY_RUN_VERSION}" \
+            --destination "$package_dir"
+
+          archive="$package_dir/chart-${DRY_RUN_VERSION}.tgz"
+          test -f "$archive"
+
+          packaged_metadata="$(helm show chart "$archive")"
+          packaged_name="$(awk '/^name:/ { print $2; exit }' <<<"$packaged_metadata")"
+          packaged_version="$(awk '/^version:/ { print $2; exit }' <<<"$packaged_metadata")"
+          packaged_app_version="$(awk '/^appVersion:/ { print $2; exit }' <<<"$packaged_metadata")"
+
+          if [ "$packaged_name" != "chart" ]; then
+            echo "packaged chart name must be chart, got $packaged_name" >&2
+            exit 1
+          fi
+          if [ "$packaged_version" != "$DRY_RUN_VERSION" ]; then
+            echo "packaged chart version must be $DRY_RUN_VERSION, got $packaged_version" >&2
+            exit 1
+          fi
+          if [ "$packaged_app_version" != "v${DRY_RUN_VERSION}" ]; then
+            echo "packaged chart appVersion must be v${DRY_RUN_VERSION}, got $packaged_app_version" >&2
+            exit 1
+          fi
+
+          helm template template-k8s "$archive" --namespace template-k8s-system --include-crds >/tmp/template-k8s-chart.yaml
+          grep -Fq "name: template-k8s-controller-manager" /tmp/template-k8s-chart.yaml
+          grep -Fq "app.kubernetes.io/name: template-k8s" /tmp/template-k8s-chart.yaml
+          grep -Fq "helm.sh/chart: chart-${DRY_RUN_VERSION}" /tmp/template-k8s-chart.yaml
+          grep -Fq "image: \"${IMAGE_NAME}:v${DRY_RUN_VERSION}\"" /tmp/template-k8s-chart.yaml
+          helm install template-k8s "$archive" --namespace template-k8s-system --dry-run=client --server-side=false >/dev/null
+
+          echo "Dry-run chart package: $archive"
+          echo "Dry-run OCI ref: ${CHART_REF}:${DRY_RUN_VERSION}"

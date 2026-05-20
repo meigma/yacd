@@ -1,0 +1,26 @@
+{{- if and .Values.metrics.enabled .Values.metrics.service.create }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "template-k8s.metricsServiceName" . }}
+  labels:
+    {{- include "template-k8s.labels" . | nindent 4 }}
+    control-plane: controller-manager
+    {{- with .Values.commonLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with merge .Values.metrics.service.annotations .Values.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "template-k8s.selectorLabels" . | nindent 4 }}
+    control-plane: controller-manager
+  ports:
+    - name: metrics
+      port: {{ .Values.metrics.service.port }}
+      targetPort: metrics
+      protocol: TCP
+{{- end }}
