@@ -73,3 +73,15 @@ Committed the adjustment on `feat/cardano-network-crd` as `9cabf93`
 (`refactor(api): narrow custom profile sources`). Verification after the
 commit passed: `moon run root:check`, `moon run root:test`, and
 `git diff --check`.
+
+## 2026-05-20 16:57 — CRD PR opened and CI verified
+Pushed `feat/cardano-network-crd` to origin and opened PR #3:
+<https://github.com/meigma/yacd/pull/3>. PR title is
+`feat(api): add CardanoNetwork CRD draft` and the head SHA is
+`9cabf9303d02670481fcb4ca0db1c0f63b1c4c6c`.
+
+Verified GitHub checks with `gh pr checks 3 --watch --fail-fast` and a final
+`gh pr view 3 --json ...` read. Active checks passed: `ci` succeeded in about
+1m2s and Kusari Inspector succeeded in about 21s. Release dry-run jobs were
+reported as skipped for this PR event. GitHub reports the PR merge state as
+`CLEAN` and mergeable.
