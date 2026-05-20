@@ -8,5 +8,13 @@ layout:
 - go.kubebuilder.io/v4
 projectName: yacd
 repo: github.com/meigma/yacd
-resources: []
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: meigma.io
+  group: yacd
+  kind: CardanoNetwork
+  path: github.com/meigma/yacd/api/v1alpha1
+  version: v1alpha1
 version: "3"

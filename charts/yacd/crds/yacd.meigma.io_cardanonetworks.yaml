@@ -1,0 +1,661 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: cardanonetworks.yacd.meigma.io
+spec:
+  group: yacd.meigma.io
+  names:
+    kind: CardanoNetwork
+    listKind: CardanoNetworkList
+    plural: cardanonetworks
+    singular: cardanonetwork
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CardanoNetwork is the Schema for the cardanonetworks API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of CardanoNetwork
+            properties:
+              chainAPI:
+                description: |-
+                  chainAPI configures network-facing APIs exposed next to the primary node.
+                  Ogmios is enabled by default because it is the first supported chain API.
+                properties:
+                  ogmios:
+                    description: ogmios configures the Ogmios sidecar and Service.
+                    properties:
+                      enabled:
+                        default: true
+                        description: enabled controls whether the Ogmios sidecar is
+                          deployed.
+                        type: boolean
+                      image:
+                        default: cardanosolutions/ogmios:v6.14.0
+                        description: image is the Ogmios image reference.
+                        type: string
+                      port:
+                        default: 1337
+                        description: port is the Ogmios service port.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      resources:
+                        description: resources configures the Ogmios container resources.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This field depends on the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                    required:
+                    - enabled
+                    - image
+                    - port
+                    type: object
+                type: object
+              local:
+                description: |-
+                  local configures a generated local devnet. It is required when mode is
+                  local and forbidden otherwise.
+                properties:
+                  era:
+                    default: conway
+                    description: era selects the newest ledger era for the generated
+                      network.
+                    enum:
+                    - babbage
+                    - conway
+                    type: string
+                  genesis:
+                    description: genesis configures local genesis material generated
+                      by YACD.
+                    properties:
+                      delegatedSupply:
+                        description: |-
+                          delegatedSupply is the lovelace supply initially delegated to generated
+                          pools.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      maxLovelaceSupply:
+                        description: maxLovelaceSupply sets the generated Shelley
+                          max lovelace supply.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      profile:
+                        default: default
+                        description: profile selects a curated genesis preset.
+                        enum:
+                        - default
+                        - zero-fee
+                        - zero-min-utxo
+                        - zero-fee-and-min-utxo
+                        type: string
+                      protocolVersion:
+                        description: |-
+                          protocolVersion sets the initial protocol version in generated genesis
+                          material.
+                        properties:
+                          major:
+                            description: major is the protocol major version.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          minor:
+                            description: minor is the protocol minor version.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                        required:
+                        - major
+                        - minor
+                        type: object
+                      securityParameter:
+                        description: securityParameter sets the generated Shelley
+                          security parameter.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - profile
+                    type: object
+                  networkMagic:
+                    default: 42
+                    description: networkMagic is the testnet magic used by local node
+                      and client commands.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  timing:
+                    description: timing controls slot and epoch duration for the generated
+                      network.
+                    properties:
+                      epochLength:
+                        default: 500
+                        description: epochLength is the number of slots in an epoch.
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      slotLength:
+                        default: 100ms
+                        description: slotLength is the local network slot duration.
+                        type: string
+                    required:
+                    - epochLength
+                    - slotLength
+                    type: object
+                  topology:
+                    description: |-
+                      topology describes the initial local network topology. The first
+                      controller slice only reconciles one primary node, but this keeps the CRD
+                      environment-shaped instead of node-shaped.
+                    properties:
+                      pools:
+                        description: pools configures generated stake pool nodes.
+                        properties:
+                          count:
+                            default: 1
+                            description: |-
+                              count is the number of generated pool nodes. The initial controller may
+                              reject values above one until multi-node reconciliation is implemented.
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          defaults:
+                            description: defaults configures shared pool economics
+                              for generated pools.
+                            properties:
+                              costLovelace:
+                                description: costLovelace is the fixed pool cost used
+                                  for generated pools.
+                                format: int64
+                                minimum: 0
+                                type: integer
+                              margin:
+                                description: |-
+                                  margin is the pool margin as a decimal string in the inclusive range
+                                  [0, 1]. It is a string to avoid exposing floating point behavior in the
+                                  Kubernetes API.
+                                pattern: ^(0(\.[0-9]+)?|1(\.0+)?)$
+                                type: string
+                              pledgeLovelace:
+                                description: pledgeLovelace is the pool pledge used
+                                  for generated pools.
+                                format: int64
+                                minimum: 0
+                                type: integer
+                            type: object
+                        required:
+                        - count
+                        type: object
+                    required:
+                    - pools
+                    type: object
+                required:
+                - era
+                - networkMagic
+                - timing
+                - topology
+                type: object
+              mode:
+                description: |-
+                  mode selects whether this network is generated locally or joins a public
+                  profile.
+                enum:
+                - local
+                - public
+                type: string
+              node:
+                description: |-
+                  node controls the primary Cardano node workload shared by local and
+                  public modes.
+                properties:
+                  image:
+                    description: |-
+                      image optionally overrides the full cardano-node image reference. When
+                      omitted, the controller derives an image from version.
+                    type: string
+                  port:
+                    default: 3001
+                    description: port is the node-to-node TCP port exposed by the
+                      node Service.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  resources:
+                    description: resources configures the primary cardano-node container
+                      resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  storage:
+                    description: storage configures persistent cardano-node database
+                      storage.
+                    properties:
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 10Gi
+                        description: size is the requested persistent volume size
+                          for the node database.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClassName:
+                        description: |-
+                          storageClassName optionally selects the Kubernetes StorageClass used for
+                          the node database PVC.
+                        type: string
+                    required:
+                    - size
+                    type: object
+                  version:
+                    default: 11.0.1
+                    description: version selects the cardano-node release used by
+                      the managed node image.
+                    type: string
+                required:
+                - port
+                - version
+                type: object
+              public:
+                description: |-
+                  public configures a node that joins a known or supplied public/external
+                  network profile. It is required when mode is public and forbidden
+                  otherwise.
+                properties:
+                  configSource:
+                    description: |-
+                      configSource supplies network config and genesis files for custom public
+                      profiles.
+                    properties:
+                      configMapRef:
+                        description: configMapRef loads profile files from a ConfigMap
+                          in the same namespace.
+                        properties:
+                          keyPrefix:
+                            description: keyPrefix optionally scopes profile files
+                              under keys with this prefix.
+                            type: string
+                          name:
+                            description: name is the referenced object's name.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      http:
+                        description: http downloads profile files from an HTTP endpoint.
+                        properties:
+                          sha256:
+                            description: sha256 is the expected lowercase hex SHA-256
+                              digest of the bundle.
+                            pattern: ^[a-f0-9]{64}$
+                            type: string
+                          url:
+                            description: url is the HTTP(S) URL for the profile bundle.
+                            pattern: ^https?://
+                            type: string
+                        required:
+                        - sha256
+                        - url
+                        type: object
+                      oci:
+                        description: oci loads profile files from a versioned OCI
+                          artifact.
+                        properties:
+                          digest:
+                            description: |-
+                              digest pins the expected artifact digest. Controllers should require this
+                              before fetching untrusted registries.
+                            type: string
+                          image:
+                            description: image is the OCI artifact reference.
+                            type: string
+                        required:
+                        - image
+                        type: object
+                      secretRef:
+                        description: secretRef loads profile files from a Secret in
+                          the same namespace.
+                        properties:
+                          keyPrefix:
+                            description: keyPrefix optionally scopes profile files
+                              under keys with this prefix.
+                            type: string
+                          name:
+                            description: name is the referenced object's name.
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      type:
+                        description: type selects the source mechanism.
+                        enum:
+                        - ConfigMap
+                        - Secret
+                        - OCI
+                        - HTTP
+                        type: string
+                    required:
+                    - type
+                    type: object
+                    x-kubernetes-validations:
+                    - message: configSource.type must match exactly one source block
+                      rule: 'self.type == ''ConfigMap'' ? has(self.configMapRef) &&
+                        !has(self.secretRef) && !has(self.oci) && !has(self.http)
+                        : self.type == ''Secret'' ? has(self.secretRef) && !has(self.configMapRef)
+                        && !has(self.oci) && !has(self.http) : self.type == ''OCI''
+                        ? has(self.oci) && !has(self.configMapRef) && !has(self.secretRef)
+                        && !has(self.http) : self.type == ''HTTP'' ? has(self.http)
+                        && !has(self.configMapRef) && !has(self.secretRef) && !has(self.oci)
+                        : false'
+                  profile:
+                    description: profile selects the public network profile.
+                    enum:
+                    - preprod
+                    - preview
+                    - mainnet
+                    - custom
+                    type: string
+                required:
+                - profile
+                type: object
+                x-kubernetes-validations:
+                - message: configSource is required only when public.profile is custom
+                  rule: 'self.profile == ''custom'' ? has(self.configSource) : !has(self.configSource)'
+            required:
+            - mode
+            - node
+            type: object
+            x-kubernetes-validations:
+            - message: mode must match exactly one of spec.local or spec.public
+              rule: 'self.mode == ''local'' ? has(self.local) && !has(self.public)
+                : self.mode == ''public'' ? has(self.public) && !has(self.local) :
+                false'
+          status:
+            description: status defines the observed state of CardanoNetwork
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the current state of the CardanoNetwork resource.
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
+
+                  Expected condition types include:
+                  - "Ready": the network is usable through its published endpoints
+                  - "NodeReady": the primary node is running and queryable
+                  - "OgmiosReady": Ogmios is enabled and serving health checks
+                  - "Progressing": the resource is being created or updated
+                  - "Degraded": the resource failed to reach or maintain its desired state
+
+                  The status of each condition is one of True, False, or Unknown.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              endpoints:
+                description: |-
+                  endpoints publishes cluster-local connection details for clients and
+                  supporting controllers.
+                properties:
+                  nodeToNode:
+                    description: nodeToNode is the primary node-to-node endpoint.
+                    properties:
+                      port:
+                        description: port is the Service port.
+                        format: int32
+                        type: integer
+                      serviceName:
+                        description: serviceName is the Kubernetes Service name.
+                        type: string
+                      url:
+                        description: url is a convenience URL for protocols with a
+                          stable URL shape.
+                        type: string
+                    type: object
+                  ogmios:
+                    description: ogmios is the Ogmios JSON/RPC endpoint.
+                    properties:
+                      port:
+                        description: port is the Service port.
+                        format: int32
+                        type: integer
+                      serviceName:
+                        description: serviceName is the Kubernetes Service name.
+                        type: string
+                      url:
+                        description: url is a convenience URL for protocols with a
+                          stable URL shape.
+                        type: string
+                    type: object
+                type: object
+              network:
+                description: |-
+                  network captures resolved network identity once the controller has
+                  generated or loaded chain material.
+                properties:
+                  era:
+                    description: era is the newest resolved ledger era known to the
+                      controller.
+                    enum:
+                    - babbage
+                    - conway
+                    type: string
+                  mode:
+                    description: mode is the resolved network mode.
+                    enum:
+                    - local
+                    - public
+                    type: string
+                  networkMagic:
+                    description: networkMagic is the resolved Cardano network magic.
+                    format: int64
+                    type: integer
+                  profile:
+                    description: profile is the resolved public network profile, when
+                      mode is public.
+                    enum:
+                    - preprod
+                    - preview
+                    - mainnet
+                    - custom
+                    type: string
+                type: object
+              observedGeneration:
+                description: |-
+                  observedGeneration is the most recent generation observed by the
+                  controller.
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
