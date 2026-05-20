@@ -77,3 +77,7 @@ The document intentionally avoids defining final CRD types, API contracts, CLI f
 ## 2026-05-20 14:34 — Initial prototype PLAN.md drafted
 Created `.journal/PLAN.md` in the journal root as a rough component-focused implementation sequence. The plan targets a first prototype with a primary Cardano environment, Ogmios default chain API, developer CLI/config, narrow faucet/topup path, and db-sync as the first supporting service using a dedicated follower node.
 The plan intentionally avoids becoming a backlog or API contract. It names broad build/proof checkpoints for operator identity cleanup, primary environment reconciliation, Ogmios sidecar, CLI foundation, faucet/topup, db-sync, and minimal hardening, with Yaci Store and broader topology work deferred until after the prototype.
+
+## 2026-05-20 14:41 — Close
+Closed the session after PR #1 (`docs: add initial YACD design`) was squash-merged into `master` at `35d7823`. The local `master` checkout was fast-forwarded, the remote `feat/initial-design` branch was deleted, and the Worktrunk implementation worktree was removed.
+Final handoff state: root `DESIGN.md` is on `master`; `.journal/PLAN.md`, `.journal/001/SUMMARY.md`, `.journal/INDEX.md`, `.journal/TECH_NOTES.md`, and this close note are on `journal/jmgilman`. The next implementation slice should start from operator/project identity cleanup and replacement of the template `NginxDeployment` surface.
