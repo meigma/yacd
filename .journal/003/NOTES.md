@@ -59,3 +59,17 @@ the API type with the manager scheme, updated the foundation envtest to assert
 the type registration, and refreshed README current state. Verification passed:
 `moon run root:generate`, `moon run root:check`, `moon run root:test`, and
 `git diff --check`.
+
+## 2026-05-20 16:54 — Custom profile source narrowed
+Applied review feedback to keep custom public profile sources in-cluster only
+for the first CRD pass. Removed OCI and HTTP source variants, removed the
+custom `LocalObjectReference` wrapper, and changed `configSource` to accept
+exactly one same-namespace `corev1.LocalObjectReference` for either
+`configMapRef` or `secretRef`. Because Kubernetes' built-in
+`LocalObjectReference` allows an empty name for compatibility, the CRD now adds
+a CEL rule requiring the selected reference name to be non-empty.
+
+Committed the adjustment on `feat/cardano-network-crd` as `9cabf93`
+(`refactor(api): narrow custom profile sources`). Verification after the
+commit passed: `moon run root:check`, `moon run root:test`, and
+`git diff --check`.
