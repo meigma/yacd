@@ -20,3 +20,7 @@
   info.
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
+- PR #2 completed the first operator-shell/project-identity slice on `master`.
+  The repo is now YACD-branded, the Helm chart is `charts/yacd`, and there are
+  intentionally no custom APIs or reconcilers yet. The first YACD API
+  group/version should be introduced with the real primary environment CRD.
