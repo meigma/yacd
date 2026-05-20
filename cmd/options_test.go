@@ -80,6 +80,15 @@ func TestParseManagerOptions(t *testing.T) {
 	}
 }
 
+// TestNewManagerParserUsesYACDName keeps release binary help aligned with the
+// published artifact name.
+func TestNewManagerParserUsesYACDName(t *testing.T) {
+	parser, err := newManagerParser(&managerOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, "yacd", parser.Model.Name)
+}
+
 // TestParseManagerOptionsRejectsZapFlags asserts the parser refuses legacy
 // zap flags so operators do not silently lose configuration after the slog
 // migration.
