@@ -50,5 +50,7 @@
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port
-  `10350`; future sessions should start it after selecting an implementation
-  worktree and stop it before pause or closeout.
+  `10350`; implementation sessions should start it once after selecting an
+  implementation worktree, keep it running across ordinary turns and review
+  pauses, and stop it at explicit session close/end-of-session unless the human
+  asks otherwise.

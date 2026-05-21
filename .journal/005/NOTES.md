@@ -34,3 +34,8 @@ Committed the rename-only cleanup as `310c3a3` (`refactor(cardanonetwork): short
 Applied the review feedback that was worth addressing inside the current StatefulSet-only boundary on `feat/primary-statefulset-builder`.
 Commit `61bca07` (`fix(cardanonetwork): harden primary workload metadata`) disables pod ServiceAccount token automounting, derives bounded child names and selector labels with a stable hash for long CR names, and sets explicit PVC retention (`WhenDeleted: Delete`, `WhenScaled: Retain`).
 Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, `git diff --check`, and `moon run root:check`. The local dev stack was started before implementation and shut down afterward with `moon run root:dev-down`.
+
+## 2026-05-21 10:40 — Dev stack lifecycle correction
+Clarified the intended dev stack lifecycle after the user pointed out that start/stop per work item wastes local resources.
+Commit `89d3e3b` (`docs(session): clarify dev stack lifecycle`) updates `.session.md` and `AGENTS.md` on `feat/primary-statefulset-builder` so `root:dev-up` is a one-time implementation-session startup step and `root:dev-down` is reserved for explicit session close/end-of-session, user request, or stack repair/cleanup.
+Also corrected `.journal/TECH_NOTES.md` so future session startup context does not reintroduce the stale "stop before pause" guidance. Validation passed with `git diff --check` in both the feature and journal worktrees. The dev stack was intentionally not started for this docs-only correction.
