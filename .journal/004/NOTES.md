@@ -43,3 +43,23 @@ The tag-triggered `Release cardano-testnet Image` workflow run `26207027454` com
 Created implementation branch `feat/cardano-testnet-init-container` from updated `master` (`071fa6f`) and started the dev stack with `moon run root:dev-up`. Added controller-local helper `localnetCreateEnvInitContainer(plan localnet.Plan)` that converts a pure `localnet.Plan` into a `corev1.Container` init fragment for `ghcr.io/meigma/yacd/cardano-testnet:<version>`.
 
 The fragment mounts `localnet-state` at `/state`, runs `/bin/sh -ec` as UID/GID `10001` with restricted security context and read-only root, passes the plan manifest as compact JSON, and wraps `cardano-testnet create-env` with restart-safe idempotency: matching manifest plus config exits 0, mismatched existing env refuses overwrite, and first run writes the manifest last. Verification passed: focused `go test ./internal/controller/cardanonetwork`, `moon run root:test`, `moon run root:check`, staged `git diff --check`, and a manual two-run Docker smoke against `ghcr.io/meigma/yacd/cardano-testnet:11.0.1` with a temp `/state` mount.
+
+## 2026-05-21 09:05 — yacd-suffixed cardano-testnet image reset
+Updated PR #8 after deciding the init idempotency wrapper belongs in the
+`cardano-testnet` tools image instead of being embedded as a Kubernetes shell
+script. The container now carries `/opt/yacd/bin/yacd-cardano-testnet-init`,
+the controller fragment calls that wrapper directly with only the planned
+`create-env` args, and the image tag used by the helper is
+`ghcr.io/meigma/yacd/cardano-testnet:<tool-version>-yacd.1`.
+
+Reset the component Release Please configuration to a prerelease train with
+manifest baseline `11.0.1-yacd.0`; dry-run now produces a separate
+`cardano-testnet` release PR for `11.0.1-yacd.1`. The tag workflow accepts only
+`cardano-testnet/vX.Y.Z-yacd.N`, uses the full suffixed version as the image
+tag, and derives `CARDANO_NODE_VERSION` from the unsuffixed `X.Y.Z` upstream
+version before downloading official IntersectMBO artifacts. Verification
+passed: `moon run root:test`, `moon run root:check`, `actionlint`, local native
+and `linux/amd64` image builds, read-only wrapper create/idempotency/mismatch
+smokes, Release Please dry-run, PR CI/Kusari, and manual Release Dry Run
+`26237600115`. This is paused at the hard stop before deleting the existing
+unsuffixed draft release/tag/GHCR version for `cardano-testnet/v11.0.1`.
