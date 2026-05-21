@@ -33,6 +33,7 @@ k8s_yaml(helm(
         'image.tag=tilt',
         'image.pullPolicy=IfNotPresent',
         'leaderElection.enabled=false',
+        'manager.logLevel=debug',
     ],
 ))
 
