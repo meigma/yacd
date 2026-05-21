@@ -235,3 +235,17 @@ Verified the moved paths with `bash -n .dev/scripts/*.sh .dev/ko-build.sh`,
 `kubectl`, `tilt get uiresource/controller --port 10350`, idempotent second
 `moon run root:dev-up`, and final `moon run root:dev-down`. Final verification
 passed: `moon run root:check` and `git diff --check`.
+
+## 2026-05-20 19:08 — Session protocol requires dev stack lifecycle
+
+Updated `.session.md` with dedicated, hard-to-miss `Development Stack Startup`
+and `Development Stack Shutdown` sections. The startup section requires agents
+to run `moon run root:dev-up` from the selected implementation worktree after
+journal priming and before treating implementation work as ready. The shutdown
+section requires `moon run root:dev-down` before pausing, substantial turn
+handoff, or `session-close` unless the human explicitly asks to leave the stack
+running.
+
+Verification passed: `git diff --check`, `moon run root:dev-down`, and
+`moon run root:check`. The dev stack was confirmed down with no `.run/yacd-dev`
+runtime state left behind.
