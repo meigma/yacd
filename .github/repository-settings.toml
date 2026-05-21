@@ -74,6 +74,7 @@ contexts = [
   "ci",
   "Binary Release Dry Run",
   "Container Image Dry Run",
+  "Cardano Testnet Image Dry Run",
 ]
 
 [rulesets.tags_default]
