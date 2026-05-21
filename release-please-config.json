@@ -28,7 +28,10 @@
       "package-name": "cardano-testnet",
       "include-component-in-tag": true,
       "tag-separator": "/",
-      "initial-version": "11.0.1",
+      "versioning": "prerelease",
+      "prerelease": true,
+      "prerelease-type": "yacd",
+      "initial-version": "11.0.1-yacd.0",
       "changelog-path": "CHANGELOG.md",
       "changelog-sections": [
         { "type": "build", "section": "Build" },

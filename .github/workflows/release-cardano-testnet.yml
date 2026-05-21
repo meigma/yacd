@@ -30,6 +30,7 @@ jobs:
     outputs:
       tag: ${{ steps.release-tag.outputs.tag }}
       version: ${{ steps.release-tag.outputs.version }}
+      upstream-version: ${{ steps.release-tag.outputs.upstream-version }}
     steps:
       - name: Resolve release tag
         id: release-tag
@@ -44,15 +45,17 @@ jobs:
             tag="${GITHUB_REF_NAME}"
           fi
 
-          if [[ ! "$tag" =~ ^cardano-testnet/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-            echo "Release tag must match cardano-testnet/vX.Y.Z or cardano-testnet/vX.Y.Z-prerelease: $tag" >&2
+          if [[ ! "$tag" =~ ^cardano-testnet/v[0-9]+\.[0-9]+\.[0-9]+-yacd\.[0-9]+$ ]]; then
+            echo "Release tag must match cardano-testnet/vX.Y.Z-yacd.N: $tag" >&2
             exit 1
           fi
 
           version="${tag#cardano-testnet/v}"
+          upstream_version="${version%%-yacd.*}"
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream-version=$upstream_version" >> "$GITHUB_OUTPUT"
 
       - name: Wait for draft release
         env:
@@ -140,6 +143,7 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.version=${{ needs.resolve-release.outputs.version }}
             org.opencontainers.image.revision=${{ steps.image.outputs.commit }}
+            io.yacd.cardano-node.version=${{ needs.resolve-release.outputs.upstream-version }}
 
       - name: Build and push cardano-testnet image
         id: build
@@ -154,7 +158,8 @@ jobs:
           cache-from: type=gha,scope=cardano-testnet-release-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=cardano-testnet-release-${{ matrix.arch }}
           build-args: |
-            CARDANO_NODE_VERSION=${{ steps.image.outputs.version }}
+            CARDANO_NODE_VERSION=${{ needs.resolve-release.outputs.upstream-version }}
+            YACD_CARDANO_TESTNET_VERSION=${{ steps.image.outputs.version }}
 
       - name: Smoke test platform image
         env:
@@ -290,6 +295,43 @@ jobs:
 
           docker run --rm "${{ steps.manifest.outputs.tag }}" version >/tmp/cardano-testnet-version.txt
           grep -Fq "cardano-node" /tmp/cardano-testnet-version.txt
+
+          state_dir="$(mktemp -d)"
+          chmod 0777 "$state_dir"
+          trap 'rm -rf "$state_dir"' EXIT
+
+          manifest='{"schemaVersion":"release-smoke","inputs":{"networkMagic":42,"poolCount":1,"epochLength":500,"slotLength":"0.1","envDir":"/state/env"},"fingerprint":{"algorithm":"sha256","value":"release-smoke"}}'
+          docker run --rm --read-only \
+            --entrypoint /opt/yacd/bin/yacd-cardano-testnet-init \
+            -v "${state_dir}:/state" \
+            -e YACD_LOCALNET_ENV_DIR=/state/env \
+            -e YACD_LOCALNET_CONFIG_FILE=/state/env/configuration.yaml \
+            -e YACD_LOCALNET_PLAN_MANIFEST_FILE=/state/env/yacd-localnet-plan.json \
+            -e YACD_LOCALNET_PLAN_MANIFEST="$manifest" \
+            "${{ steps.manifest.outputs.tag }}" \
+            create-env \
+            --num-pool-nodes 1 \
+            --testnet-magic 42 \
+            --epoch-length 500 \
+            --slot-length 0.1 \
+            --output /state/env
+
+          docker run --rm --read-only \
+            --entrypoint /opt/yacd/bin/yacd-cardano-testnet-init \
+            -v "${state_dir}:/state" \
+            -e YACD_LOCALNET_ENV_DIR=/state/env \
+            -e YACD_LOCALNET_CONFIG_FILE=/state/env/configuration.yaml \
+            -e YACD_LOCALNET_PLAN_MANIFEST_FILE=/state/env/yacd-localnet-plan.json \
+            -e YACD_LOCALNET_PLAN_MANIFEST="$manifest" \
+            "${{ steps.manifest.outputs.tag }}" \
+            create-env \
+            --num-pool-nodes 1 \
+            --testnet-magic 42 \
+            --epoch-length 500 \
+            --slot-length 0.1 \
+            --output /state/env
+
+          test -f "${state_dir}/env/yacd-localnet-plan.json"
 
       - name: Attest cardano-testnet image
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0

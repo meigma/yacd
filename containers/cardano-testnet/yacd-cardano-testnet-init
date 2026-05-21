@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+manifest_file="${YACD_LOCALNET_PLAN_MANIFEST_FILE:?YACD_LOCALNET_PLAN_MANIFEST_FILE is required}"
+env_dir="${YACD_LOCALNET_ENV_DIR:?YACD_LOCALNET_ENV_DIR is required}"
+config_file="${YACD_LOCALNET_CONFIG_FILE:?YACD_LOCALNET_CONFIG_FILE is required}"
+requested_manifest="${YACD_LOCALNET_PLAN_MANIFEST:?YACD_LOCALNET_PLAN_MANIFEST is required}"
+
+if [ "$#" -eq 0 ]; then
+  echo "cardano-testnet create-env arguments are required" >&2
+  exit 64
+fi
+
+if [ -f "$manifest_file" ] && [ -f "$config_file" ] && printf "%s" "$requested_manifest" | cmp -s - "$manifest_file"; then
+  echo "localnet env already matches requested plan"
+  exit 0
+fi
+
+if [ -e "$env_dir" ]; then
+  echo "existing localnet env does not match requested plan; refusing to overwrite $env_dir" >&2
+  exit 1
+fi
+
+cardano-testnet "$@"
+
+tmp_manifest="${manifest_file}.tmp.$$"
+trap 'rm -f "$tmp_manifest"' EXIT
+printf "%s" "$requested_manifest" > "$tmp_manifest"
+mv "$tmp_manifest" "$manifest_file"

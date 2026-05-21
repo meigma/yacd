@@ -19,17 +19,12 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "cardano-testnet-create-env", container.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1", container.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", container.Image)
 	assert.Equal(t, corev1.PullIfNotPresent, container.ImagePullPolicy)
-	assert.Equal(t, []string{"/bin/sh", "-ec"}, container.Command)
+	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
 	assert.Equal(t, corev1.TerminationMessageFallbackToLogsOnError, container.TerminationMessagePolicy)
 
-	require.Len(t, container.Args, 2+len(plan.CreateEnv.Args))
-	assert.Contains(t, container.Args[0], "localnet env already matches requested plan")
-	assert.Contains(t, container.Args[0], "refusing to overwrite")
-	assert.Contains(t, container.Args[0], `"$0" "$@"`)
-	assert.Equal(t, plan.CreateEnv.Command, container.Args[1])
-	assert.Equal(t, plan.CreateEnv.Args, container.Args[2:])
+	assert.Equal(t, plan.CreateEnv.Args, container.Args)
 
 	assert.Equal(t, []corev1.VolumeMount{
 		{
@@ -70,9 +65,9 @@ func TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips(t *testing.T) {
 	assert.Equal(t, plan.Manifest, got)
 }
 
-// TestLocalnetCreateEnvInitContainerPreservesPlanArgv verifies the helper does
-// not reinterpret the command produced by the pure localnet plan builder.
-func TestLocalnetCreateEnvInitContainerPreservesPlanArgv(t *testing.T) {
+// TestLocalnetCreateEnvInitContainerPreservesPlanArgs verifies the helper does
+// not reinterpret the arguments produced by the pure localnet plan builder.
+func TestLocalnetCreateEnvInitContainerPreservesPlanArgs(t *testing.T) {
 	spec := localnet.DefaultSpec()
 	spec.Tool.Binary = "/opt/cardano/bin/cardano-testnet"
 	spec.Tool.Version = "11.0.1"
@@ -82,9 +77,8 @@ func TestLocalnetCreateEnvInitContainerPreservesPlanArgv(t *testing.T) {
 	container, err := localnetCreateEnvInitContainer(plan)
 	require.NoError(t, err)
 
-	require.Len(t, container.Args, 2+len(plan.CreateEnv.Args))
-	assert.Equal(t, "/opt/cardano/bin/cardano-testnet", container.Args[1])
-	assert.Equal(t, plan.CreateEnv.Args, container.Args[2:])
+	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
+	assert.Equal(t, plan.CreateEnv.Args, container.Args)
 }
 
 // TestLocalnetCreateEnvInitContainerRejectsIncompletePlan verifies fields the
@@ -101,13 +95,6 @@ func TestLocalnetCreateEnvInitContainerRejectsIncompletePlan(t *testing.T) {
 				plan.Spec.Tool.Version = ""
 			},
 			wantErr: "localnet tool version is required",
-		},
-		{
-			name: "missing create env command",
-			mutate: func(plan *localnet.Plan) {
-				plan.CreateEnv.Command = ""
-			},
-			wantErr: "localnet create-env command is required",
 		},
 		{
 			name: "missing create env args",

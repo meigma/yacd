@@ -11,9 +11,11 @@ import (
 
 const (
 	cardanoTestnetImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
+	cardanoTestnetImageRevision   = "yacd.1"
 
 	localnetCreateEnvInitContainerName = "cardano-testnet-create-env"
 	localnetStateVolumeName            = "localnet-state"
+	localnetCreateEnvCommand           = "/opt/yacd/bin/yacd-cardano-testnet-init"
 
 	localnetToolsRunAsID int64 = 10001
 
@@ -22,24 +24,6 @@ const (
 	localnetManifestFileEnvName = "YACD_LOCALNET_PLAN_MANIFEST_FILE"
 	localnetManifestEnvName     = "YACD_LOCALNET_PLAN_MANIFEST"
 )
-
-const localnetCreateEnvWrapperScript = `manifest_file="${YACD_LOCALNET_PLAN_MANIFEST_FILE:?YACD_LOCALNET_PLAN_MANIFEST_FILE is required}"
-env_dir="${YACD_LOCALNET_ENV_DIR:?YACD_LOCALNET_ENV_DIR is required}"
-config_file="${YACD_LOCALNET_CONFIG_FILE:?YACD_LOCALNET_CONFIG_FILE is required}"
-requested_manifest="${YACD_LOCALNET_PLAN_MANIFEST:?YACD_LOCALNET_PLAN_MANIFEST is required}"
-
-if [ -f "$manifest_file" ] && [ -f "$config_file" ] && printf "%s" "$requested_manifest" | cmp -s - "$manifest_file"; then
-  echo "localnet env already matches requested plan"
-  exit 0
-fi
-
-if [ -e "$env_dir" ]; then
-  echo "existing localnet env does not match requested plan; refusing to overwrite $env_dir" >&2
-  exit 1
-fi
-
-"$0" "$@"
-printf "%s" "$requested_manifest" > "$manifest_file"`
 
 // localnetCreateEnvInitContainer converts a localnet plan into the init
 // container fragment that generates the cardano-testnet environment.
@@ -53,15 +37,15 @@ func localnetCreateEnvInitContainer(plan localnet.Plan) (corev1.Container, error
 		return corev1.Container{}, fmt.Errorf("marshal localnet plan manifest: %w", err)
 	}
 
-	args := make([]string, 0, 2+len(plan.CreateEnv.Args))
-	args = append(args, localnetCreateEnvWrapperScript, plan.CreateEnv.Command)
+	args := make([]string, 0, len(plan.CreateEnv.Args))
 	args = append(args, plan.CreateEnv.Args...)
+	toolVersion := strings.TrimSpace(plan.Spec.Tool.Version)
 
 	return corev1.Container{
 		Name:            localnetCreateEnvInitContainerName,
-		Image:           fmt.Sprintf("%s:%s", cardanoTestnetImageRepository, strings.TrimSpace(plan.Spec.Tool.Version)),
+		Image:           fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, toolVersion, cardanoTestnetImageRevision),
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{"/bin/sh", "-ec"},
+		Command:         []string{localnetCreateEnvCommand},
 		Args:            args,
 		Env: []corev1.EnvVar{
 			{Name: localnetEnvDirEnvName, Value: plan.Layout.EnvDir},
@@ -95,9 +79,6 @@ func localnetCreateEnvInitContainer(plan localnet.Plan) (corev1.Container, error
 func validateLocalnetInitContainerPlan(plan localnet.Plan) error {
 	if strings.TrimSpace(plan.Spec.Tool.Version) == "" {
 		return fmt.Errorf("localnet tool version is required")
-	}
-	if strings.TrimSpace(plan.CreateEnv.Command) == "" {
-		return fmt.Errorf("localnet create-env command is required")
 	}
 	if len(plan.CreateEnv.Args) == 0 {
 		return fmt.Errorf("localnet create-env args are required")
