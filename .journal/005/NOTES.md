@@ -39,3 +39,7 @@ Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run
 Clarified the intended dev stack lifecycle after the user pointed out that start/stop per work item wastes local resources.
 Commit `89d3e3b` (`docs(session): clarify dev stack lifecycle`) updates `.session.md` and `AGENTS.md` on `feat/primary-statefulset-builder` so `root:dev-up` is a one-time implementation-session startup step and `root:dev-down` is reserved for explicit session close/end-of-session, user request, or stack repair/cleanup.
 Also corrected `.journal/TECH_NOTES.md` so future session startup context does not reintroduce the stale "stop before pause" guidance. Validation passed with `git diff --check` in both the feature and journal worktrees. The dev stack was intentionally not started for this docs-only correction.
+
+## 2026-05-21 10:45 — PR opened and CI verified
+Pushed `feat/primary-statefulset-builder` and opened draft PR #10: https://github.com/meigma/yacd/pull/10.
+GitHub checks completed successfully for the branch head `89d3e3b`: `ci` passed and `Kusari Inspector` passed. Release dry-run jobs were reported as skipped for this PR.
