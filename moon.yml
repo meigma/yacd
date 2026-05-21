@@ -34,6 +34,8 @@ fileGroups:
     - 'Tiltfile'
     - 'dev/ctlptl.yaml'
     - 'dev/ko-build.sh'
+    - 'scripts/dev-up.sh'
+    - 'scripts/dev-down.sh'
   toolchainConfig:
     - '.prototools'
     - '.moon/proto/**/*.toml'
@@ -106,11 +108,7 @@ tasks:
       runInCI: false
 
   dev-up:
-    script: |
-      set -euo pipefail
-      ctlptl apply -f dev/ctlptl.yaml
-      kubectl config use-context kind-yacd-dev >/dev/null
-      tilt up --context kind-yacd-dev
+    command: 'bash scripts/dev-up.sh'
     inputs:
       - '@group(devStackSources)'
       - '@group(chartSources)'
@@ -118,17 +116,10 @@ tasks:
       - '@group(toolchainConfig)'
     options:
       cache: false
-      interactive: true
       runInCI: false
 
   dev-down:
-    script: |
-      set -euo pipefail
-      set +e
-      if kubectl config get-contexts kind-yacd-dev >/dev/null 2>&1; then
-        tilt down --context kind-yacd-dev --delete-namespaces
-      fi
-      ctlptl delete -f dev/ctlptl.yaml --cascade=true --ignore-not-found
+    command: 'bash scripts/dev-down.sh'
     inputs:
       - '@group(devStackSources)'
       - '@group(toolchainConfig)'

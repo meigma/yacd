@@ -2,6 +2,7 @@
 .direnv/
 .moon/cache/
 .moon/docker/
+.run/
 .journal/
 .wt/
 
