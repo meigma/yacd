@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.19.0@sha256:b6afd42430b15f2d2a4c5a02b919e98a525b785b1aaff16747d2f623364e39b6
 
 ARG CARDANO_NODE_VERSION=11.0.1
 
-FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS fetch
+FROM --platform=$BUILDPLATFORM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS fetch
 
 ARG CARDANO_NODE_VERSION
 ARG TARGETARCH
@@ -11,8 +11,8 @@ SHELL ["/bin/sh", "-eux", "-c"]
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
+        ca-certificates=20230311+deb12u1 \
+        curl=7.88.1-10+deb12u14 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
@@ -32,7 +32,7 @@ RUN case "${TARGETARCH}" in \
     test -x /out/bin/cardano-cli; \
     test -x /out/bin/cardano-node
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
 ARG CARDANO_NODE_VERSION
 
