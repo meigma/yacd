@@ -43,6 +43,11 @@ LABEL org.opencontainers.image.title="yacd-cardano-testnet" \
       org.opencontainers.image.version="${CARDANO_NODE_VERSION}" \
       org.opencontainers.image.vendor="Meigma"
 
+RUN groupadd --gid 10001 cardano \
+    && useradd --uid 10001 --gid cardano --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin cardano \
+    && mkdir -p /state \
+    && chown cardano:cardano /state
+
 COPY --from=fetch /out/bin /opt/cardano/bin
 
 ENV PATH="/opt/cardano/bin:${PATH}" \
@@ -50,5 +55,7 @@ ENV PATH="/opt/cardano/bin:${PATH}" \
     CARDANO_NODE="/opt/cardano/bin/cardano-node"
 
 WORKDIR /state
+
+USER cardano:cardano
 
 ENTRYPOINT ["cardano-testnet"]
