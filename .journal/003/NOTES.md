@@ -141,3 +141,10 @@ resources, direct `cardano-node` key/runtime paths, and era/genesis tuning to
 later slices. Verification passed on the feature branch:
 `go test ./internal/cardano/localnet`, `moon run root:test`,
 `moon run root:check`, and `git diff --check`.
+
+## 2026-05-20 17:56 — Localnet documentation cleanup
+Added godoc comments for the localnet package's unexported production helpers,
+private constants, and test functions after review feedback clarified that all
+types and functions should be documented. Verification still passed:
+`go test ./internal/cardano/localnet`, `moon run root:test`,
+`moon run root:check`, and `git diff --check`.
