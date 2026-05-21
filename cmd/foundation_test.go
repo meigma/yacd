@@ -13,7 +13,7 @@ import (
 
 // TestFoundationManagerConstruction proves the current operator shell can
 // construct a controller-runtime manager against envtest, register its API
-// types, and keep the controller set intentionally empty.
+// types, and register the CardanoNetwork controller scaffold.
 func TestFoundationManagerConstruction(t *testing.T) {
 	testEnv := &envtest.Environment{}
 	cfg, err := testEnv.Start()
