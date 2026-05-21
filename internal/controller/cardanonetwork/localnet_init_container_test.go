@@ -15,7 +15,7 @@ import (
 func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	plan := testLocalnetPlan(t)
 
-	container, err := localnetCreateEnvInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, "cardano-testnet-create-env", container.Name)
@@ -39,14 +39,7 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	assert.Equal(t, "/state/env/yacd-localnet-plan.json", env["YACD_LOCALNET_PLAN_MANIFEST_FILE"])
 	assert.NotEmpty(t, env["YACD_LOCALNET_PLAN_MANIFEST"])
 
-	require.NotNil(t, container.SecurityContext)
-	assert.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
-	assert.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
-	assert.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
-	assert.True(t, *container.SecurityContext.RunAsNonRoot)
-	assert.Equal(t, int64(10001), *container.SecurityContext.RunAsUser)
-	assert.Equal(t, int64(10001), *container.SecurityContext.RunAsGroup)
-	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, container.SecurityContext.SeccompProfile.Type)
+	assertRestrictedContainerSecurityContext(t, container.SecurityContext)
 }
 
 // TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips verifies the
@@ -54,7 +47,7 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 func TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips(t *testing.T) {
 	plan := testLocalnetPlan(t)
 
-	container, err := localnetCreateEnvInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
 	require.NoError(t, err)
 
 	raw := envMap(container)["YACD_LOCALNET_PLAN_MANIFEST"]
@@ -74,7 +67,7 @@ func TestLocalnetCreateEnvInitContainerPreservesPlanArgs(t *testing.T) {
 	plan, err := localnet.BuildPlan(spec)
 	require.NoError(t, err)
 
-	container, err := localnetCreateEnvInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
@@ -138,7 +131,7 @@ func TestLocalnetCreateEnvInitContainerRejectsIncompletePlan(t *testing.T) {
 			plan := testLocalnetPlan(t)
 			tt.mutate(&plan)
 
-			_, err := localnetCreateEnvInitContainer(plan)
+			_, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})

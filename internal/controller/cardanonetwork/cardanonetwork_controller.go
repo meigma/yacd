@@ -5,7 +5,6 @@ import (
 	"context"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/localnet"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -45,22 +44,15 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	spec, err := localnetSpecFromCardanoNetwork(network)
+	statefulSet, err := (primaryWorkloadBuilder{scheme: r.Scheme}).Build(network)
 	if err != nil {
-		log.Info("CardanoNetwork localnet input is not supported yet", "error", err)
+		log.Info("CardanoNetwork primary workload is not supported yet", "error", err)
 		return ctrl.Result{}, nil
 	}
 
-	plan, err := localnet.BuildPlan(spec)
-	if err != nil {
-		log.Info("CardanoNetwork localnet plan is invalid", "error", err)
-		return ctrl.Result{}, nil
-	}
-
-	log.V(1).Info("Built CardanoNetwork localnet plan",
-		"fingerprint", plan.Fingerprint.Value,
-		"command", plan.CreateEnv.Command,
-		"args", plan.CreateEnv.Args)
+	log.V(1).Info("Built CardanoNetwork primary StatefulSet",
+		"statefulset", client.ObjectKeyFromObject(statefulSet),
+		"localnetFingerprint", statefulSet.Spec.Template.Annotations[localnetFingerprintAnno])
 
 	return ctrl.Result{}, nil
 }
