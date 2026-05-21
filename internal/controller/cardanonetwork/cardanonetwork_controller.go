@@ -5,6 +5,8 @@ import (
 	"context"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/localnet"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,8 +34,33 @@ type CardanoNetworkReconciler struct {
 
 // Reconcile is the CardanoNetwork controller scaffold.
 func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logf.FromContext(ctx, "cardanonetwork", req.String()).
-		Info("CardanoNetwork controller scaffold is active")
+	log := logf.FromContext(ctx, "cardanonetwork", req.String())
+
+	network := &yacdv1alpha1.CardanoNetwork{}
+	if err := r.Get(ctx, req.NamespacedName, network); err != nil {
+		if apierrors.IsNotFound(err) {
+			log.V(1).Info("CardanoNetwork not found; ignoring deleted object")
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	spec, err := localnetSpecFromCardanoNetwork(network)
+	if err != nil {
+		log.Info("CardanoNetwork localnet input is not supported yet", "error", err)
+		return ctrl.Result{}, nil
+	}
+
+	plan, err := localnet.BuildPlan(spec)
+	if err != nil {
+		log.Info("CardanoNetwork localnet plan is invalid", "error", err)
+		return ctrl.Result{}, nil
+	}
+
+	log.V(1).Info("Built CardanoNetwork localnet plan",
+		"fingerprint", plan.Fingerprint.Value,
+		"command", plan.CreateEnv.Command,
+		"args", plan.CreateEnv.Args)
 
 	return ctrl.Result{}, nil
 }
