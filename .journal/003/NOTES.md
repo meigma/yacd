@@ -85,3 +85,20 @@ Verified GitHub checks with `gh pr checks 3 --watch --fail-fast` and a final
 1m2s and Kusari Inspector succeeded in about 21s. Release dry-run jobs were
 reported as skipped for this PR event. GitHub reports the PR merge state as
 `CLEAN` and mergeable.
+
+## 2026-05-20 17:01 — PR merged
+Squash-merged PR #3 on GitHub after rechecking that the head SHA was still
+`9cabf9303d02670481fcb4ca0db1c0f63b1c4c6c` and that PR checks were green. The
+merge commit on `master` is `f918623376744ad4a8eba3f574019f887318014a`.
+
+`gh pr merge --squash --delete-branch` completed the GitHub merge but could not
+delete the local branch while it was checked out in the Worktrunk worktree.
+Recovered by fast-forwarding local `master` with `git pull --ff-only origin
+master`, removing the integrated `feat/cardano-network-crd` worktree via
+`wt remove -y --foreground --format=json feat/cardano-network-crd`, and deleting
+the stale remote branch with `git push origin --delete feat/cardano-network-crd`.
+
+Post-merge `CI` on `master` passed. The `Release Please` workflow failed before
+project code ran because `actions/create-github-app-token` received an empty
+`client-id`/deprecated `app-id` input, which points at missing repository
+release-app configuration rather than the CRD merge itself.
