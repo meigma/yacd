@@ -25,9 +25,9 @@ const (
 	localnetManifestEnvName     = "YACD_LOCALNET_PLAN_MANIFEST"
 )
 
-// localnetCreateEnvInitContainer converts a localnet plan into the init
+// cardanoTestnetInitContainer converts a localnet plan into the init
 // container fragment that generates the cardano-testnet environment.
-func localnetCreateEnvInitContainer(plan localnet.Plan) (corev1.Container, error) {
+func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) (corev1.Container, error) {
 	if err := validateLocalnetInitContainerPlan(plan); err != nil {
 		return corev1.Container{}, err
 	}
@@ -72,6 +72,7 @@ func localnetCreateEnvInitContainer(plan localnet.Plan) (corev1.Container, error
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, nil
 }

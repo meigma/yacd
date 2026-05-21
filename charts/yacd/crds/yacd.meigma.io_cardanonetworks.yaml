@@ -582,6 +582,12 @@ spec:
                     - babbage
                     - conway
                     type: string
+                  localnetFingerprint:
+                    description: |-
+                      localnetFingerprint is the accepted fingerprint for generated localnet
+                      inputs. Changing those inputs requires deleting and recreating the
+                      CardanoNetwork.
+                    type: string
                   mode:
                     description: mode is the resolved network mode.
                     enum:
