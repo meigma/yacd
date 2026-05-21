@@ -16,3 +16,7 @@ Current proposal: keep `internal/cardano/localnet` as the pure `cardano-testnet 
 
 ## 2026-05-21 09:57 — Adapter folded into builder
 Decision update: the CRD-to-`localnet.Spec` adapter should not remain as a standalone `localnet_adapter.go` helper. It is small enough to become a method on the new primary workload builder, keeping the full CRD-to-workload path inside one cohesive type while preserving `internal/cardano/localnet` as the Kubernetes-free planning package.
+
+## 2026-05-21 10:06 — Implementation start
+Started implementation on Worktrunk branch `feat/primary-statefulset-builder` at `.wt/feat-primary-statefulset-builder`.
+The required local dev stack was started with `moon run root:dev-up` from the implementation worktree. It created/connected the `kind-yacd-dev` cluster and reported the YACD dev stack ready with Tilt UI on port 10350.
