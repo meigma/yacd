@@ -20,6 +20,7 @@ const (
 	conditionReasonMissingLocalnetFingerprint  = "MissingLocalnetFingerprint"
 	conditionReasonUnsupportedStorageChange    = "UnsupportedStorageChange"
 	conditionReasonUnsupportedWorkloadChange   = "UnsupportedWorkloadChange"
+	conditionReasonResourceConflict            = "ResourceConflict"
 	conditionReasonWorkloadApplied             = "WorkloadApplied"
 	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC and Deployment are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
@@ -30,8 +31,31 @@ func (r *CardanoNetworkReconciler) patchStatusConditions(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", conditions...)
+}
+
+func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	localnetFingerprint string,
+) error {
+	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint,
+		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
+		progressingCondition(metav1.ConditionFalse, conditionReasonWorkloadApplied, conditionMessagePrimaryWorkloadApplied),
+	)
+}
+
+func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	localnetFingerprint string,
+	conditions ...metav1.Condition,
+) error {
 	original := network.DeepCopy()
 	network.Status.ObservedGeneration = network.Generation
+	if localnetFingerprint != "" {
+		setLocalnetIdentityStatus(network, localnetFingerprint)
+	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
 		apimeta.SetStatusCondition(&network.Status.Conditions, condition)
@@ -42,6 +66,23 @@ func (r *CardanoNetworkReconciler) patchStatusConditions(
 	}
 
 	return r.Status().Patch(ctx, network, client.MergeFrom(original))
+}
+
+func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {
+	if network.Status.Network == nil {
+		network.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{}
+	}
+
+	network.Status.Network.Mode = network.Spec.Mode
+	network.Status.Network.LocalnetFingerprint = localnetFingerprint
+	if network.Spec.Local == nil {
+		return
+	}
+
+	networkMagic := network.Spec.Local.NetworkMagic
+	network.Status.Network.NetworkMagic = &networkMagic
+	era := network.Spec.Local.Era
+	network.Status.Network.Era = &era
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {

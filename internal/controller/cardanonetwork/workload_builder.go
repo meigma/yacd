@@ -28,11 +28,12 @@ const (
 	cardanoNodeDatabaseDir   = "/state/db"
 	cardanoNodeHostAddress   = "0.0.0.0"
 
-	nodeIPCVolumeName       = "node-ipc"
-	defaultNodeStorageSize  = "10Gi"
-	localnetFingerprintAnno = "yacd.meigma.io/localnet-fingerprint"
-	maxLabelValueLength     = 63
-	safeNameHashLength      = 10
+	nodeIPCVolumeName         = "node-ipc"
+	defaultNodeStorageSize    = "10Gi"
+	localnetFingerprintAnno   = "yacd.meigma.io/localnet-fingerprint"
+	requestedStorageClassAnno = "yacd.meigma.io/requested-storage-class"
+	maxLabelValueLength       = 63
+	safeNameHashLength        = 10
 
 	labelAppName         = "app.kubernetes.io/name"
 	labelAppInstance     = "app.kubernetes.io/instance"
@@ -286,12 +287,10 @@ func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNe
 func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) (*corev1.PersistentVolumeClaim, error) {
 	persistentVolumeClaim := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      primaryNodeStatePVCName(network),
-			Namespace: network.Namespace,
-			Labels:    primaryWorkloadLabels(network),
-			Annotations: map[string]string{
-				localnetFingerprintAnno: plan.Fingerprint.Value,
-			},
+			Name:        primaryNodeStatePVCName(network),
+			Namespace:   network.Namespace,
+			Labels:      primaryWorkloadLabels(network),
+			Annotations: persistentVolumeClaimAnnotations(network, plan),
 		},
 		Spec: b.persistentVolumeClaimSpec(network),
 	}
@@ -301,6 +300,17 @@ func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.Card
 	}
 
 	return persistentVolumeClaim, nil
+}
+
+func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {
+	annotations := map[string]string{
+		localnetFingerprintAnno: plan.Fingerprint.Value,
+	}
+	if network.Spec.Node.Storage != nil && network.Spec.Node.Storage.StorageClassName != nil {
+		annotations[requestedStorageClassAnno] = *network.Spec.Node.Storage.StorageClassName
+	}
+
+	return annotations
 }
 
 func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.CardanoNetwork) corev1.PersistentVolumeClaimSpec {

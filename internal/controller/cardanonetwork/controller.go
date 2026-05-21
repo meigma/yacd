@@ -64,6 +64,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	localnetFingerprint := resources.Deployment.Spec.Template.Annotations[localnetFingerprintAnno]
+	if err := validateAcceptedLocalnetFingerprint(network, localnetFingerprint); err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+	}
+
 	pvcResult, err := r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
 	if err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
@@ -74,10 +79,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	if err := r.patchStatusConditions(ctx, network,
-		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
-		progressingCondition(metav1.ConditionFalse, conditionReasonWorkloadApplied, conditionMessagePrimaryWorkloadApplied),
-	); err != nil {
+	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -86,7 +88,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"persistentVolumeClaimOperation", pvcResult,
 		"deployment", client.ObjectKeyFromObject(resources.Deployment),
 		"deploymentOperation", deploymentResult,
-		"localnetFingerprint", resources.Deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+		"localnetFingerprint", localnetFingerprint)
 
 	return ctrl.Result{}, nil
 }

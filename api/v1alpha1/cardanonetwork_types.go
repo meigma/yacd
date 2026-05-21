@@ -356,6 +356,12 @@ type CardanoNetworkIdentityStatus struct {
 	// +optional
 	Mode CardanoNetworkMode `json:"mode,omitempty"`
 
+	// localnetFingerprint is the accepted fingerprint for generated localnet
+	// inputs. Changing those inputs requires deleting and recreating the
+	// CardanoNetwork.
+	// +optional
+	LocalnetFingerprint string `json:"localnetFingerprint,omitempty"`
+
 	// networkMagic is the resolved Cardano network magic.
 	// +optional
 	NetworkMagic *int64 `json:"networkMagic,omitempty"`

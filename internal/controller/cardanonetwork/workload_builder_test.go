@@ -16,7 +16,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-const defaultLocalSlotLength = 100 * time.Millisecond
+const (
+	defaultLocalSlotLength = 100 * time.Millisecond
+	testStorageClassName   = "fast"
+)
 
 // TestPrimaryWorkloadBuilderLocalnetSpecMapsSupportedLocalInput verifies the
 // CRD-to-localnet adapter shape now owned by the primary workload builder.
@@ -192,6 +195,7 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 		deployment.Spec.Template.Annotations[localnetFingerprintAnno],
 		persistentVolumeClaim.Annotations[localnetFingerprintAnno],
 	)
+	assert.NotContains(t, persistentVolumeClaim.Annotations, requestedStorageClassAnno)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 
@@ -267,7 +271,7 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	network := localCardanoNetwork("custom-node")
 	image := "example.com/cardano-node:test"
-	storageClassName := "fast"
+	storageClassName := testStorageClassName
 	network.Spec.Node.Image = &image
 	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
 		Size:             resource.MustParse("20Gi"),
@@ -293,7 +297,8 @@ func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
 	require.NotNil(t, resources.PersistentVolumeClaim.Spec.StorageClassName)
-	assert.Equal(t, storageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[requestedStorageClassAnno])
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {

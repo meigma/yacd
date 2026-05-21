@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -47,7 +48,8 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
 	requirePrimaryPVC(t, ctx, reconciler, network)
-	requirePrimaryDeployment(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonWorkloadApplied)
 }
@@ -141,6 +143,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing
 			originalFingerprint := deployment.Spec.Template.Annotations[localnetFingerprintAnno]
 			pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 			require.Equal(t, originalFingerprint, pvc.Annotations[localnetFingerprintAnno])
+			require.Equal(t, originalFingerprint, requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 
 			current := requireNetwork(t, ctx, reconciler, network)
 			tt.mutate(current)
@@ -153,10 +156,39 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing
 			assert.Equal(t, originalFingerprint, pvc.Annotations[localnetFingerprintAnno])
 			deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
 			assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+			assert.Equal(t, originalFingerprint, requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
 			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonUnsupportedLocalnetChange)
 		})
 	}
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChangeAfterPVCDeletion(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-localnet-after-pvc-delete")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	originalFingerprint := requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NoError(t, reconciler.Delete(ctx, pvc))
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Local.NetworkMagic = 43
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryNodeStatePVCName(network),
+	}, &corev1.PersistentVolumeClaim{})
+	assert.True(t, apierrors.IsNotFound(err), "expected PVC to remain absent, got %v", err)
+	assert.Equal(t, originalFingerprint, requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
 }
 
 func TestCardanoNetworkReconcilerReconcileRejectsMissingLocalnetFingerprint(t *testing.T) {
@@ -231,7 +263,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageShrink(t *testing.T) {
 func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("rejects-storage-class-drift")
-	storageClassName := "fast"
+	storageClassName := testStorageClassName
 	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
 		Size:             resource.MustParse("10Gi"),
 		StorageClassName: &storageClassName,
@@ -251,8 +283,59 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T)
 
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
-	assert.Equal(t, storageClassName, *pvc.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsStorageClassRemoval(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-storage-class-removal")
+	storageClassName := testStorageClassName
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size:             resource.MustParse("10Gi"),
+		StorageClassName: &storageClassName,
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Node.Storage.StorageClassName = nil
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NotNil(t, pvc.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
+	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+}
+
+func TestCardanoNetworkReconcilerReconcileToleratesDefaultedStorageClass(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("tolerates-default-storage-class")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	defaultStorageClassName := "cluster-default"
+	pvc.Spec.StorageClassName = &defaultStorageClassName
+	require.NoError(t, reconciler.Update(ctx, pvc))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NotNil(t, pvc.Spec.StorageClassName)
+	assert.Equal(t, defaultStorageClassName, *pvc.Spec.StorageClassName)
+	assert.NotContains(t, pvc.Annotations, requestedStorageClassAnno)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
 func TestCardanoNetworkReconcilerReconcileRejectsDeploymentSelectorDrift(t *testing.T) {
@@ -271,6 +354,75 @@ func TestCardanoNetworkReconcilerReconcileRejectsDeploymentSelectorDrift(t *test
 	require.NoError(t, err)
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedWorkloadChange)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *testing.T) {
+	tests := []struct {
+		name  string
+		child func(*yacdv1alpha1.CardanoNetwork) client.Object
+	}{
+		{
+			name: "foreign-owned-pvc",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryNodeStatePVCName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-pvc",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.PersistentVolumeClaim{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryNodeStatePVCName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
+		{
+			name: "foreign-owned-deployment",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryWorkloadName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-deployment",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryWorkloadName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			network := localCardanoNetwork("collision-" + tt.name)
+			network.UID = types.UID("cardanonetwork-" + tt.name)
+			reconciler := newTestReconciler(t, network, tt.child(network))
+
+			_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+			require.NoError(t, err)
+
+			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonResourceConflict)
+		})
+	}
 }
 
 // TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput verifies adapter
@@ -320,7 +472,7 @@ func localCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 }
 
 // newTestReconciler returns a CardanoNetworkReconciler backed by a fake client.
-func newTestReconciler(t *testing.T, objects ...*yacdv1alpha1.CardanoNetwork) *CardanoNetworkReconciler {
+func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkReconciler {
 	t.Helper()
 
 	scheme := runtime.NewScheme()
@@ -331,9 +483,7 @@ func newTestReconciler(t *testing.T, objects ...*yacdv1alpha1.CardanoNetwork) *C
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{})
-	for _, object := range objects {
-		builder.WithObjects(object)
-	}
+	builder.WithObjects(objects...)
 
 	return &CardanoNetworkReconciler{
 		Client: builder.Build(),
@@ -353,6 +503,21 @@ func requireNetwork(
 	require.NoError(t, reconciler.Get(ctx, reconcileRequestFor(network).NamespacedName, current))
 
 	return current
+}
+
+func requireAcceptedLocalnetFingerprint(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) string {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotEmpty(t, current.Status.Network.LocalnetFingerprint)
+
+	return current.Status.Network.LocalnetFingerprint
 }
 
 func requirePrimaryPVC(
@@ -387,6 +552,18 @@ func requirePrimaryDeployment(
 	}, deployment))
 
 	return deployment
+}
+
+func foreignControllerOwnerReference() metav1.OwnerReference {
+	controller := true
+
+	return metav1.OwnerReference{
+		APIVersion: "v1",
+		Kind:       "ConfigMap",
+		Name:       "foreign-owner",
+		UID:        types.UID("foreign-owner"),
+		Controller: &controller,
+	}
 }
 
 func assertNoPrimaryChildren(

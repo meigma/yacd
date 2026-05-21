@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"reflect"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -39,7 +41,15 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 		return controllerutil.OperationResultNone, err
 	}
 
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
 	if err := validateLocalnetFingerprint(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateRequestedStorageClass(current, desired); err != nil {
 		return controllerutil.OperationResultNone, err
 	}
 
@@ -107,6 +117,10 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 		return controllerutil.OperationResultNone, err
 	}
 
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
 	if !equality.Semantic.DeepEqual(current.Spec.Selector, desired.Spec.Selector) {
 		return controllerutil.OperationResultNone, unsupportedWorkloadChange(
 			"Deployment %s selector drifted from desired value",
@@ -142,6 +156,13 @@ func clientObjectKey(object interface {
 	}
 }
 
+func resourceConflict(format string, args ...any) unsupportedApplyError {
+	return unsupportedApplyError{
+		reason:  conditionReasonResourceConflict,
+		message: fmt.Sprintf(format, args...),
+	}
+}
+
 func unsupportedStorageChange(format string, args ...any) unsupportedApplyError {
 	return unsupportedApplyError{
 		reason:  conditionReasonUnsupportedStorageChange,
@@ -170,6 +191,50 @@ func missingLocalnetFingerprint(format string, args ...any) unsupportedApplyErro
 	}
 }
 
+func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
+	desiredController := metav1.GetControllerOf(desired)
+	if desiredController == nil {
+		return resourceConflict(
+			"resource %s has no desired controller owner",
+			clientObjectKey(desired),
+		)
+	}
+
+	currentController := metav1.GetControllerOf(current)
+	if currentController == nil {
+		return resourceConflict(
+			"resource %s already exists without a controller owner",
+			clientObjectKey(desired),
+		)
+	}
+	if currentController.APIVersion != desiredController.APIVersion ||
+		currentController.Kind != desiredController.Kind ||
+		currentController.Name != desiredController.Name ||
+		currentController.UID != desiredController.UID {
+		return resourceConflict(
+			"resource %s is already controlled by %s/%s",
+			clientObjectKey(desired),
+			currentController.Kind,
+			currentController.Name,
+		)
+	}
+
+	return nil
+}
+
+func validateAcceptedLocalnetFingerprint(network *yacdv1alpha1.CardanoNetwork, desiredFingerprint string) error {
+	if network.Status.Network == nil || network.Status.Network.LocalnetFingerprint == "" {
+		return nil
+	}
+	if network.Status.Network.LocalnetFingerprint == desiredFingerprint {
+		return nil
+	}
+
+	return unsupportedLocalnetChange(
+		"CardanoNetwork localnet inputs changed from accepted fingerprint; delete and recreate the CardanoNetwork to change network parameters",
+	)
+}
+
 func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
 	currentFingerprint := current.Annotations[localnetFingerprintAnno]
 	if currentFingerprint == "" {
@@ -190,6 +255,21 @@ func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired 
 	return nil
 }
 
+func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
+	currentStorageClass, currentHasStorageClassRequest := current.Annotations[requestedStorageClassAnno]
+	desiredStorageClass, desiredHasStorageClassRequest := desired.Annotations[requestedStorageClassAnno]
+	if currentHasStorageClassRequest == desiredHasStorageClassRequest && currentStorageClass == desiredStorageClass {
+		return nil
+	}
+
+	return unsupportedStorageChange(
+		"PVC %s requested storageClassName cannot be changed from %s to %s",
+		clientObjectKey(desired),
+		annotationValue(currentStorageClass, currentHasStorageClassRequest),
+		annotationValue(desiredStorageClass, desiredHasStorageClassRequest),
+	)
+}
+
 func storageClassCompatible(current *string, desired *string) bool {
 	if desired == nil {
 		return true
@@ -199,6 +279,14 @@ func storageClassCompatible(current *string, desired *string) bool {
 	}
 
 	return *current == *desired
+}
+
+func annotationValue(value string, ok bool) string {
+	if !ok {
+		return "<default>"
+	}
+
+	return value
 }
 
 func stringPtrValue(value *string) string {
