@@ -52,3 +52,8 @@ PVC updates allow storage expansion, reject shrink and storage class drift witho
 ## 2026-05-21 11:37 — PR updated and CI verified
 Pushed `e861145` to draft PR #10.
 GitHub checks completed successfully on the new head: `ci` passed and `Kusari Inspector` passed. Release dry-run jobs were skipped for the draft PR.
+
+## 2026-05-21 12:15 — Localnet identity protected
+Implemented controller-side protection for stable `CardanoNetwork` localnet identity on `feat/primary-statefulset-builder` and committed it as `6a4dd87` (`feat(cardanonetwork): protect localnet identity`).
+The owned PVC now stores the accepted localnet fingerprint, the Deployment pod template keeps the same fingerprint, and PVC apply rejects fingerprint drift before storage or Deployment mutations. Drifted localnet inputs set `Degraded=True` and `Progressing=False` with `UnsupportedLocalnetChange`; unannotated existing PVCs set `MissingLocalnetFingerprint`.
+Validation passed with `moon run root:test`, `moon run root:check`, and `git diff --check`. Pushed the branch to draft PR #10, where `ci` and `Kusari Inspector` passed on head `6a4dd87`; release dry-run jobs were skipped. The dev stack remains running as intended for the ongoing implementation session.
