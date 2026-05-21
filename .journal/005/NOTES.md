@@ -25,3 +25,7 @@ The required local dev stack was started with `moon run root:dev-up` from the im
 Implemented the primary StatefulSet builder on `feat/primary-statefulset-builder` and committed it as `2a86a61` (`feat(cardanonetwork): build primary node statefulset`).
 The slice folds `localnet_adapter.go` into `primaryWorkloadBuilder`, returns a StatefulSet without Ogmios or apply/status side effects, keeps the reconciler read-only, and adds focused builder coverage for validation, owner references, init container, node container, PVC, IPC volume, labels, fingerprint annotation, resources, and security context.
 Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, `git diff --check`, and `moon run root:check`. The local dev stack was shut down with `moon run root:dev-down`, which reported `YACD dev stack is down`.
+
+## 2026-05-21 10:18 — Filename cleanup
+Renamed the CardanoNetwork controller files on `feat/primary-statefulset-builder` to shorter package-local names: `controller.go`, `controller_test.go`, `init_container.go`, `init_container_test.go`, `workload_builder.go`, and `workload_builder_test.go`.
+Committed the rename-only cleanup as `310c3a3` (`refactor(cardanonetwork): shorten controller filenames`). Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, and `git diff --check`.
