@@ -298,7 +298,15 @@ jobs:
 
           state_dir="$(mktemp -d)"
           chmod 0777 "$state_dir"
-          trap 'rm -rf "$state_dir"' EXIT
+          cleanup_state_dir() {
+            docker run --rm --user 0 \
+              --entrypoint /bin/sh \
+              -v "${state_dir}:/state" \
+              "${{ steps.manifest.outputs.tag }}" \
+              -c 'chmod -R a+rwX /state' >/dev/null 2>&1 || true
+            rm -rf "$state_dir"
+          }
+          trap cleanup_state_dir EXIT
 
           manifest='{"schemaVersion":"release-smoke","inputs":{"networkMagic":42,"poolCount":1,"epochLength":500,"slotLength":"0.1","envDir":"/state/env"},"fingerprint":{"algorithm":"sha256","value":"release-smoke"}}'
           docker run --rm --read-only \
