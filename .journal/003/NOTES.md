@@ -181,3 +181,20 @@ reconciliation. This slice remains read-only: no children, status, Events,
 metrics, or workload resources. Verification passed:
 `go test ./internal/controller/cardanonetwork`, `moon run root:test`,
 `moon run root:check`, and `git diff --check`.
+
+## 2026-05-20 18:30 — Dev stack smoke verified localnet plan logs
+
+Updated the feature branch Tilt render to set `manager.logLevel=debug` so the
+controller's `V(1)` reconcile logs are visible during local development. Ran
+the template dev-stack path against Kind using `ctlptl apply -f dev/ctlptl.yaml`
+and `tilt ci --context kind-yacd-dev --timeout 10m`; Tilt built the manager
+image with `ko`, pushed it to the local registry, installed the Helm chart, and
+reported the controller workload healthy.
+
+Applied a minimal local-mode `CardanoNetwork` named `default/local-dev` and
+confirmed the controller emitted `Built CardanoNetwork localnet plan` with
+fingerprint
+`063971a6a56498017a9fe831df5e25968b8fd06b9f4730e0ecec218503ae28ac` and
+`cardano-testnet create-env --num-pool-nodes 1 --testnet-magic 42
+--epoch-length 500 --slot-length 0.1 --output /state/env`. Verification passed:
+`git diff --check` and `moon run root:check`.
