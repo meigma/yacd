@@ -18,6 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 // TestCardanoNetworkReconcilerReconcileHandlesMissingObject verifies deleted
@@ -144,6 +145,46 @@ func TestCardanoNetworkReconcilerReconcileCorrectsPausedDeployment(t *testing.T)
 	assert.Equal(t, "keep", deployment.Labels["example.com/foreign-label"])
 	assert.Equal(t, "keep", deployment.Annotations["example.com/foreign-annotation"])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerApplyPrimaryDeploymentIgnoresAPIDefaults(t *testing.T) {
+	const foreignMetadataValue = "keep"
+
+	ctx := context.Background()
+	network := localCardanoNetwork("ignores-api-defaults")
+	reconciler := newTestReconciler(t, network)
+	resources, err := (primaryWorkloadBuilder{scheme: reconciler.Scheme}).Build(network)
+	require.NoError(t, err)
+
+	result, err := reconciler.applyPrimaryDeployment(ctx, resources.Deployment)
+	require.NoError(t, err)
+	require.Equal(t, controllerutil.OperationResultCreated, result)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	applyDeploymentAPIDefaults(deployment)
+	if deployment.Annotations == nil {
+		deployment.Annotations = map[string]string{}
+	}
+	deployment.Labels["example.com/foreign-label"] = foreignMetadataValue
+	deployment.Annotations["example.com/foreign-annotation"] = foreignMetadataValue
+	deployment.Spec.Template.Labels["example.com/foreign-template-label"] = foreignMetadataValue
+	deployment.Spec.Template.Annotations["example.com/foreign-template-annotation"] = foreignMetadataValue
+	require.NoError(t, reconciler.Update(ctx, deployment))
+
+	result, err = reconciler.applyPrimaryDeployment(ctx, resources.Deployment)
+	require.NoError(t, err)
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, corev1.RestartPolicyAlways, deployment.Spec.Template.Spec.RestartPolicy)
+	assert.Equal(t, corev1.DNSClusterFirst, deployment.Spec.Template.Spec.DNSPolicy)
+	assert.Equal(t, corev1.DefaultSchedulerName, deployment.Spec.Template.Spec.SchedulerName)
+	require.NotNil(t, deployment.Spec.Template.Spec.TerminationGracePeriodSeconds)
+	assert.Equal(t, int64(30), *deployment.Spec.Template.Spec.TerminationGracePeriodSeconds)
+	assert.Equal(t, foreignMetadataValue, deployment.Labels["example.com/foreign-label"])
+	assert.Equal(t, foreignMetadataValue, deployment.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, foreignMetadataValue, deployment.Spec.Template.Labels["example.com/foreign-template-label"])
+	assert.Equal(t, foreignMetadataValue, deployment.Spec.Template.Annotations["example.com/foreign-template-annotation"])
 }
 
 func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing.T) {
@@ -654,6 +695,14 @@ func foreignControllerOwnerReference() metav1.OwnerReference {
 		UID:        types.UID("foreign-owner"),
 		Controller: &controller,
 	}
+}
+
+func applyDeploymentAPIDefaults(deployment *appsv1.Deployment) {
+	terminationGracePeriodSeconds := int64(30)
+	deployment.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
+	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
+	deployment.Spec.Template.Spec.SchedulerName = corev1.DefaultSchedulerName
+	deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &terminationGracePeriodSeconds
 }
 
 func assertNoPrimaryChildren(

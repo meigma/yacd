@@ -202,6 +202,7 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
 	assert.Equal(t, localnetCreateEnvInitContainerName, initContainer.Name)
+	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, initContainer.VolumeMounts)
@@ -211,6 +212,7 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
 	assert.Equal(t, []string{"cardano-node"}, nodeContainer.Command)
+	assert.Equal(t, corev1.TerminationMessagePathDefault, nodeContainer.TerminationMessagePath)
 	assert.Equal(t, []string{
 		"run",
 		"--config", "/state/env/configuration.yaml",

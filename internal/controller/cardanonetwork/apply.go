@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -105,10 +106,15 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	ctx context.Context,
 	desired *appsv1.Deployment,
 ) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	if err := r.defaultObject(desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
 	current := &appsv1.Deployment{}
 	err := r.Get(ctx, clientObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
+		if err := r.Create(ctx, desired); err != nil {
 			return controllerutil.OperationResultNone, err
 		}
 
@@ -136,16 +142,31 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	current.Spec.Paused = desired.Spec.Paused
 	current.Spec.Replicas = desired.Spec.Replicas
 	current.Spec.Strategy = desired.Spec.Strategy
-	current.Spec.Template = desired.Spec.Template
+	current.Spec.Template.Labels = mergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
+	current.Spec.Template.Annotations = mergeOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
+	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
+	current.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
+	current.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
+	current.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
+	current.Spec.Template.Spec.Volumes = desired.Spec.Template.Spec.Volumes
 
 	if equality.Semantic.DeepEqual(before, current) {
 		return controllerutil.OperationResultNone, nil
 	}
-	if err := r.Update(ctx, current); err != nil {
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
 		return controllerutil.OperationResultNone, err
 	}
 
 	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoNetworkReconciler) defaultObject(object client.Object) error {
+	if r.Scheme == nil {
+		return fmt.Errorf("scheme is required")
+	}
+	r.Scheme.Default(object)
+
+	return nil
 }
 
 func clientObjectKey(object interface {

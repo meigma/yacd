@@ -21,7 +21,7 @@ metadata:
 custom_build(
     IMAGE,
     './.dev/ko-build.sh',
-    deps=['cmd', 'go.mod', 'go.sum', '.ko.yaml'],
+    deps=['cmd', 'api', 'internal', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build.sh'],
 )
 
 k8s_yaml(helm(

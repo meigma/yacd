@@ -72,6 +72,7 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) 
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, nil
 }
