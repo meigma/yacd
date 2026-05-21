@@ -29,3 +29,8 @@ Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run
 ## 2026-05-21 10:18 — Filename cleanup
 Renamed the CardanoNetwork controller files on `feat/primary-statefulset-builder` to shorter package-local names: `controller.go`, `controller_test.go`, `init_container.go`, `init_container_test.go`, `workload_builder.go`, and `workload_builder_test.go`.
 Committed the rename-only cleanup as `310c3a3` (`refactor(cardanonetwork): shorten controller filenames`). Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, and `git diff --check`.
+
+## 2026-05-21 10:35 — Review fixes
+Applied the review feedback that was worth addressing inside the current StatefulSet-only boundary on `feat/primary-statefulset-builder`.
+Commit `61bca07` (`fix(cardanonetwork): harden primary workload metadata`) disables pod ServiceAccount token automounting, derives bounded child names and selector labels with a stable hash for long CR names, and sets explicit PVC retention (`WhenDeleted: Delete`, `WhenScaled: Retain`).
+Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, `git diff --check`, and `moon run root:check`. The local dev stack was started before implementation and shut down afterward with `moon run root:dev-down`.
