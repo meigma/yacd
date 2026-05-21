@@ -13,6 +13,7 @@ rules:
       - ""
     resources:
       - persistentvolumeclaims
+      - services
     verbs:
       - create
       - get

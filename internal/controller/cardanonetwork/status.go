@@ -22,7 +22,7 @@ const (
 	conditionReasonUnsupportedWorkloadChange   = "UnsupportedWorkloadChange"
 	conditionReasonResourceConflict            = "ResourceConflict"
 	conditionReasonWorkloadApplied             = "WorkloadApplied"
-	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC and Deployment are applied"
+	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, and Service are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
 )
 

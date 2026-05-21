@@ -43,6 +43,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 
 // Reconcile is the CardanoNetwork controller scaffold.
 func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -94,12 +95,19 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
+	serviceResult, err := r.applyPrimaryService(ctx, resources.Service)
+	if err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+	}
+
 	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	resultLog := log
-	if pvcResult == controllerutil.OperationResultNone && deploymentResult == controllerutil.OperationResultNone {
+	if pvcResult == controllerutil.OperationResultNone &&
+		deploymentResult == controllerutil.OperationResultNone &&
+		serviceResult == controllerutil.OperationResultNone {
 		resultLog = log.V(1)
 	}
 	resultLog.Info("Applied CardanoNetwork primary workload",
@@ -107,6 +115,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"persistentVolumeClaimOperation", pvcResult,
 		"deployment", client.ObjectKeyFromObject(resources.Deployment),
 		"deploymentOperation", deploymentResult,
+		"service", client.ObjectKeyFromObject(resources.Service),
+		"serviceOperation", serviceResult,
 		"localnetFingerprint", localnetFingerprint)
 
 	return ctrl.Result{}, nil
@@ -144,6 +154,7 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.Service{}).
 		Named(controllerName).
 		Complete(r)
 }

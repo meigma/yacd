@@ -83,6 +83,11 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, pvcKey, &corev1.PersistentVolumeClaim{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	serviceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, serviceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -105,6 +110,17 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		got := &corev1.PersistentVolumeClaim{}
 		err := apiClient.Get(ctx, pvcKey, got)
 		return err == nil && got.UID != originalPVCUID
+	}, 10*time.Second, 100*time.Millisecond)
+
+	service := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, serviceKey, service))
+	originalServiceUID := service.UID
+	require.NoError(t, apiClient.Delete(ctx, service))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, serviceKey, got)
+		return err == nil && got.UID != originalServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
 	require.Eventually(t, func() bool {

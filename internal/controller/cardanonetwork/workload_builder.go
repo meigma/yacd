@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -23,6 +24,7 @@ const (
 
 	cardanoNodeContainerName = "cardano-node"
 	cardanoNodeCommand       = "cardano-node"
+	cardanoNodePortName      = "node-to-node"
 	cardanoNodeSocketDir     = "/ipc"
 	cardanoNodeSocketPath    = "/ipc/node.socket"
 	cardanoNodeDatabaseDir   = "/state/db"
@@ -58,6 +60,7 @@ const (
 type primaryWorkloadResources struct {
 	PersistentVolumeClaim *corev1.PersistentVolumeClaim
 	Deployment            *appsv1.Deployment
+	Service               *corev1.Service
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
@@ -109,10 +112,15 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
+	service, err := b.service(network)
+	if err != nil {
+		return nil, err
+	}
 
 	return &primaryWorkloadResources{
 		PersistentVolumeClaim: persistentVolumeClaim,
 		Deployment:            deployment,
+		Service:               service,
 	}, nil
 }
 
@@ -255,6 +263,13 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 			"--shelley-vrf-key", path.Join(plan.Layout.EnvDir, "pools-keys", "pool1", "vrf.skey"),
 			"--shelley-operational-certificate", path.Join(plan.Layout.EnvDir, "pools-keys", "pool1", "opcert.cert"),
 		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          cardanoNodePortName,
+				ContainerPort: network.Spec.Node.Port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      localnetStateVolumeName,
@@ -313,6 +328,34 @@ func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.Card
 	}
 
 	return persistentVolumeClaim, nil
+}
+
+func (b primaryWorkloadBuilder) service(network *yacdv1alpha1.CardanoNetwork) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       cardanoNodePortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       network.Spec.Node.Port,
+					TargetPort: intstr.FromString(cardanoNodePortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set primary Service owner reference: %w", err)
+	}
+
+	return service, nil
 }
 
 func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {

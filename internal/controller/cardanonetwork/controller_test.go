@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -67,6 +68,15 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 	requirePrimaryPVC(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	service := requirePrimaryService(t, ctx, reconciler, network)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       cardanoNodePortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       network.Spec.Node.Port,
+			TargetPort: intstr.FromString(cardanoNodePortName),
+		},
+	}, service.Spec.Ports)
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonWorkloadApplied)
@@ -88,6 +98,9 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	var persistentVolumeClaims corev1.PersistentVolumeClaimList
 	require.NoError(t, reconciler.List(ctx, &persistentVolumeClaims))
 	assert.Len(t, persistentVolumeClaims.Items, 1)
+	var services corev1.ServiceList
+	require.NoError(t, reconciler.List(ctx, &services))
+	assert.Len(t, services.Items, 1)
 }
 
 func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
@@ -118,6 +131,9 @@ func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *te
 	container := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, image, container.Image)
 	assert.Contains(t, container.Args, "3002")
+	service := requirePrimaryService(t, ctx, reconciler, network)
+	require.Len(t, service.Spec.Ports, 1)
+	assert.Equal(t, int32(3002), service.Spec.Ports[0].Port)
 	cpuRequest := container.Resources.Requests[corev1.ResourceCPU]
 	assert.Zero(t, cpuRequest.Cmp(resource.MustParse("250m")))
 	assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
@@ -144,6 +160,66 @@ func TestCardanoNetworkReconcilerReconcileCorrectsPausedDeployment(t *testing.T)
 	assert.False(t, deployment.Spec.Paused)
 	assert.Equal(t, "keep", deployment.Labels["example.com/foreign-label"])
 	assert.Equal(t, "keep", deployment.Annotations["example.com/foreign-annotation"])
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileCorrectsPrimaryServiceAndPreservesMetadata(t *testing.T) {
+	const (
+		clusterIP            = "10.0.0.42"
+		foreignMetadataValue = "keep"
+	)
+
+	ctx := context.Background()
+	network := localCardanoNetwork("corrects-service")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service := requirePrimaryService(t, ctx, reconciler, network)
+	ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+	service.Labels["example.com/foreign-label"] = foreignMetadataValue
+	service.Labels[labelAppManagedBy] = "wrong"
+	service.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
+	service.Spec.Type = corev1.ServiceTypeNodePort
+	service.Spec.Selector = map[string]string{"unexpected": "true"}
+	service.Spec.Ports = []corev1.ServicePort{
+		{
+			Name:       "wrong",
+			Protocol:   corev1.ProtocolTCP,
+			Port:       9999,
+			TargetPort: intstr.FromInt(9999),
+			NodePort:   32000,
+		},
+	}
+	service.Spec.ClusterIP = clusterIP
+	service.Spec.ClusterIPs = []string{clusterIP}
+	service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+	service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+	require.NoError(t, reconciler.Update(ctx, service))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service = requirePrimaryService(t, ctx, reconciler, network)
+	assert.Equal(t, foreignMetadataValue, service.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", service.Labels[labelAppManagedBy])
+	assert.Equal(t, foreignMetadataValue, service.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, service.Spec.Type)
+	assert.Equal(t, primaryWorkloadSelectorLabels(network), service.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       cardanoNodePortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       network.Spec.Node.Port,
+			TargetPort: intstr.FromString(cardanoNodePortName),
+		},
+	}, service.Spec.Ports)
+	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
+	assert.Equal(t, []string{clusterIP}, service.Spec.ClusterIPs)
+	assert.Equal(t, []corev1.IPFamily{corev1.IPv4Protocol}, service.Spec.IPFamilies)
+	require.NotNil(t, service.Spec.IPFamilyPolicy)
+	assert.Equal(t, corev1.IPFamilyPolicySingleStack, *service.Spec.IPFamilyPolicy)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -522,6 +598,29 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 				}
 			},
 		},
+		{
+			name: "foreign-owned-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryWorkloadName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryWorkloadName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -685,6 +784,23 @@ func requirePrimaryDeployment(
 	return deployment
 }
 
+func requirePrimaryService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Service {
+	t.Helper()
+
+	service := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryWorkloadName(network),
+	}, service))
+
+	return service
+}
+
 func foreignControllerOwnerReference() metav1.OwnerReference {
 	controller := true
 
@@ -724,6 +840,12 @@ func assertNoPrimaryChildren(
 		Name:      primaryNodeStatePVCName(network),
 	}, &corev1.PersistentVolumeClaim{})
 	assert.True(t, apierrors.IsNotFound(err), "expected primary PVC to be absent, got %v", err)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryWorkloadName(network),
+	}, &corev1.Service{})
+	assert.True(t, apierrors.IsNotFound(err), "expected primary Service to be absent, got %v", err)
 }
 
 func assertCondition(
