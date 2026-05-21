@@ -63,3 +63,27 @@ and `linux/amd64` image builds, read-only wrapper create/idempotency/mismatch
 smokes, Release Please dry-run, PR CI/Kusari, and manual Release Dry Run
 `26237600115`. This is paused at the hard stop before deleting the existing
 unsuffixed draft release/tag/GHCR version for `cardano-testnet/v11.0.1`.
+
+## 2026-05-21 09:29 — yacd-suffixed cardano-testnet release verified
+After user approval, deleted the disposable unsuffixed artifacts:
+draft release and git tag `cardano-testnet/v11.0.1`, plus the GHCR package
+version carrying image tag `11.0.1`. PR #8 was marked ready and squash-merged
+as `549859c5630ff31398a7f437f84980b64eb3097e`, after which Release Please
+opened the expected separate component PR #9 for
+`cardano-testnet/v11.0.1-yacd.1`.
+
+Merged Release Please PR #9 as
+`98bd70420ea655ba06b85143d40d40274fb53c08`. Release Please created tag
+`cardano-testnet/v11.0.1-yacd.1`, and the tag-triggered
+`Release cardano-testnet Image` workflow run `26238667694` completed
+successfully. Verified `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1`
+as a multi-platform `linux/amd64,linux/arm64` image at digest
+`sha256:e865acea09f292f389f345948a8be5703b8ebfdf48544fa06af6ea76746cfe64`,
+confirmed `docker run --rm ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1
+version`, and verified the GitHub attestation for source ref
+`refs/tags/cardano-testnet/v11.0.1-yacd.1`.
+
+Published the GitHub release at
+`https://github.com/meigma/yacd/releases/tag/cardano-testnet/v11.0.1-yacd.1`.
+Fast-forwarded the primary `master` checkout to `98bd704`; the dev stack was
+already down. Root Release Please PR #7 remains separate and unmerged.
