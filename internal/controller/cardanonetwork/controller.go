@@ -73,6 +73,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if statusErr := r.patchStatusConditions(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -135,6 +136,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	if statusErr := r.patchStatusConditions(ctx, network,
 		degradedCondition(metav1.ConditionTrue, unsupported.reason, unsupported.message),
 		progressingCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		nodeReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}

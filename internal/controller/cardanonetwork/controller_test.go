@@ -57,7 +57,7 @@ func TestCardanoNetworkReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
 }
 
 // TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload verifies a
-// supported resource creates the singleton primary node PVC and Deployment.
+// supported resource creates the singleton primary node PVC, Deployment, and Service.
 func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("creates-workload")
@@ -80,8 +80,27 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	}, service.Spec.Ports)
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
-	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonWorkloadApplied)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
+}
+
+func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("node-ready")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 }
 
 func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
@@ -639,6 +658,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 
 			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 		})
 	}
 }
@@ -672,8 +692,59 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 	assertNoPrimaryChildren(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	current := requireNetwork(t, ctx, reconciler, network)
 	assert.Nil(t, current.Status.Endpoints)
+}
+
+func TestCardanoNetworkReconcilerPrimaryNodeReadyConditionReportsMissingChildren(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("missing-children")
+	reconciler := newTestReconciler(t, network)
+	resources, err := (primaryWorkloadBuilder{scheme: reconciler.Scheme}).Build(network)
+	require.NoError(t, err)
+
+	got, err := reconciler.primaryNodeReadyCondition(ctx, network)
+	require.NoError(t, err)
+	assert.Equal(t, conditionTypeNodeReady, got.Type)
+	assert.Equal(t, metav1.ConditionFalse, got.Status)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, "Primary node PVC is missing", got.Message)
+
+	require.NoError(t, reconciler.Create(ctx, resources.PersistentVolumeClaim))
+	got, err = reconciler.primaryNodeReadyCondition(ctx, network)
+	require.NoError(t, err)
+	assert.Equal(t, metav1.ConditionFalse, got.Status)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, "Primary node Service is missing", got.Message)
+
+	require.NoError(t, reconciler.Create(ctx, resources.Service))
+	got, err = reconciler.primaryNodeReadyCondition(ctx, network)
+	require.NoError(t, err)
+	assert.Equal(t, metav1.ConditionFalse, got.Status)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, "Primary node Deployment is missing", got.Message)
+}
+
+func TestCardanoNetworkReconcilerPrimaryNodeReadyConditionRequiresFreshAvailableDeployment(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("stale-deployment")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	deployment.Status.ObservedGeneration = deployment.Generation + 1
+	require.NoError(t, reconciler.Status().Update(ctx, deployment))
+
+	got, err := reconciler.primaryNodeReadyCondition(ctx, network)
+	require.NoError(t, err)
+	assert.Equal(t, metav1.ConditionFalse, got.Status)
+	assert.Equal(t, conditionReasonDeploymentProgressing, got.Reason)
+	assert.Equal(t, "Primary node Deployment has not observed the latest generation", got.Message)
 }
 
 // localCardanoNetwork returns a minimally supported local-mode CardanoNetwork.
@@ -717,7 +788,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkRe
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{})
+		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{})
 	builder.WithObjects(objects...)
 
 	return &CardanoNetworkReconciler{
@@ -824,6 +895,32 @@ func applyDeploymentAPIDefaults(deployment *appsv1.Deployment) {
 	deployment.Spec.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
 	deployment.Spec.Template.Spec.SchedulerName = corev1.DefaultSchedulerName
 	deployment.Spec.Template.Spec.TerminationGracePeriodSeconds = &terminationGracePeriodSeconds
+}
+
+func markPrimaryDeploymentAvailable(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	deployment *appsv1.Deployment,
+) {
+	t.Helper()
+
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 1
+	deployment.Status.AvailableReplicas = 1
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:               appsv1.DeploymentAvailable,
+			Status:             corev1.ConditionTrue,
+			Reason:             "MinimumReplicasAvailable",
+			Message:            "Deployment has minimum availability.",
+			LastUpdateTime:     metav1.Now(),
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+	require.NoError(t, reconciler.Status().Update(ctx, deployment))
 }
 
 func assertNoPrimaryChildren(
