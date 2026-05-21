@@ -81,10 +81,12 @@ Helm-rendered Deployment. Tilt logs are available at `.run/yacd-dev/tilt.log`
 and through `tilt logs --port 10350` while the stack is running. `root:dev-up`
 uses `python3` only to launch Tilt outside Moon's task process group.
 
-During agent sessions, run `moon run root:dev-up` after selecting or creating
-the implementation worktree. Before pausing or closing the session, run
-`moon run root:dev-down` so no background Tilt process or Kind cluster is left
-behind.
+During an implementation session, run `moon run root:dev-up` once after
+selecting or creating the implementation worktree. Keep the stack running
+across ordinary turns and user review pauses. Run `moon run root:dev-down` only
+at explicit session close/end-of-session, when the user asks, or when
+repairing/cleaning up the stack, so no background Tilt process or Kind cluster
+is left behind after the session.
 
 ## Manager Startup
 
