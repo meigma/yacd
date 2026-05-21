@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -18,9 +19,10 @@ var (
 )
 
 // init registers the core Kubernetes types with the shared runtime scheme used
-// by the manager. YACD does not define custom APIs yet.
+// by the manager plus YACD API types.
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(yacdv1alpha1.AddToScheme(scheme))
 
 	// +kubebuilder:scaffold:scheme
 }
@@ -32,7 +34,7 @@ func mustRegisterControllers(mgr manager.Manager) {
 }
 
 // registerControllers is the insertion point for future YACD controllers. The
-// foundation pass intentionally ships no custom API or reconciler.
+// first CardanoNetwork API pass intentionally ships no reconciler yet.
 func registerControllers(_ manager.Manager) error {
 	setupLog.Info("No controllers registered yet")
 	// +kubebuilder:scaffold:builder

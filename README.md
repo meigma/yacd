@@ -4,15 +4,16 @@ YACD is a Kubernetes-native development environment manager for Cardano. It is
 aimed at builders who need repeatable local or shared development networks, not
 validators, stake pool operators, or production network operators.
 
-The repository currently contains the operator foundation only. It has no
-custom resource definitions yet; the first Cardano environment API will land in
-a later prototype slice.
+The repository currently contains the operator foundation and an initial
+`CardanoNetwork` API draft. The first reconciler will land in a later prototype
+slice.
 
 ## Current State
 
 - Controller-runtime manager startup with structured logging.
 - Health and readiness probes.
 - Secure metrics serving with Kubernetes authn/authz filters.
+- Initial `CardanoNetwork` CRD shape for local and public network modes.
 - Helm chart packaging for the manager deployment.
 - Moon tasks for generation, checks, tests, local deployment, and Kind smoke
   testing.

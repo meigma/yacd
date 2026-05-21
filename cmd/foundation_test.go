@@ -4,15 +4,16 @@ import (
 	"testing"
 	"time"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-// TestFoundationManagerConstruction proves the current no-CRD operator shell
-// can construct a controller-runtime manager against envtest and register its
-// intentionally empty controller set.
+// TestFoundationManagerConstruction proves the current operator shell can
+// construct a controller-runtime manager against envtest, register its API
+// types, and keep the controller set intentionally empty.
 func TestFoundationManagerConstruction(t *testing.T) {
 	testEnv := &envtest.Environment{}
 	cfg, err := testEnv.Start()
@@ -32,5 +33,8 @@ func TestFoundationManagerConstruction(t *testing.T) {
 	require.NoError(t, registerControllers(mgr))
 
 	_, _, err = scheme.ObjectKinds(&corev1.Pod{})
+	require.NoError(t, err)
+
+	_, _, err = scheme.ObjectKinds(&yacdv1alpha1.CardanoNetwork{})
 	require.NoError(t, err)
 }
