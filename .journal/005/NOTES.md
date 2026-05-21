@@ -43,3 +43,8 @@ Also corrected `.journal/TECH_NOTES.md` so future session startup context does n
 ## 2026-05-21 10:45 — PR opened and CI verified
 Pushed `feat/primary-statefulset-builder` and opened draft PR #10: https://github.com/meigma/yacd/pull/10.
 GitHub checks completed successfully for the branch head `89d3e3b`: `ci` passed and `Kusari Inspector` passed. Release dry-run jobs were reported as skipped for this PR.
+
+## 2026-05-21 11:36 — Deployment and explicit PVC refactor
+Implemented the next primary workload slice on `feat/primary-statefulset-builder` and committed it as `e861145` (`refactor(cardanonetwork): run primary node as deployment`).
+The builder now returns an owned singleton `Deployment` plus explicit owned PVC instead of a StatefulSet with `volumeClaimTemplates`; the reconciler applies the PVC first, then the Deployment, owns both child types, and writes minimal `Progressing`/`Degraded` status conditions.
+PVC updates allow storage expansion, reject shrink and storage class drift without destructive recreation, and Deployment updates reject selector drift while patching the pod template. Validation passed with `moon run root:generate`, `moon run root:test`, `moon run root:check`, and `git diff --check`. The dev stack was started once for the implementation session and intentionally left running.
