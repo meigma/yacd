@@ -249,3 +249,14 @@ running.
 Verification passed: `git diff --check`, `moon run root:dev-down`, and
 `moon run root:check`. The dev stack was confirmed down with no `.run/yacd-dev`
 runtime state left behind.
+
+## 2026-05-20 19:12 — PR opened and CI passed
+
+Pushed `feat/localnet-plan-package` to GitHub and opened PR #4:
+https://github.com/meigma/yacd/pull/4. The PR title is
+`feat(localnet): build CardanoNetwork plan pipeline` so the squash commit will
+use a Conventional Commit subject.
+
+GitHub checks completed cleanly. `ci` passed, Kusari Inspector passed, and the
+Release Dry Run jobs were skipped by workflow policy. The PR merge state is
+clean. The local dev stack remains down.
