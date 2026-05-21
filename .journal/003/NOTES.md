@@ -125,3 +125,19 @@ controller-adjacent at first. Split the Kubernetes fragments into separate
 packages only once the seams prove useful. The agreed runtime flow is:
 `CardanoNetwork spec -> localnet.TestnetPlan -> node fragment -> Ogmios
 fragment -> StatefulSet + Service`.
+
+## 2026-05-20 17:52 — Localnet plan package implemented
+Created Worktrunk branch `feat/localnet-plan-package` from `master` and added
+the pure Go `internal/cardano/localnet` package. The package keeps the first
+runtime boundary Kubernetes/API-free and builds a deterministic
+`cardano-testnet create-env` plan from normalized inputs: network magic, pool
+count, slot/epoch timing, output paths, optional tool version, expected config
+and manifest paths, and a SHA-256 fingerprint/manifest for later init-container
+idempotency checks.
+
+Implementation intentionally models only the `cardano-testnet create-env`
+input contract. It defers CRD mapping, init container construction, workload
+resources, direct `cardano-node` key/runtime paths, and era/genesis tuning to
+later slices. Verification passed on the feature branch:
+`go test ./internal/cardano/localnet`, `moon run root:test`,
+`moon run root:check`, and `git diff --check`.
