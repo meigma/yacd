@@ -30,3 +30,9 @@ Plan: include this list in the session closeout summary, preferably under Open T
 Goal for the checkpoint: implement phase-2 remaining-work item 1 by adding the primary node Service only.
 Current state of the world: created Worktrunk implementation branch `feat/cardanonetwork-primary-service` at `/Users/josh/code/meigma/yacd/.wt/feat-cardanonetwork-primary-service` from current `master`. Ran `moon run root:dev-up` from that worktree; it created/connected the Kind/Tilt dev stack and reported the controller ready with Tilt UI at `http://localhost:10350/`.
 Plan: add an owned ClusterIP Service and named node container port, wire Service ownership/RBAC/apply behavior, extend builder/reconciler/envtest coverage, then run generation/check/test/diff verification.
+
+## 2026-05-21 15:20 — Primary Service implemented
+Goal for the checkpoint: finish phase-2 remaining-work item 1.
+Current state of the world: branch `feat/cardanonetwork-primary-service` now has commit `fa9f9db` (`feat(cardanonetwork): expose primary node service`). The controller builds an owned ClusterIP Service named with the primary workload name, exposes `node-to-node` TCP through a named cardano-node container port, reconciles Service drift while preserving foreign metadata and assigned cluster IP fields, watches owned Services, and updates manager RBAC for Services. This completes the first item from the phase-2 remaining-work list.
+Validation: ran `moon run root:generate`, focused `KUBEBUILDER_ASSETS="$(setup-envtest use 1.35.x -p path)" go test ./internal/controller/cardanonetwork`, `moon run root:check`, `moon run root:test`, and `git diff --check`; all passed. The Kind/Tilt dev stack remains running for the active session.
+Plan: next phase-2 item remains endpoint publication in `status.endpoints.nodeToNode`.
