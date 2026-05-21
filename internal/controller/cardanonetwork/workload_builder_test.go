@@ -44,7 +44,7 @@ func TestPrimaryWorkloadBuilderLocalnetSpecMapsSupportedLocalInput(t *testing.T)
 }
 
 // TestPrimaryWorkloadBuilderRejectsUnsupportedInput verifies unsupported API
-// shapes fail before producing a partial StatefulSet.
+// shapes fail before producing partial primary workload resources.
 func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -150,27 +150,31 @@ func TestPrimaryWorkloadBuilderRejectsNilInputAndScheme(t *testing.T) {
 	assert.Contains(t, err.Error(), "scheme is required")
 }
 
-// TestPrimaryWorkloadBuilderBuildsStatefulSet verifies the initial primary
-// node StatefulSet shape without the future Ogmios sidecar.
-func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
+// TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC verifies the initial
+// singleton primary node workload shape without the future Ogmios sidecar.
+func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	network := localCardanoNetwork("devnet")
 
-	statefulSet, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
+	deployment := resources.Deployment
+	persistentVolumeClaim := resources.PersistentVolumeClaim
 
-	assert.Equal(t, "devnet-node", statefulSet.Name)
-	assert.Equal(t, "default", statefulSet.Namespace)
-	assert.Equal(t, "devnet-node", statefulSet.Spec.ServiceName)
-	require.NotNil(t, statefulSet.Spec.Replicas)
-	assert.Equal(t, int32(1), *statefulSet.Spec.Replicas)
-	require.NotNil(t, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy)
-	assert.Equal(t, appsv1.DeletePersistentVolumeClaimRetentionPolicyType, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted)
-	assert.Equal(t, appsv1.RetainPersistentVolumeClaimRetentionPolicyType, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled)
+	assert.Equal(t, "devnet-node", deployment.Name)
+	assert.Equal(t, "default", deployment.Namespace)
+	require.NotNil(t, deployment.Spec.Replicas)
+	assert.Equal(t, int32(1), *deployment.Spec.Replicas)
+	assert.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
 
-	controller := metav1.GetControllerOf(statefulSet)
+	controller := metav1.GetControllerOf(deployment)
 	require.NotNil(t, controller)
 	assert.Equal(t, "devnet", controller.Name)
 	assert.Equal(t, "CardanoNetwork", controller.Kind)
+
+	pvcController := metav1.GetControllerOf(persistentVolumeClaim)
+	require.NotNil(t, pvcController)
+	assert.Equal(t, "devnet", pvcController.Name)
+	assert.Equal(t, "CardanoNetwork", pvcController.Kind)
 
 	expectedSelector := map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -179,22 +183,22 @@ func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
 		labelCardanoNetwork: "devnet",
 		labelCardanoRole:    labelPrimaryRole,
 	}
-	assert.Equal(t, expectedSelector, statefulSet.Spec.Selector.MatchLabels)
-	assert.Equal(t, expectedSelector, statefulSet.Spec.Template.Labels)
-	assert.Equal(t, "yacd", statefulSet.Labels[labelAppManagedBy])
-	assert.NotEmpty(t, statefulSet.Spec.Template.Annotations[localnetFingerprintAnno])
-	require.NotNil(t, statefulSet.Spec.Template.Spec.AutomountServiceAccountToken)
-	assert.False(t, *statefulSet.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.Equal(t, expectedSelector, deployment.Spec.Selector.MatchLabels)
+	assert.Equal(t, expectedSelector, deployment.Spec.Template.Labels)
+	assert.Equal(t, "yacd", deployment.Labels[labelAppManagedBy])
+	assert.NotEmpty(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 
-	require.Len(t, statefulSet.Spec.Template.Spec.InitContainers, 1)
-	initContainer := statefulSet.Spec.Template.Spec.InitContainers[0]
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
 	assert.Equal(t, localnetCreateEnvInitContainerName, initContainer.Name)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, initContainer.VolumeMounts)
 
-	require.Len(t, statefulSet.Spec.Template.Spec.Containers, 1)
-	nodeContainer := statefulSet.Spec.Template.Spec.Containers[0]
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
 	assert.Equal(t, []string{"cardano-node"}, nodeContainer.Command)
@@ -215,37 +219,44 @@ func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
 		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
 	}, nodeContainer.VolumeMounts)
 
-	require.Len(t, statefulSet.Spec.Template.Spec.Volumes, 1)
-	assert.Equal(t, nodeIPCVolumeName, statefulSet.Spec.Template.Spec.Volumes[0].Name)
-	assert.NotNil(t, statefulSet.Spec.Template.Spec.Volumes[0].EmptyDir)
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 2)
+	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
+	assert.Equal(t, localnetStateVolumeName, stateVolume.Name)
+	require.NotNil(t, stateVolume.PersistentVolumeClaim)
+	assert.Equal(t, "devnet-node-state", stateVolume.PersistentVolumeClaim.ClaimName)
+	ipcVolume := deployment.Spec.Template.Spec.Volumes[1]
+	assert.Equal(t, nodeIPCVolumeName, ipcVolume.Name)
+	assert.NotNil(t, ipcVolume.EmptyDir)
 
-	require.Len(t, statefulSet.Spec.VolumeClaimTemplates, 1)
-	claim := statefulSet.Spec.VolumeClaimTemplates[0]
-	assert.Equal(t, localnetStateVolumeName, claim.Name)
-	assert.Equal(t, []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, claim.Spec.AccessModes)
-	storage := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Equal(t, "devnet-node-state", persistentVolumeClaim.Name)
+	assert.Equal(t, "default", persistentVolumeClaim.Namespace)
+	assert.Equal(t, "yacd", persistentVolumeClaim.Labels[labelAppManagedBy])
+	assert.Equal(t, []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, persistentVolumeClaim.Spec.AccessModes)
+	storage := persistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse("10Gi")))
 
-	assertPodSecurityContext(t, statefulSet.Spec.Template.Spec.SecurityContext)
+	assertPodSecurityContext(t, deployment.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
 }
 
 func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	network := localCardanoNetwork("devnet." + strings.Repeat("a", 80))
 
-	statefulSet, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(statefulSet.Name), maxLabelValueLength)
-	assert.True(t, strings.HasSuffix(statefulSet.Name, "-node"))
-	assert.NotContains(t, statefulSet.Name, ".")
-	assert.Equal(t, statefulSet.Name, statefulSet.Spec.ServiceName)
+	assert.LessOrEqual(t, len(resources.Deployment.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.Deployment.Name, "-node"))
+	assert.NotContains(t, resources.Deployment.Name, ".")
+	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
+	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
 
-	selector := statefulSet.Spec.Selector.MatchLabels
+	selector := resources.Deployment.Spec.Selector.MatchLabels
 	assert.LessOrEqual(t, len(selector[labelAppInstance]), maxLabelValueLength)
 	assert.LessOrEqual(t, len(selector[labelCardanoNetwork]), maxLabelValueLength)
 	assert.NotEqual(t, network.Name, selector[labelAppInstance])
-	assert.Equal(t, selector, statefulSet.Spec.Template.Labels)
+	assert.Equal(t, selector, resources.Deployment.Spec.Template.Labels)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
@@ -267,18 +278,17 @@ func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 		},
 	}
 
-	statefulSet, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	nodeContainer := statefulSet.Spec.Template.Spec.Containers[0]
+	nodeContainer := resources.Deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, image, nodeContainer.Image)
 	assert.Equal(t, *network.Spec.Node.Resources, nodeContainer.Resources)
 
-	claim := statefulSet.Spec.VolumeClaimTemplates[0]
-	storage := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
-	require.NotNil(t, claim.Spec.StorageClassName)
-	assert.Equal(t, storageClassName, *claim.Spec.StorageClassName)
+	require.NotNil(t, resources.PersistentVolumeClaim.Spec.StorageClassName)
+	assert.Equal(t, storageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {

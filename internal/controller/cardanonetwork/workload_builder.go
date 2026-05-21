@@ -52,14 +52,20 @@ const (
 	localnetEnvDir = "/state/env"
 )
 
-// primaryWorkloadBuilder converts a CardanoNetwork into the initial primary
-// node workload resources. This slice only builds the StatefulSet; reconciliation
-// side effects stay in the controller.
+// primaryWorkloadResources are the Kubernetes resources that run the initial
+// singleton primary Cardano node.
+type primaryWorkloadResources struct {
+	PersistentVolumeClaim *corev1.PersistentVolumeClaim
+	Deployment            *appsv1.Deployment
+}
+
+// primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
+// node workload resources. Reconciliation side effects stay in the controller.
 type primaryWorkloadBuilder struct {
 	scheme *runtime.Scheme
 }
 
-func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*appsv1.StatefulSet, error) {
+func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*primaryWorkloadResources, error) {
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
@@ -82,12 +88,19 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*ap
 		return nil, err
 	}
 
-	statefulSet, err := b.statefulSet(network, plan, initContainer)
+	deployment, err := b.deployment(network, plan, initContainer)
+	if err != nil {
+		return nil, err
+	}
+	persistentVolumeClaim, err := b.persistentVolumeClaim(network)
 	if err != nil {
 		return nil, err
 	}
 
-	return statefulSet, nil
+	return &primaryWorkloadResources{
+		PersistentVolumeClaim: persistentVolumeClaim,
+		Deployment:            deployment,
+	}, nil
 }
 
 func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwork) (localnet.Spec, error) {
@@ -142,26 +155,24 @@ func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwor
 	}, nil
 }
 
-func (b primaryWorkloadBuilder) statefulSet(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container) (*appsv1.StatefulSet, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
-	statefulSetName := primaryStatefulSetName(network)
+	deploymentName := primaryWorkloadName(network)
 
-	statefulSet := &appsv1.StatefulSet{
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      statefulSetName,
+			Name:      deploymentName,
 			Namespace: network.Namespace,
 			Labels:    labels,
 		},
-		Spec: appsv1.StatefulSetSpec{
-			Replicas:    new(int32(1)),
-			ServiceName: statefulSetName,
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32(1)),
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RecreateDeploymentStrategyType,
+			},
 			Selector: &metav1.LabelSelector{
 				MatchLabels: selectorLabels,
-			},
-			PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
-				WhenDeleted: appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
-				WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -187,6 +198,14 @@ func (b primaryWorkloadBuilder) statefulSet(network *yacdv1alpha1.CardanoNetwork
 					},
 					Volumes: []corev1.Volume{
 						{
+							Name: localnetStateVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: primaryNodeStatePVCName(network),
+								},
+							},
+						},
+						{
 							Name: nodeIPCVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
@@ -195,15 +214,14 @@ func (b primaryWorkloadBuilder) statefulSet(network *yacdv1alpha1.CardanoNetwork
 					},
 				},
 			},
-			VolumeClaimTemplates: b.volumeClaimTemplates(network),
 		},
 	}
 
-	if err := controllerutil.SetControllerReference(network, statefulSet, b.scheme); err != nil {
-		return nil, fmt.Errorf("set primary StatefulSet owner reference: %w", err)
+	if err := controllerutil.SetControllerReference(network, deployment, b.scheme); err != nil {
+		return nil, fmt.Errorf("set primary Deployment owner reference: %w", err)
 	}
 
-	return statefulSet, nil
+	return deployment, nil
 }
 
 func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) corev1.Container {
@@ -265,7 +283,24 @@ func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNe
 	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, strings.TrimSpace(network.Spec.Node.Version), cardanoTestnetImageRevision)
 }
 
-func (b primaryWorkloadBuilder) volumeClaimTemplates(network *yacdv1alpha1.CardanoNetwork) []corev1.PersistentVolumeClaim {
+func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork) (*corev1.PersistentVolumeClaim, error) {
+	persistentVolumeClaim := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryNodeStatePVCName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: b.persistentVolumeClaimSpec(network),
+	}
+
+	if err := controllerutil.SetControllerReference(network, persistentVolumeClaim, b.scheme); err != nil {
+		return nil, fmt.Errorf("set primary PVC owner reference: %w", err)
+	}
+
+	return persistentVolumeClaim, nil
+}
+
+func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.CardanoNetwork) corev1.PersistentVolumeClaimSpec {
 	storageSize := resource.MustParse(defaultNodeStorageSize)
 	var storageClassName *string
 	if network.Spec.Node.Storage != nil {
@@ -273,26 +308,23 @@ func (b primaryWorkloadBuilder) volumeClaimTemplates(network *yacdv1alpha1.Carda
 		storageClassName = network.Spec.Node.Storage.StorageClassName
 	}
 
-	return []corev1.PersistentVolumeClaim{
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: localnetStateVolumeName,
-			},
-			Spec: corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceStorage: storageSize,
-					},
-				},
-				StorageClassName: storageClassName,
+	return corev1.PersistentVolumeClaimSpec{
+		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceStorage: storageSize,
 			},
 		},
+		StorageClassName: storageClassName,
 	}
 }
 
-func primaryStatefulSetName(network *yacdv1alpha1.CardanoNetwork) string {
+func primaryWorkloadName(network *yacdv1alpha1.CardanoNetwork) string {
 	return safeDNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
+}
+
+func primaryNodeStatePVCName(network *yacdv1alpha1.CardanoNetwork) string {
+	return safeDNSLabelWithSuffix(network.Name, "node-state")
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {

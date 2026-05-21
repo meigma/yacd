@@ -8,6 +8,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -31,34 +35,175 @@ func TestCardanoNetworkReconcilerReconcileHandlesMissingObject(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 }
 
-// TestCardanoNetworkReconcilerReconcileBuildsPrimaryWorkload verifies supported
-// resources are fetched and converted into a primary StatefulSet without
-// creating children in this read-only slice.
-func TestCardanoNetworkReconcilerReconcileBuildsPrimaryWorkload(t *testing.T) {
-	network := localCardanoNetwork("builds-plan")
+// TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload verifies a
+// supported resource creates the singleton primary node PVC and Deployment.
+func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("creates-workload")
 	reconciler := newTestReconciler(t, network)
 
-	result, err := reconciler.Reconcile(context.Background(), reconcileRequestFor(network))
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
-
-	var statefulSets appsv1.StatefulSetList
-	require.NoError(t, reconciler.List(context.Background(), &statefulSets))
-	assert.Empty(t, statefulSets.Items)
+	requirePrimaryPVC(t, ctx, reconciler, network)
+	requirePrimaryDeployment(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonWorkloadApplied)
 }
 
-// TestCardanoNetworkReconcilerReconcileIgnoresUnsupportedInput verifies
-// adapter rejections are handled as read-only observations in this slice.
-func TestCardanoNetworkReconcilerReconcileIgnoresUnsupportedInput(t *testing.T) {
+func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("idempotent")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	var deployments appsv1.DeploymentList
+	require.NoError(t, reconciler.List(ctx, &deployments))
+	assert.Len(t, deployments.Items, 1)
+	var persistentVolumeClaims corev1.PersistentVolumeClaimList
+	require.NoError(t, reconciler.List(ctx, &persistentVolumeClaims))
+	assert.Len(t, persistentVolumeClaims.Items, 1)
+}
+
+func TestCardanoNetworkReconcilerReconcilePatchesDeploymentTemplate(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("patches-template")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	originalFingerprint := deployment.Spec.Template.Annotations[localnetFingerprintAnno]
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	image := "example.com/cardano-node:patched"
+	current.Spec.Node.Image = &image
+	current.Spec.Node.Port = 3002
+	current.Spec.Local.NetworkMagic = 43
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	container := deployment.Spec.Template.Spec.Containers[0]
+	assert.Equal(t, image, container.Image)
+	assert.Contains(t, container.Args, "3002")
+	assert.NotEqual(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+}
+
+func TestCardanoNetworkReconcilerReconcileExpandsStorage(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("expands-storage")
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size: resource.MustParse("10Gi"),
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Node.Storage.Size = resource.MustParse("20Gi")
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsStorageShrink(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-storage-shrink")
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size: resource.MustParse("20Gi"),
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Node.Storage.Size = resource.MustParse("10Gi")
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-storage-class-drift")
+	storageClassName := "fast"
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size:             resource.MustParse("10Gi"),
+		StorageClassName: &storageClassName,
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	newStorageClassName := "slow"
+	current.Spec.Node.Storage.StorageClassName = &newStorageClassName
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NotNil(t, pvc.Spec.StorageClassName)
+	assert.Equal(t, storageClassName, *pvc.Spec.StorageClassName)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsDeploymentSelectorDrift(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-selector-drift")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	deployment.Spec.Selector.MatchLabels[labelCardanoRole] = "unexpected"
+	require.NoError(t, reconciler.Update(ctx, deployment))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedWorkloadChange)
+}
+
+// TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput verifies adapter
+// rejections are surfaced through status without creating children.
+func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
+	ctx := context.Background()
 	network := localCardanoNetwork("unsupported-input")
 	network.Spec.Local.Era = yacdv1alpha1.CardanoEraBabbage
 	reconciler := newTestReconciler(t, network)
 
-	result, err := reconciler.Reconcile(context.Background(), reconcileRequestFor(network))
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{}, result)
+	assertNoPrimaryChildren(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
 }
 
 // localCardanoNetwork returns a minimally supported local-mode CardanoNetwork.
@@ -98,8 +243,11 @@ func newTestReconciler(t *testing.T, objects ...*yacdv1alpha1.CardanoNetwork) *C
 	scheme := runtime.NewScheme()
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
 
-	builder := fake.NewClientBuilder().WithScheme(scheme)
+	builder := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{})
 	for _, object := range objects {
 		builder.WithObjects(object)
 	}
@@ -108,6 +256,95 @@ func newTestReconciler(t *testing.T, objects ...*yacdv1alpha1.CardanoNetwork) *C
 		Client: builder.Build(),
 		Scheme: scheme,
 	}
+}
+
+func requireNetwork(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *yacdv1alpha1.CardanoNetwork {
+	t.Helper()
+
+	current := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, reconciler.Get(ctx, reconcileRequestFor(network).NamespacedName, current))
+
+	return current
+}
+
+func requirePrimaryPVC(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.PersistentVolumeClaim {
+	t.Helper()
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryNodeStatePVCName(network),
+	}, pvc))
+
+	return pvc
+}
+
+func requirePrimaryDeployment(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *appsv1.Deployment {
+	t.Helper()
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryWorkloadName(network),
+	}, deployment))
+
+	return deployment
+}
+
+func assertNoPrimaryChildren(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryWorkloadName(network),
+	}, &appsv1.Deployment{})
+	assert.True(t, apierrors.IsNotFound(err), "expected primary Deployment to be absent, got %v", err)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryNodeStatePVCName(network),
+	}, &corev1.PersistentVolumeClaim{})
+	assert.True(t, apierrors.IsNotFound(err), "expected primary PVC to be absent, got %v", err)
+}
+
+func assertCondition(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason string,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	condition := apimeta.FindStatusCondition(current.Status.Conditions, conditionType)
+	require.NotNil(t, condition)
+	assert.Equal(t, status, condition.Status)
+	assert.Equal(t, reason, condition.Reason)
+	assert.Equal(t, current.Generation, condition.ObservedGeneration)
+	assert.Equal(t, current.Generation, current.Status.ObservedGeneration)
 }
 
 // reconcileRequestFor returns a reconcile request targeting object.
