@@ -4,6 +4,7 @@ package cardanonetwork
 import (
 	"context"
 	"errors"
+	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -12,14 +13,19 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 const (
 	// controllerName is the controller-runtime name used for logs, metrics,
 	// and controller registration.
 	controllerName = "cardanonetwork"
+
+	resourceConflictRequeueAfter = time.Minute
 )
 
 // CardanoNetworkReconciler reconciles CardanoNetwork resources.
@@ -49,6 +55,10 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	if !network.DeletionTimestamp.IsZero() {
+		log.V(1).Info("CardanoNetwork is deleting; skipping reconcile")
+		return ctrl.Result{}, nil
 	}
 
 	resources, err := (primaryWorkloadBuilder{scheme: r.Scheme}).Build(network)
@@ -88,7 +98,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Applied CardanoNetwork primary workload",
+	resultLog := log
+	if pvcResult == controllerutil.OperationResultNone && deploymentResult == controllerutil.OperationResultNone {
+		resultLog = log.V(1)
+	}
+	resultLog.Info("Applied CardanoNetwork primary workload",
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
 		"persistentVolumeClaimOperation", pvcResult,
 		"deployment", client.ObjectKeyFromObject(resources.Deployment),
@@ -114,6 +128,9 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
+	if unsupported.reason == conditionReasonResourceConflict {
+		return ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, nil
+	}
 
 	return ctrl.Result{}, nil
 }
@@ -124,7 +141,7 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Info("Starting CardanoNetwork controller scaffold")
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&yacdv1alpha1.CardanoNetwork{}).
+		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Named(controllerName).

@@ -36,6 +36,23 @@ func TestCardanoNetworkReconcilerReconcileHandlesMissingObject(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 }
 
+func TestCardanoNetworkReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("terminating")
+	now := metav1.Now()
+	network.DeletionTimestamp = &now
+	network.Finalizers = []string{"yacd.meigma.io/test-finalizer"}
+	reconciler := newTestReconciler(t, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	assertNoPrimaryChildren(t, ctx, reconciler, network)
+	current := requireNetwork(t, ctx, reconciler, network)
+	assert.Empty(t, current.Status.Conditions)
+}
+
 // TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload verifies a
 // supported resource creates the singleton primary node PVC and Deployment.
 func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
@@ -473,8 +490,9 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 			network.UID = types.UID("cardanonetwork-" + tt.name)
 			reconciler := newTestReconciler(t, network, tt.child(network))
 
-			_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+			result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 			require.NoError(t, err)
+			assert.Equal(t, ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, result)
 
 			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonResourceConflict)
