@@ -70,7 +70,7 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	assert.Len(t, persistentVolumeClaims.Items, 1)
 }
 
-func TestCardanoNetworkReconcilerReconcilePatchesDeploymentTemplate(t *testing.T) {
+func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("patches-template")
 	reconciler := newTestReconciler(t, network)
@@ -84,7 +84,11 @@ func TestCardanoNetworkReconcilerReconcilePatchesDeploymentTemplate(t *testing.T
 	image := "example.com/cardano-node:patched"
 	current.Spec.Node.Image = &image
 	current.Spec.Node.Port = 3002
-	current.Spec.Local.NetworkMagic = 43
+	current.Spec.Node.Resources = &corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("250m"),
+		},
+	}
 	require.NoError(t, reconciler.Update(ctx, current))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -94,7 +98,86 @@ func TestCardanoNetworkReconcilerReconcilePatchesDeploymentTemplate(t *testing.T
 	container := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, image, container.Image)
 	assert.Contains(t, container.Args, "3002")
-	assert.NotEqual(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+	cpuRequest := container.Resources.Requests[corev1.ResourceCPU]
+	assert.Zero(t, cpuRequest.Cmp(resource.MustParse("250m")))
+	assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*yacdv1alpha1.CardanoNetwork)
+	}{
+		{
+			name: "network-magic",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Local.NetworkMagic = 43
+			},
+		},
+		{
+			name: "node-version",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Node.Version = "11.0.2"
+			},
+		},
+		{
+			name: "timing",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Local.Timing.EpochLength = 600
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			network := localCardanoNetwork("rejects-localnet-" + tt.name)
+			reconciler := newTestReconciler(t, network)
+
+			_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+			require.NoError(t, err)
+
+			deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+			originalFingerprint := deployment.Spec.Template.Annotations[localnetFingerprintAnno]
+			pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+			require.Equal(t, originalFingerprint, pvc.Annotations[localnetFingerprintAnno])
+
+			current := requireNetwork(t, ctx, reconciler, network)
+			tt.mutate(current)
+			require.NoError(t, reconciler.Update(ctx, current))
+
+			_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+			require.NoError(t, err)
+
+			pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+			assert.Equal(t, originalFingerprint, pvc.Annotations[localnetFingerprintAnno])
+			deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+			assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
+			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonUnsupportedLocalnetChange)
+		})
+	}
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsMissingLocalnetFingerprint(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("missing-localnet-fingerprint")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	delete(pvc.Annotations, localnetFingerprintAnno)
+	require.NoError(t, reconciler.Update(ctx, pvc))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+	assert.Empty(t, pvc.Annotations[localnetFingerprintAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonMissingLocalnetFingerprint)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonMissingLocalnetFingerprint)
 }
 
 func TestCardanoNetworkReconcilerReconcileExpandsStorage(t *testing.T) {

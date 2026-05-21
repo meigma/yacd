@@ -92,7 +92,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
-	persistentVolumeClaim, err := b.persistentVolumeClaim(network)
+	persistentVolumeClaim, err := b.persistentVolumeClaim(network, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -283,12 +283,15 @@ func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNe
 	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, strings.TrimSpace(network.Spec.Node.Version), cardanoTestnetImageRevision)
 }
 
-func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork) (*corev1.PersistentVolumeClaim, error) {
+func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) (*corev1.PersistentVolumeClaim, error) {
 	persistentVolumeClaim := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      primaryNodeStatePVCName(network),
 			Namespace: network.Namespace,
 			Labels:    primaryWorkloadLabels(network),
+			Annotations: map[string]string{
+				localnetFingerprintAnno: plan.Fingerprint.Value,
+			},
 		},
 		Spec: b.persistentVolumeClaimSpec(network),
 	}

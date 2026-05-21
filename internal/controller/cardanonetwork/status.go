@@ -16,6 +16,8 @@ const (
 
 	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
+	conditionReasonUnsupportedLocalnetChange   = "UnsupportedLocalnetChange"
+	conditionReasonMissingLocalnetFingerprint  = "MissingLocalnetFingerprint"
 	conditionReasonUnsupportedStorageChange    = "UnsupportedStorageChange"
 	conditionReasonUnsupportedWorkloadChange   = "UnsupportedWorkloadChange"
 	conditionReasonWorkloadApplied             = "WorkloadApplied"

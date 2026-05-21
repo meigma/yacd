@@ -39,6 +39,10 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 		return controllerutil.OperationResultNone, err
 	}
 
+	if err := validateLocalnetFingerprint(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
 	if !storageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
 		return controllerutil.OperationResultNone, unsupportedStorageChange(
 			"PVC %s storageClassName cannot be changed from %s to %s",
@@ -150,6 +154,40 @@ func unsupportedWorkloadChange(format string, args ...any) unsupportedApplyError
 		reason:  conditionReasonUnsupportedWorkloadChange,
 		message: fmt.Sprintf(format, args...),
 	}
+}
+
+func unsupportedLocalnetChange(format string, args ...any) unsupportedApplyError {
+	return unsupportedApplyError{
+		reason:  conditionReasonUnsupportedLocalnetChange,
+		message: fmt.Sprintf(format, args...),
+	}
+}
+
+func missingLocalnetFingerprint(format string, args ...any) unsupportedApplyError {
+	return unsupportedApplyError{
+		reason:  conditionReasonMissingLocalnetFingerprint,
+		message: fmt.Sprintf(format, args...),
+	}
+}
+
+func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
+	currentFingerprint := current.Annotations[localnetFingerprintAnno]
+	if currentFingerprint == "" {
+		return missingLocalnetFingerprint(
+			"PVC %s is missing localnet fingerprint annotation; delete and recreate the CardanoNetwork to recreate localnet state",
+			clientObjectKey(desired),
+		)
+	}
+
+	desiredFingerprint := desired.Annotations[localnetFingerprintAnno]
+	if currentFingerprint != desiredFingerprint {
+		return unsupportedLocalnetChange(
+			"CardanoNetwork localnet inputs changed for PVC %s; delete and recreate the CardanoNetwork to change network parameters",
+			clientObjectKey(desired),
+		)
+	}
+
+	return nil
 }
 
 func storageClassCompatible(current *string, desired *string) bool {

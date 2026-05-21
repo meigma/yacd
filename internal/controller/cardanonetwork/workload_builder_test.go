@@ -187,6 +187,11 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	assert.Equal(t, expectedSelector, deployment.Spec.Template.Labels)
 	assert.Equal(t, "yacd", deployment.Labels[labelAppManagedBy])
 	assert.NotEmpty(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
+	assert.NotEmpty(t, persistentVolumeClaim.Annotations[localnetFingerprintAnno])
+	assert.Equal(t,
+		deployment.Spec.Template.Annotations[localnetFingerprintAnno],
+		persistentVolumeClaim.Annotations[localnetFingerprintAnno],
+	)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 
