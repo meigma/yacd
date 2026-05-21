@@ -33,6 +33,20 @@
   `cardano-testnet create-env` inputs. It returns a deterministic invocation,
   expected output layout, fingerprint, and JSON-serializable manifest for later
   init-container idempotency.
+- `containers/cardano-testnet` is the YACD tools image for official
+  IntersectMBO `cardano-node` release artifacts. Its Release Please component
+  uses tags like `cardano-testnet/v11.0.1-yacd.1`; the OCI image tag is the
+  full `11.0.1-yacd.1`, while the release workflow strips the `-yacd.N` suffix
+  to download upstream Cardano artifacts.
+- The first published corrected tools image is
+  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1`. Future packaging-only
+  fixes should bump `yacd.N`; future upstream Cardano bumps should move the
+  base version and reset the YACD packaging revision.
+- The `cardano-testnet` init-container fragment belongs in
+  `internal/controller/cardanonetwork`, not `internal/cardano/localnet`. It
+  calls the image-owned `/opt/yacd/bin/yacd-cardano-testnet-init` wrapper,
+  passes the compact plan manifest through env, and expects a writable
+  `localnet-state` volume mounted at the plan state directory.
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port

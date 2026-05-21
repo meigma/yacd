@@ -87,3 +87,19 @@ Published the GitHub release at
 `https://github.com/meigma/yacd/releases/tag/cardano-testnet/v11.0.1-yacd.1`.
 Fast-forwarded the primary `master` checkout to `98bd704`; the dev stack was
 already down. Root Release Please PR #7 remains separate and unmerged.
+
+## 2026-05-21 09:39 — Close
+Closed session 004 after landing and verifying all session work. Merged PRs:
+#5 (`build(cardano-testnet): add tools container`), #6
+(`chore(master): release cardano-testnet 11.0.1`), #8
+(`build(cardano-testnet): add localnet init wrapper`), and #9
+(`chore(master): release cardano-testnet 11.0.1-yacd.1`). Deleted the
+disposable unsuffixed release artifacts, published and attested
+`ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1`, fast-forwarded local
+`master` to `98bd704`, purged the two feature worktrees, and confirmed
+`moon run root:dev-down` reports the YACD dev stack is down.
+
+Wrote `.journal/004/SUMMARY.md`, updated `.journal/INDEX.md`, and revised
+`.journal/TECH_NOTES.md` with the durable image/versioning and init-fragment
+contracts. Root Release Please PR #7 remains open separately and is recorded as
+an open thread rather than session work to merge.
