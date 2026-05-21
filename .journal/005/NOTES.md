@@ -20,3 +20,8 @@ Decision update: the CRD-to-`localnet.Spec` adapter should not remain as a stand
 ## 2026-05-21 10:06 — Implementation start
 Started implementation on Worktrunk branch `feat/primary-statefulset-builder` at `.wt/feat-primary-statefulset-builder`.
 The required local dev stack was started with `moon run root:dev-up` from the implementation worktree. It created/connected the `kind-yacd-dev` cluster and reported the YACD dev stack ready with Tilt UI on port 10350.
+
+## 2026-05-21 10:14 — StatefulSet builder implemented
+Implemented the primary StatefulSet builder on `feat/primary-statefulset-builder` and committed it as `2a86a61` (`feat(cardanonetwork): build primary node statefulset`).
+The slice folds `localnet_adapter.go` into `primaryWorkloadBuilder`, returns a StatefulSet without Ogmios or apply/status side effects, keeps the reconciler read-only, and adds focused builder coverage for validation, owner references, init container, node container, PVC, IPC volume, labels, fingerprint annotation, resources, and security context.
+Validation passed with `go test ./internal/controller/cardanonetwork`, `moon run root:test`, `git diff --check`, and `moon run root:check`. The local dev stack was shut down with `moon run root:dev-down`, which reported `YACD dev stack is down`.
