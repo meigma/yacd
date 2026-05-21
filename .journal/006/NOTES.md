@@ -25,3 +25,8 @@ Current state of the world: the realistic remaining phase-2 work is:
 - Clean current-state docs drift, especially README text that still says the first reconciler will land later.
 
 Plan: include this list in the session closeout summary, preferably under Open Threads or Next Steps, unless later implementation in this session completes some of these items.
+
+## 2026-05-21 15:15 — Primary Service implementation start
+Goal for the checkpoint: implement phase-2 remaining-work item 1 by adding the primary node Service only.
+Current state of the world: created Worktrunk implementation branch `feat/cardanonetwork-primary-service` at `/Users/josh/code/meigma/yacd/.wt/feat-cardanonetwork-primary-service` from current `master`. Ran `moon run root:dev-up` from that worktree; it created/connected the Kind/Tilt dev stack and reported the controller ready with Tilt UI at `http://localhost:10350/`.
+Plan: add an owned ClusterIP Service and named node container port, wire Service ownership/RBAC/apply behavior, extend builder/reconciler/envtest coverage, then run generation/check/test/diff verification.
