@@ -100,7 +100,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint); err != nil {
+	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service); err != nil {
 		return ctrl.Result{}, err
 	}
 

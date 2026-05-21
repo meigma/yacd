@@ -129,7 +129,14 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 			return false
 		}
 		degraded := findCondition(current, conditionTypeDegraded)
-		return degraded != nil && degraded.Status == metav1.ConditionFalse
+		return degraded != nil &&
+			degraded.Status == metav1.ConditionFalse &&
+			current.Status.Endpoints != nil &&
+			current.Status.Endpoints.NodeToNode != nil &&
+			current.Status.Endpoints.NodeToNode.ServiceName == primaryWorkloadName(network) &&
+			current.Status.Endpoints.NodeToNode.Port == network.Spec.Node.Port &&
+			current.Status.Endpoints.NodeToNode.URL == "tcp://manager-owned-node.cardanonetwork-envtest.svc.cluster.local:3001" &&
+			current.Status.Endpoints.Ogmios == nil
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

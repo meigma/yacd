@@ -2,8 +2,10 @@ package cardanonetwork
 
 import (
 	"context"
+	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,15 +33,16 @@ func (r *CardanoNetworkReconciler) patchStatusConditions(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	localnetFingerprint string,
+	service *corev1.Service,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint,
+	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, service,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingCondition(metav1.ConditionFalse, conditionReasonWorkloadApplied, conditionMessagePrimaryWorkloadApplied),
 	)
@@ -49,12 +52,16 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	localnetFingerprint string,
+	service *corev1.Service,
 	conditions ...metav1.Condition,
 ) error {
 	original := network.DeepCopy()
 	network.Status.ObservedGeneration = network.Generation
 	if localnetFingerprint != "" {
 		setLocalnetIdentityStatus(network, localnetFingerprint)
+	}
+	if service != nil {
+		setNodeToNodeEndpointStatus(network, service)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -83,6 +90,18 @@ func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFin
 	network.Status.Network.NetworkMagic = &networkMagic
 	era := network.Spec.Local.Era
 	network.Status.Network.Era = &era
+}
+
+func setNodeToNodeEndpointStatus(network *yacdv1alpha1.CardanoNetwork, service *corev1.Service) {
+	if network.Status.Endpoints == nil {
+		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
+	}
+
+	network.Status.Endpoints.NodeToNode = &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: service.Name,
+		Port:        network.Spec.Node.Port,
+		URL:         fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", service.Name, service.Namespace, network.Spec.Node.Port),
+	}
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {

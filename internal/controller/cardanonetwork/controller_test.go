@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -80,6 +81,7 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonWorkloadApplied)
+	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
 }
 
 func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
@@ -134,6 +136,7 @@ func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *te
 	service := requirePrimaryService(t, ctx, reconciler, network)
 	require.Len(t, service.Spec.Ports, 1)
 	assert.Equal(t, int32(3002), service.Spec.Ports[0].Port)
+	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, int32(3002))
 	cpuRequest := container.Resources.Requests[corev1.ResourceCPU]
 	assert.Zero(t, cpuRequest.Cmp(resource.MustParse("250m")))
 	assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
@@ -669,6 +672,8 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 	assertNoPrimaryChildren(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	current := requireNetwork(t, ctx, reconciler, network)
+	assert.Nil(t, current.Status.Endpoints)
 }
 
 // localCardanoNetwork returns a minimally supported local-mode CardanoNetwork.
@@ -866,6 +871,28 @@ func assertCondition(
 	assert.Equal(t, reason, condition.Reason)
 	assert.Equal(t, current.Generation, condition.ObservedGeneration)
 	assert.Equal(t, current.Generation, current.Status.ObservedGeneration)
+}
+
+func assertNodeToNodeEndpoint(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	serviceName string,
+	port int32,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.NodeToNode)
+	assert.Equal(t, serviceName, current.Status.Endpoints.NodeToNode.ServiceName)
+	assert.Equal(t, port, current.Status.Endpoints.NodeToNode.Port)
+	assert.Equal(t,
+		fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
+		current.Status.Endpoints.NodeToNode.URL,
+	)
+	assert.Nil(t, current.Status.Endpoints.Ogmios)
 }
 
 // reconcileRequestFor returns a reconcile request targeting object.
