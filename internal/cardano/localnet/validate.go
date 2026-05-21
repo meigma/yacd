@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// cleanAbsolutePath trims and normalizes a container path, rejecting relative
+// locations.
 func cleanAbsolutePath(value string, field string) (string, error) {
 	cleaned := path.Clean(strings.TrimSpace(value))
 	if cleaned == "." || !strings.HasPrefix(cleaned, "/") {
@@ -16,6 +18,7 @@ func cleanAbsolutePath(value string, field string) (string, error) {
 	return cleaned, nil
 }
 
+// validateSpec checks the normalized localnet spec invariants.
 func validateSpec(spec Spec) error {
 	var errs []error
 

@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestBuildPlanUsesDefaultCreateEnvInvocation verifies the default plan command
+// and stable output layout.
 func TestBuildPlanUsesDefaultCreateEnvInvocation(t *testing.T) {
 	plan, err := BuildPlan(Spec{})
 	require.NoError(t, err)
@@ -31,6 +33,8 @@ func TestBuildPlanUsesDefaultCreateEnvInvocation(t *testing.T) {
 	}, plan.Layout)
 }
 
+// TestBuildPlanFormatsSlotLengthInSeconds verifies cardano-testnet slot-length
+// formatting.
 func TestBuildPlanFormatsSlotLengthInSeconds(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -68,6 +72,8 @@ func TestBuildPlanFormatsSlotLengthInSeconds(t *testing.T) {
 	}
 }
 
+// TestBuildPlanNormalizesPaths verifies path cleanup and derived default env
+// directory behavior.
 func TestBuildPlanNormalizesPaths(t *testing.T) {
 	spec := DefaultSpec()
 	spec.Paths.StateDir = "/data//state/"
@@ -83,6 +89,8 @@ func TestBuildPlanNormalizesPaths(t *testing.T) {
 	assert.Equal(t, "/data/state/env/yacd-localnet-plan.json", plan.Layout.ManifestFile)
 }
 
+// TestBuildPlanRejectsInvalidSpec verifies validation errors for unsupported
+// localnet input values.
 func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -145,6 +153,8 @@ func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
 	}
 }
 
+// TestBuildPlanFingerprintIsStableAndInputSensitive verifies the default
+// fingerprint and its input coverage.
 func TestBuildPlanFingerprintIsStableAndInputSensitive(t *testing.T) {
 	base := DefaultSpec()
 	plan, err := BuildPlan(base)
@@ -207,6 +217,8 @@ func TestBuildPlanFingerprintIsStableAndInputSensitive(t *testing.T) {
 	}
 }
 
+// TestBuildPlanFingerprintExcludesToolBinary verifies binary path changes do
+// not mark generated environments incompatible.
 func TestBuildPlanFingerprintExcludesToolBinary(t *testing.T) {
 	base, err := BuildPlan(DefaultSpec())
 	require.NoError(t, err)
@@ -221,6 +233,8 @@ func TestBuildPlanFingerprintExcludesToolBinary(t *testing.T) {
 	assert.Equal(t, base.Fingerprint, changed.Fingerprint)
 }
 
+// TestBuildPlanManifestMarshalsDeterministically verifies the manifest's JSON
+// representation.
 func TestBuildPlanManifestMarshalsDeterministically(t *testing.T) {
 	spec := DefaultSpec()
 	spec.Tool.Version = "11.0.1"

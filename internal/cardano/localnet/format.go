@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+// formatSlotLength converts a duration to the seconds value expected by
+// cardano-testnet create-env.
 func formatSlotLength(duration time.Duration) string {
 	nanos := duration.Nanoseconds()
 	whole := nanos / int64(time.Second)

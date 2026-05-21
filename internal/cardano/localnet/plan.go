@@ -9,14 +9,31 @@ import (
 )
 
 const (
+	// defaultNetworkMagic is the local development testnet magic used when a
+	// caller leaves NetworkMagic unset.
 	defaultNetworkMagic = 42
-	defaultPoolCount    = 1
-	defaultEpochLength  = 500
-	defaultSlotLength   = 100 * time.Millisecond
-	defaultStateDir     = "/state"
-	defaultToolBinary   = "cardano-testnet"
-	manifestFileName    = "yacd-localnet-plan.json"
-	configFileName      = "configuration.yaml"
+
+	// defaultPoolCount is the generated stake pool count used by default.
+	defaultPoolCount = 1
+
+	// defaultEpochLength is the default number of slots per local epoch.
+	defaultEpochLength = 500
+
+	// defaultSlotLength is the default local slot duration.
+	defaultSlotLength = 100 * time.Millisecond
+
+	// defaultStateDir is the default durable state mount root inside the
+	// cardano-testnet container.
+	defaultStateDir = "/state"
+
+	// defaultToolBinary is the default executable used for cardano-testnet.
+	defaultToolBinary = "cardano-testnet"
+
+	// manifestFileName is the localnet plan marker filename under EnvDir.
+	manifestFileName = "yacd-localnet-plan.json"
+
+	// configFileName is the cardano-testnet-generated node config filename.
+	configFileName = "configuration.yaml"
 )
 
 // DefaultSpec returns the default local testnet create-env inputs used by YACD.
@@ -96,6 +113,8 @@ func BuildPlan(spec Spec) (Plan, error) {
 	}, nil
 }
 
+// normalizeSpec applies defaults, cleans paths, and validates the resulting
+// localnet spec.
 func normalizeSpec(spec Spec) (Spec, error) {
 	defaults := DefaultSpec()
 
