@@ -164,3 +164,20 @@ Verification passed: `moon run root:test`, `moon run root:check`, and
 `git diff --check`. A direct `go test ./cmd` was not used as verification
 because it bypasses the repo's envtest asset setup and fails looking for
 `/usr/local/kubebuilder/bin/etcd`; `moon run root:test` is the expected path.
+
+## 2026-05-20 18:20 — Reconcile reads CardanoNetwork and builds localnet plan
+Extended the `CardanoNetwork` controller from a pure scaffold into the first
+read-only reconcile loop. Reconcile now fetches the current `CardanoNetwork`,
+ignores not-found resources at `V(1)`, converts supported local-mode
+cardano-testnet fields into `internal/cardano/localnet.Spec`, builds a
+`localnet.Plan`, and logs the plan fingerprint plus create-env command at
+`V(1)`. Unsupported localnet inputs are logged and treated as handled for now
+because no status conditions exist yet.
+
+Added the controller-adjacent adapter in `internal/controller/cardanonetwork`
+and direct unit tests for supported mapping, rejected public/missing/unsupported
+local fields, not-found reconciliation, supported reconciliation, and unsupported
+reconciliation. This slice remains read-only: no children, status, Events,
+metrics, or workload resources. Verification passed:
+`go test ./internal/controller/cardanonetwork`, `moon run root:test`,
+`moon run root:check`, and `git diff --check`.
