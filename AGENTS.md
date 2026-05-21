@@ -58,7 +58,7 @@ already configured.
 ## Local Development Stack
 
 Use the local dev stack when you need a fast operator feedback loop in Kind.
-Run it through Moon from the repo root:
+Run it through Moon from the active implementation worktree:
 
 ```sh
 direnv allow
@@ -67,11 +67,24 @@ moon run root:dev-down
 ```
 
 `ctlptl` owns the Kind cluster and local registry described in
-`dev/ctlptl.yaml`; do not create or delete that cluster from the `Tiltfile`.
+`.dev/ctlptl.yaml`; do not create or delete that cluster from the `Tiltfile`.
+`root:dev-up` starts Tilt in the background, waits for the operator to become
+ready, and then exits. Runtime state is shared across Worktrunk worktrees under
+`.run/yacd-dev/` in the primary checkout; use `moon run root:dev-down` to stop
+the recorded Tilt process, remove Tilt-managed resources, and delete the
+Kind cluster and registry.
+
 `Tiltfile` assumes the current Kubernetes context is `kind-yacd-dev`, renders
 the Helm chart, and redeploys changes. `ko` builds the manager image from
 `./cmd` using `.ko.yaml`, and Tilt injects the built image into the
-Helm-rendered Deployment.
+Helm-rendered Deployment. Tilt logs are available at `.run/yacd-dev/tilt.log`
+and through `tilt logs --port 10350` while the stack is running. `root:dev-up`
+uses `python3` only to launch Tilt outside Moon's task process group.
+
+During agent sessions, run `moon run root:dev-up` after selecting or creating
+the implementation worktree. Before pausing or closing the session, run
+`moon run root:dev-down` so no background Tilt process or Kind cluster is left
+behind.
 
 ## Manager Startup
 

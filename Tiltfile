@@ -20,7 +20,7 @@ metadata:
 
 custom_build(
     IMAGE,
-    './dev/ko-build.sh',
+    './.dev/ko-build.sh',
     deps=['cmd', 'go.mod', 'go.sum', '.ko.yaml'],
 )
 
@@ -33,6 +33,7 @@ k8s_yaml(helm(
         'image.tag=tilt',
         'image.pullPolicy=IfNotPresent',
         'leaderElection.enabled=false',
+        'manager.logLevel=debug',
     ],
 ))
 

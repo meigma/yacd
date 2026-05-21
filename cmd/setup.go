@@ -4,6 +4,7 @@ import (
 	"os"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/controller/cardanonetwork"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -33,10 +34,17 @@ func mustRegisterControllers(mgr manager.Manager) {
 	exitOnError(registerControllers(mgr), "Failed to register controllers")
 }
 
-// registerControllers is the insertion point for future YACD controllers. The
-// first CardanoNetwork API pass intentionally ships no reconciler yet.
-func registerControllers(_ manager.Manager) error {
-	setupLog.Info("No controllers registered yet")
+// registerControllers constructs and registers every reconciler with the
+// manager.
+func registerControllers(mgr manager.Manager) error {
+	err := (&cardanonetwork.CardanoNetworkReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr)
+	if err != nil {
+		return err
+	}
+
 	// +kubebuilder:scaffold:builder
 	return nil
 }

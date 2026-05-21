@@ -32,8 +32,10 @@ fileGroups:
     - '.ko.yaml'
     - '.tiltignore'
     - 'Tiltfile'
-    - 'dev/ctlptl.yaml'
-    - 'dev/ko-build.sh'
+    - '.dev/ctlptl.yaml'
+    - '.dev/ko-build.sh'
+    - '.dev/scripts/dev-up.sh'
+    - '.dev/scripts/dev-down.sh'
   toolchainConfig:
     - '.prototools'
     - '.moon/proto/**/*.toml'
@@ -44,7 +46,7 @@ workspace:
 
 tasks:
   check:
-    command: 'bash scripts/check.sh'
+    command: 'bash .dev/scripts/check.sh'
     inputs:
       - '@group(goSources)'
       - '@group(generatorSources)'
@@ -52,7 +54,7 @@ tasks:
       - '@group(chainsawSources)'
       - '@group(toolchainConfig)'
       - '.golangci.yml'
-      - 'scripts/check.sh'
+      - '.dev/scripts/check.sh'
     options:
       cache: false
 
@@ -86,31 +88,27 @@ tasks:
       runInCI: false
 
   deploy:
-    command: 'bash scripts/deploy.sh'
+    command: 'bash .dev/scripts/deploy.sh'
     inputs:
       - '@group(chartSources)'
       - '@group(toolchainConfig)'
-      - 'scripts/deploy.sh'
+      - '.dev/scripts/deploy.sh'
     options:
       cache: false
       runInCI: false
 
   undeploy:
-    command: 'bash scripts/undeploy.sh'
+    command: 'bash .dev/scripts/undeploy.sh'
     inputs:
       - '@group(chartSources)'
       - '@group(toolchainConfig)'
-      - 'scripts/undeploy.sh'
+      - '.dev/scripts/undeploy.sh'
     options:
       cache: false
       runInCI: false
 
   dev-up:
-    script: |
-      set -euo pipefail
-      ctlptl apply -f dev/ctlptl.yaml
-      kubectl config use-context kind-yacd-dev >/dev/null
-      tilt up --context kind-yacd-dev
+    command: 'bash .dev/scripts/dev-up.sh'
     inputs:
       - '@group(devStackSources)'
       - '@group(chartSources)'
@@ -118,17 +116,10 @@ tasks:
       - '@group(toolchainConfig)'
     options:
       cache: false
-      interactive: true
       runInCI: false
 
   dev-down:
-    script: |
-      set -euo pipefail
-      set +e
-      if kubectl config get-contexts kind-yacd-dev >/dev/null 2>&1; then
-        tilt down --context kind-yacd-dev --delete-namespaces
-      fi
-      ctlptl delete -f dev/ctlptl.yaml --cascade=true --ignore-not-found
+    command: 'bash .dev/scripts/dev-down.sh'
     inputs:
       - '@group(devStackSources)'
       - '@group(toolchainConfig)'
@@ -137,16 +128,16 @@ tasks:
       runInCI: false
 
   test-e2e:
-    command: 'bash scripts/test-e2e.sh'
+    command: 'bash .dev/scripts/test-e2e.sh'
     inputs:
       - '@group(goSources)'
       - '@group(chartSources)'
       - '@group(chainsawSources)'
       - '@group(toolchainConfig)'
       - 'Dockerfile'
-      - 'scripts/deploy.sh'
-      - 'scripts/undeploy.sh'
-      - 'scripts/test-e2e.sh'
+      - '.dev/scripts/deploy.sh'
+      - '.dev/scripts/undeploy.sh'
+      - '.dev/scripts/test-e2e.sh'
     options:
       cache: false
       runInCI: false
