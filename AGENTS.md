@@ -67,7 +67,7 @@ moon run root:dev-down
 ```
 
 `ctlptl` owns the Kind cluster and local registry described in
-`dev/ctlptl.yaml`; do not create or delete that cluster from the `Tiltfile`.
+`.dev/ctlptl.yaml`; do not create or delete that cluster from the `Tiltfile`.
 `root:dev-up` starts Tilt in the background, waits for the operator to become
 ready, and then exits. Runtime state is shared across Worktrunk worktrees under
 `.run/yacd-dev/` in the primary checkout; use `moon run root:dev-down` to stop

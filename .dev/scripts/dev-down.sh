@@ -87,7 +87,7 @@ if kubectl config get-contexts "$context" >/dev/null 2>&1; then
   ) || true
 fi
 
-ctlptl delete -f dev/ctlptl.yaml --cascade=true --ignore-not-found
+ctlptl delete -f .dev/ctlptl.yaml --cascade=true --ignore-not-found
 rm -rf "$state_dir"
 
 echo "YACD dev stack is down."

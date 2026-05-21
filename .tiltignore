@@ -4,6 +4,7 @@
 .direnv/
 .moon/cache/
 .moon/docker/
+.run/
 bin/
 dist/
 cover.out

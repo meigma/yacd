@@ -20,7 +20,7 @@ metadata:
 
 custom_build(
     IMAGE,
-    './dev/ko-build.sh',
+    './.dev/ko-build.sh',
     deps=['cmd', 'go.mod', 'go.sum', '.ko.yaml'],
 )
 

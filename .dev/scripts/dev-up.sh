@@ -85,7 +85,7 @@ fi
 
 mkdir -p "$state_dir"
 
-ctlptl apply -f dev/ctlptl.yaml
+ctlptl apply -f .dev/ctlptl.yaml
 kubectl config use-context "$context" >/dev/null
 
 existing_pid="$(read_state_file "$pid_file")"
