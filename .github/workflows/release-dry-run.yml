@@ -282,6 +282,9 @@ jobs:
           sbom: true
           cache-from: type=gha,scope=cardano-testnet-release-dry-run-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=cardano-testnet-release-dry-run-${{ matrix.arch }}
+          build-args: |
+            CARDANO_NODE_VERSION=11.0.1
+            YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
 
       - name: Validate cardano-testnet platform OCI archive
         run: test -s /tmp/cardano-testnet-dry-run-${{ matrix.arch }}.oci
@@ -324,6 +327,9 @@ jobs:
           tags: cardano-testnet:dry-run
           cache-from: type=gha,scope=cardano-testnet-release-dry-run-amd64
           cache-to: type=gha,mode=max,scope=cardano-testnet-release-dry-run-amd64
+          build-args: |
+            CARDANO_NODE_VERSION=11.0.1
+            YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
 
       - name: Smoke test local cardano-testnet image
         run: |
@@ -331,6 +337,51 @@ jobs:
 
           docker run --rm cardano-testnet:dry-run version >/tmp/cardano-testnet-version.txt
           grep -Fq "cardano-node" /tmp/cardano-testnet-version.txt
+
+          state_dir="$(mktemp -d)"
+          chmod 0777 "$state_dir"
+          cleanup_state_dir() {
+            docker run --rm --user 0 \
+              --entrypoint /bin/sh \
+              -v "${state_dir}:/state" \
+              cardano-testnet:dry-run \
+              -c 'chmod -R a+rwX /state' >/dev/null 2>&1 || true
+            rm -rf "$state_dir"
+          }
+          trap cleanup_state_dir EXIT
+
+          manifest='{"schemaVersion":"release-dry-run","inputs":{"networkMagic":42,"poolCount":1,"epochLength":500,"slotLength":"0.1","envDir":"/state/env"},"fingerprint":{"algorithm":"sha256","value":"release-dry-run"}}'
+          docker run --rm --read-only \
+            --entrypoint /opt/yacd/bin/yacd-cardano-testnet-init \
+            -v "${state_dir}:/state" \
+            -e YACD_LOCALNET_ENV_DIR=/state/env \
+            -e YACD_LOCALNET_CONFIG_FILE=/state/env/configuration.yaml \
+            -e YACD_LOCALNET_PLAN_MANIFEST_FILE=/state/env/yacd-localnet-plan.json \
+            -e YACD_LOCALNET_PLAN_MANIFEST="$manifest" \
+            cardano-testnet:dry-run \
+            create-env \
+            --num-pool-nodes 1 \
+            --testnet-magic 42 \
+            --epoch-length 500 \
+            --slot-length 0.1 \
+            --output /state/env
+
+          docker run --rm --read-only \
+            --entrypoint /opt/yacd/bin/yacd-cardano-testnet-init \
+            -v "${state_dir}:/state" \
+            -e YACD_LOCALNET_ENV_DIR=/state/env \
+            -e YACD_LOCALNET_CONFIG_FILE=/state/env/configuration.yaml \
+            -e YACD_LOCALNET_PLAN_MANIFEST_FILE=/state/env/yacd-localnet-plan.json \
+            -e YACD_LOCALNET_PLAN_MANIFEST="$manifest" \
+            cardano-testnet:dry-run \
+            create-env \
+            --num-pool-nodes 1 \
+            --testnet-magic 42 \
+            --epoch-length 500 \
+            --slot-length 0.1 \
+            --output /state/env
+
+          test -f "${state_dir}/env/yacd-localnet-plan.json"
 
   helm-chart-dry-run:
     name: Helm Chart Dry Run

@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.19.0@sha256:b6afd42430b15f2d2a4c5a02b919e98a525b785b1aaff16747d2f623364e39b6
 
 ARG CARDANO_NODE_VERSION=11.0.1
+ARG YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.1
 
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS fetch
 
@@ -35,13 +36,15 @@ RUN case "${TARGETARCH}" in \
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
 ARG CARDANO_NODE_VERSION
+ARG YACD_CARDANO_TESTNET_VERSION
 
 LABEL org.opencontainers.image.title="yacd-cardano-testnet" \
       org.opencontainers.image.description="YACD cardano-testnet tools image built from official IntersectMBO cardano-node release artifacts" \
       org.opencontainers.image.source="https://github.com/meigma/yacd" \
       org.opencontainers.image.url="https://github.com/meigma/yacd" \
-      org.opencontainers.image.version="${CARDANO_NODE_VERSION}" \
-      org.opencontainers.image.vendor="Meigma"
+      org.opencontainers.image.version="${YACD_CARDANO_TESTNET_VERSION}" \
+      org.opencontainers.image.vendor="Meigma" \
+      io.yacd.cardano-node.version="${CARDANO_NODE_VERSION}"
 
 RUN groupadd --gid 10001 cardano \
     && useradd --uid 10001 --gid cardano --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin cardano \
@@ -49,8 +52,9 @@ RUN groupadd --gid 10001 cardano \
     && chown cardano:cardano /state
 
 COPY --from=fetch /out/bin /opt/cardano/bin
+COPY --chmod=0555 yacd-cardano-testnet-init /opt/yacd/bin/yacd-cardano-testnet-init
 
-ENV PATH="/opt/cardano/bin:${PATH}" \
+ENV PATH="/opt/yacd/bin:/opt/cardano/bin:${PATH}" \
     CARDANO_CLI="/opt/cardano/bin/cardano-cli" \
     CARDANO_NODE="/opt/cardano/bin/cardano-node"
 
