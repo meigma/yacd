@@ -4,8 +4,9 @@
   manager for builders, not validators or stake pool operators. The first
   prototype should stay local-first and Kind/Tilt-friendly.
 - The primary CRD should represent a Cardano environment/network rather than a
-  single node. The first runtime can be one primary `cardano-node` StatefulSet
-  with Ogmios as a default sidecar and ClusterIP chain API.
+  single node. The first runtime is now an owned singleton primary
+  `cardano-node` Deployment plus explicit owned PVC; Ogmios and Services are
+  intentionally deferred to later slices.
 - Supporting services should be separate CRDs/controllers. Network-only
   services can run as independent workloads; heavy IPC services such as db-sync
   should prefer a dedicated follower-node Pod so they do not mutate or restart
@@ -25,10 +26,11 @@
   uses `spec.mode: local|public`; public networks use `profile:
   preprod|preview|mainnet|custom`, and custom public profile data is limited to
   same-namespace ConfigMap/Secret refs through `corev1.LocalObjectReference`.
-- The first runtime path is local-mode only. The controller adapter maps
+- The first runtime path is local-mode only. `primaryWorkloadBuilder` maps
   network magic, pool count, slot/epoch timing, and node version into
   `internal/cardano/localnet.Spec`; it rejects public mode and unsupported local
   genesis/era/pool-default inputs until later slices implement those contracts.
+  This phase supports exactly one pool/primary node.
 - `internal/cardano/localnet` is the pure Go, Kubernetes-free boundary for
   `cardano-testnet create-env` inputs. It returns a deterministic invocation,
   expected output layout, fingerprint, and JSON-serializable manifest for later
@@ -47,6 +49,15 @@
   calls the image-owned `/opt/yacd/bin/yacd-cardano-testnet-init` wrapper,
   passes the compact plan manifest through env, and expects a writable
   `localnet-state` volume mounted at the plan state directory.
+- A `CardanoNetwork` localnet is stable for its lifetime. The accepted localnet
+  fingerprint is stored on the owned PVC and in CR status; if localnet inputs
+  drift after acceptance, reconcile stops before Deployment updates and sets a
+  degraded condition. Delete and recreate the CR/PVC to change localnet
+  parameters.
+- Primary PVC reconciliation allows storage expansion when the accepted
+  fingerprint matches, rejects storage shrink and requested storage class
+  drift, and refuses unowned or foreign-owned same-name children rather than
+  adopting them silently.
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port

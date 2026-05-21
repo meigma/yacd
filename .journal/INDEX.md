@@ -6,3 +6,4 @@
 | 002 | 2026-05-20 | YACD foundation branding pass | complete | Rebranded the operator foundation as YACD, removed the template Nginx API/controller surface, merged PR #2, and left `master` ready for the first real environment API slice. |
 | 003 | 2026-05-20 | First YACD environment prototype | complete | Added the first `CardanoNetwork` CRD, localnet plan package, read-only controller adapter, and managed Kind/Tilt dev-stack lifecycle. |
 | 004 | 2026-05-20 | cardano-testnet tools image and init fragment | complete | Added the YACD `cardano-testnet` tools image, released `11.0.1-yacd.1`, and generated the first localnet init-container fragment from `localnet.Plan`. |
+| 005 | 2026-05-21 | Primary CardanoNetwork workload | complete | Added the singleton primary node Deployment/PVC reconciliation path, localnet identity protection, manual Kind/Tilt proof, and dev rebuild/churn fixes. |

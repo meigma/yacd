@@ -84,3 +84,8 @@ Addressed the two manual-test follow-ups on `feat/primary-statefulset-builder` a
 Tilt now watches the full manager compile surface (`cmd`, `api`, `internal`, `go.mod`, `go.sum`, `.ko.yaml`, and `.dev/ko-build.sh`), so touching `internal/controller/cardanonetwork/apply.go` triggered a controller rebuild/redeploy without `tilt trigger`.
 Deployment apply now defaults desired objects through the reconciler scheme, patches only controller-owned mutable fields with `client.MergeFrom`, preserves unrelated Deployment/template metadata, and makes owned container `terminationMessagePath` explicit to avoid API-default drift.
 Validation passed with `moon run root:test`, `moon run root:check`, and `git diff --check`. The focused manual smoke created `CardanoNetwork/devnet`, verified matching fingerprints and successful conditions, confirmed a clean 35s quiet window after rollout, confirmed exactly one expected Deployment update for a runtime-only port/resource patch followed by another clean quiet window, and verified owned Deployment recreation with the same fingerprint and no post-recreate update/error loop. The test namespace was deleted afterward; the dev stack remains running.
+
+## 2026-05-21 14:22 — Close
+Closed session 005 after merging PR #10 (`feat(cardanonetwork): apply primary node deployment`) into `master` as `044d441d65052122ef162c55806c0cbacba2c0a1`.
+Local `master` was fast-forwarded, the remote `feat/primary-statefulset-builder` branch was deleted, and the Worktrunk feature worktree was removed. The Kind/Tilt dev stack was shut down with `moon run root:dev-down` before closeout.
+Wrote `.journal/005/SUMMARY.md`, updated `.journal/INDEX.md`, and revised `.journal/TECH_NOTES.md` with the durable Deployment/PVC and localnet-identity contract.
