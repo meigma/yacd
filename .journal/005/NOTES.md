@@ -13,3 +13,6 @@ Plan: keep this session idle until the user gives the next task. For implementat
 Goal for the checkpoint: review the current phase 2 boundary and propose the shape of a new type that turns a `CardanoNetwork` into the primary node workload.
 What was reviewed: `.journal/PLAN.md`, `.journal/TECH_NOTES.md`, `DESIGN.md`, the `CardanoNetwork` API, the read-only `CardanoNetworkReconciler`, `localnetSpecFromCardanoNetwork`, `localnet.BuildPlan`, and the existing `localnetCreateEnvInitContainer` helper.
 Current proposal: keep `internal/cardano/localnet` as the pure `cardano-testnet create-env` planner, add a package-local builder in `internal/controller/cardanonetwork` as the single Kubernetes resource construction entrypoint, and have it return a small resource set with the StatefulSet first and Services/PVC/status wiring added as the prototype proves each piece.
+
+## 2026-05-21 09:57 — Adapter folded into builder
+Decision update: the CRD-to-`localnet.Spec` adapter should not remain as a standalone `localnet_adapter.go` helper. It is small enough to become a method on the new primary workload builder, keeping the full CRD-to-workload path inside one cohesive type while preserving `internal/cardano/localnet` as the Kubernetes-free planning package.
