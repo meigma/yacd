@@ -66,6 +66,18 @@ type primaryWorkloadBuilder struct {
 	scheme *runtime.Scheme
 }
 
+type unsupportedSpecError struct {
+	message string
+}
+
+func (e unsupportedSpecError) Error() string {
+	return e.message
+}
+
+func unsupportedSpec(format string, args ...any) unsupportedSpecError {
+	return unsupportedSpecError{message: fmt.Sprintf(format, args...)}
+}
+
 func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*primaryWorkloadResources, error) {
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
@@ -81,7 +93,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 
 	plan, err := localnet.BuildPlan(spec)
 	if err != nil {
-		return nil, err
+		return nil, unsupportedSpec("build localnet plan: %v", err)
 	}
 
 	initContainer, err := b.cardanoTestnetInitContainer(plan)
@@ -107,36 +119,36 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwork) (localnet.Spec, error) {
 	nodeVersion := strings.TrimSpace(network.Spec.Node.Version)
 	if nodeVersion == "" {
-		return localnet.Spec{}, fmt.Errorf("node version is required")
+		return localnet.Spec{}, unsupportedSpec("node version is required")
 	}
 	if network.Spec.Node.Image != nil && strings.TrimSpace(*network.Spec.Node.Image) == "" {
-		return localnet.Spec{}, fmt.Errorf("node image override must not be blank")
+		return localnet.Spec{}, unsupportedSpec("node image override must not be blank")
 	}
 	if network.Spec.Node.Port < 1 || network.Spec.Node.Port > 65535 {
-		return localnet.Spec{}, fmt.Errorf("node port must be between 1 and 65535")
+		return localnet.Spec{}, unsupportedSpec("node port must be between 1 and 65535")
 	}
 	if network.Spec.Mode != yacdv1alpha1.CardanoNetworkModeLocal {
-		return localnet.Spec{}, fmt.Errorf("mode %q is not supported", network.Spec.Mode)
+		return localnet.Spec{}, unsupportedSpec("mode %q is not supported", network.Spec.Mode)
 	}
 	if network.Spec.Local == nil {
-		return localnet.Spec{}, fmt.Errorf("local spec is required")
+		return localnet.Spec{}, unsupportedSpec("local spec is required")
 	}
 	if network.Spec.Public != nil {
-		return localnet.Spec{}, fmt.Errorf("public spec is not supported with local mode")
+		return localnet.Spec{}, unsupportedSpec("public spec is not supported with local mode")
 	}
 
 	local := network.Spec.Local
 	if local.Era == yacdv1alpha1.CardanoEraBabbage {
-		return localnet.Spec{}, fmt.Errorf("local era %q is not supported", local.Era)
+		return localnet.Spec{}, unsupportedSpec("local era %q is not supported", local.Era)
 	}
 	if local.Genesis != nil {
-		return localnet.Spec{}, fmt.Errorf("local genesis tuning is not supported")
+		return localnet.Spec{}, unsupportedSpec("local genesis tuning is not supported")
 	}
 	if local.Topology.Pools.Count != 1 {
-		return localnet.Spec{}, fmt.Errorf("local pool count %d is not supported", local.Topology.Pools.Count)
+		return localnet.Spec{}, unsupportedSpec("local pool count %d is not supported", local.Topology.Pools.Count)
 	}
 	if local.Topology.Pools.Defaults != nil {
-		return localnet.Spec{}, fmt.Errorf("local pool defaults are not supported")
+		return localnet.Spec{}, unsupportedSpec("local pool defaults are not supported")
 	}
 
 	return localnet.Spec{
@@ -361,11 +373,17 @@ func primaryWorkloadLabels(network *yacdv1alpha1.CardanoNetwork) map[string]stri
 
 func safeDNSLabelWithSuffix(value string, suffix string) string {
 	base := sanitizeDNSLabel(value)
+	needsHash := base != value
 	if base == "" {
-		base = shortNameHash(value)
+		base = "x"
+		needsHash = true
 	}
 
-	candidate := fmt.Sprintf("%s-%s", base, suffix)
+	candidateSuffix := "-" + suffix
+	if needsHash {
+		candidateSuffix = fmt.Sprintf("-%s-%s", shortNameHash(value), suffix)
+	}
+	candidate := base + candidateSuffix
 	if len(candidate) <= maxLabelValueLength {
 		return candidate
 	}

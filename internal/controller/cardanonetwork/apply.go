@@ -3,6 +3,7 @@ package cardanonetwork
 import (
 	"context"
 	"fmt"
+	"maps"
 	"reflect"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -80,8 +81,8 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	if current.Spec.Resources.Requests == nil {
 		current.Spec.Resources.Requests = corev1.ResourceList{}
@@ -129,9 +130,10 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
+	current.Spec.Paused = desired.Spec.Paused
 	current.Spec.Replicas = desired.Spec.Replicas
 	current.Spec.Strategy = desired.Spec.Strategy
 	current.Spec.Template = desired.Spec.Template
@@ -154,6 +156,34 @@ func clientObjectKey(object interface {
 		Namespace: object.GetNamespace(),
 		Name:      object.GetName(),
 	}
+}
+
+func mergeStringMap(current map[string]string, desired map[string]string) map[string]string {
+	merged := map[string]string{}
+	maps.Copy(merged, current)
+	maps.Copy(merged, desired)
+	if len(merged) == 0 {
+		return nil
+	}
+
+	return merged
+}
+
+func mergeOwnedAnnotations(current map[string]string, desired map[string]string) map[string]string {
+	merged := map[string]string{}
+	maps.Copy(merged, current)
+	for _, key := range []string{localnetFingerprintAnno, requestedStorageClassAnno} {
+		if value, ok := desired[key]; ok {
+			merged[key] = value
+			continue
+		}
+		delete(merged, key)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+
+	return merged
 }
 
 func resourceConflict(format string, args ...any) unsupportedApplyError {

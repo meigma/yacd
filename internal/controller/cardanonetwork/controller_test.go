@@ -105,6 +105,30 @@ func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *te
 	assert.Equal(t, originalFingerprint, deployment.Spec.Template.Annotations[localnetFingerprintAnno])
 }
 
+func TestCardanoNetworkReconcilerReconcileCorrectsPausedDeployment(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("corrects-paused-deployment")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	deployment.Spec.Paused = true
+	deployment.Labels["example.com/foreign-label"] = "keep"
+	deployment.Annotations = map[string]string{"example.com/foreign-annotation": "keep"}
+	require.NoError(t, reconciler.Update(ctx, deployment))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.False(t, deployment.Spec.Paused)
+	assert.Equal(t, "keep", deployment.Labels["example.com/foreign-label"])
+	assert.Equal(t, "keep", deployment.Annotations["example.com/foreign-annotation"])
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
 func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -233,6 +257,39 @@ func TestCardanoNetworkReconcilerReconcileExpandsStorage(t *testing.T) {
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcilePreservesPVCForeignMetadata(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("preserves-pvc-metadata")
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size: resource.MustParse("10Gi"),
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	pvc.Labels["example.com/foreign-label"] = "keep"
+	pvc.Labels[labelAppManagedBy] = "wrong"
+	pvc.Annotations["volume.kubernetes.io/selected-node"] = "kind-worker"
+	require.NoError(t, reconciler.Update(ctx, pvc))
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Node.Storage.Size = resource.MustParse("20Gi")
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
+	assert.Equal(t, "keep", pvc.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", pvc.Labels[labelAppManagedBy])
+	assert.Equal(t, "kind-worker", pvc.Annotations["volume.kubernetes.io/selected-node"])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -423,6 +480,21 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonResourceConflict)
 		})
 	}
+}
+
+func TestCardanoNetworkReconcilerReconcileReturnsInternalBuildErrors(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("internal-build-error")
+	reconciler := newTestReconciler(t, network)
+	reconciler.Scheme = nil
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scheme is required")
+	assert.Equal(t, ctrl.Result{}, result)
+	current := requireNetwork(t, ctx, reconciler, network)
+	assert.Empty(t, current.Status.Conditions)
 }
 
 // TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput verifies adapter

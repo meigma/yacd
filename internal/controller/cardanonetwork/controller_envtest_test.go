@@ -94,6 +94,19 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalUID
 	}, 10*time.Second, 100*time.Millisecond)
 
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, apiClient.Get(ctx, pvcKey, pvc))
+	originalPVCUID := pvc.UID
+	pvc.Finalizers = nil
+	require.NoError(t, apiClient.Update(ctx, pvc))
+	require.NoError(t, apiClient.Delete(ctx, pvc))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.PersistentVolumeClaim{}
+		err := apiClient.Get(ctx, pvcKey, got)
+		return err == nil && got.UID != originalPVCUID
+	}, 10*time.Second, 100*time.Millisecond)
+
 	require.Eventually(t, func() bool {
 		current := &yacdv1alpha1.CardanoNetwork{}
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {

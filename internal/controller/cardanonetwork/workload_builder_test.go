@@ -268,6 +268,16 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	assert.Equal(t, selector, resources.Deployment.Spec.Template.Labels)
 }
 
+func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
+	dotted, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo.bar"))
+	require.NoError(t, err)
+	dashed, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo-bar"))
+	require.NoError(t, err)
+
+	assert.NotEqual(t, dotted.Deployment.Name, dashed.Deployment.Name)
+	assert.NotEqual(t, dotted.PersistentVolumeClaim.Name, dashed.PersistentVolumeClaim.Name)
+}
+
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	network := localCardanoNetwork("custom-node")
 	image := "example.com/cardano-node:test"

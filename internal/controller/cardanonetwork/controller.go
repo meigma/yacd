@@ -53,6 +53,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	resources, err := (primaryWorkloadBuilder{scheme: r.Scheme}).Build(network)
 	if err != nil {
+		var unsupportedSpec unsupportedSpecError
+		if !errors.As(err, &unsupportedSpec) {
+			return ctrl.Result{}, err
+		}
+
 		log.Info("CardanoNetwork primary workload is not supported yet", "error", err)
 		if statusErr := r.patchStatusConditions(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
