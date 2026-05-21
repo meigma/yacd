@@ -20,7 +20,21 @@
   info.
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
-- PR #2 completed the first operator-shell/project-identity slice on `master`.
-  The repo is now YACD-branded, the Helm chart is `charts/yacd`, and there are
-  intentionally no custom APIs or reconcilers yet. The first YACD API
-  group/version should be introduced with the real primary environment CRD.
+- PR #3 introduced the first real API group/version with
+  `yacd.meigma.io/v1alpha1` and the namespaced `CardanoNetwork` CRD. The draft
+  uses `spec.mode: local|public`; public networks use `profile:
+  preprod|preview|mainnet|custom`, and custom public profile data is limited to
+  same-namespace ConfigMap/Secret refs through `corev1.LocalObjectReference`.
+- The first runtime path is local-mode only. The controller adapter maps
+  network magic, pool count, slot/epoch timing, and node version into
+  `internal/cardano/localnet.Spec`; it rejects public mode and unsupported local
+  genesis/era/pool-default inputs until later slices implement those contracts.
+- `internal/cardano/localnet` is the pure Go, Kubernetes-free boundary for
+  `cardano-testnet create-env` inputs. It returns a deterministic invocation,
+  expected output layout, fingerprint, and JSON-serializable manifest for later
+  init-container idempotency.
+- The repo-local development stack is managed by `moon run root:dev-up` and
+  `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
+  `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port
+  `10350`; future sessions should start it after selecting an implementation
+  worktree and stop it before pause or closeout.
