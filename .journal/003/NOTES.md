@@ -218,3 +218,20 @@ still recording the real Tilt PID for cleanup. Verified the full lifecycle:
 `moon run root:dev-up`, final `moon run root:dev-down`, removed runtime state,
 `bash -n scripts/dev-up.sh scripts/dev-down.sh`, `moon task root:dev-up`,
 `moon task root:dev-down`, `moon run root:check`, and `git diff --check`.
+
+## 2026-05-20 19:05 — Development tooling moved under .dev
+
+Moved the development support directory from `dev/` to `.dev/` and moved all
+task helper scripts from `scripts/` to `.dev/scripts/`. Updated the Tilt custom
+build command, Moon task commands and inputs, dev-stack scripts, `.tiltignore`,
+and `AGENTS.md` references to use the new paths. This keeps development
+tooling visually separate from Go package paths.
+
+Verified the moved paths with `bash -n .dev/scripts/*.sh .dev/ko-build.sh`,
+`moon task root:check`, `moon task root:deploy`, `moon task root:undeploy`,
+`moon task root:dev-up`, `moon task root:dev-down`, and
+`moon task root:test-e2e`. Also ran the live lifecycle smoke:
+`moon run root:dev-down`, `moon run root:dev-up`, controller readiness through
+`kubectl`, `tilt get uiresource/controller --port 10350`, idempotent second
+`moon run root:dev-up`, and final `moon run root:dev-down`. Final verification
+passed: `moon run root:check` and `git diff --check`.
