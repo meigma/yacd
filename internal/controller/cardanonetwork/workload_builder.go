@@ -1,6 +1,8 @@
 package cardanonetwork
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path"
 	"strconv"
@@ -29,6 +31,8 @@ const (
 	nodeIPCVolumeName       = "node-ipc"
 	defaultNodeStorageSize  = "10Gi"
 	localnetFingerprintAnno = "yacd.meigma.io/localnet-fingerprint"
+	maxLabelValueLength     = 63
+	safeNameHashLength      = 10
 
 	labelAppName         = "app.kubernetes.io/name"
 	labelAppInstance     = "app.kubernetes.io/instance"
@@ -141,18 +145,23 @@ func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwor
 func (b primaryWorkloadBuilder) statefulSet(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container) (*appsv1.StatefulSet, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
+	statefulSetName := primaryStatefulSetName(network)
 
 	statefulSet := &appsv1.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      primaryStatefulSetName(network),
+			Name:      statefulSetName,
 			Namespace: network.Namespace,
 			Labels:    labels,
 		},
 		Spec: appsv1.StatefulSetSpec{
 			Replicas:    new(int32(1)),
-			ServiceName: primaryStatefulSetName(network),
+			ServiceName: statefulSetName,
 			Selector: &metav1.LabelSelector{
 				MatchLabels: selectorLabels,
+			},
+			PersistentVolumeClaimRetentionPolicy: &appsv1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+				WhenDeleted: appsv1.DeletePersistentVolumeClaimRetentionPolicyType,
+				WhenScaled:  appsv1.RetainPersistentVolumeClaimRetentionPolicyType,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
@@ -162,6 +171,7 @@ func (b primaryWorkloadBuilder) statefulSet(network *yacdv1alpha1.CardanoNetwork
 					},
 				},
 				Spec: corev1.PodSpec{
+					AutomountServiceAccountToken: new(false),
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:      new(localnetToolsRunAsID),
 						RunAsGroup:   new(localnetToolsRunAsID),
@@ -282,15 +292,17 @@ func (b primaryWorkloadBuilder) volumeClaimTemplates(network *yacdv1alpha1.Carda
 }
 
 func primaryStatefulSetName(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("%s-%s", network.Name, primaryNodeNameSuffix)
+	return safeDNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {
+	instance := safeLabelValue(network.Name)
+
 	return map[string]string{
 		labelAppName:        labelPrimaryNodeName,
-		labelAppInstance:    network.Name,
+		labelAppInstance:    instance,
 		labelAppComponent:   labelPrimaryRole,
-		labelCardanoNetwork: network.Name,
+		labelCardanoNetwork: instance,
 		labelCardanoRole:    labelPrimaryRole,
 	}
 }
@@ -300,4 +312,84 @@ func primaryWorkloadLabels(network *yacdv1alpha1.CardanoNetwork) map[string]stri
 	labels[labelAppManagedBy] = "yacd"
 
 	return labels
+}
+
+func safeDNSLabelWithSuffix(value string, suffix string) string {
+	base := sanitizeDNSLabel(value)
+	if base == "" {
+		base = shortNameHash(value)
+	}
+
+	candidate := fmt.Sprintf("%s-%s", base, suffix)
+	if len(candidate) <= maxLabelValueLength {
+		return candidate
+	}
+
+	hash := shortNameHash(value)
+	hashSuffix := fmt.Sprintf("-%s-%s", hash, suffix)
+	prefixLength := maxLabelValueLength - len(hashSuffix)
+	prefix := strings.Trim(base[:prefixLength], "-")
+	if prefix == "" {
+		prefix = "x"
+	}
+
+	return prefix + hashSuffix
+}
+
+func safeLabelValue(value string) string {
+	base := sanitizeLabelValue(value)
+	if base == "" {
+		base = shortNameHash(value)
+	}
+	if len(base) <= maxLabelValueLength {
+		return base
+	}
+
+	hash := shortNameHash(value)
+	hashSuffix := "-" + hash
+	prefixLength := maxLabelValueLength - len(hashSuffix)
+	prefix := strings.TrimRight(base[:prefixLength], "-_.")
+	if prefix == "" {
+		prefix = "x"
+	}
+
+	return prefix + hashSuffix
+}
+
+func sanitizeDNSLabel(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, char := range strings.ToLower(value) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
+			builder.WriteRune(char)
+			continue
+		}
+		builder.WriteByte('-')
+	}
+
+	return strings.Trim(builder.String(), "-")
+}
+
+func sanitizeLabelValue(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == '-' ||
+			char == '_' ||
+			char == '.' {
+			builder.WriteRune(char)
+			continue
+		}
+		builder.WriteByte('-')
+	}
+
+	return strings.Trim(builder.String(), "-_.")
+}
+
+func shortNameHash(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:safeNameHashLength]
 }

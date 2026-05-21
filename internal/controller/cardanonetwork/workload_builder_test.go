@@ -1,6 +1,7 @@
 package cardanonetwork
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,9 @@ func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
 	assert.Equal(t, "devnet-node", statefulSet.Spec.ServiceName)
 	require.NotNil(t, statefulSet.Spec.Replicas)
 	assert.Equal(t, int32(1), *statefulSet.Spec.Replicas)
+	require.NotNil(t, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy)
+	assert.Equal(t, appsv1.DeletePersistentVolumeClaimRetentionPolicyType, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy.WhenDeleted)
+	assert.Equal(t, appsv1.RetainPersistentVolumeClaimRetentionPolicyType, statefulSet.Spec.PersistentVolumeClaimRetentionPolicy.WhenScaled)
 
 	controller := metav1.GetControllerOf(statefulSet)
 	require.NotNil(t, controller)
@@ -179,6 +183,8 @@ func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
 	assert.Equal(t, expectedSelector, statefulSet.Spec.Template.Labels)
 	assert.Equal(t, "yacd", statefulSet.Labels[labelAppManagedBy])
 	assert.NotEmpty(t, statefulSet.Spec.Template.Annotations[localnetFingerprintAnno])
+	require.NotNil(t, statefulSet.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *statefulSet.Spec.Template.Spec.AutomountServiceAccountToken)
 
 	require.Len(t, statefulSet.Spec.Template.Spec.InitContainers, 1)
 	initContainer := statefulSet.Spec.Template.Spec.InitContainers[0]
@@ -222,6 +228,24 @@ func TestPrimaryWorkloadBuilderBuildsStatefulSet(t *testing.T) {
 
 	assertPodSecurityContext(t, statefulSet.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
+}
+
+func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
+	network := localCardanoNetwork("devnet." + strings.Repeat("a", 80))
+
+	statefulSet, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(statefulSet.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(statefulSet.Name, "-node"))
+	assert.NotContains(t, statefulSet.Name, ".")
+	assert.Equal(t, statefulSet.Name, statefulSet.Spec.ServiceName)
+
+	selector := statefulSet.Spec.Selector.MatchLabels
+	assert.LessOrEqual(t, len(selector[labelAppInstance]), maxLabelValueLength)
+	assert.LessOrEqual(t, len(selector[labelCardanoNetwork]), maxLabelValueLength)
+	assert.NotEqual(t, network.Name, selector[labelAppInstance])
+	assert.Equal(t, selector, statefulSet.Spec.Template.Labels)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
