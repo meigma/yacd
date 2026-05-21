@@ -102,3 +102,26 @@ Post-merge `CI` on `master` passed. The `Release Please` workflow failed before
 project code ran because `actions/create-github-app-token` received an empty
 `client-id`/deprecated `app-id` input, which points at missing repository
 release-app configuration rather than the CRD merge itself.
+
+## 2026-05-20 17:27 — Local Cardano package layering
+Agreed to keep the first local-mode implementation focused on
+`cardano-testnet` and to ignore public mode for now. The raw Cardano boundary
+should generate a typed Go `TestnetPlan` rather than Kubernetes resources. That
+plan should describe the `cardano-testnet create-env` invocation, output/state
+paths, expected node config/topology/key paths, socket conventions, and a plan
+hash for idempotency/reset detection.
+
+The Kubernetes side should stay layered. A node workload-fragment layer
+converts the `TestnetPlan` into the init container, cardano-node container,
+volume mounts, probes, and volume-name requirements. A separate Ogmios
+fragment converts Ogmios settings plus node runtime paths into the sidecar,
+port, and readiness shape. A final resource assembly layer consumes those
+fragments to build the owned `StatefulSet`, service(s), selector labels,
+volume claim template, owner refs, and status endpoint inputs.
+
+First-pass package direction: keep the pure Cardano plan under something like
+`internal/cardano/localnet`, and keep the Kubernetes fragments/resource assembly
+controller-adjacent at first. Split the Kubernetes fragments into separate
+packages only once the seams prove useful. The agreed runtime flow is:
+`CardanoNetwork spec -> localnet.TestnetPlan -> node fragment -> Ogmios
+fragment -> StatefulSet + Service`.
