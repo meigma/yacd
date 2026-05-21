@@ -198,3 +198,23 @@ fingerprint
 `cardano-testnet create-env --num-pool-nodes 1 --testnet-magic 42
 --epoch-length 500 --slot-length 0.1 --output /state/env`. Verification passed:
 `git diff --check` and `moon run root:check`.
+
+## 2026-05-20 18:59 — Dev stack recipes now manage background Tilt
+
+Converted `root:dev-up` and `root:dev-down` into the shared human/agent
+dev-stack contract. The Moon tasks now call `scripts/dev-up.sh` and
+`scripts/dev-down.sh`; `dev-up` creates the ctlptl Kind cluster/registry,
+starts Tilt in the background, records shared state under `.run/yacd-dev/` in
+the primary checkout, waits for the Tiltfile and controller resource to become
+ready, and exits. `dev-down` stops the recorded Tilt PID, runs `tilt down`,
+deletes the ctlptl cluster/registry, and removes the runtime state.
+
+During smoke testing, plain shell backgrounding and `nohup` were not enough
+because Moon cleaned up the task process group after the task exited. The final
+launcher uses `python3` with `start_new_session=True` to detach Tilt while
+still recording the real Tilt PID for cleanup. Verified the full lifecycle:
+`moon run root:dev-down`, `moon run root:dev-up`, controller readiness,
+`tilt get uiresource/controller --port 10350`, idempotent second
+`moon run root:dev-up`, final `moon run root:dev-down`, removed runtime state,
+`bash -n scripts/dev-up.sh scripts/dev-down.sh`, `moon task root:dev-up`,
+`moon task root:dev-down`, `moon run root:check`, and `git diff --check`.
