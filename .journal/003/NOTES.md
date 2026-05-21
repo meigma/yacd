@@ -148,3 +148,19 @@ private constants, and test functions after review feedback clarified that all
 types and functions should be documented. Verification still passed:
 `go test ./internal/cardano/localnet`, `moon run root:test`,
 `moon run root:check`, and `git diff --check`.
+
+## 2026-05-20 18:06 — CardanoNetwork controller scaffold
+Added the first `CardanoNetwork` controller scaffold under
+`internal/controller/cardanonetwork`, following the template-k8s controller
+shape but keeping this pass intentionally non-functional. The reconciler now
+registers with controller-runtime using `.For(&CardanoNetwork{})`, logs a
+startup message from `SetupWithManager`, and logs a scaffold message if a
+reconcile is invoked. It does not create child resources, update status,
+emit events, or build localnet plans yet.
+
+Updated `cmd/setup.go` to register the controller and updated Helm manager RBAC
+to match the generated `get/list/watch` permission for `cardanonetworks`.
+Verification passed: `moon run root:test`, `moon run root:check`, and
+`git diff --check`. A direct `go test ./cmd` was not used as verification
+because it bypasses the repo's envtest asset setup and fails looking for
+`/usr/local/kubebuilder/bin/etcd`; `moon run root:test` is the expected path.
