@@ -130,15 +130,85 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "kupo port must be between 1 and 65535",
 		},
 		{
-			name: "kupo with ogmios disabled",
+			name: "explicit kupo with ogmios disabled",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 					Ogmios: &yacdv1alpha1.OgmiosSpec{
 						Enabled: false,
 					},
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    defaultKupoPort,
+					},
 				}
 			},
 			wantErr: "kupo requires ogmios to be enabled",
+		},
+		{
+			name: "unsupported kupo image tag",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   "cardanosolutions/kupo:latest",
+						Port:    defaultKupoPort,
+					},
+				}
+			},
+			wantErr: `kupo image tag "latest" is not a pinned release tag`,
+		},
+		{
+			name: "untagged kupo image",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   "cardanosolutions/kupo",
+						Port:    defaultKupoPort,
+					},
+				}
+			},
+			wantErr: `kupo image "cardanosolutions/kupo" must include a pinned release tag`,
+		},
+		{
+			name: "ogmios port conflicts with node port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   defaultOgmiosImage,
+						Port:    network.Spec.Node.Port,
+					},
+				}
+			},
+			wantErr: "ogmios port 3001 conflicts with node-to-node port",
+		},
+		{
+			name: "kupo port conflicts with node port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    network.Spec.Node.Port,
+					},
+				}
+			},
+			wantErr: "kupo port 3001 conflicts with node-to-node port",
+		},
+		{
+			name: "kupo port conflicts with ogmios port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    defaultOgmiosPort,
+					},
+				}
+			},
+			wantErr: "kupo port 1337 conflicts with ogmios port",
 		},
 		{
 			name: "unsupported ogmios image tag",
@@ -618,9 +688,6 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	network := localCardanoNetwork("ogmios-disabled")
 	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
-			Enabled: false,
-		},
-		Kupo: &yacdv1alpha1.KupoSpec{
 			Enabled: false,
 		},
 	}

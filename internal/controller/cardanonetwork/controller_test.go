@@ -181,9 +181,6 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
 			Enabled: false,
 		},
-		Kupo: &yacdv1alpha1.KupoSpec{
-			Enabled: false,
-		},
 	}
 	reconciler := newTestReconciler(t, network)
 
@@ -222,13 +219,11 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	requirePrimaryKupoService(t, ctx, reconciler, network)
 
 	current := requireNetwork(t, ctx, reconciler, network)
 	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
-			Enabled: false,
-		},
-		Kupo: &yacdv1alpha1.KupoSpec{
 			Enabled: false,
 		},
 	}
@@ -238,6 +233,7 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 	require.NoError(t, err)
 
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)

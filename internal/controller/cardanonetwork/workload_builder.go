@@ -159,7 +159,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
-	kupo, err := resolveKupoSettings(network)
+	kupo, err := resolveKupoSettings(network, ogmios)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +170,12 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		err = validateOgmiosCompatibility(network.Spec.Node.Version, ogmios)
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err := validateKupoImageTag(kupo); err != nil {
+		return nil, err
+	}
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo); err != nil {
 		return nil, err
 	}
 
@@ -292,13 +298,16 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 	return settings, nil
 }
 
-func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork) (kupoSettings, error) {
+func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSettings) (kupoSettings, error) {
 	settings := kupoSettings{
 		enabled: true,
 		image:   defaultKupoImage,
 		port:    defaultKupoPort,
 	}
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Kupo == nil {
+		if !ogmios.enabled {
+			settings.enabled = false
+		}
 		return settings, nil
 	}
 
@@ -321,6 +330,54 @@ func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork) (kupoSettings, er
 	}
 
 	return settings, nil
+}
+
+func validateKupoImageTag(settings kupoSettings) error {
+	if !settings.enabled {
+		return nil
+	}
+
+	tag, ok := containerImageTag(settings.image)
+	if !ok {
+		return unsupportedSpec("kupo image %q must include a pinned release tag", settings.image)
+	}
+	if tag == "latest" {
+		return unsupportedSpec("kupo image tag %q is not a pinned release tag", tag)
+	}
+	if !strings.HasPrefix(tag, "v") {
+		return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
+	}
+
+	parts := strings.Split(strings.TrimPrefix(tag, "v"), ".")
+	if len(parts) != 3 {
+		return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
+	}
+	for _, part := range parts {
+		if _, err := strconv.Atoi(part); err != nil {
+			return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
+		}
+	}
+
+	return nil
+}
+
+func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings) error {
+	seen := map[int32]string{
+		nodePort: cardanoNodePortName,
+	}
+	if ogmios.enabled {
+		if owner, ok := seen[ogmios.port]; ok {
+			return unsupportedSpec("ogmios port %d conflicts with %s port", ogmios.port, owner)
+		}
+		seen[ogmios.port] = ogmiosPortName
+	}
+	if kupo.enabled {
+		if owner, ok := seen[kupo.port]; ok {
+			return unsupportedSpec("kupo port %d conflicts with %s port", kupo.port, owner)
+		}
+	}
+
+	return nil
 }
 
 func validateOgmiosCompatibility(nodeVersion string, settings ogmiosSettings) error {
