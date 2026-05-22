@@ -39,3 +39,18 @@ Started implementation on Worktrunk branch `feat/ogmios-chain-api` at
 that worktree with `direnv allow && moon run root:dev-up`; it created the
 `yacd-dev` Kind cluster, started Tilt, and reported `YACD dev stack is ready`.
 Tilt UI is available on port `10350`, with logs under `.run/yacd-dev/tilt.log`.
+
+## 2026-05-21 18:14 — Ogmios implementation
+Implemented phase 3 on `feat/ogmios-chain-api` and pushed commit `281ef1e`
+(`feat(cardanonetwork): expose ogmios chain api`). The slice adds default
+Ogmios settings resolution, the sidecar mounted to the existing node IPC and
+state volumes, a dedicated `<network>-ogmios` Service, Ogmios endpoint status,
+`OgmiosReady`, and aggregate `Ready`. Explicit `enabled: false` removes the
+owned Ogmios Service and clears the endpoint.
+Validation passed with `moon run root:generate`, `moon run root:test`,
+`moon run root:check`, `moon run root:test-e2e`, and `git diff --check`.
+The Chainsaw smoke created `phase3-smoke`, reached `Ready=True`, verified both
+node-to-node and Ogmios status endpoints, and confirmed an in-cluster curl pod
+received HTTP 200 from `http://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337/health`.
+After e2e cleanup, the kubectl context was restored to `kind-yacd-dev`; the
+session dev stack remains running.
