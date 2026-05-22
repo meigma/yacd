@@ -24,21 +24,21 @@ spec:
           echo "== controller manager deployment =="
           kubectl describe deployment -n yacd-system yacd-controller-manager
           echo "== CardanoNetwork smoke resource =="
-          kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o yaml
+          kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml
           echo "== CardanoNetwork smoke resources =="
-          kubectl get all,pvc -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase3-smoke -o wide
+          kubectl get all,pvc -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
           echo "== CardanoNetwork smoke events =="
           kubectl get events -n yacd-smoke --sort-by=.lastTimestamp
           echo "== CardanoNetwork smoke child descriptions =="
-          kubectl describe pvc -n yacd-smoke phase3-smoke-node-state
-          kubectl describe service -n yacd-smoke phase3-smoke-node
-          kubectl describe service -n yacd-smoke phase3-smoke-ogmios
-          kubectl describe deployment -n yacd-smoke phase3-smoke-node
-          kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase3-smoke,yacd.meigma.io/role=primary-node
+          kubectl describe pvc -n yacd-smoke phase4-smoke-node-state
+          kubectl describe service -n yacd-smoke phase4-smoke-node
+          kubectl describe service -n yacd-smoke phase4-smoke-ogmios
+          kubectl describe deployment -n yacd-smoke phase4-smoke-node
+          kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node
           echo "== Ogmios curl logs =="
           kubectl logs -n yacd-smoke curl-ogmios || true
           echo "== CardanoNetwork smoke pod logs =="
-          kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase3-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
+          kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
           exit 0
   steps:
     - name: deploy-controller
@@ -166,50 +166,28 @@ spec:
                 *) exit 1 ;;
               esac
         - script:
-            timeout: 1m
+            timeout: 12m
             workDir: ../../..
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
               kubectl label --overwrite namespace yacd-smoke pod-security.kubernetes.io/enforce=restricted
-              kubectl apply -f - <<'YAML'
-              apiVersion: yacd.meigma.io/v1alpha1
-              kind: CardanoNetwork
-              metadata:
-                name: phase3-smoke
-                namespace: yacd-smoke
-              spec:
-                mode: local
-                node:
-                  version: "11.0.1"
-                  port: 3001
-                  storage:
-                    size: 2Gi
-                local:
-                  networkMagic: 42
-                  era: conway
-                  timing:
-                    slotLength: 100ms
-                    epochLength: 500
-                  topology:
-                    pools:
-                      count: 1
-              YAML
+              go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait --timeout 10m
         - assert:
             resource:
               apiVersion: v1
               kind: PersistentVolumeClaim
               metadata:
                 namespace: yacd-smoke
-                name: phase3-smoke-node-state
+                name: phase4-smoke-node-state
         - assert:
             resource:
               apiVersion: v1
               kind: Service
               metadata:
                 namespace: yacd-smoke
-                name: phase3-smoke-node
+                name: phase4-smoke-node
               spec:
                 type: ClusterIP
                 ports:
@@ -223,7 +201,7 @@ spec:
               kind: Service
               metadata:
                 namespace: yacd-smoke
-                name: phase3-smoke-ogmios
+                name: phase4-smoke-ogmios
               spec:
                 type: ClusterIP
                 ports:
@@ -235,7 +213,7 @@ spec:
             apiVersion: apps/v1
             kind: Deployment
             namespace: yacd-smoke
-            name: phase3-smoke-node
+            name: phase4-smoke-node
             timeout: 10m
             for:
               condition:
@@ -246,7 +224,7 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              selector="yacd.meigma.io/cardanonetwork=phase3-smoke,yacd.meigma.io/role=primary-node"
+              selector="yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node"
               kubectl wait -n yacd-smoke --for=condition=Ready pod -l "${selector}" --timeout=10m
         - script:
             timeout: 10m
@@ -254,31 +232,31 @@ spec:
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               for _ in $(seq 1 120); do
-                ready="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
-                node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
-                ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
-                progressing="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null || true)"
-                degraded="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
-                service_name="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.nodeToNode.serviceName}' 2>/dev/null || true)"
-                port="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.nodeToNode.port}' 2>/dev/null || true)"
-                url="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.nodeToNode.url}' 2>/dev/null || true)"
-                ogmios_service_name="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.ogmios.serviceName}' 2>/dev/null || true)"
-                ogmios_port="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.ogmios.port}' 2>/dev/null || true)"
-                ogmios_url="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.ogmios.url}' 2>/dev/null || true)"
+                ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+                node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
+                ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
+                progressing="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null || true)"
+                degraded="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+                service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.nodeToNode.serviceName}' 2>/dev/null || true)"
+                port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.nodeToNode.port}' 2>/dev/null || true)"
+                url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.nodeToNode.url}' 2>/dev/null || true)"
+                ogmios_service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.ogmios.serviceName}' 2>/dev/null || true)"
+                ogmios_port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.ogmios.port}' 2>/dev/null || true)"
+                ogmios_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.ogmios.url}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${progressing}" = "False" ] &&
                   [ "${degraded}" = "False" ] &&
-                  [ "${service_name}" = "phase3-smoke-node" ] &&
+                  [ "${service_name}" = "phase4-smoke-node" ] &&
                   [ "${port}" = "3001" ] &&
-                  [ "${url}" = "tcp://phase3-smoke-node.yacd-smoke.svc.cluster.local:3001" ] &&
-                  [ "${ogmios_service_name}" = "phase3-smoke-ogmios" ] &&
+                  [ "${url}" = "tcp://phase4-smoke-node.yacd-smoke.svc.cluster.local:3001" ] &&
+                  [ "${ogmios_service_name}" = "phase4-smoke-ogmios" ] &&
                   [ "${ogmios_port}" = "1337" ] &&
-                  [ "${ogmios_url}" = "ws://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337" ]; then
+                  [ "${ogmios_url}" = "ws://phase4-smoke-ogmios.yacd-smoke.svc.cluster.local:1337" ]; then
                   exit 0
                 fi
-                kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o yaml || true
+                kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true
                 sleep 5
               done
               exit 1
@@ -288,6 +266,18 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              info_json="$(go run ./cli/cmd/yacd --namespace yacd-smoke info phase4-smoke --json)"
+              printf '%s\n' "$info_json"
+              INFO_JSON="$info_json" python3 - <<'PY'
+              import json
+              import os
+
+              data = json.loads(os.environ["INFO_JSON"])
+              assert data["name"] == "phase4-smoke"
+              assert data["namespace"] == "yacd-smoke"
+              assert data["endpoints"]["ogmios"]["url"] == "ws://phase4-smoke-ogmios.yacd-smoke.svc.cluster.local:1337"
+              assert any(condition["type"] == "Ready" and condition["status"] == "True" for condition in data["conditions"])
+              PY
               kubectl apply -f - <<'YAML'
               apiVersion: v1
               kind: Pod
@@ -318,7 +308,7 @@ spec:
                           status="$(curl -sS -o /tmp/ogmios-tip.json -w '%{http_code}' \
                             -H 'Content-Type: application/json' \
                             -d '{"jsonrpc":"2.0","method":"queryNetwork/tip","id":"chainsaw-smoke"}' \
-                            http://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337 || true)"
+                            http://phase4-smoke-ogmios.yacd-smoke.svc.cluster.local:1337 || true)"
                           echo "ogmios queryNetwork/tip status: ${status}"
                           cat /tmp/ogmios-tip.json || true
                           if [ "${status}" = "200" ] &&
@@ -355,21 +345,21 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl patch cardanonetwork -n yacd-smoke phase3-smoke --type=merge -p '{"spec":{"chainAPI":{"ogmios":{"enabled":false,"image":"cardanosolutions/ogmios:v6.14.0","port":1337}}}}'
+              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"ogmios":{"enabled":false,"image":"cardanosolutions/ogmios:v6.14.0","port":1337}}}}'
               for _ in $(seq 1 60); do
-                if kubectl get service -n yacd-smoke phase3-smoke-ogmios >/dev/null 2>&1; then
+                if kubectl get service -n yacd-smoke phase4-smoke-ogmios >/dev/null 2>&1; then
                   sleep 5
                   continue
                 fi
-                ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
-                ogmios_reason="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].reason}' 2>/dev/null || true)"
-                ogmios_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.ogmios.serviceName}' 2>/dev/null || true)"
+                ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
+                ogmios_reason="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].reason}' 2>/dev/null || true)"
+                ogmios_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.ogmios.serviceName}' 2>/dev/null || true)"
                 if [ "${ogmios_ready}" = "False" ] &&
                   [ "${ogmios_reason}" = "OgmiosDisabled" ] &&
                   [ -z "${ogmios_endpoint}" ]; then
                   exit 0
                 fi
-                kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o yaml || true
+                kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true
                 sleep 5
               done
               exit 1

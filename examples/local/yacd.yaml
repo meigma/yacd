@@ -1,0 +1,22 @@
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: phase4-smoke
+  namespace: yacd-smoke
+spec:
+  network:
+    mode: local
+    node:
+      version: "11.0.1"
+      port: 3001
+      storage:
+        size: 2Gi
+    local:
+      networkMagic: 42
+      era: conway
+      timing:
+        slotLength: 100ms
+        epochLength: 500
+      topology:
+        pools:
+          count: 1

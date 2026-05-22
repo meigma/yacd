@@ -4,7 +4,7 @@ project_name: yacd
 
 builds:
   - id: yacd
-    main: ./cmd
+    main: ./cli/cmd/yacd
     binary: yacd
     env:
       - CGO_ENABLED=0
@@ -18,6 +18,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w -buildid=
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .CommitDate }}
     mod_timestamp: '{{ .CommitTimestamp }}'
 
 archives:

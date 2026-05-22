@@ -12,6 +12,7 @@ project:
 fileGroups:
   goSources:
     - 'api/**/*.go'
+    - 'cli/**/*.go'
     - 'cmd/**/*.go'
     - 'internal/**/*.go'
     - 'test/**/*.go'
@@ -27,6 +28,7 @@ fileGroups:
   chartSources:
     - 'charts/yacd/**/*'
   chainsawSources:
+    - 'examples/**/*.yaml'
     - 'test/chainsaw/**/*.yaml'
   devStackSources:
     - '.ko.yaml'
