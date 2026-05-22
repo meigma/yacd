@@ -68,7 +68,7 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	requirePrimaryPVC(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	service := requirePrimaryService(t, ctx, reconciler, network)
@@ -108,6 +108,7 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
@@ -117,6 +118,26 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+}
+
+func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("node-ready-ogmios-waiting")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
 
 func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
@@ -142,6 +163,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 
@@ -950,11 +972,13 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkRe
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{})
+		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{}, &corev1.Pod{})
 	builder.WithObjects(objects...)
+	fakeClient := builder.Build()
 
 	return &CardanoNetworkReconciler{
-		Client: builder.Build(),
+		Client: fakeClient,
+		Reader: fakeClient,
 		Scheme: scheme,
 	}
 }
@@ -1100,6 +1124,46 @@ func markPrimaryDeploymentAvailable(
 		},
 	}
 	require.NoError(t, reconciler.Status().Update(ctx, deployment))
+}
+
+func markPrimaryPodContainersReady(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	containerNames ...string,
+) {
+	t.Helper()
+
+	containers := make([]corev1.Container, 0, len(containerNames))
+	containerStatuses := make([]corev1.ContainerStatus, 0, len(containerNames))
+	for _, containerName := range containerNames {
+		containers = append(containers, corev1.Container{Name: containerName, Image: "example.com/" + containerName + ":test"})
+		containerStatuses = append(containerStatuses, corev1.ContainerStatus{
+			Name:  containerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		})
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network) + "-pod",
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadSelectorLabels(network),
+		},
+		Spec: corev1.PodSpec{
+			Containers: containers,
+		},
+	}
+	require.NoError(t, reconciler.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = containerStatuses
+	require.NoError(t, reconciler.Status().Update(ctx, pod))
 }
 
 func assertNoPrimaryChildren(

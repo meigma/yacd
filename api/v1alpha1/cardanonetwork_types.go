@@ -338,8 +338,8 @@ type CardanoNetworkStatus struct {
 	//
 	// Expected condition types include:
 	// - "Ready": the network is usable through its published endpoints
-	// - "NodeReady": the primary node is running and queryable
-	// - "OgmiosReady": Ogmios is enabled and serving health checks
+	// - "NodeReady": the primary node container is running
+	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain its desired state
 	//

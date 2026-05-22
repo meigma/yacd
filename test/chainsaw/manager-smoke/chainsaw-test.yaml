@@ -315,10 +315,15 @@ spec:
                     args:
                       - |
                         for i in $(seq 1 30); do
-                          status="$(curl -sS -o /tmp/ogmios-health.json -w '%{http_code}' http://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337/health || true)"
-                          echo "ogmios health status: ${status}"
-                          if [ "${status}" = "200" ]; then
-                            cat /tmp/ogmios-health.json
+                          status="$(curl -sS -o /tmp/ogmios-tip.json -w '%{http_code}' \
+                            -H 'Content-Type: application/json' \
+                            -d '{"jsonrpc":"2.0","method":"queryNetwork/tip","id":"chainsaw-smoke"}' \
+                            http://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337 || true)"
+                          echo "ogmios queryNetwork/tip status: ${status}"
+                          cat /tmp/ogmios-tip.json || true
+                          if [ "${status}" = "200" ] &&
+                            grep -q '"method"[[:space:]]*:[[:space:]]*"queryNetwork/tip"' /tmp/ogmios-tip.json &&
+                            grep -q '"result"[[:space:]]*:' /tmp/ogmios-tip.json; then
                             exit 0
                           fi
                           sleep 2
@@ -345,6 +350,29 @@ spec:
               jsonPath:
                 path: '{.status.phase}'
                 value: Succeeded
+        - script:
+            timeout: 5m
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              kubectl patch cardanonetwork -n yacd-smoke phase3-smoke --type=merge -p '{"spec":{"chainAPI":{"ogmios":{"enabled":false,"image":"cardanosolutions/ogmios:v6.14.0","port":1337}}}}'
+              for _ in $(seq 1 60); do
+                if kubectl get service -n yacd-smoke phase3-smoke-ogmios >/dev/null 2>&1; then
+                  sleep 5
+                  continue
+                fi
+                ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
+                ogmios_reason="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].reason}' 2>/dev/null || true)"
+                ogmios_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o jsonpath='{.status.endpoints.ogmios.serviceName}' 2>/dev/null || true)"
+                if [ "${ogmios_ready}" = "False" ] &&
+                  [ "${ogmios_reason}" = "OgmiosDisabled" ] &&
+                  [ -z "${ogmios_endpoint}" ]; then
+                  exit 0
+                fi
+                kubectl get cardanonetwork -n yacd-smoke phase3-smoke -o yaml || true
+                sleep 5
+              done
+              exit 1
       cleanup:
         - script:
             timeout: 5m

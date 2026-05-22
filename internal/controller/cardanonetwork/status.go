@@ -37,8 +37,8 @@ const (
 	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, Service, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
 	conditionMessageReady                      = "CardanoNetwork is usable through its published endpoints"
-	conditionMessagePrimaryNodeReady           = "Primary node Deployment is available"
-	conditionMessageOgmiosReady                = "Ogmios is available through its Service"
+	conditionMessagePrimaryNodeReady           = "Primary node container is ready"
+	conditionMessageOgmiosReady                = "Ogmios sidecar is connected and available through its Service"
 	conditionMessageOgmiosDisabled             = "Ogmios chain API is disabled"
 )
 
@@ -56,24 +56,28 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	localnetFingerprint string,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
-) error {
+) (metav1.Condition, error) {
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
-		return err
+		return metav1.Condition{}, err
 	}
 	ogmiosReady, err := r.primaryOgmiosReadyCondition(ctx, network, ogmiosService != nil)
 	if err != nil {
-		return err
+		return metav1.Condition{}, err
 	}
 	ready := readyCondition(nodeReady, ogmiosReady)
 
-	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
 		nodeReady,
 		ogmiosReady,
-	)
+	); err != nil {
+		return metav1.Condition{}, err
+	}
+
+	return ready, nil
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
@@ -190,13 +194,23 @@ func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
 			"Primary node Deployment has not observed the latest generation",
 		), nil
 	}
-	if !deploymentAvailable(deployment) ||
-		deployment.Status.ReadyReplicas < 1 ||
-		deployment.Status.AvailableReplicas < 1 {
+	if deployment.Status.UpdatedReplicas < 1 {
 		return nodeReadyCondition(
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"Primary node Deployment is not available",
+		), nil
+	}
+
+	containerReady, err := r.primaryPodContainerReady(ctx, network, cardanoNodeContainerName)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	if !containerReady {
+		return nodeReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node container is not ready",
 		), nil
 	}
 
@@ -250,13 +264,23 @@ func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 			"Primary node Deployment has not observed the latest generation",
 		), nil
 	}
-	if !deploymentAvailable(deployment) ||
-		deployment.Status.ReadyReplicas < 1 ||
-		deployment.Status.AvailableReplicas < 1 {
+	if deployment.Status.UpdatedReplicas < 1 {
 		return ogmiosReadyCondition(
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"Ogmios sidecar is not available",
+		), nil
+	}
+
+	containerReady, err := r.primaryPodContainerReady(ctx, network, ogmiosContainerName)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	if !containerReady {
+		return ogmiosReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Ogmios sidecar is not ready",
 		), nil
 	}
 
@@ -267,10 +291,46 @@ func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 	), nil
 }
 
-func deploymentAvailable(deployment *appsv1.Deployment) bool {
-	for _, condition := range deployment.Status.Conditions {
-		if condition.Type == appsv1.DeploymentAvailable {
-			return condition.Status == corev1.ConditionTrue
+func (r *CardanoNetworkReconciler) primaryPodContainerReady(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	containerName string,
+) (bool, error) {
+	pods := &corev1.PodList{}
+	if err := r.statusReader().List(
+		ctx,
+		pods,
+		client.InNamespace(network.Namespace),
+		client.MatchingLabels(primaryWorkloadSelectorLabels(network)),
+	); err != nil {
+		return false, err
+	}
+
+	for i := range pods.Items {
+		if podContainerReady(&pods.Items[i], containerName) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func (r *CardanoNetworkReconciler) statusReader() client.Reader {
+	if r.Reader != nil {
+		return r.Reader
+	}
+
+	return r.Client
+}
+
+func podContainerReady(pod *corev1.Pod, containerName string) bool {
+	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == containerName && status.Ready && status.State.Running != nil {
+			return true
 		}
 	}
 

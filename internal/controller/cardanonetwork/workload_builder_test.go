@@ -104,6 +104,33 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "ogmios port must be between 1 and 65535",
 		},
 		{
+			name: "unsupported ogmios image tag",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   "cardanosolutions/ogmios:latest",
+						Port:    defaultOgmiosPort,
+					},
+				}
+			},
+			wantErr: `ogmios image tag "latest" is not a supported release tag`,
+		},
+		{
+			name: "unsupported ogmios node compatibility",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Node.Version = "10.1.4"
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   defaultOgmiosImage,
+						Port:    defaultOgmiosPort,
+					},
+				}
+			},
+			wantErr: "ogmios v6.14.* is not supported with cardano-node 10.1.4",
+		},
+		{
 			name: "public mode",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
@@ -294,9 +321,14 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		},
 	}, ogmiosContainer.Ports)
 	require.NotNil(t, ogmiosContainer.ReadinessProbe)
-	require.NotNil(t, ogmiosContainer.ReadinessProbe.HTTPGet)
-	assert.Equal(t, ogmiosHealthPath, ogmiosContainer.ReadinessProbe.HTTPGet.Path)
-	assert.Equal(t, intstr.FromString(ogmiosPortName), ogmiosContainer.ReadinessProbe.HTTPGet.Port)
+	require.NotNil(t, ogmiosContainer.StartupProbe)
+	require.NotNil(t, ogmiosContainer.LivenessProbe)
+	assert.Equal(t, []string{ogmiosCommand, "health-check", "--port", "1337"}, ogmiosContainer.ReadinessProbe.Exec.Command)
+	assert.Equal(t, []string{ogmiosCommand, "health-check", "--port", "1337"}, ogmiosContainer.StartupProbe.Exec.Command)
+	assert.Equal(t, []string{ogmiosCommand, "health-check", "--port", "1337"}, ogmiosContainer.LivenessProbe.Exec.Command)
+	assert.Equal(t, int32(3), ogmiosContainer.ReadinessProbe.FailureThreshold)
+	assert.Equal(t, int32(60), ogmiosContainer.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(12), ogmiosContainer.LivenessProbe.FailureThreshold)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
 		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
@@ -425,7 +457,7 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
 			Enabled: true,
-			Image:   "example.com/ogmios:test",
+			Image:   "example.com/ogmios:v6.14.0",
 			Port:    1444,
 			Resources: &corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
@@ -441,8 +473,9 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 	require.NotNil(t, resources.OgmiosService)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
 	ogmiosContainer := resources.Deployment.Spec.Template.Spec.Containers[1]
-	assert.Equal(t, "example.com/ogmios:test", ogmiosContainer.Image)
+	assert.Equal(t, "example.com/ogmios:v6.14.0", ogmiosContainer.Image)
 	assert.Contains(t, ogmiosContainer.Args, "1444")
+	assert.Equal(t, []string{ogmiosCommand, "health-check", "--port", "1444"}, ogmiosContainer.ReadinessProbe.Exec.Command)
 	assert.Equal(t, *network.Spec.ChainAPI.Ogmios.Resources, ogmiosContainer.Resources)
 	assert.Equal(t, int32(1444), resources.OgmiosService.Spec.Ports[0].Port)
 	assert.Equal(t, intstr.FromString(ogmiosPortName), resources.OgmiosService.Spec.Ports[0].TargetPort)

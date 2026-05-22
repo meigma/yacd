@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -64,6 +65,17 @@ const (
 	localnetEnvDir = "/state/env"
 )
 
+var supportedOgmiosNodeVersions = map[string][]string{
+	"v6.14": {"10.5.1", "10.5.3", "11.0.1"},
+	"v6.13": {"10.1.2", "10.1.3", "10.1.4"},
+	"v6.12": {"10.1.2", "10.1.3", "10.1.4"},
+	"v6.11": {"10.1.2", "10.1.3", "10.1.4"},
+	"v6.10": {"10.1.2", "10.1.3", "10.1.4"},
+	"v6.9":  {"10.1.2", "10.1.3"},
+	"v6.8":  {"9.1.1", "9.2.0"},
+	"v6.7":  {"9.1.1", "9.2.0"},
+}
+
 // primaryWorkloadResources are the Kubernetes resources that run the initial
 // singleton primary Cardano node.
 type primaryWorkloadResources struct {
@@ -122,6 +134,12 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	}
 
 	ogmios, err := resolveOgmiosSettings(network)
+	if err != nil {
+		return nil, err
+	}
+	if !acceptedLocalnetFingerprintChanged(network, plan.Fingerprint.Value) {
+		err = validateOgmiosCompatibility(network.Spec.Node.Version, ogmios)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -235,6 +253,82 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 	}
 
 	return settings, nil
+}
+
+func validateOgmiosCompatibility(nodeVersion string, settings ogmiosSettings) error {
+	if !settings.enabled {
+		return nil
+	}
+
+	compatibilityKey, err := ogmiosCompatibilityKey(settings.image)
+	if err != nil {
+		return err
+	}
+
+	supportedNodeVersions, ok := supportedOgmiosNodeVersions[compatibilityKey]
+	if !ok {
+		return unsupportedSpec("ogmios image tag %q is not supported", mustContainerImageTag(settings.image))
+	}
+
+	nodeVersion = strings.TrimSpace(nodeVersion)
+	if slices.Contains(supportedNodeVersions, nodeVersion) {
+		return nil
+	}
+
+	return unsupportedSpec(
+		"ogmios %s.* is not supported with cardano-node %s; supported cardano-node versions: %s",
+		compatibilityKey,
+		nodeVersion,
+		strings.Join(supportedNodeVersions, ", "),
+	)
+}
+
+func acceptedLocalnetFingerprintChanged(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) bool {
+	return network.Status.Network != nil &&
+		network.Status.Network.LocalnetFingerprint != "" &&
+		network.Status.Network.LocalnetFingerprint != localnetFingerprint
+}
+
+func ogmiosCompatibilityKey(image string) (string, error) {
+	tag, ok := containerImageTag(image)
+	if !ok {
+		return "", unsupportedSpec("ogmios image %q must include a supported release tag", image)
+	}
+	if !strings.HasPrefix(tag, "v") {
+		return "", unsupportedSpec("ogmios image tag %q is not a supported release tag", tag)
+	}
+
+	parts := strings.Split(strings.TrimPrefix(tag, "v"), ".")
+	if len(parts) != 3 {
+		return "", unsupportedSpec("ogmios image tag %q is not a supported release tag", tag)
+	}
+	for _, part := range parts {
+		if _, err := strconv.Atoi(part); err != nil {
+			return "", unsupportedSpec("ogmios image tag %q is not a supported release tag", tag)
+		}
+	}
+
+	return "v" + parts[0] + "." + parts[1], nil
+}
+
+func containerImageTag(image string) (string, bool) {
+	withoutDigest, _, _ := strings.Cut(strings.TrimSpace(image), "@")
+	lastSlash := strings.LastIndex(withoutDigest, "/")
+	lastColon := strings.LastIndex(withoutDigest, ":")
+	if lastColon <= lastSlash || lastColon == len(withoutDigest)-1 {
+		return "", false
+	}
+
+	return withoutDigest[lastColon+1:], true
+}
+
+func mustContainerImageTag(image string) string {
+	tag, ok := containerImageTag(image)
+	if !ok {
+		return ""
+	}
+
+	return tag
 }
 
 func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings) (*appsv1.Deployment, error) {
@@ -386,18 +480,9 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		ReadinessProbe: &corev1.Probe{
-			ProbeHandler: corev1.ProbeHandler{
-				HTTPGet: &corev1.HTTPGetAction{
-					Path: ogmiosHealthPath,
-					Port: intstr.FromString(ogmiosPortName),
-				},
-			},
-			InitialDelaySeconds: 2,
-			PeriodSeconds:       5,
-			TimeoutSeconds:      2,
-			FailureThreshold:    12,
-		},
+		StartupProbe:   ogmiosHealthProbe(settings.port, 5, 2, 60),
+		LivenessProbe:  ogmiosHealthProbe(settings.port, 10, 5, 12),
+		ReadinessProbe: ogmiosHealthProbe(settings.port, 5, 2, 3),
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      localnetStateVolumeName,
@@ -430,6 +515,24 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 	}
 
 	return container
+}
+
+func ogmiosHealthProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{
+					ogmiosCommand,
+					"health-check",
+					"--port",
+					strconv.Itoa(int(port)),
+				},
+			},
+		},
+		PeriodSeconds:    periodSeconds,
+		TimeoutSeconds:   timeoutSeconds,
+		FailureThreshold: failureThreshold,
+	}
 }
 
 func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNetwork) string {

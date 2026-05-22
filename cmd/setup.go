@@ -39,6 +39,7 @@ func mustRegisterControllers(mgr manager.Manager) {
 func registerControllers(mgr manager.Manager) error {
 	err := (&cardanonetwork.CardanoNetworkReconciler{
 		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr)
 	if err != nil {

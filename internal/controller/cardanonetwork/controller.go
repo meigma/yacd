@@ -25,7 +25,8 @@ const (
 	// and controller registration.
 	controllerName = "cardanonetwork"
 
-	resourceConflictRequeueAfter = time.Minute
+	primaryWorkloadReadinessRequeueAfter = 15 * time.Second
+	resourceConflictRequeueAfter         = time.Minute
 )
 
 // CardanoNetworkReconciler reconciles CardanoNetwork resources.
@@ -33,6 +34,9 @@ type CardanoNetworkReconciler struct {
 	// Client is the controller-runtime client used to read and write
 	// CardanoNetwork resources and their owned children.
 	client.Client
+
+	// Reader is the uncached reader used for live runtime status checks.
+	Reader client.Reader
 
 	// Scheme is the runtime scheme used when setting controller references on
 	// owned child resources.
@@ -43,7 +47,8 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 
 // Reconcile is the CardanoNetwork controller scaffold.
 func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -113,7 +118,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService); err != nil {
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -138,6 +144,10 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"ogmiosService", ogmiosServiceKey,
 		"ogmiosServiceOperation", ogmiosServiceResult,
 		"localnetFingerprint", localnetFingerprint)
+
+	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
+		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, nil
+	}
 
 	return ctrl.Result{}, nil
 }

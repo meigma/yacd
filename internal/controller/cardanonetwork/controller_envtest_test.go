@@ -47,6 +47,7 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.NoError(t, err)
 	require.NoError(t, (&CardanoNetworkReconciler{
 		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr))
 
@@ -142,6 +143,43 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.Eventually(t, func() bool {
 		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network) + "-pod",
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadSelectorLabels(network),
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: cardanoNodeContainerName, Image: "example.com/cardano-node:test"},
+				{Name: ogmiosContainerName, Image: "example.com/ogmios:test"},
+			},
+		},
+	}
+	require.NoError(t, apiClient.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{
+			Name:  cardanoNodeContainerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		},
+		{
+			Name:  ogmiosContainerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		},
+	}
+	require.NoError(t, apiClient.Status().Update(ctx, pod))
 
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	deployment.Status.ObservedGeneration = deployment.Generation
