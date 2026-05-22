@@ -14,3 +14,6 @@ Reviewed `.journal/PLAN.md` phase 4, `DESIGN.md`, the current `CardanoNetwork` A
 
 ## 2026-05-22 08:28 — CLI surface feedback
 The CLI proposal was narrowed after user feedback: avoid a separate `apply` command if `render | kubectl apply` is enough, prefer one deployment command with `--dry-run` and optional `--wait`, and collapse status plus connection details into `yacd info`. Candidate phase-4 surface is now two commands: `yacd deploy` (or `create`) and `yacd info`.
+
+## 2026-05-22 08:46 — CLI implementation kickoff
+Created implementation worktree `feat/cli-foundation` at `.wt/feat-cli-foundation` and started the required dev stack with `moon run root:dev-up`. The stack is ready on Kind context `kind-yacd-dev`, with Tilt logs under `.run/yacd-dev/tilt.log`; implementation will now add the phase-4 CLI under `cli/` while keeping the manager image entrypoint on `./cmd`.
