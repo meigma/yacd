@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 const (
@@ -153,15 +154,16 @@ func TestPrimaryWorkloadBuilderRejectsNilInputAndScheme(t *testing.T) {
 	assert.Contains(t, err.Error(), "scheme is required")
 }
 
-// TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC verifies the initial
+// TestPrimaryWorkloadBuilderBuildsPrimaryWorkload verifies the initial
 // singleton primary node workload shape without the future Ogmios sidecar.
-func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
+func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	network := localCardanoNetwork("devnet")
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 	deployment := resources.Deployment
 	persistentVolumeClaim := resources.PersistentVolumeClaim
+	service := resources.Service
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -178,6 +180,11 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	require.NotNil(t, pvcController)
 	assert.Equal(t, "devnet", pvcController.Name)
 	assert.Equal(t, "CardanoNetwork", pvcController.Kind)
+
+	serviceController := metav1.GetControllerOf(service)
+	require.NotNil(t, serviceController)
+	assert.Equal(t, "devnet", serviceController.Name)
+	assert.Equal(t, "CardanoNetwork", serviceController.Kind)
 
 	expectedSelector := map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -225,6 +232,13 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 		"--shelley-vrf-key", "/state/env/pools-keys/pool1/vrf.skey",
 		"--shelley-operational-certificate", "/state/env/pools-keys/pool1/opcert.cert",
 	}, nodeContainer.Args)
+	assert.Equal(t, []corev1.ContainerPort{
+		{
+			Name:          cardanoNodePortName,
+			ContainerPort: 3001,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}, nodeContainer.Ports)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
@@ -246,6 +260,20 @@ func TestPrimaryWorkloadBuilderBuildsDeploymentAndPVC(t *testing.T) {
 	storage := persistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse("10Gi")))
 
+	assert.Equal(t, "devnet-node", service.Name)
+	assert.Equal(t, "default", service.Namespace)
+	assert.Equal(t, "yacd", service.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, service.Spec.Type)
+	assert.Equal(t, expectedSelector, service.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       cardanoNodePortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       3001,
+			TargetPort: intstr.FromString(cardanoNodePortName),
+		},
+	}, service.Spec.Ports)
+
 	assertPodSecurityContext(t, deployment.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
 }
@@ -259,6 +287,7 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	assert.LessOrEqual(t, len(resources.Deployment.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.Deployment.Name, "-node"))
 	assert.NotContains(t, resources.Deployment.Name, ".")
+	assert.Equal(t, resources.Deployment.Name, resources.Service.Name)
 	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
 	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
@@ -278,6 +307,7 @@ func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
 
 	assert.NotEqual(t, dotted.Deployment.Name, dashed.Deployment.Name)
 	assert.NotEqual(t, dotted.PersistentVolumeClaim.Name, dashed.PersistentVolumeClaim.Name)
+	assert.NotEqual(t, dotted.Service.Name, dashed.Service.Name)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {

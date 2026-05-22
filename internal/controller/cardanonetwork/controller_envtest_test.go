@@ -83,6 +83,11 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, pvcKey, &corev1.PersistentVolumeClaim{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	serviceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, serviceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -107,13 +112,70 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalPVCUID
 	}, 10*time.Second, 100*time.Millisecond)
 
+	service := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, serviceKey, service))
+	originalServiceUID := service.UID
+	require.NoError(t, apiClient.Delete(ctx, service))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, serviceKey, got)
+		return err == nil && got.UID != originalServiceUID
+	}, 10*time.Second, 100*time.Millisecond)
+
 	require.Eventually(t, func() bool {
 		current := &yacdv1alpha1.CardanoNetwork{}
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
 			return false
 		}
 		degraded := findCondition(current, conditionTypeDegraded)
-		return degraded != nil && degraded.Status == metav1.ConditionFalse
+		progressing := findCondition(current, conditionTypeProgressing)
+		nodeReady := findCondition(current, conditionTypeNodeReady)
+		return degraded != nil &&
+			degraded.Status == metav1.ConditionFalse &&
+			progressing != nil &&
+			progressing.Status == metav1.ConditionTrue &&
+			nodeReady != nil &&
+			nodeReady.Status == metav1.ConditionFalse &&
+			current.Status.Endpoints != nil &&
+			current.Status.Endpoints.NodeToNode != nil &&
+			current.Status.Endpoints.NodeToNode.ServiceName == primaryWorkloadName(network) &&
+			current.Status.Endpoints.NodeToNode.Port == network.Spec.Node.Port &&
+			current.Status.Endpoints.NodeToNode.URL == "tcp://manager-owned-node.cardanonetwork-envtest.svc.cluster.local:3001" &&
+			current.Status.Endpoints.Ogmios == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 1
+	deployment.Status.AvailableReplicas = 1
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:               appsv1.DeploymentAvailable,
+			Status:             corev1.ConditionTrue,
+			Reason:             "MinimumReplicasAvailable",
+			Message:            "Deployment has minimum availability.",
+			LastUpdateTime:     metav1.Now(),
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+	require.NoError(t, apiClient.Status().Update(ctx, deployment))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+			return false
+		}
+		progressing := findCondition(current, conditionTypeProgressing)
+		nodeReady := findCondition(current, conditionTypeNodeReady)
+		return progressing != nil &&
+			progressing.Status == metav1.ConditionFalse &&
+			progressing.Reason == conditionReasonNodeReady &&
+			nodeReady != nil &&
+			nodeReady.Status == metav1.ConditionTrue &&
+			nodeReady.Reason == conditionReasonNodeReady
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

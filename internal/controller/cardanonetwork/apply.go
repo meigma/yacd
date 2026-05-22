@@ -160,6 +160,51 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	return controllerutil.OperationResultUpdated, nil
 }
 
+func (r *CardanoNetworkReconciler) applyPrimaryService(
+	ctx context.Context,
+	desired *corev1.Service,
+) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	if err := r.defaultObject(desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	current := &corev1.Service{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Spec.Type = desired.Spec.Type
+	current.Spec.Selector = maps.Clone(desired.Spec.Selector)
+	current.Spec.Ports = desired.Spec.Ports
+	current.Spec.ExternalName = desired.Spec.ExternalName
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
 func (r *CardanoNetworkReconciler) defaultObject(object client.Object) error {
 	if r.Scheme == nil {
 		return fmt.Errorf("scheme is required")

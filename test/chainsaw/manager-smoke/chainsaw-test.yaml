@@ -3,7 +3,7 @@ kind: Test
 metadata:
   name: manager-smoke
 spec:
-  description: Verify the YACD operator foundation deploys and exposes protected metrics.
+  description: Verify the YACD operator foundation deploys, exposes protected metrics, and reconciles one CardanoNetwork to Kubernetes workload readiness. This does not prove Cardano protocol health.
   concurrent: false
   failFast: true
   catch:
@@ -23,6 +23,19 @@ spec:
           kubectl describe pod -n yacd-system curl-metrics
           echo "== controller manager deployment =="
           kubectl describe deployment -n yacd-system yacd-controller-manager
+          echo "== CardanoNetwork smoke resource =="
+          kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o yaml
+          echo "== CardanoNetwork smoke resources =="
+          kubectl get all,pvc -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase2-smoke -o wide
+          echo "== CardanoNetwork smoke events =="
+          kubectl get events -n yacd-smoke --sort-by=.lastTimestamp
+          echo "== CardanoNetwork smoke child descriptions =="
+          kubectl describe pvc -n yacd-smoke phase2-smoke-node-state
+          kubectl describe service -n yacd-smoke phase2-smoke-node
+          kubectl describe deployment -n yacd-smoke phase2-smoke-node
+          kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase2-smoke,yacd.meigma.io/role=primary-node
+          echo "== CardanoNetwork smoke pod logs =="
+          kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase2-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
           exit 0
   steps:
     - name: deploy-controller
@@ -149,13 +162,107 @@ spec:
                 *"metrics status: 200"*) ;;
                 *) exit 1 ;;
               esac
+        - script:
+            timeout: 1m
+            workDir: ../../..
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
+              kubectl label --overwrite namespace yacd-smoke pod-security.kubernetes.io/enforce=restricted
+              kubectl apply -f - <<'YAML'
+              apiVersion: yacd.meigma.io/v1alpha1
+              kind: CardanoNetwork
+              metadata:
+                name: phase2-smoke
+                namespace: yacd-smoke
+              spec:
+                mode: local
+                node:
+                  version: "11.0.1"
+                  port: 3001
+                  storage:
+                    size: 2Gi
+                local:
+                  networkMagic: 42
+                  era: conway
+                  timing:
+                    slotLength: 100ms
+                    epochLength: 500
+                  topology:
+                    pools:
+                      count: 1
+              YAML
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: PersistentVolumeClaim
+              metadata:
+                namespace: yacd-smoke
+                name: phase2-smoke-node-state
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                namespace: yacd-smoke
+                name: phase2-smoke-node
+              spec:
+                type: ClusterIP
+                ports:
+                  - name: node-to-node
+                    protocol: TCP
+                    port: 3001
+                    targetPort: node-to-node
+        - wait:
+            apiVersion: apps/v1
+            kind: Deployment
+            namespace: yacd-smoke
+            name: phase2-smoke-node
+            timeout: 10m
+            for:
+              condition:
+                name: Available
+                value: 'true'
+        - script:
+            timeout: 10m
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              selector="yacd.meigma.io/cardanonetwork=phase2-smoke,yacd.meigma.io/role=primary-node"
+              kubectl wait -n yacd-smoke --for=condition=Ready pod -l "${selector}" --timeout=10m
+        - script:
+            timeout: 10m
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              for _ in $(seq 1 120); do
+                node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
+                progressing="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null || true)"
+                degraded="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
+                service_name="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.endpoints.nodeToNode.serviceName}' 2>/dev/null || true)"
+                port="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.endpoints.nodeToNode.port}' 2>/dev/null || true)"
+                url="$(kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o jsonpath='{.status.endpoints.nodeToNode.url}' 2>/dev/null || true)"
+                if [ "${node_ready}" = "True" ] &&
+                  [ "${progressing}" = "False" ] &&
+                  [ "${degraded}" = "False" ] &&
+                  [ "${service_name}" = "phase2-smoke-node" ] &&
+                  [ "${port}" = "3001" ] &&
+                  [ "${url}" = "tcp://phase2-smoke-node.yacd-smoke.svc.cluster.local:3001" ]; then
+                  exit 0
+                fi
+                kubectl get cardanonetwork -n yacd-smoke phase2-smoke -o yaml || true
+                sleep 5
+              done
+              exit 1
       cleanup:
         - script:
-            timeout: 3m
+            timeout: 5m
             workDir: ../../..
             content: |
               set +e
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              kubectl delete namespace yacd-smoke --ignore-not-found=true || true
               kubectl delete pod curl-metrics -n yacd-system --ignore-not-found=true || true
               kubectl delete clusterrolebinding yacd-metrics-smoke --ignore-not-found=true || true
               kubectl delete serviceaccount metrics-smoke -n yacd-system --ignore-not-found=true || true
