@@ -32,3 +32,10 @@ Proposal direction: keep Ogmios under the existing package-local
 controller-side defaults and validation, extend `primaryWorkloadResources`
 with an explicit Ogmios Service, and keep sidecar rendering/status endpoint
 helpers unexported in `internal/controller/cardanonetwork`.
+
+## 2026-05-21 17:58 — Implementation start
+Started implementation on Worktrunk branch `feat/ogmios-chain-api` at
+`.wt/feat-ogmios-chain-api`. Ran the required session dev stack startup from
+that worktree with `direnv allow && moon run root:dev-up`; it created the
+`yacd-dev` Kind cluster, started Tilt, and reported `YACD dev stack is ready`.
+Tilt UI is available on port `10350`, with logs under `.run/yacd-dev/tilt.log`.
