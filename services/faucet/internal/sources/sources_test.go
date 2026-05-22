@@ -86,6 +86,11 @@ func TestSourceJSONDoesNotExposeCBORHex(t *testing.T) {
 	if strings.Contains(string(encoded), "cborHex") || strings.Contains(string(encoded), "secret-cbor") {
 		t.Fatalf("source JSON exposed key material: %s", encoded)
 	}
+	for _, secretPathDetail := range []string{"verificationKeyPath", "signingKeyPath", rootDir, "utxo.skey"} {
+		if strings.Contains(string(encoded), secretPathDetail) {
+			t.Fatalf("source JSON exposed path detail %q: %s", secretPathDetail, encoded)
+		}
+	}
 }
 
 func TestStoreGetReturnsValidSource(t *testing.T) {
@@ -100,8 +105,63 @@ func TestStoreGetReturnsValidSource(t *testing.T) {
 	if got, want := source.Name, "utxo1"; got != want {
 		t.Fatalf("Name = %q, want %q", got, want)
 	}
-	if got, want := source.SigningKeyPath, filepath.Join(rootDir, "utxo1", "utxo.skey"); got != want {
-		t.Fatalf("SigningKeyPath = %q, want %q", got, want)
+	if got, want := source.SigningKeyType, signingKeyType; got != want {
+		t.Fatalf("SigningKeyType = %q, want %q", got, want)
+	}
+}
+
+func TestStoreRejectsSymlinkedSource(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	outsideDir := t.TempDir()
+	writeSource(t, outsideDir, "external")
+	requireNoError(t, os.Symlink(filepath.Join(outsideDir, "external"), filepath.Join(rootDir, "utxo1")))
+
+	err := NewStore(rootDir, "utxo1").Ready()
+	if err == nil {
+		t.Fatal("Ready succeeded, want symlinked source rejection")
+	}
+	if !IsCode(err, CodeSourceNotFound) {
+		t.Fatalf("error = %v, want %s", err, CodeSourceNotFound)
+	}
+}
+
+func TestStoreRejectsSymlinkedKeyFiles(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	sourceDir := filepath.Join(rootDir, "utxo1")
+	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
+	outsideKey := filepath.Join(t.TempDir(), "utxo.vkey")
+	writeKey(t, outsideKey, verificationKeyType)
+	requireNoError(t, os.Symlink(outsideKey, filepath.Join(sourceDir, "utxo.vkey")))
+	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
+
+	_, err := NewStore(rootDir, "utxo1").Get("utxo1")
+	if err == nil {
+		t.Fatal("Get succeeded, want symlinked key rejection")
+	}
+	if !IsCode(err, CodeSourceInvalidKey) {
+		t.Fatalf("error = %v, want %s", err, CodeSourceInvalidKey)
+	}
+}
+
+func TestStoreRejectsUnexpectedKeyType(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	sourceDir := filepath.Join(rootDir, "utxo1")
+	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
+	writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), "PaymentVerificationKeyShelley_ed25519")
+	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
+
+	err := NewStore(rootDir, "utxo1").Ready()
+	if err == nil {
+		t.Fatal("Ready succeeded, want unexpected key type error")
+	}
+	if !IsCode(err, CodeSourceInvalidKey) {
+		t.Fatalf("error = %v, want %s", err, CodeSourceInvalidKey)
 	}
 }
 
@@ -110,14 +170,16 @@ func writeSource(t *testing.T, rootDir string, name string) {
 
 	sourceDir := filepath.Join(rootDir, name)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{
-  "type": "GenesisUTxOVerificationKey_ed25519",
-  "description": "Genesis Initial UTxO Verification Key",
-  "cborHex": "public-cbor"
-}`)
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{
-  "type": "GenesisUTxOSigningKey_ed25519",
-  "description": "Genesis Initial UTxO Signing Key",
+	writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), verificationKeyType)
+	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
+}
+
+func writeKey(t *testing.T, path string, keyType string) {
+	t.Helper()
+
+	writeSourceFile(t, path, `{
+  "type": "`+keyType+`",
+  "description": "Genesis Initial UTxO Key",
   "cborHex": "secret-cbor"
 }`)
 }

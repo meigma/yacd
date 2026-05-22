@@ -11,8 +11,11 @@ import (
 )
 
 const (
-	verificationKeyFile = "utxo.vkey"
-	signingKeyFile      = "utxo.skey"
+	verificationKeyFile     = "utxo.vkey"
+	signingKeyFile          = "utxo.skey"
+	verificationKeyType     = "GenesisUTxOVerificationKey_ed25519"
+	signingKeyType          = "GenesisUTxOSigningKey_ed25519"
+	sourceDirectoryPathName = "."
 
 	// CodeInvalidSourceName identifies a source name validation error.
 	CodeInvalidSourceName = "invalid_source_name"
@@ -42,8 +45,6 @@ type List struct {
 type Source struct {
 	Name                       string `json:"name"`
 	Default                    bool   `json:"default"`
-	VerificationKeyPath        string `json:"verificationKeyPath"`
-	SigningKeyPath             string `json:"signingKeyPath"`
 	VerificationKeyType        string `json:"verificationKeyType"`
 	SigningKeyType             string `json:"signingKeyType"`
 	VerificationKeyDescription string `json:"verificationKeyDescription,omitempty"`
@@ -118,7 +119,15 @@ func (s Store) List() (List, error) {
 		return List{}, err
 	}
 
-	entries, err := os.ReadDir(s.rootDir)
+	root, err := s.openRoot()
+	if err != nil {
+		return List{}, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	entries, err := readDir(root, sourceDirectoryPathName)
 	if err != nil {
 		return List{}, sourceError(CodeSourceReadFailed, "read source directory %q: %v", s.rootDir, err)
 	}
@@ -135,7 +144,7 @@ func (s Store) List() (List, error) {
 			continue
 		}
 
-		source, err := s.readSource(entry.Name())
+		source, err := s.readSource(root, entry.Name())
 		if err != nil {
 			if IsCode(err, CodeSourceNotFound) || IsCode(err, CodeSourceIncomplete) {
 				continue
@@ -159,7 +168,15 @@ func (s Store) Get(name string) (Source, error) {
 		return Source{}, err
 	}
 
-	source, err := s.readSource(name)
+	root, err := s.openRoot()
+	if err != nil {
+		return Source{}, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	source, err := s.readSource(root, name)
 	if err != nil {
 		if IsCode(err, CodeSourceIncomplete) {
 			return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
@@ -173,19 +190,47 @@ func (s Store) Get(name string) (Source, error) {
 
 // Ready returns nil when the source directory and default source are usable.
 func (s Store) Ready() error {
-	if _, err := os.ReadDir(s.rootDir); err != nil {
+	root, err := s.openRoot()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	if _, err := readDir(root, sourceDirectoryPathName); err != nil {
 		return sourceError(CodeSourceReadFailed, "read source directory %q: %v", s.rootDir, err)
 	}
-	if _, err := s.Get(s.defaultName); err != nil {
+	if _, err := s.readSource(root, s.defaultName); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (s Store) readSource(name string) (Source, error) {
-	sourceDir := filepath.Join(s.rootDir, name)
-	info, err := os.Stat(sourceDir)
+func (s Store) openRoot() (*os.Root, error) {
+	root, err := os.OpenRoot(s.rootDir)
+	if err != nil {
+		return nil, sourceError(CodeSourceReadFailed, "open source directory %q: %v", s.rootDir, err)
+	}
+
+	return root, nil
+}
+
+func readDir(root *os.Root, name string) ([]os.DirEntry, error) {
+	dir, err := root.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = dir.Close()
+	}()
+
+	return dir.ReadDir(-1)
+}
+
+func (s Store) readSource(root *os.Root, name string) (Source, error) {
+	info, err := root.Lstat(name)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
@@ -193,17 +238,27 @@ func (s Store) readSource(name string) (Source, error) {
 
 		return Source{}, sourceError(CodeSourceReadFailed, "stat source %q: %v", name, err)
 	}
-	if !info.IsDir() {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
 	}
 
-	verificationKeyPath := filepath.Join(sourceDir, verificationKeyFile)
-	signingKeyPath := filepath.Join(sourceDir, signingKeyFile)
-	verificationKey, err := readKeyMetadata(verificationKeyPath, name, "verification")
+	verificationKey, err := readKeyMetadata(
+		root,
+		filepath.Join(name, verificationKeyFile),
+		name,
+		"verification",
+		verificationKeyType,
+	)
 	if err != nil {
 		return Source{}, err
 	}
-	signingKey, err := readKeyMetadata(signingKeyPath, name, "signing")
+	signingKey, err := readKeyMetadata(
+		root,
+		filepath.Join(name, signingKeyFile),
+		name,
+		"signing",
+		signingKeyType,
+	)
 	if err != nil {
 		return Source{}, err
 	}
@@ -211,8 +266,6 @@ func (s Store) readSource(name string) (Source, error) {
 	return Source{
 		Name:                       name,
 		Default:                    name == s.defaultName,
-		VerificationKeyPath:        verificationKeyPath,
-		SigningKeyPath:             signingKeyPath,
 		VerificationKeyType:        verificationKey.Type,
 		SigningKeyType:             signingKey.Type,
 		VerificationKeyDescription: verificationKey.Description,
@@ -220,8 +273,14 @@ func (s Store) readSource(name string) (Source, error) {
 	}, nil
 }
 
-func readKeyMetadata(path string, sourceName string, keyKind string) (keyMetadata, error) {
-	contents, err := os.ReadFile(path)
+func readKeyMetadata(
+	root *os.Root,
+	path string,
+	sourceName string,
+	keyKind string,
+	expectedType string,
+) (keyMetadata, error) {
+	info, err := root.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return keyMetadata{}, sourceError(
@@ -232,6 +291,33 @@ func readKeyMetadata(path string, sourceName string, keyKind string) (keyMetadat
 			)
 		}
 
+		return keyMetadata{}, sourceError(
+			CodeSourceReadFailed,
+			"read %s key for source %q: %v",
+			keyKind,
+			sourceName,
+			err,
+		)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return keyMetadata{}, sourceError(
+			CodeSourceInvalidKey,
+			"%s key for source %q must not be a symlink",
+			keyKind,
+			sourceName,
+		)
+	}
+	if !info.Mode().IsRegular() {
+		return keyMetadata{}, sourceError(
+			CodeSourceInvalidKey,
+			"%s key for source %q must be a regular file",
+			keyKind,
+			sourceName,
+		)
+	}
+
+	contents, err := root.ReadFile(path)
+	if err != nil {
 		return keyMetadata{}, sourceError(
 			CodeSourceReadFailed,
 			"read %s key for source %q: %v",
@@ -257,6 +343,16 @@ func readKeyMetadata(path string, sourceName string, keyKind string) (keyMetadat
 			"%s key for source %q is missing type",
 			keyKind,
 			sourceName,
+		)
+	}
+	if metadata.Type != expectedType {
+		return keyMetadata{}, sourceError(
+			CodeSourceInvalidKey,
+			"%s key for source %q has type %q, want %q",
+			keyKind,
+			sourceName,
+			metadata.Type,
+			expectedType,
 		)
 	}
 

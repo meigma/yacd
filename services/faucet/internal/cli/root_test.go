@@ -60,7 +60,7 @@ func TestRootCommandUsesDefaults(t *testing.T) {
 	if captured == nil {
 		t.Fatal("server did not run")
 	}
-	if got, want := captured.ListenAddress, ":8080"; got != want {
+	if got, want := captured.ListenAddress, "127.0.0.1:8080"; got != want {
 		t.Fatalf("listen address = %q, want %q", got, want)
 	}
 	if got, want := captured.Sources.RootDir(), "/state/env/utxo-keys"; got != want {

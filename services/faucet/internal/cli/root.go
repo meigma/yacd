@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	defaultListenAddress = ":8080"
+	defaultListenAddress = "127.0.0.1:8080"
 	defaultUTXOKeysDir   = "/state/env/utxo-keys"
 	defaultSource        = "utxo1"
 )
@@ -130,7 +130,11 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.SetOut(options.Out)
 	root.SetErr(options.Err)
 
-	root.Flags().String("listen-address", defaultListenAddress, "Address for the HTTP server to listen on")
+	root.Flags().String(
+		"listen-address",
+		defaultListenAddress,
+		"Address for the HTTP server to listen on; set 0.0.0.0:8080 to expose beyond loopback",
+	)
 	root.Flags().String("utxo-keys-dir", defaultUTXOKeysDir, "Path to the cardano-testnet utxo-keys directory")
 	root.Flags().String("default-source", defaultSource, "Default faucet source name")
 	root.Flags().String("log-level", "info", "Log level: debug, info, warn, error")
