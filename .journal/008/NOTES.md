@@ -17,3 +17,8 @@ The CLI proposal was narrowed after user feedback: avoid a separate `apply` comm
 
 ## 2026-05-22 08:46 — CLI implementation kickoff
 Created implementation worktree `feat/cli-foundation` at `.wt/feat-cli-foundation` and started the required dev stack with `moon run root:dev-up`. The stack is ready on Kind context `kind-yacd-dev`, with Tilt logs under `.run/yacd-dev/tilt.log`; implementation will now add the phase-4 CLI under `cli/` while keeping the manager image entrypoint on `./cmd`.
+
+## 2026-05-22 09:07 — CLI foundation implemented
+Implemented the first developer CLI under `cli/` with a Cobra/Viper root command, linker-injected version metadata, global Kubernetes/logging flags backed by `YACD_*` env vars, `deploy -f` with `--dry-run`, `--wait`, and timeout support, and `info NAME --json` backed by a command-owned DTO. The CLI uses a checked-in developer config envelope that reuses `api/v1alpha1.CardanoNetworkSpec`, renders one `CardanoNetwork`, applies it with server-side apply field owner `yacd-cli`, and polls status conditions for readiness/degraded outcomes.
+
+Validation completed from `.wt/feat-cli-foundation`: `moon run root:test --summary minimal`, `moon run root:check --summary minimal`, `moon run root:test-e2e --summary minimal`, `git diff --check`, `go run ./cli/cmd/yacd --version`, and `goreleaser release --snapshot --clean --skip=publish`. The Chainsaw smoke now runs `go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait --timeout 10m`, verifies `info --json`, and still proves the Ogmios endpoint through an in-cluster JSON-RPC query.
