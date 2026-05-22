@@ -11,3 +11,6 @@ Plan: Keep the session open, select or create an implementation worktree once th
 
 ## 2026-05-21 22:50 — Phase 4 CLI architecture review
 Reviewed `.journal/PLAN.md` phase 4, `DESIGN.md`, the current `CardanoNetwork` API/status contract, controller readiness behavior, Chainsaw smoke manifests, release packaging, and current manager CLI entrypoint. The phase 4 proposal should stay prototype-first: build a local developer config plus render/apply/wait/status/connection-info flow against the existing `CardanoNetwork` CR before broadening into faucet, db-sync, or final CLI packaging details.
+
+## 2026-05-22 08:28 — CLI surface feedback
+The CLI proposal was narrowed after user feedback: avoid a separate `apply` command if `render | kubectl apply` is enough, prefer one deployment command with `--dry-run` and optional `--wait`, and collapse status plus connection details into `yacd info`. Candidate phase-4 surface is now two commands: `yacd deploy` (or `create`) and `yacd info`.
