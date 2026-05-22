@@ -208,6 +208,7 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 		`"namespace": "env-ns"`,
 		`"type": "Ready"`,
 		`"url": "ws://devnet-ogmios.env-ns.svc.cluster.local:1337"`,
+		`"url": "http://devnet-kupo.env-ns.svc.cluster.local:1442"`,
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
@@ -302,6 +303,11 @@ func readyNetwork(namespace string, name string) *yacdv1alpha1.CardanoNetwork {
 					ServiceName: name + "-ogmios",
 					Port:        1337,
 					URL:         "ws://" + name + "-ogmios." + namespace + ".svc.cluster.local:1337",
+				},
+				Kupo: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-kupo",
+					Port:        1442,
+					URL:         "http://" + name + "-kupo." + namespace + ".svc.cluster.local:1442",
 				},
 			},
 			Conditions: []metav1.Condition{

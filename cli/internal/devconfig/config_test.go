@@ -84,6 +84,15 @@ func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
 			config:  strings.Replace(validConfig, "      networkMagic: 42\n", "", 1),
 			wantErr: "spec.network.local.networkMagic",
 		},
+		{
+			name: "kupo image",
+			config: validConfig + `    chainAPI:
+      kupo:
+        enabled: true
+        port: 1442
+`,
+			wantErr: "spec.network.chainAPI.kupo.image",
+		},
 	}
 
 	for _, tt := range tests {

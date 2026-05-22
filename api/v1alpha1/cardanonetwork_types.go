@@ -86,7 +86,8 @@ type CardanoNetworkSpec struct {
 	Public *PublicNetworkSpec `json:"public,omitempty"`
 
 	// chainAPI configures network-facing APIs exposed next to the primary node.
-	// Ogmios is enabled by default because it is the first supported chain API.
+	// Ogmios and Kupo are enabled by default as the first chain API and chain
+	// index endpoints.
 	// +optional
 	ChainAPI *ChainAPISpec `json:"chainAPI,omitempty"`
 }
@@ -290,6 +291,10 @@ type ChainAPISpec struct {
 	// ogmios configures the Ogmios sidecar and Service.
 	// +optional
 	Ogmios *OgmiosSpec `json:"ogmios,omitempty"`
+
+	// kupo configures the Kupo sidecar and Service.
+	// +optional
+	Kupo *KupoSpec `json:"kupo,omitempty"`
 }
 
 // OgmiosSpec configures the default Ogmios chain API.
@@ -312,6 +317,30 @@ type OgmiosSpec struct {
 	Port int32 `json:"port"`
 
 	// resources configures the Ogmios container resources.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// KupoSpec configures the Kupo chain index API.
+type KupoSpec struct {
+	// enabled controls whether the Kupo sidecar is deployed.
+	// +kubebuilder:default=true
+	// +required
+	Enabled bool `json:"enabled"`
+
+	// image is the Kupo image reference.
+	// +kubebuilder:default="cardanosolutions/kupo:v2.11.0"
+	// +required
+	Image string `json:"image"`
+
+	// port is the Kupo service port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=1442
+	// +required
+	Port int32 `json:"port"`
+
+	// resources configures the Kupo container resources.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
@@ -340,6 +369,7 @@ type CardanoNetworkStatus struct {
 	// - "Ready": the network is usable through its published endpoints
 	// - "NodeReady": the primary node container is running
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
+	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain its desired state
 	//
@@ -384,6 +414,10 @@ type CardanoNetworkEndpointsStatus struct {
 	// ogmios is the Ogmios JSON/RPC endpoint.
 	// +optional
 	Ogmios *ServiceEndpointStatus `json:"ogmios,omitempty"`
+
+	// kupo is the Kupo chain index HTTP endpoint.
+	// +optional
+	Kupo *ServiceEndpointStatus `json:"kupo,omitempty"`
 }
 
 // ServiceEndpointStatus reports a cluster-local Service endpoint.

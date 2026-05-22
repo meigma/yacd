@@ -40,6 +40,23 @@ const (
 	ogmiosHealthPath     = "/health"
 	ogmiosServiceURLType = "ws"
 
+	kupoContainerName       = "kupo"
+	kupoPortName            = "kupo"
+	kupoHostAddress         = "0.0.0.0"
+	kupoOgmiosHostAddress   = "127.0.0.1"
+	kupoWorkDir             = "/kupo"
+	kupoDBVolumeName        = "kupo-db"
+	kupoTmpDir              = "/tmp"
+	kupoTmpVolumeName       = "kupo-tmp"
+	defaultKupoImage        = "cardanosolutions/kupo:v2.11.0"
+	defaultKupoPort         = 1442
+	defaultKupoSince        = "origin"
+	defaultKupoMatchPattern = "*/*"
+	defaultKupoDBSizeLimit  = "1Gi"
+	defaultKupoTmpSizeLimit = "256Mi"
+	defaultKupoStorageLimit = "1536Mi"
+	kupoServiceURLType      = "http"
+
 	nodeIPCVolumeName         = "node-ipc"
 	defaultNodeStorageSize    = "10Gi"
 	localnetFingerprintAnno   = "yacd.meigma.io/localnet-fingerprint"
@@ -83,6 +100,7 @@ type primaryWorkloadResources struct {
 	Deployment            *appsv1.Deployment
 	Service               *corev1.Service
 	OgmiosService         *corev1.Service
+	KupoService           *corev1.Service
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
@@ -96,6 +114,13 @@ type unsupportedSpecError struct {
 }
 
 type ogmiosSettings struct {
+	enabled   bool
+	image     string
+	port      int32
+	resources *corev1.ResourceRequirements
+}
+
+type kupoSettings struct {
 	enabled   bool
 	image     string
 	port      int32
@@ -137,14 +162,27 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
+	kupo, err := resolveKupoSettings(network, ogmios)
+	if err != nil {
+		return nil, err
+	}
+	if kupo.enabled && !ogmios.enabled {
+		return nil, unsupportedSpec("kupo requires ogmios to be enabled")
+	}
 	if !acceptedLocalnetFingerprintChanged(network, plan.Fingerprint.Value) {
 		err = validateOgmiosCompatibility(network.Spec.Node.Version, ogmios)
 	}
 	if err != nil {
 		return nil, err
 	}
+	if err := validateKupoImage(kupo); err != nil {
+		return nil, err
+	}
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo); err != nil {
+		return nil, err
+	}
 
-	deployment, err := b.deployment(network, plan, initContainer, ogmios)
+	deployment, err := b.deployment(network, plan, initContainer, ogmios, kupo)
 	if err != nil {
 		return nil, err
 	}
@@ -163,12 +201,20 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	var kupoService *corev1.Service
+	if kupo.enabled {
+		kupoService, err = b.kupoService(network, kupo)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &primaryWorkloadResources{
 		PersistentVolumeClaim: persistentVolumeClaim,
 		Deployment:            deployment,
 		Service:               service,
 		OgmiosService:         ogmiosService,
+		KupoService:           kupoService,
 	}, nil
 }
 
@@ -255,6 +301,70 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 	return settings, nil
 }
 
+func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSettings) (kupoSettings, error) {
+	settings := kupoSettings{
+		enabled: true,
+		image:   defaultKupoImage,
+		port:    defaultKupoPort,
+	}
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Kupo == nil {
+		if !ogmios.enabled {
+			settings.enabled = false
+		}
+		return settings, nil
+	}
+
+	spec := network.Spec.ChainAPI.Kupo
+	if !spec.Enabled {
+		settings.enabled = false
+		return settings, nil
+	}
+
+	settings.image = strings.TrimSpace(spec.Image)
+	if settings.image == "" {
+		return kupoSettings{}, unsupportedSpec("kupo image is required")
+	}
+	if spec.Port < 1 || spec.Port > 65535 {
+		return kupoSettings{}, unsupportedSpec("kupo port must be between 1 and 65535")
+	}
+	settings.port = spec.Port
+	if spec.Resources != nil {
+		settings.resources = spec.Resources.DeepCopy()
+	}
+
+	return settings, nil
+}
+
+func validateKupoImage(settings kupoSettings) error {
+	if !settings.enabled {
+		return nil
+	}
+	if settings.image == defaultKupoImage {
+		return nil
+	}
+
+	return unsupportedSpec("kupo image %q is not supported; supported image: %s", settings.image, defaultKupoImage)
+}
+
+func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings) error {
+	seen := map[int32]string{
+		nodePort: cardanoNodePortName,
+	}
+	if ogmios.enabled {
+		if owner, ok := seen[ogmios.port]; ok {
+			return unsupportedSpec("ogmios port %d conflicts with %s port", ogmios.port, owner)
+		}
+		seen[ogmios.port] = ogmiosPortName
+	}
+	if kupo.enabled {
+		if owner, ok := seen[kupo.port]; ok {
+			return unsupportedSpec("kupo port %d conflicts with %s port", kupo.port, owner)
+		}
+	}
+
+	return nil
+}
+
 func validateOgmiosCompatibility(nodeVersion string, settings ogmiosSettings) error {
 	if !settings.enabled {
 		return nil
@@ -331,13 +441,52 @@ func mustContainerImageTag(image string) string {
 	return tag
 }
 
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings) (*appsv1.Deployment, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings, kupo kupoSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
 	containers := []corev1.Container{b.cardanoNodeContainer(network, plan)}
 	if ogmios.enabled {
 		containers = append(containers, b.ogmiosContainer(ogmios, plan))
+	}
+	if kupo.enabled {
+		containers = append(containers, b.kupoContainer(kupo, ogmios))
+	}
+	volumes := []corev1.Volume{
+		{
+			Name: localnetStateVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: primaryNodeStatePVCName(network),
+				},
+			},
+		},
+		{
+			Name: nodeIPCVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		},
+	}
+	if kupo.enabled {
+		volumes = append(volumes,
+			corev1.Volume{
+				Name: kupoDBVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						SizeLimit: resourceQuantity(defaultKupoDBSizeLimit),
+					},
+				},
+			},
+			corev1.Volume{
+				Name: kupoTmpVolumeName,
+				VolumeSource: corev1.VolumeSource{
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						SizeLimit: resourceQuantity(defaultKupoTmpSizeLimit),
+					},
+				},
+			},
+		)
 	}
 
 	deployment := &appsv1.Deployment{
@@ -374,22 +523,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 					},
 					InitContainers: []corev1.Container{initContainer},
 					Containers:     containers,
-					Volumes: []corev1.Volume{
-						{
-							Name: localnetStateVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: primaryNodeStatePVCName(network),
-								},
-							},
-						},
-						{
-							Name: nodeIPCVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								EmptyDir: &corev1.EmptyDirVolumeSource{},
-							},
-						},
-					},
+					Volumes:        volumes,
 				},
 			},
 		},
@@ -517,12 +651,105 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 	return container
 }
 
+func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmiosSettings) corev1.Container {
+	container := corev1.Container{
+		Name:            kupoContainerName,
+		Image:           settings.image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Args: []string{
+			"--ogmios-host", kupoOgmiosHostAddress,
+			"--ogmios-port", strconv.Itoa(int(ogmios.port)),
+			"--since", defaultKupoSince,
+			"--match", defaultKupoMatchPattern,
+			"--prune-utxo",
+			"--workdir", kupoWorkDir,
+			"--host", kupoHostAddress,
+			"--port", strconv.Itoa(int(settings.port)),
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          kupoPortName,
+				ContainerPort: settings.port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		StartupProbe:   kupoHealthProbe(settings.port, 5, 2, 60),
+		LivenessProbe:  kupoHealthProbe(settings.port, 10, 5, 12),
+		ReadinessProbe: kupoHealthProbe(settings.port, 5, 2, 3),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      kupoDBVolumeName,
+				MountPath: kupoWorkDir,
+			},
+			{
+				Name:      kupoTmpVolumeName,
+				MountPath: kupoTmpDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+		Resources:                defaultKupoResources(),
+	}
+	if settings.resources != nil {
+		container.Resources = *settings.resources.DeepCopy()
+	}
+
+	return container
+}
+
+func defaultKupoResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoTmpSizeLimit),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoStorageLimit),
+		},
+	}
+}
+
+func resourceQuantity(value string) *resource.Quantity {
+	quantity := resource.MustParse(value)
+	return &quantity
+}
+
 func ogmiosHealthProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			Exec: &corev1.ExecAction{
 				Command: []string{
 					ogmiosCommand,
+					"health-check",
+					"--port",
+					strconv.Itoa(int(port)),
+				},
+			},
+		},
+		PeriodSeconds:    periodSeconds,
+		TimeoutSeconds:   timeoutSeconds,
+		FailureThreshold: failureThreshold,
+	}
+}
+
+func kupoHealthProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			Exec: &corev1.ExecAction{
+				Command: []string{
+					kupoContainerName,
 					"health-check",
 					"--port",
 					strconv.Itoa(int(port)),
@@ -617,6 +844,34 @@ func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwo
 	return service, nil
 }
 
+func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork, settings kupoSettings) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryKupoServiceName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       kupoPortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       settings.port,
+					TargetPort: intstr.FromString(kupoPortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set Kupo Service owner reference: %w", err)
+	}
+
+	return service, nil
+}
+
 func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {
 	annotations := map[string]string{
 		localnetFingerprintAnno: plan.Fingerprint.Value,
@@ -657,6 +912,10 @@ func primaryNodeStatePVCName(network *yacdv1alpha1.CardanoNetwork) string {
 
 func primaryOgmiosServiceName(network *yacdv1alpha1.CardanoNetwork) string {
 	return safeDNSLabelWithSuffix(network.Name, "ogmios")
+}
+
+func primaryKupoServiceName(network *yacdv1alpha1.CardanoNetwork) string {
+	return safeDNSLabelWithSuffix(network.Name, "kupo")
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {

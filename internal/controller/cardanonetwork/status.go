@@ -20,6 +20,7 @@ const (
 	conditionTypeReady       = "Ready"
 	conditionTypeNodeReady   = "NodeReady"
 	conditionTypeOgmiosReady = "OgmiosReady"
+	conditionTypeKupoReady   = "KupoReady"
 
 	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
@@ -33,6 +34,8 @@ const (
 	conditionReasonNodeReady                   = "NodeReady"
 	conditionReasonOgmiosReady                 = "OgmiosReady"
 	conditionReasonOgmiosDisabled              = "OgmiosDisabled"
+	conditionReasonKupoReady                   = "KupoReady"
+	conditionReasonKupoDisabled                = "KupoDisabled"
 	conditionReasonPrimaryWorkloadMissing      = "PrimaryWorkloadMissing"
 	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, Service, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
@@ -40,6 +43,8 @@ const (
 	conditionMessagePrimaryNodeReady           = "Primary node container is ready"
 	conditionMessageOgmiosReady                = "Ogmios sidecar is connected and available through its Service"
 	conditionMessageOgmiosDisabled             = "Ogmios chain API is disabled"
+	conditionMessageKupoReady                  = "Kupo sidecar is available through its Service"
+	conditionMessageKupoDisabled               = "Kupo chain index API is disabled"
 )
 
 func (r *CardanoNetworkReconciler) patchStatusConditions(
@@ -47,7 +52,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditions(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
@@ -56,6 +61,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	localnetFingerprint string,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
+	kupoService *corev1.Service,
 ) (metav1.Condition, error) {
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
@@ -65,14 +71,19 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	ready := readyCondition(nodeReady, ogmiosReady)
+	kupoReady, err := r.primaryKupoReadyCondition(ctx, network, kupoService != nil)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, kupoService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
 		nodeReady,
 		ogmiosReady,
+		kupoReady,
 	); err != nil {
 		return metav1.Condition{}, err
 	}
@@ -86,6 +97,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	localnetFingerprint string,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
+	kupoService *corev1.Service,
 	conditions ...metav1.Condition,
 ) error {
 	original := network.DeepCopy()
@@ -94,7 +106,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		setLocalnetIdentityStatus(network, localnetFingerprint)
 	}
 	if nodeService != nil {
-		setEndpointStatus(network, nodeService, ogmiosService)
+		setEndpointStatus(network, nodeService, ogmiosService, kupoService)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -125,7 +137,7 @@ func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFin
 	network.Status.Network.Era = &era
 }
 
-func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service) {
+func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service) {
 	if network.Status.Endpoints == nil {
 		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
 	}
@@ -137,13 +149,22 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 	}
 	if ogmiosService == nil {
 		network.Status.Endpoints.Ogmios = nil
+	} else {
+		network.Status.Endpoints.Ogmios = &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: ogmiosService.Name,
+			Port:        ogmiosService.Spec.Ports[0].Port,
+			URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", ogmiosServiceURLType, ogmiosService.Name, ogmiosService.Namespace, ogmiosService.Spec.Ports[0].Port),
+		}
+	}
+	if kupoService == nil {
+		network.Status.Endpoints.Kupo = nil
 		return
 	}
 
-	network.Status.Endpoints.Ogmios = &yacdv1alpha1.ServiceEndpointStatus{
-		ServiceName: ogmiosService.Name,
-		Port:        ogmiosService.Spec.Ports[0].Port,
-		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", ogmiosServiceURLType, ogmiosService.Name, ogmiosService.Namespace, ogmiosService.Spec.Ports[0].Port),
+	network.Status.Endpoints.Kupo = &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: kupoService.Name,
+		Port:        kupoService.Spec.Ports[0].Port,
+		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", kupoServiceURLType, kupoService.Name, kupoService.Namespace, kupoService.Spec.Ports[0].Port),
 	}
 }
 
@@ -291,6 +312,76 @@ func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 	), nil
 }
 
+func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	enabled bool,
+) (metav1.Condition, error) {
+	if !enabled {
+		return kupoReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonKupoDisabled,
+			conditionMessageKupoDisabled,
+		), nil
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryKupoServiceName(network)}, service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return kupoReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Kupo Service is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return kupoReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Primary node Deployment is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+	if deployment.Status.ObservedGeneration != deployment.Generation {
+		return kupoReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		), nil
+	}
+	if deployment.Status.UpdatedReplicas < 1 {
+		return kupoReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Kupo sidecar is not available",
+		), nil
+	}
+
+	containerReady, err := r.primaryPodContainerReady(ctx, network, kupoContainerName)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	if !containerReady {
+		return kupoReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Kupo sidecar is not ready",
+		), nil
+	}
+
+	return kupoReadyCondition(
+		metav1.ConditionTrue,
+		conditionReasonKupoReady,
+		conditionMessageKupoReady,
+	), nil
+}
+
 func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -337,15 +428,18 @@ func podContainerReady(pod *corev1.Pod, containerName string) bool {
 	return false
 }
 
-func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition) metav1.Condition {
-	if nodeReady.Status == metav1.ConditionTrue && ogmiosReady.Status == metav1.ConditionTrue {
+func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, kupoEnabled bool) metav1.Condition {
+	if nodeReady.Status == metav1.ConditionTrue && ogmiosReady.Status == metav1.ConditionTrue && (!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) {
 		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 	}
 	if nodeReady.Status != metav1.ConditionTrue {
 		return condition(conditionTypeReady, metav1.ConditionFalse, nodeReady.Reason, nodeReady.Message)
 	}
+	if ogmiosReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
+	}
 
-	return condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
+	return condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
@@ -358,6 +452,10 @@ func nodeReadyCondition(status metav1.ConditionStatus, reason string, message st
 
 func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
 	return condition(conditionTypeOgmiosReady, status, reason, message)
+}
+
+func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeKupoReady, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {

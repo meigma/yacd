@@ -94,6 +94,11 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, ogmiosServiceKey, &corev1.Service{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	kupoServiceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryKupoServiceName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, kupoServiceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -140,6 +145,17 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalOgmiosServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
+	kupoService := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, kupoServiceKey, kupoService))
+	originalKupoServiceUID := kupoService.UID
+	require.NoError(t, apiClient.Delete(ctx, kupoService))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, kupoServiceKey, got)
+		return err == nil && got.UID != originalKupoServiceUID
+	}, 10*time.Second, 100*time.Millisecond)
+
 	require.Eventually(t, func() bool {
 		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
@@ -154,6 +170,7 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 			Containers: []corev1.Container{
 				{Name: cardanoNodeContainerName, Image: "example.com/cardano-node:test"},
 				{Name: ogmiosContainerName, Image: "example.com/ogmios:test"},
+				{Name: kupoContainerName, Image: "example.com/kupo:test"},
 			},
 		},
 	}
@@ -171,6 +188,15 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		},
 		{
 			Name:  ogmiosContainerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		},
+		{
+			Name:  kupoContainerName,
 			Ready: true,
 			State: corev1.ContainerState{
 				Running: &corev1.ContainerStateRunning{
@@ -223,8 +249,10 @@ func statusHasProgressingEndpoints(
 		conditionHas(current, conditionTypeReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeNodeReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionFalse, "") &&
+		conditionHas(current, conditionTypeKupoReady, metav1.ConditionFalse, "") &&
 		nodeToNodeEndpointMatches(current, network) &&
-		ogmiosEndpointMatches(current, network)
+		ogmiosEndpointMatches(current, network) &&
+		kupoEndpointMatches(current, network)
 }
 
 func statusHasReadyConditions(
@@ -240,7 +268,8 @@ func statusHasReadyConditions(
 	return conditionHas(current, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady) &&
 		conditionHas(current, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady) &&
 		conditionHas(current, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady) &&
-		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady) &&
+		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
 }
 
 func conditionHas(
@@ -275,4 +304,14 @@ func ogmiosEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1
 	return current.Status.Endpoints.Ogmios.ServiceName == primaryOgmiosServiceName(network) &&
 		current.Status.Endpoints.Ogmios.Port == defaultOgmiosPort &&
 		current.Status.Endpoints.Ogmios.URL == "ws://manager-owned-ogmios.cardanonetwork-envtest.svc.cluster.local:1337"
+}
+
+func kupoEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	if current.Status.Endpoints == nil || current.Status.Endpoints.Kupo == nil {
+		return false
+	}
+
+	return current.Status.Endpoints.Kupo.ServiceName == primaryKupoServiceName(network) &&
+		current.Status.Endpoints.Kupo.Port == defaultKupoPort &&
+		current.Status.Endpoints.Kupo.URL == "http://manager-owned-kupo.cardanonetwork-envtest.svc.cluster.local:1442"
 }

@@ -81,6 +81,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -118,7 +119,17 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService)
+	var kupoServiceResult controllerutil.OperationResult
+	if resources.KupoService != nil {
+		kupoServiceResult, err = r.applyPrimaryService(ctx, resources.KupoService)
+	} else {
+		kupoServiceResult, err = r.deletePrimaryKupoService(ctx, network)
+	}
+	if err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+	}
+
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -127,12 +138,17 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if pvcResult == controllerutil.OperationResultNone &&
 		deploymentResult == controllerutil.OperationResultNone &&
 		serviceResult == controllerutil.OperationResultNone &&
-		ogmiosServiceResult == controllerutil.OperationResultNone {
+		ogmiosServiceResult == controllerutil.OperationResultNone &&
+		kupoServiceResult == controllerutil.OperationResultNone {
 		resultLog = log.V(1)
 	}
 	ogmiosServiceKey := "disabled"
 	if resources.OgmiosService != nil {
 		ogmiosServiceKey = client.ObjectKeyFromObject(resources.OgmiosService).String()
+	}
+	kupoServiceKey := "disabled"
+	if resources.KupoService != nil {
+		kupoServiceKey = client.ObjectKeyFromObject(resources.KupoService).String()
 	}
 	resultLog.Info("Applied CardanoNetwork primary workload",
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
@@ -143,6 +159,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"serviceOperation", serviceResult,
 		"ogmiosService", ogmiosServiceKey,
 		"ogmiosServiceOperation", ogmiosServiceResult,
+		"kupoService", kupoServiceKey,
+		"kupoServiceOperation", kupoServiceResult,
 		"localnetFingerprint", localnetFingerprint)
 
 	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
@@ -168,6 +186,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		condition(conditionTypeReady, metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		nodeReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		kupoReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
