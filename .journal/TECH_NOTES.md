@@ -17,9 +17,23 @@
   is proven.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
-- The companion CLI should compile one developer-facing config into Kubernetes
-  CRDs and own imperative operations such as topup, wait, status, and connection
-  info.
+- The companion CLI now lives under `cli/`. It uses Cobra/Viper, builds the
+  release binary from `./cli/cmd/yacd`, and keeps the operator manager image
+  entrypoint on `./cmd`.
+- The first CLI surface is intentionally small: `yacd deploy -f yacd.yaml`
+  renders and server-side-applies one `CardanoNetwork`, `--dry-run` prints the
+  rendered manifest without applying, `--wait` polls readiness, and `yacd info
+  NAME --json` returns a command-owned DTO with status, network identity, and
+  node/Ogmios endpoints.
+- The phase-4 developer config is
+  `apiVersion: yacd.meigma.io/devconfig/v1alpha1`, `kind: Environment`, with
+  `metadata.name`, optional `metadata.namespace`, and `spec.network` currently
+  shaped as `api/v1alpha1.CardanoNetworkSpec`. Because the CLI decodes into the
+  concrete API type, it rejects omitted CRD-defaulted concrete fields rather
+  than rendering zero values.
+- `yacd deploy --wait` must only trust `Ready` or `Degraded` conditions whose
+  `observedGeneration` is at least the current object generation; otherwise an
+  updated already-ready resource can report stale success.
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
 - PR #3 introduced the first real API group/version with

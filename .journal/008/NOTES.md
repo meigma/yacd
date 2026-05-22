@@ -28,3 +28,6 @@ Addressed review findings on `feat/cli-foundation`: `deploy --wait` now ignores 
 
 ## 2026-05-22 09:31 — Deploy input validation fixes
 Addressed the second review pass on `feat/cli-foundation`: `deploy` now rejects positional arguments with `cobra.NoArgs`, and `--wait --timeout <=0` is validated before loading or applying Kubernetes resources. Added command tests that fail if an invalid operand or invalid timeout constructs a Kubernetes client. Verification: `go test ./cli/...` with envtest assets, `moon run root:test --summary minimal`, `moon run root:check --summary minimal`, `git diff --check`, and manual `go run ./cli/cmd/yacd deploy unexpected ...` / `go run ./cli/cmd/yacd deploy ... --wait --timeout 0s` probes.
+
+## 2026-05-22 09:49 — Close
+PR #13 (`feat(cli): add developer environment CLI`) was reviewed, squash-merged, and fast-forwarded into local `master` at `8bf1b26`. The temporary `feat/cli-foundation` worktree and branch were removed, the remote feature branch was deleted, and `moon run root:dev-down` stopped the Kind/Tilt development stack. Closeout artifacts were written in `.journal/008/SUMMARY.md`, `.journal/INDEX.md`, and `.journal/TECH_NOTES.md`.
