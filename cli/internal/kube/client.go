@@ -62,22 +62,11 @@ func NewClient(config Config) (Client, error) {
 
 // RESTConfig resolves the user's kubeconfig and default namespace.
 func RESTConfig(config Config) (*rest.Config, string, error) {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if strings.TrimSpace(config.Kubeconfig) != "" {
-		loadingRules.ExplicitPath = strings.TrimSpace(config.Kubeconfig)
-	}
+	clientConfig := newClientConfig(config)
 
-	overrides := &clientcmd.ConfigOverrides{
-		CurrentContext: strings.TrimSpace(config.Context),
-	}
-	clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
-
-	namespace, _, err := clientConfig.Namespace()
+	namespace, err := DefaultNamespace(config)
 	if err != nil {
-		return nil, "", fmt.Errorf("resolve Kubernetes namespace: %w", err)
-	}
-	if strings.TrimSpace(namespace) == "" {
-		namespace = defaultNamespace
+		return nil, "", err
 	}
 
 	restConfig, err := clientConfig.ClientConfig()
@@ -86,6 +75,33 @@ func RESTConfig(config Config) (*rest.Config, string, error) {
 	}
 
 	return restConfig, namespace, nil
+}
+
+// DefaultNamespace resolves the namespace selected by the user's kubeconfig.
+func DefaultNamespace(config Config) (string, error) {
+	clientConfig := newClientConfig(config)
+
+	namespace, _, err := clientConfig.Namespace()
+	if err != nil {
+		return "", fmt.Errorf("resolve Kubernetes namespace: %w", err)
+	}
+	if strings.TrimSpace(namespace) == "" {
+		namespace = defaultNamespace
+	}
+
+	return namespace, nil
+}
+
+func newClientConfig(config Config) clientcmd.ClientConfig {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if strings.TrimSpace(config.Kubeconfig) != "" {
+		loadingRules.ExplicitPath = strings.TrimSpace(config.Kubeconfig)
+	}
+
+	overrides := &clientcmd.ConfigOverrides{
+		CurrentContext: strings.TrimSpace(config.Context),
+	}
+	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
 }
 
 func (c *runtimeClient) DefaultNamespace() string {

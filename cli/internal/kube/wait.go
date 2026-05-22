@@ -36,12 +36,12 @@ func WaitReady(
 		}
 		latest = network
 
-		degraded := apimeta.FindStatusCondition(network.Status.Conditions, conditionDegraded)
+		degraded := freshCondition(network, conditionDegraded)
 		if degraded != nil && degraded.Status == metav1.ConditionTrue {
 			return false, fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
 		}
 
-		ready := apimeta.FindStatusCondition(network.Status.Conditions, conditionReady)
+		ready := freshCondition(network, conditionReady)
 		if ready != nil && ready.Status == metav1.ConditionTrue {
 			return true, nil
 		}
@@ -52,6 +52,15 @@ func WaitReady(
 		if latest != nil {
 			ready := apimeta.FindStatusCondition(latest.Status.Conditions, conditionReady)
 			if ready != nil {
+				if ready.ObservedGeneration < latest.Generation {
+					return latest, fmt.Errorf(
+						"cardanonetwork %s/%s did not become ready: Ready condition observed generation %d is older than current generation %d",
+						namespace,
+						name,
+						ready.ObservedGeneration,
+						latest.Generation,
+					)
+				}
 				return latest, fmt.Errorf("cardanonetwork %s/%s did not become ready: %s: %s", namespace, name, ready.Reason, ready.Message)
 			}
 		}
@@ -59,4 +68,16 @@ func WaitReady(
 	}
 
 	return latest, nil
+}
+
+func freshCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
+	condition := apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
+	if condition == nil {
+		return nil
+	}
+	if condition.ObservedGeneration < network.Generation {
+		return nil
+	}
+
+	return condition
 }

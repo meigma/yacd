@@ -110,6 +110,31 @@ func TestWaitReadyFailsOnDegradedNetwork(t *testing.T) {
 	}
 }
 
+func TestWaitReadyIgnoresStaleReadyGeneration(t *testing.T) {
+	t.Parallel()
+
+	network := localCardanoNetwork("cli-stale", "ready")
+	network.Generation = 2
+	network.Status.Conditions = []metav1.Condition{
+		{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "Ready",
+			Message:            "previous spec was ready",
+			ObservedGeneration: 1,
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+
+	_, err := WaitReady(context.Background(), &staticClient{network: network}, "cli-stale", "ready", 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("WaitReady succeeded, want stale generation error")
+	}
+	if got := err.Error(); !strings.Contains(got, "observed generation 1") || !strings.Contains(got, "current generation 2") {
+		t.Fatalf("error = %q, want stale generation details", got)
+	}
+}
+
 func TestWaitReadyTimesOutCleanly(t *testing.T) {
 	t.Parallel()
 

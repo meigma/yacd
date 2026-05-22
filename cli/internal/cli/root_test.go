@@ -102,6 +102,31 @@ func TestDeployDryRunPrintsManifestWithoutKubeClient(t *testing.T) {
 	}
 }
 
+func TestDeployDryRunUsesKubeDefaultNamespace(t *testing.T) {
+	t.Setenv("YACD_NAMESPACE", "")
+
+	configPath := writeTempConfig(t, strings.Replace(testDevConfig, "  namespace: config-ns\n", "", 1))
+	var stdout bytes.Buffer
+	root := NewRootCommand(Options{
+		Out:   &stdout,
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return nil, fmt.Errorf("kube client should not be constructed for dry run")
+		},
+		KubeNamespaceResolver: func(kube.Config) (string, error) {
+			return "kube-ns", nil
+		},
+	})
+	root.SetArgs([]string{"deploy", "-f", configPath, "--dry-run"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext returned an error: %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "namespace: kube-ns") {
+		t.Fatalf("stdout = %s, want kube namespace", got)
+	}
+}
+
 func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 	t.Setenv("YACD_KUBECONFIG", "/tmp/yacd-kubeconfig")
 	t.Setenv("YACD_KUBE_CONTEXT", "dev-context")

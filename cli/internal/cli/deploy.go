@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/meigma/yacd/cli/internal/devconfig"
@@ -33,17 +34,27 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			kubeConfig := kube.Config{
+				Kubeconfig: runtimeConfig.Kubeconfig,
+				Context:    runtimeConfig.KubeContext,
+			}
 			var kubeClient kube.Client
 			fallbackNamespace := ""
+			needsKubeDefaultNamespace := strings.TrimSpace(runtimeConfig.Namespace) == "" &&
+				strings.TrimSpace(environment.Metadata.Namespace) == ""
 			if !dryRun {
-				kubeClient, err = commandContext.kubeClientFactory(kube.Config{
-					Kubeconfig: runtimeConfig.Kubeconfig,
-					Context:    runtimeConfig.KubeContext,
-				})
+				kubeClient, err = commandContext.kubeClientFactory(kubeConfig)
 				if err != nil {
 					return err
 				}
-				fallbackNamespace = kubeClient.DefaultNamespace()
+				if needsKubeDefaultNamespace {
+					fallbackNamespace = kubeClient.DefaultNamespace()
+				}
+			} else if needsKubeDefaultNamespace {
+				fallbackNamespace, err = commandContext.kubeNamespaceResolver(kubeConfig)
+				if err != nil {
+					return err
+				}
 			}
 
 			network, err := render.CardanoNetwork(environment, render.Namespace(runtimeConfig.Namespace, environment.Metadata.Namespace, fallbackNamespace))

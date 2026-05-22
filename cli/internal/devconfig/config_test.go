@@ -61,6 +61,44 @@ func TestLoadRejectsUnknownTopLevelFields(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name:    "node version",
+			config:  strings.Replace(validConfig, "      version: \"11.0.1\"\n", "", 1),
+			wantErr: "spec.network.node.version",
+		},
+		{
+			name:    "node port",
+			config:  strings.Replace(validConfig, "      port: 3001\n", "", 1),
+			wantErr: "spec.network.node.port",
+		},
+		{
+			name:    "local network magic",
+			config:  strings.Replace(validConfig, "      networkMagic: 42\n", "", 1),
+			wantErr: "spec.network.local.networkMagic",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(tt.config))
+			if err == nil {
+				t.Fatal("Load succeeded, want error")
+			}
+			if got := err.Error(); !strings.Contains(got, tt.wantErr) {
+				t.Fatalf("error = %q, want %q", got, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateRequiresEnvelope(t *testing.T) {
 	t.Parallel()
 

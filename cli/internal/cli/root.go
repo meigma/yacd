@@ -27,16 +27,18 @@ type Options struct {
 	Build BuildInfo
 	Viper *viper.Viper
 
-	KubeClientFactory func(kube.Config) (kube.Client, error)
+	KubeClientFactory     func(kube.Config) (kube.Client, error)
+	KubeNamespaceResolver func(kube.Config) (string, error)
 }
 
 type commandContext struct {
-	in                io.Reader
-	out               io.Writer
-	err               io.Writer
-	viper             *viper.Viper
-	kubeClientFactory func(kube.Config) (kube.Client, error)
-	logger            *slog.Logger
+	in                    io.Reader
+	out                   io.Writer
+	err                   io.Writer
+	viper                 *viper.Viper
+	kubeClientFactory     func(kube.Config) (kube.Client, error)
+	kubeNamespaceResolver func(kube.Config) (string, error)
+	logger                *slog.Logger
 }
 
 // RuntimeConfig is the global CLI runtime configuration.
@@ -65,15 +67,19 @@ func NewRootCommand(options Options) *cobra.Command {
 	if options.KubeClientFactory == nil {
 		options.KubeClientFactory = kube.NewClient
 	}
+	if options.KubeNamespaceResolver == nil {
+		options.KubeNamespaceResolver = kube.DefaultNamespace
+	}
 	options.Build = options.Build.withDefaults()
 
 	commandContext := &commandContext{
-		in:                options.In,
-		out:               options.Out,
-		err:               options.Err,
-		viper:             options.Viper,
-		kubeClientFactory: options.KubeClientFactory,
-		logger:            slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		in:                    options.In,
+		out:                   options.Out,
+		err:                   options.Err,
+		viper:                 options.Viper,
+		kubeClientFactory:     options.KubeClientFactory,
+		kubeNamespaceResolver: options.KubeNamespaceResolver,
+		logger:                slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
 	root := &cobra.Command{
