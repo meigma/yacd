@@ -15,6 +15,7 @@ fileGroups:
     - 'cli/**/*.go'
     - 'cmd/**/*.go'
     - 'internal/**/*.go'
+    - 'services/**/*.go'
     - 'test/**/*.go'
     - 'go.mod'
     - 'go.sum'
