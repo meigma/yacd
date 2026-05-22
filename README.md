@@ -15,7 +15,7 @@ local YACD environment from a checked-in config file.
 - Secure metrics serving with Kubernetes authn/authz filters.
 - Initial `CardanoNetwork` CRD shape for local and public network modes.
 - Local-mode `CardanoNetwork` reconciliation for one primary node with Ogmios
-  as the default chain API.
+  as the default chain API and Kupo as the default chain index API.
 - Developer CLI under `cli/` with `deploy` and `info` commands.
 - Helm chart packaging for the manager deployment.
 - Moon tasks for generation, checks, tests, local deployment, and Kind smoke

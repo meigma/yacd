@@ -104,6 +104,43 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "ogmios port must be between 1 and 65535",
 		},
 		{
+			name: "blank kupo image",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   " ",
+						Port:    defaultKupoPort,
+					},
+				}
+			},
+			wantErr: "kupo image is required",
+		},
+		{
+			name: "invalid kupo port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    65536,
+					},
+				}
+			},
+			wantErr: "kupo port must be between 1 and 65535",
+		},
+		{
+			name: "kupo with ogmios disabled",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: false,
+					},
+				}
+			},
+			wantErr: "kupo requires ogmios to be enabled",
+		},
+		{
 			name: "unsupported ogmios image tag",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -218,7 +255,9 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	persistentVolumeClaim := resources.PersistentVolumeClaim
 	service := resources.Service
 	ogmiosService := resources.OgmiosService
+	kupoService := resources.KupoService
 	require.NotNil(t, ogmiosService)
+	require.NotNil(t, kupoService)
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -244,6 +283,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, ogmiosServiceController)
 	assert.Equal(t, "devnet", ogmiosServiceController.Name)
 	assert.Equal(t, "CardanoNetwork", ogmiosServiceController.Kind)
+	kupoServiceController := metav1.GetControllerOf(kupoService)
+	require.NotNil(t, kupoServiceController)
+	assert.Equal(t, "devnet", kupoServiceController.Name)
+	assert.Equal(t, "CardanoNetwork", kupoServiceController.Kind)
 
 	expectedSelector := map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -273,7 +316,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, initContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
@@ -334,7 +377,41 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
 	}, ogmiosContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Volumes, 2)
+	kupoContainer := deployment.Spec.Template.Spec.Containers[2]
+	assert.Equal(t, kupoContainerName, kupoContainer.Name)
+	assert.Equal(t, defaultKupoImage, kupoContainer.Image)
+	assert.Empty(t, kupoContainer.Command)
+	assert.Equal(t, []string{
+		"--ogmios-host", "127.0.0.1",
+		"--ogmios-port", "1337",
+		"--since", "origin",
+		"--match", "*/*",
+		"--workdir", "/kupo",
+		"--host", "0.0.0.0",
+		"--port", "1442",
+	}, kupoContainer.Args)
+	assert.Equal(t, []corev1.ContainerPort{
+		{
+			Name:          kupoPortName,
+			ContainerPort: defaultKupoPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}, kupoContainer.Ports)
+	require.NotNil(t, kupoContainer.ReadinessProbe)
+	require.NotNil(t, kupoContainer.StartupProbe)
+	require.NotNil(t, kupoContainer.LivenessProbe)
+	assert.Equal(t, []string{kupoContainerName, "health-check", "--port", "1442"}, kupoContainer.ReadinessProbe.Exec.Command)
+	assert.Equal(t, []string{kupoContainerName, "health-check", "--port", "1442"}, kupoContainer.StartupProbe.Exec.Command)
+	assert.Equal(t, []string{kupoContainerName, "health-check", "--port", "1442"}, kupoContainer.LivenessProbe.Exec.Command)
+	assert.Equal(t, int32(3), kupoContainer.ReadinessProbe.FailureThreshold)
+	assert.Equal(t, int32(60), kupoContainer.StartupProbe.FailureThreshold)
+	assert.Equal(t, int32(12), kupoContainer.LivenessProbe.FailureThreshold)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: kupoDBVolumeName, MountPath: "/kupo"},
+		{Name: kupoTmpVolumeName, MountPath: "/tmp"},
+	}, kupoContainer.VolumeMounts)
+
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 4)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
 	assert.Equal(t, localnetStateVolumeName, stateVolume.Name)
 	require.NotNil(t, stateVolume.PersistentVolumeClaim)
@@ -342,6 +419,12 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	ipcVolume := deployment.Spec.Template.Spec.Volumes[1]
 	assert.Equal(t, nodeIPCVolumeName, ipcVolume.Name)
 	assert.NotNil(t, ipcVolume.EmptyDir)
+	kupoVolume := deployment.Spec.Template.Spec.Volumes[2]
+	assert.Equal(t, kupoDBVolumeName, kupoVolume.Name)
+	assert.NotNil(t, kupoVolume.EmptyDir)
+	kupoTmpVolume := deployment.Spec.Template.Spec.Volumes[3]
+	assert.Equal(t, kupoTmpVolumeName, kupoTmpVolume.Name)
+	assert.NotNil(t, kupoTmpVolume.EmptyDir)
 
 	assert.Equal(t, "devnet-node-state", persistentVolumeClaim.Name)
 	assert.Equal(t, "default", persistentVolumeClaim.Namespace)
@@ -378,9 +461,24 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		},
 	}, ogmiosService.Spec.Ports)
 
+	assert.Equal(t, "devnet-kupo", kupoService.Name)
+	assert.Equal(t, "default", kupoService.Namespace)
+	assert.Equal(t, "yacd", kupoService.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, kupoService.Spec.Type)
+	assert.Equal(t, expectedSelector, kupoService.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       kupoPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultKupoPort,
+			TargetPort: intstr.FromString(kupoPortName),
+		},
+	}, kupoService.Spec.Ports)
+
 	assertPodSecurityContext(t, deployment.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, ogmiosContainer.SecurityContext)
+	assertRestrictedContainerSecurityContext(t, kupoContainer.SecurityContext)
 }
 
 func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
@@ -396,6 +494,9 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	assert.LessOrEqual(t, len(resources.OgmiosService.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.OgmiosService.Name, "-ogmios"))
 	assert.NotContains(t, resources.OgmiosService.Name, ".")
+	assert.LessOrEqual(t, len(resources.KupoService.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.KupoService.Name, "-kupo"))
+	assert.NotContains(t, resources.KupoService.Name, ".")
 	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
 	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
@@ -417,6 +518,7 @@ func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
 	assert.NotEqual(t, dotted.PersistentVolumeClaim.Name, dashed.PersistentVolumeClaim.Name)
 	assert.NotEqual(t, dotted.Service.Name, dashed.Service.Name)
 	assert.NotEqual(t, dotted.OgmiosService.Name, dashed.OgmiosService.Name)
+	assert.NotEqual(t, dotted.KupoService.Name, dashed.KupoService.Name)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
@@ -471,7 +573,7 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, resources.OgmiosService)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
 	ogmiosContainer := resources.Deployment.Spec.Template.Spec.Containers[1]
 	assert.Equal(t, "example.com/ogmios:v6.14.0", ogmiosContainer.Image)
 	assert.Contains(t, ogmiosContainer.Args, "1444")
@@ -479,12 +581,46 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 	assert.Equal(t, *network.Spec.ChainAPI.Ogmios.Resources, ogmiosContainer.Resources)
 	assert.Equal(t, int32(1444), resources.OgmiosService.Spec.Ports[0].Port)
 	assert.Equal(t, intstr.FromString(ogmiosPortName), resources.OgmiosService.Spec.Ports[0].TargetPort)
+	kupoContainer := resources.Deployment.Spec.Template.Spec.Containers[2]
+	assert.Contains(t, kupoContainer.Args, "1444")
+}
+
+func TestPrimaryWorkloadBuilderAppliesKupoOverrides(t *testing.T) {
+	network := localCardanoNetwork("custom-kupo")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled: true,
+			Image:   "example.com/kupo:v2.11.0",
+			Port:    2442,
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+			},
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.NotNil(t, resources.KupoService)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	kupoContainer := resources.Deployment.Spec.Template.Spec.Containers[2]
+	assert.Equal(t, "example.com/kupo:v2.11.0", kupoContainer.Image)
+	assert.Contains(t, kupoContainer.Args, "2442")
+	assert.Equal(t, []string{kupoContainerName, "health-check", "--port", "2442"}, kupoContainer.ReadinessProbe.Exec.Command)
+	assert.Equal(t, *network.Spec.ChainAPI.Kupo.Resources, kupoContainer.Resources)
+	assert.Equal(t, int32(2442), resources.KupoService.Spec.Ports[0].Port)
+	assert.Equal(t, intstr.FromString(kupoPortName), resources.KupoService.Spec.Ports[0].TargetPort)
 }
 
 func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	network := localCardanoNetwork("ogmios-disabled")
 	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: false,
+		},
+		Kupo: &yacdv1alpha1.KupoSpec{
 			Enabled: false,
 		},
 	}
@@ -495,6 +631,27 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Nil(t, resources.OgmiosService)
+	assert.Nil(t, resources.KupoService)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
+}
+
+func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
+	network := localCardanoNetwork("kupo-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled: false,
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
+	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.NotNil(t, resources.OgmiosService)
+	assert.Nil(t, resources.KupoService)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {

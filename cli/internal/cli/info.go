@@ -80,6 +80,7 @@ type networkOutput struct {
 type endpointsOutput struct {
 	NodeToNode *endpointOutput `json:"nodeToNode,omitempty"`
 	Ogmios     *endpointOutput `json:"ogmios,omitempty"`
+	Kupo       *endpointOutput `json:"kupo,omitempty"`
 }
 
 type endpointOutput struct {
@@ -118,6 +119,7 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 	if network.Status.Endpoints != nil {
 		info.Endpoints.NodeToNode = endpointInfo(network.Status.Endpoints.NodeToNode)
 		info.Endpoints.Ogmios = endpointInfo(network.Status.Endpoints.Ogmios)
+		info.Endpoints.Kupo = endpointInfo(network.Status.Endpoints.Kupo)
 	}
 
 	info.Conditions = make([]conditionOutput, 0, len(network.Status.Conditions))
@@ -251,6 +253,9 @@ func printEndpointsInfo(out io.Writer, endpoints endpointsOutput) error {
 		return err
 	}
 	if err := printEndpointInfo(out, "ogmios", endpoints.Ogmios); err != nil {
+		return err
+	}
+	if err := printEndpointInfo(out, "kupo", endpoints.Kupo); err != nil {
 		return err
 	}
 

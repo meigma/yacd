@@ -73,6 +73,7 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	service := requirePrimaryService(t, ctx, reconciler, network)
 	ogmiosService := requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	kupoService := requirePrimaryKupoService(t, ctx, reconciler, network)
 	assert.Equal(t, []corev1.ServicePort{
 		{
 			Name:       cardanoNodePortName,
@@ -89,14 +90,24 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 			TargetPort: intstr.FromString(ogmiosPortName),
 		},
 	}, ogmiosService.Spec.Ports)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       kupoPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultKupoPort,
+			TargetPort: intstr.FromString(kupoPortName),
+		},
+	}, kupoService.Spec.Ports)
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
 	assertOgmiosEndpoint(t, ctx, reconciler, network, ogmiosService.Name, defaultOgmiosPort)
+	assertKupoEndpoint(t, ctx, reconciler, network, kupoService.Name, defaultKupoPort)
 }
 
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
@@ -108,7 +119,7 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
@@ -118,6 +129,7 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
 }
 
 func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *testing.T) {
@@ -137,6 +149,28 @@ func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *te
 	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+}
+
+func TestCardanoNetworkReconcilerReconcileRequiresKupoReadyWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("ogmios-ready-kupo-waiting")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
 
@@ -145,6 +179,9 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	network := localCardanoNetwork("ogmios-disabled")
 	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: false,
+		},
+		Kupo: &yacdv1alpha1.KupoSpec{
 			Enabled: false,
 		},
 	}
@@ -157,10 +194,13 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
+	assert.Nil(t, current.Status.Endpoints.Kupo)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
@@ -169,6 +209,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 }
@@ -187,6 +228,9 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 		Ogmios: &yacdv1alpha1.OgmiosSpec{
 			Enabled: false,
 		},
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled: false,
+		},
 	}
 	require.NoError(t, reconciler.Update(ctx, current))
 
@@ -197,7 +241,72 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
+	assert.Nil(t, current.Status.Endpoints.Kupo)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+}
+
+func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("kupo-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled: false,
+		},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
+	requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Kupo)
+
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
+}
+
+func TestCardanoNetworkReconcilerReconcileDeletesOwnedKupoServiceWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("deletes-kupo-service")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	requirePrimaryKupoService(t, ctx, reconciler, network)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled: false,
+		},
+	}
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	current = requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
 }
 
 func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
@@ -218,7 +327,7 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	assert.Len(t, persistentVolumeClaims.Items, 1)
 	var services corev1.ServiceList
 	require.NoError(t, reconciler.List(ctx, &services))
-	assert.Len(t, services.Items, 2)
+	assert.Len(t, services.Items, 3)
 }
 
 func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
@@ -392,6 +501,66 @@ func TestCardanoNetworkReconcilerReconcileCorrectsOgmiosServiceAndPreservesMetad
 			Protocol:   corev1.ProtocolTCP,
 			Port:       defaultOgmiosPort,
 			TargetPort: intstr.FromString(ogmiosPortName),
+		},
+	}, service.Spec.Ports)
+	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
+	assert.Equal(t, []string{clusterIP}, service.Spec.ClusterIPs)
+	assert.Equal(t, []corev1.IPFamily{corev1.IPv4Protocol}, service.Spec.IPFamilies)
+	require.NotNil(t, service.Spec.IPFamilyPolicy)
+	assert.Equal(t, corev1.IPFamilyPolicySingleStack, *service.Spec.IPFamilyPolicy)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileCorrectsKupoServiceAndPreservesMetadata(t *testing.T) {
+	const (
+		clusterIP            = "10.0.0.44"
+		foreignMetadataValue = "keep"
+	)
+
+	ctx := context.Background()
+	network := localCardanoNetwork("corrects-kupo-service")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service := requirePrimaryKupoService(t, ctx, reconciler, network)
+	ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+	service.Labels["example.com/foreign-label"] = foreignMetadataValue
+	service.Labels[labelAppManagedBy] = wrongManagedByLabelValue
+	service.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
+	service.Spec.Type = corev1.ServiceTypeNodePort
+	service.Spec.Selector = map[string]string{"unexpected": "true"}
+	service.Spec.Ports = []corev1.ServicePort{
+		{
+			Name:       "wrong",
+			Protocol:   corev1.ProtocolTCP,
+			Port:       9997,
+			TargetPort: intstr.FromInt(9997),
+			NodePort:   32002,
+		},
+	}
+	service.Spec.ClusterIP = clusterIP
+	service.Spec.ClusterIPs = []string{clusterIP}
+	service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+	service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+	require.NoError(t, reconciler.Update(ctx, service))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service = requirePrimaryKupoService(t, ctx, reconciler, network)
+	assert.Equal(t, foreignMetadataValue, service.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", service.Labels[labelAppManagedBy])
+	assert.Equal(t, foreignMetadataValue, service.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, service.Spec.Type)
+	assert.Equal(t, primaryWorkloadSelectorLabels(network), service.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       kupoPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultKupoPort,
+			TargetPort: intstr.FromString(kupoPortName),
 		},
 	}, service.Spec.Ports)
 	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
@@ -823,6 +992,29 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 				}
 			},
 		},
+		{
+			name: "foreign-owned-kupo-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryKupoServiceName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-kupo-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryKupoServiceName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -841,6 +1033,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 			assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 		})
 	}
 }
@@ -877,6 +1070,7 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	current := requireNetwork(t, ctx, reconciler, network)
 	assert.Nil(t, current.Status.Endpoints)
 }
@@ -1080,6 +1274,23 @@ func requirePrimaryOgmiosService(
 	return service
 }
 
+func requirePrimaryKupoService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Service {
+	t.Helper()
+
+	service := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryKupoServiceName(network),
+	}, service))
+
+	return service
+}
+
 func foreignControllerOwnerReference() metav1.OwnerReference {
 	controller := true
 
@@ -1193,6 +1404,7 @@ func assertNoPrimaryChildren(
 	assert.True(t, apierrors.IsNotFound(err), "expected primary Service to be absent, got %v", err)
 
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 }
 
 func assertNoPrimaryOgmiosService(
@@ -1208,6 +1420,21 @@ func assertNoPrimaryOgmiosService(
 		Name:      primaryOgmiosServiceName(network),
 	}, &corev1.Service{})
 	assert.True(t, apierrors.IsNotFound(err), "expected Ogmios Service to be absent, got %v", err)
+}
+
+func assertNoPrimaryKupoService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryKupoServiceName(network),
+	}, &corev1.Service{})
+	assert.True(t, apierrors.IsNotFound(err), "expected Kupo Service to be absent, got %v", err)
 }
 
 func assertCondition(
@@ -1269,6 +1496,27 @@ func assertOgmiosEndpoint(
 	assert.Equal(t,
 		fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
 		current.Status.Endpoints.Ogmios.URL,
+	)
+}
+
+func assertKupoEndpoint(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	serviceName string,
+	port int32,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.Kupo)
+	assert.Equal(t, serviceName, current.Status.Endpoints.Kupo.ServiceName)
+	assert.Equal(t, port, current.Status.Endpoints.Kupo.Port)
+	assert.Equal(t,
+		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
+		current.Status.Endpoints.Kupo.URL,
 	)
 }
 

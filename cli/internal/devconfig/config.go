@@ -129,6 +129,13 @@ func validateExplicitFields(data []byte, environment Environment) error {
 			[]string{"spec", "network", "chainAPI", "ogmios", "port"},
 		)
 	}
+	if environment.Spec.Network.ChainAPI != nil && environment.Spec.Network.ChainAPI.Kupo != nil {
+		requiredPaths = append(requiredPaths,
+			[]string{"spec", "network", "chainAPI", "kupo", "enabled"},
+			[]string{"spec", "network", "chainAPI", "kupo", "image"},
+			[]string{"spec", "network", "chainAPI", "kupo", "port"},
+		)
+	}
 
 	for _, path := range requiredPaths {
 		if !hasPath(document, path...) {

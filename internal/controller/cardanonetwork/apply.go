@@ -211,14 +211,30 @@ func (r *CardanoNetworkReconciler) deletePrimaryOgmiosService(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 ) (controllerutil.OperationResult, error) {
+	return r.deletePrimaryChainAPIService(ctx, network, primaryOgmiosServiceName(network), "Ogmios")
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryKupoService(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (controllerutil.OperationResult, error) {
+	return r.deletePrimaryChainAPIService(ctx, network, primaryKupoServiceName(network), "Kupo")
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryChainAPIService(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	name string,
+	label string,
+) (controllerutil.OperationResult, error) {
 	desired := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      primaryOgmiosServiceName(network),
+			Name:      name,
 			Namespace: network.Namespace,
 		},
 	}
 	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
-		return controllerutil.OperationResultNone, fmt.Errorf("set desired Ogmios Service owner reference: %w", err)
+		return controllerutil.OperationResultNone, fmt.Errorf("set desired %s Service owner reference: %w", label, err)
 	}
 
 	current := &corev1.Service{}
