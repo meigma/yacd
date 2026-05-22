@@ -69,3 +69,28 @@ Validation passed with `moon run root:test`, `moon run root:test-e2e`,
 `go test ./internal/controller/cardanonetwork` failed because plain Go test
 does not set envtest assets; the repo-supported `moon run root:test` path
 passed.
+
+## 2026-05-21 19:18 — Manual Ogmios function test
+Ran a manual function test against the active `kind-yacd-dev` development
+environment from `.wt/feat-ogmios-chain-api`. Confirmed the controller manager
+was rolled out from the Tilt-built image and that in-cluster RBAC allows the
+manager ServiceAccount to delete Services and list Pods.
+Applied a throwaway `yacd-manual/manual-ogmios` `CardanoNetwork` with omitted
+`spec.chainAPI`. The operator created the node PVC, node Service, Ogmios
+Service, and two-container Deployment. The Pod reached ready with both
+`cardano-node` and `ogmios` ready and zero restarts; the Ogmios startup,
+readiness, and liveness probes all used `/bin/ogmios health-check --port
+1337`. Status reached `Ready=True`, `NodeReady=True`, and
+`OgmiosReady=True`, with the expected `ws://manual-ogmios-ogmios.yacd-manual.svc.cluster.local:1337`
+endpoint. A separate curl pod queried the Service and confirmed `/health`
+returned `connectionStatus:"connected"` and `queryNetwork/tip` returned a
+JSON-RPC result.
+Patched the same CR to `spec.chainAPI.ogmios.enabled=false`; the controller
+deleted the Ogmios Service, removed the sidecar from the Deployment template,
+cleared `status.endpoints.ogmios`, kept `NodeReady=True`, and set
+`OgmiosReady=False`/`Ready=False` with reason `OgmiosDisabled`.
+Also applied `manual-ogmios-invalid` with `cardanosolutions/ogmios:latest`;
+the controller rejected it with `Degraded=True`, reason `UnsupportedSpec`,
+message `ogmios image tag "latest" is not a supported release tag`, and
+created no children. The throwaway namespace was deleted and kubectl context
+is `kind-yacd-dev`.
