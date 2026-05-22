@@ -5,8 +5,8 @@
   prototype should stay local-first and Kind/Tilt-friendly.
 - The primary CRD should represent a Cardano environment/network rather than a
   single node. The first runtime is now an owned singleton primary
-  `cardano-node` Deployment plus explicit owned PVC; Ogmios and Services are
-  intentionally deferred to later slices.
+  `cardano-node` Deployment, explicit owned PVC, and owned ClusterIP Service
+  exposing node-to-node TCP. Ogmios is intentionally deferred to a later slice.
 - Supporting services should be separate CRDs/controllers. Network-only
   services can run as independent workloads; heavy IPC services such as db-sync
   should prefer a dedicated follower-node Pod so they do not mutate or restart
@@ -58,6 +58,21 @@
   fingerprint matches, rejects storage shrink and requested storage class
   drift, and refuses unowned or foreign-owned same-name children rather than
   adopting them silently.
+- The primary node Service uses the same safe name as the Deployment
+  (`<safe CardanoNetwork name>-node`), targets the named `node-to-node`
+  container port, preserves Kubernetes-assigned cluster IP fields, and refuses
+  unowned or foreign-owned same-name Services.
+- `status.endpoints.nodeToNode` is the canonical in-cluster discovery contract
+  for the primary node. It publishes `serviceName`, `port`, and a fully
+  qualified `tcp://<service>.<namespace>.svc.cluster.local:<port>` URL.
+- `NodeReady` is Kubernetes-runtime readiness only. It becomes true when the
+  owned PVC and Service exist and the owned Deployment has observed its current
+  generation with an available ready replica. Protocol-level Cardano health and
+  aggregate `Ready` remain future contracts.
+- The Chainsaw manager smoke now includes an installed-operator proof that a
+  representative local-mode `CardanoNetwork` creates primary resources and
+  reaches `NodeReady=True` in Kind. It intentionally does not run
+  `cardano-cli` or socket-level protocol checks.
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port

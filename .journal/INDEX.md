@@ -7,3 +7,4 @@
 | 003 | 2026-05-20 | First YACD environment prototype | complete | Added the first `CardanoNetwork` CRD, localnet plan package, read-only controller adapter, and managed Kind/Tilt dev-stack lifecycle. |
 | 004 | 2026-05-20 | cardano-testnet tools image and init fragment | complete | Added the YACD `cardano-testnet` tools image, released `11.0.1-yacd.1`, and generated the first localnet init-container fragment from `localnet.Plan`. |
 | 005 | 2026-05-21 | Primary CardanoNetwork workload | complete | Added the singleton primary node Deployment/PVC reconciliation path, localnet identity protection, manual Kind/Tilt proof, and dev rebuild/churn fixes. |
+| 006 | 2026-05-21 | Primary node service, status, and readiness | complete | Completed the primary node Service, endpoint status, runtime readiness, and installed-operator Kind smoke for the phase-2 runtime path. |
