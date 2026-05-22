@@ -54,3 +54,18 @@ node-to-node and Ogmios status endpoints, and confirmed an in-cluster curl pod
 received HTTP 200 from `http://phase3-smoke-ogmios.yacd-smoke.svc.cluster.local:1337/health`.
 After e2e cleanup, the kubectl context was restored to `kind-yacd-dev`; the
 session dev stack remains running.
+
+## 2026-05-21 19:09 — Review fixes
+Addressed the Ogmios review feedback on `feat/ogmios-chain-api` and pushed
+commit `e8104e6` (`fix(cardanonetwork): harden ogmios readiness`). The fix
+adds Service delete RBAC, live pod/container-based `NodeReady` and
+`OgmiosReady` status, `ogmios health-check` startup/readiness/liveness probes,
+a package-local Ogmios/cardano-node compatibility table enforced during
+workload build, and a Chainsaw smoke that performs a real
+`queryNetwork/tip` call before disabling Ogmios and proving the owned Service
+is deleted.
+Validation passed with `moon run root:test`, `moon run root:test-e2e`,
+`moon run root:check`, and `git diff --check HEAD`. The initial standalone
+`go test ./internal/controller/cardanonetwork` failed because plain Go test
+does not set envtest assets; the repo-supported `moon run root:test` path
+passed.
