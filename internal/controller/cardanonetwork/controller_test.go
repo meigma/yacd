@@ -23,6 +23,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+const wrongManagedByLabelValue = "wrong"
+
 // TestCardanoNetworkReconcilerReconcileHandlesMissingObject verifies deleted
 // resources are ignored without requeueing.
 func TestCardanoNetworkReconcilerReconcileHandlesMissingObject(t *testing.T) {
@@ -57,7 +59,7 @@ func TestCardanoNetworkReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
 }
 
 // TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload verifies a
-// supported resource creates the singleton primary node PVC, Deployment, and Service.
+// supported resource creates the singleton primary node PVC, Deployment, and Services.
 func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("creates-workload")
@@ -66,10 +68,11 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	requirePrimaryPVC(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	service := requirePrimaryService(t, ctx, reconciler, network)
+	ogmiosService := requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	assert.Equal(t, []corev1.ServicePort{
 		{
 			Name:       cardanoNodePortName,
@@ -78,11 +81,22 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 			TargetPort: intstr.FromString(cardanoNodePortName),
 		},
 	}, service.Spec.Ports)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       ogmiosPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultOgmiosPort,
+			TargetPort: intstr.FromString(ogmiosPortName),
+		},
+	}, ogmiosService.Spec.Ports)
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
+	assertOgmiosEndpoint(t, ctx, reconciler, network, ogmiosService.Name, defaultOgmiosPort)
 }
 
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
@@ -94,13 +108,96 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
-	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+}
+
+func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("node-ready-ogmios-waiting")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+}
+
+func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("ogmios-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: false,
+		},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
+	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Ogmios)
+
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
+}
+
+func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("deletes-ogmios-service")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	requirePrimaryOgmiosService(t, ctx, reconciler, network)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: false,
+		},
+	}
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+	current = requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Ogmios)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 }
 
 func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
@@ -121,7 +218,7 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	assert.Len(t, persistentVolumeClaims.Items, 1)
 	var services corev1.ServiceList
 	require.NoError(t, reconciler.List(ctx, &services))
-	assert.Len(t, services.Items, 1)
+	assert.Len(t, services.Items, 2)
 }
 
 func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
@@ -201,7 +298,7 @@ func TestCardanoNetworkReconcilerReconcileCorrectsPrimaryServiceAndPreservesMeta
 	service := requirePrimaryService(t, ctx, reconciler, network)
 	ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
 	service.Labels["example.com/foreign-label"] = foreignMetadataValue
-	service.Labels[labelAppManagedBy] = "wrong"
+	service.Labels[labelAppManagedBy] = wrongManagedByLabelValue
 	service.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
 	service.Spec.Type = corev1.ServiceTypeNodePort
 	service.Spec.Selector = map[string]string{"unexpected": "true"}
@@ -235,6 +332,66 @@ func TestCardanoNetworkReconcilerReconcileCorrectsPrimaryServiceAndPreservesMeta
 			Protocol:   corev1.ProtocolTCP,
 			Port:       network.Spec.Node.Port,
 			TargetPort: intstr.FromString(cardanoNodePortName),
+		},
+	}, service.Spec.Ports)
+	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
+	assert.Equal(t, []string{clusterIP}, service.Spec.ClusterIPs)
+	assert.Equal(t, []corev1.IPFamily{corev1.IPv4Protocol}, service.Spec.IPFamilies)
+	require.NotNil(t, service.Spec.IPFamilyPolicy)
+	assert.Equal(t, corev1.IPFamilyPolicySingleStack, *service.Spec.IPFamilyPolicy)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileCorrectsOgmiosServiceAndPreservesMetadata(t *testing.T) {
+	const (
+		clusterIP            = "10.0.0.43"
+		foreignMetadataValue = "keep"
+	)
+
+	ctx := context.Background()
+	network := localCardanoNetwork("corrects-ogmios-service")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service := requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+	service.Labels["example.com/foreign-label"] = foreignMetadataValue
+	service.Labels[labelAppManagedBy] = wrongManagedByLabelValue
+	service.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
+	service.Spec.Type = corev1.ServiceTypeNodePort
+	service.Spec.Selector = map[string]string{"unexpected": "true"}
+	service.Spec.Ports = []corev1.ServicePort{
+		{
+			Name:       "wrong",
+			Protocol:   corev1.ProtocolTCP,
+			Port:       9998,
+			TargetPort: intstr.FromInt(9998),
+			NodePort:   32001,
+		},
+	}
+	service.Spec.ClusterIP = clusterIP
+	service.Spec.ClusterIPs = []string{clusterIP}
+	service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+	service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+	require.NoError(t, reconciler.Update(ctx, service))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service = requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	assert.Equal(t, foreignMetadataValue, service.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", service.Labels[labelAppManagedBy])
+	assert.Equal(t, foreignMetadataValue, service.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, service.Spec.Type)
+	assert.Equal(t, primaryWorkloadSelectorLabels(network), service.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       ogmiosPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultOgmiosPort,
+			TargetPort: intstr.FromString(ogmiosPortName),
 		},
 	}, service.Spec.Ports)
 	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
@@ -429,7 +586,7 @@ func TestCardanoNetworkReconcilerReconcilePreservesPVCForeignMetadata(t *testing
 
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	pvc.Labels["example.com/foreign-label"] = "keep"
-	pvc.Labels[labelAppManagedBy] = "wrong"
+	pvc.Labels[labelAppManagedBy] = wrongManagedByLabelValue
 	pvc.Annotations["volume.kubernetes.io/selected-node"] = "kind-worker"
 	require.NoError(t, reconciler.Update(ctx, pvc))
 
@@ -643,6 +800,29 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 				}
 			},
 		},
+		{
+			name: "foreign-owned-ogmios-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryOgmiosServiceName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-ogmios-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryOgmiosServiceName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -658,7 +838,9 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 
 			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 		})
 	}
 }
@@ -692,7 +874,9 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 	assert.Equal(t, ctrl.Result{}, result)
 	assertNoPrimaryChildren(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	current := requireNetwork(t, ctx, reconciler, network)
 	assert.Nil(t, current.Status.Endpoints)
 }
@@ -788,11 +972,13 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkRe
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{})
+		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{}, &corev1.Pod{})
 	builder.WithObjects(objects...)
+	fakeClient := builder.Build()
 
 	return &CardanoNetworkReconciler{
-		Client: builder.Build(),
+		Client: fakeClient,
+		Reader: fakeClient,
 		Scheme: scheme,
 	}
 }
@@ -877,6 +1063,23 @@ func requirePrimaryService(
 	return service
 }
 
+func requirePrimaryOgmiosService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Service {
+	t.Helper()
+
+	service := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryOgmiosServiceName(network),
+	}, service))
+
+	return service
+}
+
 func foreignControllerOwnerReference() metav1.OwnerReference {
 	controller := true
 
@@ -923,6 +1126,46 @@ func markPrimaryDeploymentAvailable(
 	require.NoError(t, reconciler.Status().Update(ctx, deployment))
 }
 
+func markPrimaryPodContainersReady(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	containerNames ...string,
+) {
+	t.Helper()
+
+	containers := make([]corev1.Container, 0, len(containerNames))
+	containerStatuses := make([]corev1.ContainerStatus, 0, len(containerNames))
+	for _, containerName := range containerNames {
+		containers = append(containers, corev1.Container{Name: containerName, Image: "example.com/" + containerName + ":test"})
+		containerStatuses = append(containerStatuses, corev1.ContainerStatus{
+			Name:  containerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		})
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network) + "-pod",
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadSelectorLabels(network),
+		},
+		Spec: corev1.PodSpec{
+			Containers: containers,
+		},
+	}
+	require.NoError(t, reconciler.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = containerStatuses
+	require.NoError(t, reconciler.Status().Update(ctx, pod))
+}
+
 func assertNoPrimaryChildren(
 	t *testing.T,
 	ctx context.Context,
@@ -948,6 +1191,23 @@ func assertNoPrimaryChildren(
 		Name:      primaryWorkloadName(network),
 	}, &corev1.Service{})
 	assert.True(t, apierrors.IsNotFound(err), "expected primary Service to be absent, got %v", err)
+
+	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
+}
+
+func assertNoPrimaryOgmiosService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryOgmiosServiceName(network),
+	}, &corev1.Service{})
+	assert.True(t, apierrors.IsNotFound(err), "expected Ogmios Service to be absent, got %v", err)
 }
 
 func assertCondition(
@@ -989,7 +1249,27 @@ func assertNodeToNodeEndpoint(
 		fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
 		current.Status.Endpoints.NodeToNode.URL,
 	)
-	assert.Nil(t, current.Status.Endpoints.Ogmios)
+}
+
+func assertOgmiosEndpoint(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	serviceName string,
+	port int32,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.Ogmios)
+	assert.Equal(t, serviceName, current.Status.Endpoints.Ogmios.ServiceName)
+	assert.Equal(t, port, current.Status.Endpoints.Ogmios.Port)
+	assert.Equal(t,
+		fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
+		current.Status.Endpoints.Ogmios.URL,
+	)
 }
 
 // reconcileRequestFor returns a reconcile request targeting object.

@@ -22,6 +22,8 @@ type unsupportedApplyError struct {
 	message string
 }
 
+const operationResultDeleted controllerutil.OperationResult = "deleted"
+
 func (e unsupportedApplyError) Error() string {
 	return e.message
 }
@@ -203,6 +205,38 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	}
 
 	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryOgmiosService(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (controllerutil.OperationResult, error) {
+	desired := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryOgmiosServiceName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return controllerutil.OperationResultNone, fmt.Errorf("set desired Ogmios Service owner reference: %w", err)
+	}
+
+	current := &corev1.Service{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	if err := r.Delete(ctx, current); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return operationResultDeleted, nil
 }
 
 func (r *CardanoNetworkReconciler) defaultObject(object client.Object) error {

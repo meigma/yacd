@@ -13,7 +13,6 @@ rules:
       - ""
     resources:
       - persistentvolumeclaims
-      - services
     verbs:
       - create
       - get
@@ -21,6 +20,25 @@ rules:
       - patch
       - update
       - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
   - apiGroups:
       - apps
     resources:
