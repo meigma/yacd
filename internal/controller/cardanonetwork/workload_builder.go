@@ -52,6 +52,9 @@ const (
 	defaultKupoPort         = 1442
 	defaultKupoSince        = "origin"
 	defaultKupoMatchPattern = "*/*"
+	defaultKupoDBSizeLimit  = "1Gi"
+	defaultKupoTmpSizeLimit = "256Mi"
+	defaultKupoStorageLimit = "1536Mi"
 	kupoServiceURLType      = "http"
 
 	nodeIPCVolumeName         = "node-ipc"
@@ -172,7 +175,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
-	if err := validateKupoImageTag(kupo); err != nil {
+	if err := validateKupoImage(kupo); err != nil {
 		return nil, err
 	}
 	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo); err != nil {
@@ -332,33 +335,15 @@ func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSett
 	return settings, nil
 }
 
-func validateKupoImageTag(settings kupoSettings) error {
+func validateKupoImage(settings kupoSettings) error {
 	if !settings.enabled {
 		return nil
 	}
-
-	tag, ok := containerImageTag(settings.image)
-	if !ok {
-		return unsupportedSpec("kupo image %q must include a pinned release tag", settings.image)
-	}
-	if tag == "latest" {
-		return unsupportedSpec("kupo image tag %q is not a pinned release tag", tag)
-	}
-	if !strings.HasPrefix(tag, "v") {
-		return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
+	if settings.image == defaultKupoImage {
+		return nil
 	}
 
-	parts := strings.Split(strings.TrimPrefix(tag, "v"), ".")
-	if len(parts) != 3 {
-		return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
-	}
-	for _, part := range parts {
-		if _, err := strconv.Atoi(part); err != nil {
-			return unsupportedSpec("kupo image tag %q is not a supported release tag", tag)
-		}
-	}
-
-	return nil
+	return unsupportedSpec("kupo image %q is not supported; supported image: %s", settings.image, defaultKupoImage)
 }
 
 func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings) error {
@@ -488,13 +473,17 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			corev1.Volume{
 				Name: kupoDBVolumeName,
 				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						SizeLimit: resourceQuantity(defaultKupoDBSizeLimit),
+					},
 				},
 			},
 			corev1.Volume{
 				Name: kupoTmpVolumeName,
 				VolumeSource: corev1.VolumeSource{
-					EmptyDir: &corev1.EmptyDirVolumeSource{},
+					EmptyDir: &corev1.EmptyDirVolumeSource{
+						SizeLimit: resourceQuantity(defaultKupoTmpSizeLimit),
+					},
 				},
 			},
 		)
@@ -672,6 +661,7 @@ func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmi
 			"--ogmios-port", strconv.Itoa(int(ogmios.port)),
 			"--since", defaultKupoSince,
 			"--match", defaultKupoMatchPattern,
+			"--prune-utxo",
 			"--workdir", kupoWorkDir,
 			"--host", kupoHostAddress,
 			"--port", strconv.Itoa(int(settings.port)),
@@ -711,12 +701,29 @@ func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmi
 		},
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+		Resources:                defaultKupoResources(),
 	}
 	if settings.resources != nil {
 		container.Resources = *settings.resources.DeepCopy()
 	}
 
 	return container
+}
+
+func defaultKupoResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoTmpSizeLimit),
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoStorageLimit),
+		},
+	}
+}
+
+func resourceQuantity(value string) *resource.Quantity {
+	quantity := resource.MustParse(value)
+	return &quantity
 }
 
 func ogmiosHealthProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
