@@ -78,6 +78,32 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "node port must be between 1 and 65535",
 		},
 		{
+			name: "blank ogmios image",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   " ",
+						Port:    defaultOgmiosPort,
+					},
+				}
+			},
+			wantErr: "ogmios image is required",
+		},
+		{
+			name: "invalid ogmios port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   defaultOgmiosImage,
+						Port:    65536,
+					},
+				}
+			},
+			wantErr: "ogmios port must be between 1 and 65535",
+		},
+		{
 			name: "public mode",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
@@ -155,7 +181,7 @@ func TestPrimaryWorkloadBuilderRejectsNilInputAndScheme(t *testing.T) {
 }
 
 // TestPrimaryWorkloadBuilderBuildsPrimaryWorkload verifies the initial
-// singleton primary node workload shape without the future Ogmios sidecar.
+// singleton primary node workload shape with the default Ogmios sidecar.
 func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	network := localCardanoNetwork("devnet")
 
@@ -164,6 +190,8 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	deployment := resources.Deployment
 	persistentVolumeClaim := resources.PersistentVolumeClaim
 	service := resources.Service
+	ogmiosService := resources.OgmiosService
+	require.NotNil(t, ogmiosService)
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -185,6 +213,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, serviceController)
 	assert.Equal(t, "devnet", serviceController.Name)
 	assert.Equal(t, "CardanoNetwork", serviceController.Kind)
+	ogmiosServiceController := metav1.GetControllerOf(ogmiosService)
+	require.NotNil(t, ogmiosServiceController)
+	assert.Equal(t, "devnet", ogmiosServiceController.Name)
+	assert.Equal(t, "CardanoNetwork", ogmiosServiceController.Kind)
 
 	expectedSelector := map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -214,7 +246,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, initContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
@@ -243,6 +275,32 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
 	}, nodeContainer.VolumeMounts)
+
+	ogmiosContainer := deployment.Spec.Template.Spec.Containers[1]
+	assert.Equal(t, ogmiosContainerName, ogmiosContainer.Name)
+	assert.Equal(t, defaultOgmiosImage, ogmiosContainer.Image)
+	assert.Equal(t, []string{ogmiosCommand}, ogmiosContainer.Command)
+	assert.Equal(t, []string{
+		"--node-socket", "/ipc/node.socket",
+		"--node-config", "/state/env/configuration.yaml",
+		"--host", "0.0.0.0",
+		"--port", "1337",
+	}, ogmiosContainer.Args)
+	assert.Equal(t, []corev1.ContainerPort{
+		{
+			Name:          ogmiosPortName,
+			ContainerPort: defaultOgmiosPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}, ogmiosContainer.Ports)
+	require.NotNil(t, ogmiosContainer.ReadinessProbe)
+	require.NotNil(t, ogmiosContainer.ReadinessProbe.HTTPGet)
+	assert.Equal(t, ogmiosHealthPath, ogmiosContainer.ReadinessProbe.HTTPGet.Path)
+	assert.Equal(t, intstr.FromString(ogmiosPortName), ogmiosContainer.ReadinessProbe.HTTPGet.Port)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
+		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
+	}, ogmiosContainer.VolumeMounts)
 
 	require.Len(t, deployment.Spec.Template.Spec.Volumes, 2)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
@@ -274,8 +332,23 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		},
 	}, service.Spec.Ports)
 
+	assert.Equal(t, "devnet-ogmios", ogmiosService.Name)
+	assert.Equal(t, "default", ogmiosService.Namespace)
+	assert.Equal(t, "yacd", ogmiosService.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, ogmiosService.Spec.Type)
+	assert.Equal(t, expectedSelector, ogmiosService.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       ogmiosPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultOgmiosPort,
+			TargetPort: intstr.FromString(ogmiosPortName),
+		},
+	}, ogmiosService.Spec.Ports)
+
 	assertPodSecurityContext(t, deployment.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
+	assertRestrictedContainerSecurityContext(t, ogmiosContainer.SecurityContext)
 }
 
 func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
@@ -288,6 +361,9 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	assert.True(t, strings.HasSuffix(resources.Deployment.Name, "-node"))
 	assert.NotContains(t, resources.Deployment.Name, ".")
 	assert.Equal(t, resources.Deployment.Name, resources.Service.Name)
+	assert.LessOrEqual(t, len(resources.OgmiosService.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.OgmiosService.Name, "-ogmios"))
+	assert.NotContains(t, resources.OgmiosService.Name, ".")
 	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
 	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
@@ -308,6 +384,7 @@ func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
 	assert.NotEqual(t, dotted.Deployment.Name, dashed.Deployment.Name)
 	assert.NotEqual(t, dotted.PersistentVolumeClaim.Name, dashed.PersistentVolumeClaim.Name)
 	assert.NotEqual(t, dotted.Service.Name, dashed.Service.Name)
+	assert.NotEqual(t, dotted.OgmiosService.Name, dashed.OgmiosService.Name)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
@@ -341,6 +418,50 @@ func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	require.NotNil(t, resources.PersistentVolumeClaim.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[requestedStorageClassAnno])
+}
+
+func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
+	network := localCardanoNetwork("custom-ogmios")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: true,
+			Image:   "example.com/ogmios:test",
+			Port:    1444,
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+			},
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.NotNil(t, resources.OgmiosService)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
+	ogmiosContainer := resources.Deployment.Spec.Template.Spec.Containers[1]
+	assert.Equal(t, "example.com/ogmios:test", ogmiosContainer.Image)
+	assert.Contains(t, ogmiosContainer.Args, "1444")
+	assert.Equal(t, *network.Spec.ChainAPI.Ogmios.Resources, ogmiosContainer.Resources)
+	assert.Equal(t, int32(1444), resources.OgmiosService.Spec.Ports[0].Port)
+	assert.Equal(t, intstr.FromString(ogmiosPortName), resources.OgmiosService.Spec.Ports[0].TargetPort)
+}
+
+func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
+	network := localCardanoNetwork("ogmios-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: false,
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 1)
+	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Nil(t, resources.OgmiosService)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {

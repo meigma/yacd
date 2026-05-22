@@ -30,6 +30,15 @@ const (
 	cardanoNodeDatabaseDir   = "/state/db"
 	cardanoNodeHostAddress   = "0.0.0.0"
 
+	ogmiosContainerName  = "ogmios"
+	ogmiosCommand        = "/bin/ogmios"
+	ogmiosPortName       = "ogmios"
+	ogmiosHostAddress    = "0.0.0.0"
+	defaultOgmiosImage   = "cardanosolutions/ogmios:v6.14.0"
+	defaultOgmiosPort    = 1337
+	ogmiosHealthPath     = "/health"
+	ogmiosServiceURLType = "ws"
+
 	nodeIPCVolumeName         = "node-ipc"
 	defaultNodeStorageSize    = "10Gi"
 	localnetFingerprintAnno   = "yacd.meigma.io/localnet-fingerprint"
@@ -61,6 +70,7 @@ type primaryWorkloadResources struct {
 	PersistentVolumeClaim *corev1.PersistentVolumeClaim
 	Deployment            *appsv1.Deployment
 	Service               *corev1.Service
+	OgmiosService         *corev1.Service
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
@@ -71,6 +81,13 @@ type primaryWorkloadBuilder struct {
 
 type unsupportedSpecError struct {
 	message string
+}
+
+type ogmiosSettings struct {
+	enabled   bool
+	image     string
+	port      int32
+	resources *corev1.ResourceRequirements
 }
 
 func (e unsupportedSpecError) Error() string {
@@ -104,7 +121,12 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, err
 	}
 
-	deployment, err := b.deployment(network, plan, initContainer)
+	ogmios, err := resolveOgmiosSettings(network)
+	if err != nil {
+		return nil, err
+	}
+
+	deployment, err := b.deployment(network, plan, initContainer, ogmios)
 	if err != nil {
 		return nil, err
 	}
@@ -116,11 +138,19 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
+	var ogmiosService *corev1.Service
+	if ogmios.enabled {
+		ogmiosService, err = b.ogmiosService(network, ogmios)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &primaryWorkloadResources{
 		PersistentVolumeClaim: persistentVolumeClaim,
 		Deployment:            deployment,
 		Service:               service,
+		OgmiosService:         ogmiosService,
 	}, nil
 }
 
@@ -176,10 +206,45 @@ func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwor
 	}, nil
 }
 
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container) (*appsv1.Deployment, error) {
+func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings, error) {
+	settings := ogmiosSettings{
+		enabled: true,
+		image:   defaultOgmiosImage,
+		port:    defaultOgmiosPort,
+	}
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Ogmios == nil {
+		return settings, nil
+	}
+
+	spec := network.Spec.ChainAPI.Ogmios
+	if !spec.Enabled {
+		settings.enabled = false
+		return settings, nil
+	}
+
+	settings.image = strings.TrimSpace(spec.Image)
+	if settings.image == "" {
+		return ogmiosSettings{}, unsupportedSpec("ogmios image is required")
+	}
+	if spec.Port < 1 || spec.Port > 65535 {
+		return ogmiosSettings{}, unsupportedSpec("ogmios port must be between 1 and 65535")
+	}
+	settings.port = spec.Port
+	if spec.Resources != nil {
+		settings.resources = spec.Resources.DeepCopy()
+	}
+
+	return settings, nil
+}
+
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
+	containers := []corev1.Container{b.cardanoNodeContainer(network, plan)}
+	if ogmios.enabled {
+		containers = append(containers, b.ogmiosContainer(ogmios, plan))
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -214,9 +279,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 						},
 					},
 					InitContainers: []corev1.Container{initContainer},
-					Containers: []corev1.Container{
-						b.cardanoNodeContainer(network, plan),
-					},
+					Containers:     containers,
 					Volumes: []corev1.Volume{
 						{
 							Name: localnetStateVolumeName,
@@ -304,6 +367,71 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 	return container
 }
 
+func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan localnet.Plan) corev1.Container {
+	container := corev1.Container{
+		Name:            ogmiosContainerName,
+		Image:           settings.image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{ogmiosCommand},
+		Args: []string{
+			"--node-socket", cardanoNodeSocketPath,
+			"--node-config", plan.Layout.ConfigFile,
+			"--host", ogmiosHostAddress,
+			"--port", strconv.Itoa(int(settings.port)),
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          ogmiosPortName,
+				ContainerPort: settings.port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		ReadinessProbe: &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path: ogmiosHealthPath,
+					Port: intstr.FromString(ogmiosPortName),
+				},
+			},
+			InitialDelaySeconds: 2,
+			PeriodSeconds:       5,
+			TimeoutSeconds:      2,
+			FailureThreshold:    12,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: plan.Layout.StateDir,
+				ReadOnly:  true,
+			},
+			{
+				Name:      nodeIPCVolumeName,
+				MountPath: cardanoNodeSocketDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+	if settings.resources != nil {
+		container.Resources = *settings.resources.DeepCopy()
+	}
+
+	return container
+}
+
 func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNetwork) string {
 	if network.Spec.Node.Image != nil {
 		return strings.TrimSpace(*network.Spec.Node.Image)
@@ -358,6 +486,34 @@ func (b primaryWorkloadBuilder) service(network *yacdv1alpha1.CardanoNetwork) (*
 	return service, nil
 }
 
+func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwork, settings ogmiosSettings) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryOgmiosServiceName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       ogmiosPortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       settings.port,
+					TargetPort: intstr.FromString(ogmiosPortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set Ogmios Service owner reference: %w", err)
+	}
+
+	return service, nil
+}
+
 func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {
 	annotations := map[string]string{
 		localnetFingerprintAnno: plan.Fingerprint.Value,
@@ -394,6 +550,10 @@ func primaryWorkloadName(network *yacdv1alpha1.CardanoNetwork) string {
 
 func primaryNodeStatePVCName(network *yacdv1alpha1.CardanoNetwork) string {
 	return safeDNSLabelWithSuffix(network.Name, "node-state")
+}
+
+func primaryOgmiosServiceName(network *yacdv1alpha1.CardanoNetwork) string {
+	return safeDNSLabelWithSuffix(network.Name, "ogmios")
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {

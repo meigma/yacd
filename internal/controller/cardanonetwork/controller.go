@@ -73,7 +73,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if statusErr := r.patchStatusConditions(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -101,15 +103,30 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service); err != nil {
+	var ogmiosServiceResult controllerutil.OperationResult
+	if resources.OgmiosService != nil {
+		ogmiosServiceResult, err = r.applyPrimaryService(ctx, resources.OgmiosService)
+	} else {
+		ogmiosServiceResult, err = r.deletePrimaryOgmiosService(ctx, network)
+	}
+	if err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+	}
+
+	if err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	resultLog := log
 	if pvcResult == controllerutil.OperationResultNone &&
 		deploymentResult == controllerutil.OperationResultNone &&
-		serviceResult == controllerutil.OperationResultNone {
+		serviceResult == controllerutil.OperationResultNone &&
+		ogmiosServiceResult == controllerutil.OperationResultNone {
 		resultLog = log.V(1)
+	}
+	ogmiosServiceKey := "disabled"
+	if resources.OgmiosService != nil {
+		ogmiosServiceKey = client.ObjectKeyFromObject(resources.OgmiosService).String()
 	}
 	resultLog.Info("Applied CardanoNetwork primary workload",
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
@@ -118,6 +135,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"deploymentOperation", deploymentResult,
 		"service", client.ObjectKeyFromObject(resources.Service),
 		"serviceOperation", serviceResult,
+		"ogmiosService", ogmiosServiceKey,
+		"ogmiosServiceOperation", ogmiosServiceResult,
 		"localnetFingerprint", localnetFingerprint)
 
 	return ctrl.Result{}, nil
@@ -136,7 +155,9 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	if statusErr := r.patchStatusConditions(ctx, network,
 		degradedCondition(metav1.ConditionTrue, unsupported.reason, unsupported.message),
 		progressingCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		condition(conditionTypeReady, metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		nodeReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}

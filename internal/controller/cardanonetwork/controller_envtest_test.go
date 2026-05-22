@@ -88,6 +88,11 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, serviceKey, &corev1.Service{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	ogmiosServiceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryOgmiosServiceName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, ogmiosServiceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -123,26 +128,19 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
+	ogmiosService := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, ogmiosServiceKey, ogmiosService))
+	originalOgmiosServiceUID := ogmiosService.UID
+	require.NoError(t, apiClient.Delete(ctx, ogmiosService))
+
 	require.Eventually(t, func() bool {
-		current := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
-			return false
-		}
-		degraded := findCondition(current, conditionTypeDegraded)
-		progressing := findCondition(current, conditionTypeProgressing)
-		nodeReady := findCondition(current, conditionTypeNodeReady)
-		return degraded != nil &&
-			degraded.Status == metav1.ConditionFalse &&
-			progressing != nil &&
-			progressing.Status == metav1.ConditionTrue &&
-			nodeReady != nil &&
-			nodeReady.Status == metav1.ConditionFalse &&
-			current.Status.Endpoints != nil &&
-			current.Status.Endpoints.NodeToNode != nil &&
-			current.Status.Endpoints.NodeToNode.ServiceName == primaryWorkloadName(network) &&
-			current.Status.Endpoints.NodeToNode.Port == network.Spec.Node.Port &&
-			current.Status.Endpoints.NodeToNode.URL == "tcp://manager-owned-node.cardanonetwork-envtest.svc.cluster.local:3001" &&
-			current.Status.Endpoints.Ogmios == nil
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, ogmiosServiceKey, got)
+		return err == nil && got.UID != originalOgmiosServiceUID
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
@@ -164,21 +162,79 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.NoError(t, apiClient.Status().Update(ctx, deployment))
 
 	require.Eventually(t, func() bool {
-		current := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
-			return false
-		}
-		progressing := findCondition(current, conditionTypeProgressing)
-		nodeReady := findCondition(current, conditionTypeNodeReady)
-		return progressing != nil &&
-			progressing.Status == metav1.ConditionFalse &&
-			progressing.Reason == conditionReasonNodeReady &&
-			nodeReady != nil &&
-			nodeReady.Status == metav1.ConditionTrue &&
-			nodeReady.Reason == conditionReasonNodeReady
+		return statusHasReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
 	return apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
+}
+
+func statusHasProgressingEndpoints(
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) bool {
+	current := &yacdv1alpha1.CardanoNetwork{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+		return false
+	}
+
+	return conditionHas(current, conditionTypeDegraded, metav1.ConditionFalse, "") &&
+		conditionHas(current, conditionTypeProgressing, metav1.ConditionTrue, "") &&
+		conditionHas(current, conditionTypeReady, metav1.ConditionFalse, "") &&
+		conditionHas(current, conditionTypeNodeReady, metav1.ConditionFalse, "") &&
+		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionFalse, "") &&
+		nodeToNodeEndpointMatches(current, network) &&
+		ogmiosEndpointMatches(current, network)
+}
+
+func statusHasReadyConditions(
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) bool {
+	current := &yacdv1alpha1.CardanoNetwork{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+		return false
+	}
+
+	return conditionHas(current, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady) &&
+		conditionHas(current, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady) &&
+		conditionHas(current, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady) &&
+		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+}
+
+func conditionHas(
+	network *yacdv1alpha1.CardanoNetwork,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason string,
+) bool {
+	condition := findCondition(network, conditionType)
+	if condition == nil || condition.Status != status {
+		return false
+	}
+
+	return reason == "" || condition.Reason == reason
+}
+
+func nodeToNodeEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	if current.Status.Endpoints == nil || current.Status.Endpoints.NodeToNode == nil {
+		return false
+	}
+
+	return current.Status.Endpoints.NodeToNode.ServiceName == primaryWorkloadName(network) &&
+		current.Status.Endpoints.NodeToNode.Port == network.Spec.Node.Port &&
+		current.Status.Endpoints.NodeToNode.URL == "tcp://manager-owned-node.cardanonetwork-envtest.svc.cluster.local:3001"
+}
+
+func ogmiosEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	if current.Status.Endpoints == nil || current.Status.Endpoints.Ogmios == nil {
+		return false
+	}
+
+	return current.Status.Endpoints.Ogmios.ServiceName == primaryOgmiosServiceName(network) &&
+		current.Status.Endpoints.Ogmios.Port == defaultOgmiosPort &&
+		current.Status.Endpoints.Ogmios.URL == "ws://manager-owned-ogmios.cardanonetwork-envtest.svc.cluster.local:1337"
 }

@@ -17,7 +17,9 @@ import (
 const (
 	conditionTypeProgressing = "Progressing"
 	conditionTypeDegraded    = "Degraded"
+	conditionTypeReady       = "Ready"
 	conditionTypeNodeReady   = "NodeReady"
+	conditionTypeOgmiosReady = "OgmiosReady"
 
 	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
@@ -27,11 +29,17 @@ const (
 	conditionReasonUnsupportedWorkloadChange   = "UnsupportedWorkloadChange"
 	conditionReasonResourceConflict            = "ResourceConflict"
 	conditionReasonDeploymentProgressing       = "DeploymentProgressing"
+	conditionReasonReady                       = "Ready"
 	conditionReasonNodeReady                   = "NodeReady"
+	conditionReasonOgmiosReady                 = "OgmiosReady"
+	conditionReasonOgmiosDisabled              = "OgmiosDisabled"
 	conditionReasonPrimaryWorkloadMissing      = "PrimaryWorkloadMissing"
-	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, and Service are applied"
+	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, Service, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
+	conditionMessageReady                      = "CardanoNetwork is usable through its published endpoints"
 	conditionMessagePrimaryNodeReady           = "Primary node Deployment is available"
+	conditionMessageOgmiosReady                = "Ogmios is available through its Service"
+	conditionMessageOgmiosDisabled             = "Ogmios chain API is disabled"
 )
 
 func (r *CardanoNetworkReconciler) patchStatusConditions(
@@ -39,24 +47,32 @@ func (r *CardanoNetworkReconciler) patchStatusConditions(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	localnetFingerprint string,
-	service *corev1.Service,
+	nodeService *corev1.Service,
+	ogmiosService *corev1.Service,
 ) error {
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
 		return err
 	}
+	ogmiosReady, err := r.primaryOgmiosReadyCondition(ctx, network, ogmiosService != nil)
+	if err != nil {
+		return err
+	}
+	ready := readyCondition(nodeReady, ogmiosReady)
 
-	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, service,
+	return r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
-		progressingForNodeReadyCondition(nodeReady),
+		progressingForReadyCondition(ready),
+		ready,
 		nodeReady,
+		ogmiosReady,
 	)
 }
 
@@ -64,7 +80,8 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	localnetFingerprint string,
-	service *corev1.Service,
+	nodeService *corev1.Service,
+	ogmiosService *corev1.Service,
 	conditions ...metav1.Condition,
 ) error {
 	original := network.DeepCopy()
@@ -72,8 +89,8 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	if localnetFingerprint != "" {
 		setLocalnetIdentityStatus(network, localnetFingerprint)
 	}
-	if service != nil {
-		setNodeToNodeEndpointStatus(network, service)
+	if nodeService != nil {
+		setEndpointStatus(network, nodeService, ogmiosService)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -104,15 +121,25 @@ func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFin
 	network.Status.Network.Era = &era
 }
 
-func setNodeToNodeEndpointStatus(network *yacdv1alpha1.CardanoNetwork, service *corev1.Service) {
+func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service) {
 	if network.Status.Endpoints == nil {
 		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
 	}
 
 	network.Status.Endpoints.NodeToNode = &yacdv1alpha1.ServiceEndpointStatus{
-		ServiceName: service.Name,
+		ServiceName: nodeService.Name,
 		Port:        network.Spec.Node.Port,
-		URL:         fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", service.Name, service.Namespace, network.Spec.Node.Port),
+		URL:         fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", nodeService.Name, nodeService.Namespace, network.Spec.Node.Port),
+	}
+	if ogmiosService == nil {
+		network.Status.Endpoints.Ogmios = nil
+		return
+	}
+
+	network.Status.Endpoints.Ogmios = &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: ogmiosService.Name,
+		Port:        ogmiosService.Spec.Ports[0].Port,
+		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", ogmiosServiceURLType, ogmiosService.Name, ogmiosService.Namespace, ogmiosService.Spec.Ports[0].Port),
 	}
 }
 
@@ -180,6 +207,66 @@ func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
 	), nil
 }
 
+func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	enabled bool,
+) (metav1.Condition, error) {
+	if !enabled {
+		return ogmiosReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonOgmiosDisabled,
+			conditionMessageOgmiosDisabled,
+		), nil
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryOgmiosServiceName(network)}, service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ogmiosReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Ogmios Service is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ogmiosReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Primary node Deployment is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+	if deployment.Status.ObservedGeneration != deployment.Generation {
+		return ogmiosReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		), nil
+	}
+	if !deploymentAvailable(deployment) ||
+		deployment.Status.ReadyReplicas < 1 ||
+		deployment.Status.AvailableReplicas < 1 {
+		return ogmiosReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Ogmios sidecar is not available",
+		), nil
+	}
+
+	return ogmiosReadyCondition(
+		metav1.ConditionTrue,
+		conditionReasonOgmiosReady,
+		conditionMessageOgmiosReady,
+	), nil
+}
+
 func deploymentAvailable(deployment *appsv1.Deployment) bool {
 	for _, condition := range deployment.Status.Conditions {
 		if condition.Type == appsv1.DeploymentAvailable {
@@ -190,29 +277,36 @@ func deploymentAvailable(deployment *appsv1.Deployment) bool {
 	return false
 }
 
-func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return metav1.Condition{
-		Type:               conditionTypeDegraded,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
+func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition) metav1.Condition {
+	if nodeReady.Status == metav1.ConditionTrue && ogmiosReady.Status == metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 	}
+	if nodeReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, nodeReady.Reason, nodeReady.Message)
+	}
+
+	return condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
+}
+
+func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeDegraded, status, reason, message)
 }
 
 func nodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return metav1.Condition{
-		Type:               conditionTypeNodeReady,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-	}
+	return condition(conditionTypeNodeReady, status, reason, message)
+}
+
+func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeOgmiosReady, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeProgressing, status, reason, message)
+}
+
+func condition(conditionType string, status metav1.ConditionStatus, reason string, message string) metav1.Condition {
 	return metav1.Condition{
-		Type:               conditionTypeProgressing,
+		Type:               conditionType,
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
@@ -220,10 +314,13 @@ func progressingCondition(status metav1.ConditionStatus, reason string, message 
 	}
 }
 
-func progressingForNodeReadyCondition(nodeReady metav1.Condition) metav1.Condition {
-	if nodeReady.Status == metav1.ConditionTrue {
-		return progressingCondition(metav1.ConditionFalse, conditionReasonNodeReady, conditionMessagePrimaryNodeReady)
+func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
+	if ready.Status == metav1.ConditionTrue {
+		return progressingCondition(metav1.ConditionFalse, conditionReasonReady, conditionMessageReady)
+	}
+	if ready.Reason == conditionReasonDeploymentProgressing || ready.Reason == conditionReasonPrimaryWorkloadMissing {
+		return progressingCondition(metav1.ConditionTrue, ready.Reason, ready.Message)
 	}
 
-	return progressingCondition(metav1.ConditionTrue, nodeReady.Reason, nodeReady.Message)
+	return progressingCondition(metav1.ConditionFalse, ready.Reason, ready.Message)
 }
