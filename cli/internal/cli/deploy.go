@@ -15,6 +15,7 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Render and deploy a YACD developer environment",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
 			if err != nil {
@@ -28,6 +29,9 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 			timeout := commandContext.viper.GetDuration("timeout")
 			dryRun := commandContext.viper.GetBool("dry-run")
 			waitReady := commandContext.viper.GetBool("wait")
+			if waitReady && timeout <= 0 {
+				return fmt.Errorf("--timeout must be greater than 0 when --wait is set")
+			}
 
 			environment, err := devconfig.LoadFile(file)
 			if err != nil {

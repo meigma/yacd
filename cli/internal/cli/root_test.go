@@ -102,6 +102,27 @@ func TestDeployDryRunPrintsManifestWithoutKubeClient(t *testing.T) {
 	}
 }
 
+func TestDeployRejectsUnexpectedArgs(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeTempConfig(t, testDevConfig)
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return nil, fmt.Errorf("kube client should not be constructed with invalid args")
+		},
+	})
+	root.SetArgs([]string{"deploy", "unexpected", "-f", configPath, "--dry-run"})
+
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("ExecuteContext succeeded, want argument error")
+	}
+	if got := err.Error(); !strings.Contains(got, `unknown command "unexpected"`) {
+		t.Fatalf("error = %q, want unexpected arg message", got)
+	}
+}
+
 func TestDeployDryRunUsesKubeDefaultNamespace(t *testing.T) {
 	t.Setenv("YACD_NAMESPACE", "")
 
@@ -124,6 +145,27 @@ func TestDeployDryRunUsesKubeDefaultNamespace(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "namespace: kube-ns") {
 		t.Fatalf("stdout = %s, want kube namespace", got)
+	}
+}
+
+func TestDeployRejectsInvalidWaitTimeoutBeforeApply(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeTempConfig(t, testDevConfig)
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return nil, fmt.Errorf("kube client should not be constructed with invalid timeout")
+		},
+	})
+	root.SetArgs([]string{"deploy", "-f", configPath, "--wait", "--timeout", "0s"})
+
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("ExecuteContext succeeded, want timeout error")
+	}
+	if got := err.Error(); !strings.Contains(got, "--timeout must be greater than 0 when --wait is set") {
+		t.Fatalf("error = %q, want timeout validation", got)
 	}
 }
 
