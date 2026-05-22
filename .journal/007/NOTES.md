@@ -94,3 +94,16 @@ the controller rejected it with `Degraded=True`, reason `UnsupportedSpec`,
 message `ogmios image tag "latest" is not a supported release tag`, and
 created no children. The throwaway namespace was deleted and kubectl context
 is `kind-yacd-dev`.
+
+## 2026-05-21 19:38 — Close
+Closed the implementation work through PR #12:
+https://github.com/meigma/yacd/pull/12. The PR was squash-merged into
+`master` as `fe8b4fd` (`feat(cardanonetwork): expose ogmios chain api (#12)`)
+after user approval. Local `master` in `/Users/josh/code/meigma/yacd` was
+fast-forwarded to the merge commit, the `feat/ogmios-chain-api` worktree and
+branch were removed, and the remote feature branch was deleted. The active
+YACD development stack was stopped with `moon run root:dev-down`, which removed
+the Tilt process, Kind cluster, and local registry.
+Closeout artifacts written in the journal branch: `.journal/007/SUMMARY.md`,
+the session row in `.journal/INDEX.md`, updated durable context in
+`.journal/TECH_NOTES.md`, and this final `NOTES.md` entry.

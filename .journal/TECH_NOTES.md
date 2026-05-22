@@ -5,8 +5,9 @@
   prototype should stay local-first and Kind/Tilt-friendly.
 - The primary CRD should represent a Cardano environment/network rather than a
   single node. The first runtime is now an owned singleton primary
-  `cardano-node` Deployment, explicit owned PVC, and owned ClusterIP Service
-  exposing node-to-node TCP. Ogmios is intentionally deferred to a later slice.
+  `cardano-node` Deployment, explicit owned PVC, owned ClusterIP Service
+  exposing node-to-node TCP, and an Ogmios sidecar plus owned ClusterIP Service
+  as the default chain API.
 - Supporting services should be separate CRDs/controllers. Network-only
   services can run as independent workloads; heavy IPC services such as db-sync
   should prefer a dedicated follower-node Pod so they do not mutate or restart
@@ -65,14 +66,26 @@
 - `status.endpoints.nodeToNode` is the canonical in-cluster discovery contract
   for the primary node. It publishes `serviceName`, `port`, and a fully
   qualified `tcp://<service>.<namespace>.svc.cluster.local:<port>` URL.
-- `NodeReady` is Kubernetes-runtime readiness only. It becomes true when the
-  owned PVC and Service exist and the owned Deployment has observed its current
-  generation with an available ready replica. Protocol-level Cardano health and
-  aggregate `Ready` remain future contracts.
+- The Ogmios Service uses `<safe CardanoNetwork name>-ogmios`, selects the
+  primary-node Pod labels, targets the named `ogmios` port, and is deleted when
+  `spec.chainAPI.ogmios.enabled=false`. `status.endpoints.ogmios` publishes a
+  fully qualified `ws://<service>.<namespace>.svc.cluster.local:<port>` URL.
+- `NodeReady` and `OgmiosReady` are Kubernetes-runtime conditions derived from
+  live primary Pod container readiness. `NodeReady` is intentionally separate
+  from the Ogmios sidecar, and aggregate `Ready` is true only when both are
+  true. When Ogmios is explicitly disabled, `OgmiosReady=False` and aggregate
+  `Ready=False` with reason `OgmiosDisabled`.
+- Ogmios readiness uses `/bin/ogmios health-check --port <port>` for startup,
+  readiness, and conservative liveness probes. The controller also enforces a
+  package-local compatibility table for recognized Ogmios release tags against
+  `spec.node.version`; the default `cardanosolutions/ogmios:v6.14.0` and
+  `cardano-node` `11.0.1` pair is manually and Chainsaw-smoke validated with
+  `queryNetwork/tip` on localnet.
 - The Chainsaw manager smoke now includes an installed-operator proof that a
-  representative local-mode `CardanoNetwork` creates primary resources and
-  reaches `NodeReady=True` in Kind. It intentionally does not run
-  `cardano-cli` or socket-level protocol checks.
+  representative local-mode `CardanoNetwork` creates primary resources,
+  publishes node-to-node and Ogmios endpoints, reaches `Ready=True`, returns a
+  real Ogmios `queryNetwork/tip` result through the Service, then disables
+  Ogmios and verifies the owned Service is deleted and the endpoint is cleared.
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port
