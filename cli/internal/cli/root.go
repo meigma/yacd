@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/meigma/yacd/cli/internal/kube"
@@ -29,6 +30,7 @@ type Options struct {
 
 	KubeClientFactory     func(kube.Config) (kube.Client, error)
 	KubeNamespaceResolver func(kube.Config) (string, error)
+	HTTPClient            httpDoer
 }
 
 type commandContext struct {
@@ -38,7 +40,12 @@ type commandContext struct {
 	viper                 *viper.Viper
 	kubeClientFactory     func(kube.Config) (kube.Client, error)
 	kubeNamespaceResolver func(kube.Config) (string, error)
+	httpClient            httpDoer
 	logger                *slog.Logger
+}
+
+type httpDoer interface {
+	Do(*http.Request) (*http.Response, error)
 }
 
 // RuntimeConfig is the global CLI runtime configuration.
@@ -70,6 +77,9 @@ func NewRootCommand(options Options) *cobra.Command {
 	if options.KubeNamespaceResolver == nil {
 		options.KubeNamespaceResolver = kube.DefaultNamespace
 	}
+	if options.HTTPClient == nil {
+		options.HTTPClient = http.DefaultClient
+	}
 	options.Build = options.Build.withDefaults()
 
 	commandContext := &commandContext{
@@ -79,6 +89,7 @@ func NewRootCommand(options Options) *cobra.Command {
 		viper:                 options.Viper,
 		kubeClientFactory:     options.KubeClientFactory,
 		kubeNamespaceResolver: options.KubeNamespaceResolver,
+		httpClient:            options.HTTPClient,
 		logger:                slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
@@ -113,6 +124,7 @@ func NewRootCommand(options Options) *cobra.Command {
 
 	root.AddCommand(newDeployCommand(commandContext))
 	root.AddCommand(newInfoCommand(commandContext))
+	root.AddCommand(newTopUpCommand(commandContext))
 
 	return root
 }

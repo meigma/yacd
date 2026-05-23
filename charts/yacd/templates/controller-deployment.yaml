@@ -63,6 +63,7 @@ spec:
             {{- end }}
             - {{ printf "--log-format=%s" .Values.manager.logFormat | quote }}
             - {{ printf "--log-level=%s" .Values.manager.logLevel | quote }}
+            - {{ printf "--default-faucet-image=%s" (include "yacd.faucetImage" .) | quote }}
             {{- if .Values.metrics.tls.secretName }}
             - {{ printf "--metrics-cert-path=%s" .Values.metrics.tls.certPath | quote }}
             - {{ printf "--metrics-cert-name=%s" .Values.metrics.tls.certName | quote }}

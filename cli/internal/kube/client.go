@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -31,6 +32,7 @@ type Client interface {
 	DefaultNamespace() string
 	ApplyCardanoNetwork(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) error
 	GetCardanoNetwork(ctx context.Context, namespace string, name string) (*yacdv1alpha1.CardanoNetwork, error)
+	GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error)
 }
 
 type runtimeClient struct {
@@ -138,4 +140,25 @@ func (c *runtimeClient) GetCardanoNetwork(ctx context.Context, namespace string,
 	}
 
 	return network, nil
+}
+
+func (c *runtimeClient) GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error) {
+	secret := &corev1.Secret{}
+	objectKey := client.ObjectKey{
+		Namespace: namespace,
+		Name:      name,
+	}
+	if err := c.client.Get(ctx, objectKey, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("secret %s/%s not found", namespace, name)
+		}
+		return "", fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+	}
+
+	value, ok := secret.Data[key]
+	if !ok || len(value) == 0 {
+		return "", fmt.Errorf("secret %s/%s is missing key %q", namespace, name, key)
+	}
+
+	return string(value), nil
 }

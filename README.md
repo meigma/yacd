@@ -15,8 +15,9 @@ local YACD environment from a checked-in config file.
 - Secure metrics serving with Kubernetes authn/authz filters.
 - Initial `CardanoNetwork` CRD shape for local and public network modes.
 - Local-mode `CardanoNetwork` reconciliation for one primary node with Ogmios
-  as the default chain API and Kupo as the default chain index API.
-- Developer CLI under `cli/` with `deploy` and `info` commands.
+  as the default chain API, Kupo as the default chain index API, and a
+  token-protected faucet as the default local top-up endpoint.
+- Developer CLI under `cli/` with `deploy`, `info`, and `topup` commands.
 - Helm chart packaging for the manager deployment.
 - Moon tasks for generation, checks, tests, local deployment, and Kind smoke
   testing.
@@ -51,6 +52,7 @@ Deploy the example environment and wait for the operator to report readiness:
 kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
 go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait
 go run ./cli/cmd/yacd info phase4-smoke --namespace yacd-smoke
+go run ./cli/cmd/yacd topup phase4-smoke --namespace yacd-smoke --address addr_test... --lovelace 1000000
 ```
 
 Run the local development stack with Kind, ctlptl, Tilt, and ko:
@@ -78,6 +80,7 @@ Useful local deployment overrides:
 ```sh
 HELM_RELEASE=yacd HELM_NAMESPACE=yacd-system moon run root:deploy
 IMG=ghcr.io/meigma/yacd:<tag> moon run root:deploy
+FAUCET_IMG=ghcr.io/meigma/yacd/faucet:<tag> moon run root:deploy
 LOCAL_IMAGE=true IMG=example.com/yacd:v0.0.1 moon run root:deploy
 ```
 

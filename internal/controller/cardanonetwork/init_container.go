@@ -13,9 +13,13 @@ const (
 	cardanoTestnetImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
 	cardanoTestnetImageRevision   = "yacd.1"
 
-	localnetCreateEnvInitContainerName = "cardano-testnet-create-env"
-	localnetStateVolumeName            = "localnet-state"
-	localnetCreateEnvCommand           = "/opt/yacd/bin/yacd-cardano-testnet-init"
+	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
+	faucetSourceAddressInitContainerName = "faucet-source-addresses"
+	localnetStateVolumeName              = "localnet-state"
+	localnetCreateEnvCommand             = "/opt/yacd/bin/yacd-cardano-testnet-init"
+	faucetSourceAddressCommand           = "/bin/sh"
+	faucetVerificationKeyFileName        = "utxo.vkey"
+	faucetAddressFileName                = "utxo.addr"
 
 	localnetToolsRunAsID int64 = 10001
 
@@ -43,7 +47,7 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) 
 
 	return corev1.Container{
 		Name:            localnetCreateEnvInitContainerName,
-		Image:           fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, toolVersion, cardanoTestnetImageRevision),
+		Image:           cardanoTestnetImage(toolVersion),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{localnetCreateEnvCommand},
 		Args:            args,
@@ -75,6 +79,54 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) 
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, nil
+}
+
+func faucetSourceAddressInitContainer(plan localnet.Plan) corev1.Container {
+	toolVersion := strings.TrimSpace(plan.Spec.Tool.Version)
+	script := fmt.Sprintf(`for dir in %s/utxo[1-9]*; do
+  [ -d "$dir" ] || continue
+  [ -f "$dir/%s" ] || continue
+  cardano-cli address build --testnet-magic %d --payment-verification-key-file "$dir/%s" --out-file "$dir/%s"
+done`,
+		faucetUTXOKeysDir,
+		faucetVerificationKeyFileName,
+		plan.Spec.NetworkMagic,
+		faucetVerificationKeyFileName,
+		faucetAddressFileName,
+	)
+
+	return corev1.Container{
+		Name:            faucetSourceAddressInitContainerName,
+		Image:           cardanoTestnetImage(toolVersion),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{faucetSourceAddressCommand},
+		Args:            []string{"-eu", "-c", script},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: plan.Layout.StateDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+}
+
+func cardanoTestnetImage(toolVersion string) string {
+	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, toolVersion, cardanoTestnetImageRevision)
 }
 
 func validateLocalnetInitContainerPlan(plan localnet.Plan) error {

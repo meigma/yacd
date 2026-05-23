@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,7 +187,7 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 			capturedConfig = config
 			return &fakeKubeClient{
 				defaultNamespace:   "default-ns",
-				network:            readyNetwork("env-ns", "devnet"),
+				network:            readyNetwork("env-ns"),
 				requestedNamespace: &requestedNamespace,
 			}, nil
 		},
@@ -209,6 +212,8 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 		`"type": "Ready"`,
 		`"url": "ws://devnet-ogmios.env-ns.svc.cluster.local:1337"`,
 		`"url": "http://devnet-kupo.env-ns.svc.cluster.local:1442"`,
+		`"url": "http://devnet-faucet.env-ns.svc.cluster.local:8080"`,
+		`"authSecretName": "devnet-faucet-auth"`,
 	} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
@@ -223,7 +228,7 @@ func TestDeployAppliesAndWaits(t *testing.T) {
 	var stderr bytes.Buffer
 	fakeClient := &fakeKubeClient{
 		defaultNamespace: "default-ns",
-		network:          readyNetwork("config-ns", "devnet"),
+		network:          readyNetwork("config-ns"),
 	}
 	root := NewRootCommand(Options{
 		Err:   &stderr,
@@ -248,6 +253,124 @@ func TestDeployAppliesAndWaits(t *testing.T) {
 	}
 }
 
+func TestTopUpReadsSecretAndPostsToFaucet(t *testing.T) {
+	t.Parallel()
+
+	var gotAuth string
+	var gotContentType string
+	var gotPayload topUpHTTPPayload
+	faucetServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/topups" {
+			t.Fatalf("path = %q, want /v1/topups", request.URL.Path)
+		}
+		gotAuth = request.Header.Get("Authorization")
+		gotContentType = request.Header.Get("Content-Type")
+		if err := json.NewDecoder(request.Body).Decode(&gotPayload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(writer, `{"txId":"abc123","source":"utxo2","sourceAddress":"addr_test1source","destinationAddress":"addr_test1dest","lovelace":2000000}`)
+	}))
+	t.Cleanup(faucetServer.Close)
+
+	var stdout bytes.Buffer
+	root := NewRootCommand(Options{
+		Out:   &stdout,
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return &fakeKubeClient{
+				defaultNamespace: "default-ns",
+				network:          readyNetwork("default-ns"),
+				secretValues: map[string]string{
+					"default-ns/devnet-faucet-auth/token": "super-secret-token-which-is-long-enough",
+				},
+			}, nil
+		},
+	})
+	root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000", "--source", "utxo2", "--faucet-url", faucetServer.URL, "--json"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext returned an error: %v", err)
+	}
+	if got, want := gotAuth, "Bearer super-secret-token-which-is-long-enough"; got != want {
+		t.Fatalf("Authorization = %q, want %q", got, want)
+	}
+	if got, want := gotContentType, "application/json"; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	if gotPayload.Address != "addr_test1dest" || gotPayload.Lovelace != 2000000 || gotPayload.Source != "utxo2" {
+		t.Fatalf("payload = %+v, want address/source/lovelace", gotPayload)
+	}
+	for _, want := range []string{`"txId": "abc123"`, `"source": "utxo2"`, `"lovelace": 2000000`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestTopUpUsesStatusEndpointByDefault(t *testing.T) {
+	t.Parallel()
+
+	faucetServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(writer, `{"txId":"abc123","source":"utxo1","sourceAddress":"addr_test1source","destinationAddress":"addr_test1dest","lovelace":2000000}`)
+	}))
+	t.Cleanup(faucetServer.Close)
+
+	network := readyNetwork("default-ns")
+	network.Status.Endpoints.Faucet.URL = faucetServer.URL
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return &fakeKubeClient{
+				defaultNamespace: "default-ns",
+				network:          network,
+				secretValues: map[string]string{
+					"default-ns/devnet-faucet-auth/token": "super-secret-token-which-is-long-enough",
+				},
+			}, nil
+		},
+	})
+	root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext returned an error: %v", err)
+	}
+}
+
+func TestTopUpReportsFaucetErrors(t *testing.T) {
+	t.Parallel()
+
+	faucetServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(writer, `{"error":{"code":"unauthorized","message":"bad token"}}`)
+	}))
+	t.Cleanup(faucetServer.Close)
+
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return &fakeKubeClient{
+				defaultNamespace: "default-ns",
+				network:          readyNetwork("default-ns"),
+				secretValues: map[string]string{
+					"default-ns/devnet-faucet-auth/token": "super-secret-token-which-is-long-enough",
+				},
+			}, nil
+		},
+	})
+	root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000", "--faucet-url", faucetServer.URL})
+
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("ExecuteContext succeeded, want error")
+	}
+	if got := err.Error(); !strings.Contains(got, "HTTP 401: unauthorized: bad token") {
+		t.Fatalf("error = %q, want faucet error", got)
+	}
+}
+
 func writeTempConfig(t *testing.T, contents string) string {
 	t.Helper()
 
@@ -264,6 +387,7 @@ type fakeKubeClient struct {
 	network            *yacdv1alpha1.CardanoNetwork
 	applied            *yacdv1alpha1.CardanoNetwork
 	requestedNamespace *string
+	secretValues       map[string]string
 }
 
 func (f *fakeKubeClient) DefaultNamespace() string {
@@ -282,9 +406,18 @@ func (f *fakeKubeClient) GetCardanoNetwork(_ context.Context, namespace string, 
 	return f.network.DeepCopy(), nil
 }
 
-func readyNetwork(namespace string, name string) *yacdv1alpha1.CardanoNetwork {
+func (f *fakeKubeClient) GetSecretValue(_ context.Context, namespace string, name string, key string) (string, error) {
+	value, ok := f.secretValues[namespace+"/"+name+"/"+key]
+	if !ok {
+		return "", fmt.Errorf("secret value not found")
+	}
+	return value, nil
+}
+
+func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 	networkMagic := int64(42)
 	era := yacdv1alpha1.CardanoEraConway
+	name := "devnet"
 
 	return &yacdv1alpha1.CardanoNetwork{
 		ObjectMeta: metav1.ObjectMeta{
@@ -309,6 +442,14 @@ func readyNetwork(namespace string, name string) *yacdv1alpha1.CardanoNetwork {
 					Port:        1442,
 					URL:         "http://" + name + "-kupo." + namespace + ".svc.cluster.local:1442",
 				},
+				Faucet: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-faucet",
+					Port:        8080,
+					URL:         "http://" + name + "-faucet." + namespace + ".svc.cluster.local:8080",
+				},
+			},
+			Faucet: &yacdv1alpha1.FaucetStatus{
+				AuthSecretName: name + "-faucet-auth",
 			},
 			Conditions: []metav1.Condition{
 				{

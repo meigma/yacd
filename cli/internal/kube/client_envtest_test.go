@@ -76,6 +76,33 @@ func TestWaitReadyReturnsReadyNetwork(t *testing.T) {
 	}
 }
 
+func TestRuntimeClientGetsSecretValue(t *testing.T) {
+	ctx := context.Background()
+	kubeClient, apiClient := newEnvtestClient(t)
+	namespace := createNamespace(t, ctx, apiClient, "cli-secret")
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "devnet-faucet-auth",
+			Namespace: namespace,
+		},
+		Data: map[string][]byte{
+			"token": []byte("super-secret-token-which-is-long-enough"),
+		},
+	}
+	if err := apiClient.Create(ctx, secret); err != nil {
+		t.Fatalf("create secret: %v", err)
+	}
+
+	got, err := kubeClient.GetSecretValue(ctx, namespace, "devnet-faucet-auth", "token")
+	if err != nil {
+		t.Fatalf("GetSecretValue returned an error: %v", err)
+	}
+	if got != "super-secret-token-which-is-long-enough" {
+		t.Fatalf("secret token = %q, want configured token", got)
+	}
+}
+
 func TestWaitReadyFailsOnDegradedNetwork(t *testing.T) {
 	ctx := context.Background()
 	kubeClient, apiClient := newEnvtestClient(t)
@@ -254,4 +281,8 @@ func (s *staticClient) ApplyCardanoNetwork(context.Context, *yacdv1alpha1.Cardan
 
 func (s *staticClient) GetCardanoNetwork(context.Context, string, string) (*yacdv1alpha1.CardanoNetwork, error) {
 	return s.network.DeepCopy(), nil
+}
+
+func (s *staticClient) GetSecretValue(context.Context, string, string, string) (string, error) {
+	return "", nil
 }

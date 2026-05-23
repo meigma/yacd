@@ -93,6 +93,17 @@ func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
 `,
 			wantErr: "spec.network.chainAPI.kupo.image",
 		},
+		{
+			name: "faucet port",
+			config: validConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.port",
+		},
 	}
 
 	for _, tt := range tests {
@@ -105,6 +116,28 @@ func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
 				t.Fatalf("error = %q, want %q", got, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadAllowsFaucetWithoutImageOverride(t *testing.T) {
+	t.Parallel()
+
+	environment, err := Load(strings.NewReader(validConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`))
+	if err != nil {
+		t.Fatalf("Load returned an error: %v", err)
+	}
+	if environment.Spec.Network.ChainAPI == nil || environment.Spec.Network.ChainAPI.Faucet == nil {
+		t.Fatal("faucet config was not loaded")
+	}
+	if environment.Spec.Network.ChainAPI.Faucet.Image != nil {
+		t.Fatalf("faucet image = %q, want nil", *environment.Spec.Network.ChainAPI.Faucet.Image)
 	}
 }
 

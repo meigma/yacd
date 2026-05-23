@@ -37,6 +37,7 @@ fileGroups:
     - 'Tiltfile'
     - '.dev/ctlptl.yaml'
     - '.dev/ko-build.sh'
+    - '.dev/ko-build-faucet.sh'
     - '.dev/scripts/dev-up.sh'
     - '.dev/scripts/dev-down.sh'
   toolchainConfig:
@@ -138,6 +139,7 @@ tasks:
       - '@group(chainsawSources)'
       - '@group(toolchainConfig)'
       - 'Dockerfile'
+      - 'services/faucet/Dockerfile'
       - '.dev/scripts/deploy.sh'
       - '.dev/scripts/undeploy.sh'
       - '.dev/scripts/test-e2e.sh'

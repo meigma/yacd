@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -99,6 +100,18 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, kupoServiceKey, &corev1.Service{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	faucetServiceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetServiceName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, faucetServiceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	faucetAuthSecretKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}
+	require.Eventually(t, func() bool {
+		secret := &corev1.Secret{}
+		return apiClient.Get(ctx, faucetAuthSecretKey, secret) == nil &&
+			validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey]))
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -156,6 +169,29 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalKupoServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
+	faucetService := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, faucetServiceKey, faucetService))
+	originalFaucetServiceUID := faucetService.UID
+	require.NoError(t, apiClient.Delete(ctx, faucetService))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, faucetServiceKey, got)
+		return err == nil && got.UID != originalFaucetServiceUID
+	}, 10*time.Second, 100*time.Millisecond)
+
+	faucetAuthSecret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, faucetAuthSecretKey, faucetAuthSecret))
+	originalFaucetAuthSecretUID := faucetAuthSecret.UID
+	require.NoError(t, apiClient.Delete(ctx, faucetAuthSecret))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Secret{}
+		err := apiClient.Get(ctx, faucetAuthSecretKey, got)
+		return err == nil && got.UID != originalFaucetAuthSecretUID &&
+			validFaucetAuthToken(string(got.Data[faucetAuthTokenKey]))
+	}, 10*time.Second, 100*time.Millisecond)
+
 	require.Eventually(t, func() bool {
 		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
@@ -171,6 +207,7 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 				{Name: cardanoNodeContainerName, Image: "example.com/cardano-node:test"},
 				{Name: ogmiosContainerName, Image: "example.com/ogmios:test"},
 				{Name: kupoContainerName, Image: "example.com/kupo:test"},
+				{Name: faucetContainerName, Image: "example.com/faucet:test"},
 			},
 		},
 	}
@@ -204,6 +241,15 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 				},
 			},
 		},
+		{
+			Name:  faucetContainerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		},
 	}
 	require.NoError(t, apiClient.Status().Update(ctx, pod))
 
@@ -228,6 +274,47 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.Eventually(t, func() bool {
 		return statusHasReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
+
+	current := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), current))
+	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Faucet: &yacdv1alpha1.FaucetSpec{
+			Enabled:          false,
+			Port:             defaultFaucetPort,
+			DefaultSource:    defaultFaucetSource,
+			MinTopUpLovelace: defaultFaucetMinLovelace,
+			MaxTopUpLovelace: defaultFaucetMaxLovelace,
+		},
+	}
+	require.NoError(t, apiClient.Update(ctx, current))
+
+	require.Eventually(t, func() bool {
+		err := apiClient.Get(ctx, faucetServiceKey, &corev1.Service{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool {
+		err := apiClient.Get(ctx, faucetAuthSecretKey, &corev1.Secret{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool {
+		got := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, got); err != nil {
+			return false
+		}
+		return len(got.Spec.Template.Spec.Containers) == 3
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 1
+	deployment.Status.AvailableReplicas = 1
+	require.NoError(t, apiClient.Status().Update(ctx, deployment))
+
+	require.Eventually(t, func() bool {
+		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
@@ -250,9 +337,12 @@ func statusHasProgressingEndpoints(
 		conditionHas(current, conditionTypeNodeReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeKupoReady, metav1.ConditionFalse, "") &&
+		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionFalse, "") &&
 		nodeToNodeEndpointMatches(current, network) &&
 		ogmiosEndpointMatches(current, network) &&
-		kupoEndpointMatches(current, network)
+		kupoEndpointMatches(current, network) &&
+		faucetEndpointMatches(current, network) &&
+		faucetStatusMatches(current, network)
 }
 
 func statusHasReadyConditions(
@@ -269,7 +359,29 @@ func statusHasReadyConditions(
 		conditionHas(current, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady) &&
 		conditionHas(current, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady) &&
 		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady) &&
-		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
+		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady) &&
+		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionTrue, conditionReasonFaucetReady)
+}
+
+func statusHasDisabledFaucetReadyConditions(
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) bool {
+	current := &yacdv1alpha1.CardanoNetwork{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+		return false
+	}
+
+	return conditionHas(current, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady) &&
+		conditionHas(current, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady) &&
+		conditionHas(current, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady) &&
+		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady) &&
+		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady) &&
+		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled) &&
+		current.Status.Endpoints != nil &&
+		current.Status.Endpoints.Faucet == nil &&
+		current.Status.Faucet == nil
 }
 
 func conditionHas(
@@ -314,4 +426,19 @@ func kupoEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1al
 	return current.Status.Endpoints.Kupo.ServiceName == primaryKupoServiceName(network) &&
 		current.Status.Endpoints.Kupo.Port == defaultKupoPort &&
 		current.Status.Endpoints.Kupo.URL == "http://manager-owned-kupo.cardanonetwork-envtest.svc.cluster.local:1442"
+}
+
+func faucetEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	if current.Status.Endpoints == nil || current.Status.Endpoints.Faucet == nil {
+		return false
+	}
+
+	return current.Status.Endpoints.Faucet.ServiceName == primaryFaucetServiceName(network) &&
+		current.Status.Endpoints.Faucet.Port == defaultFaucetPort &&
+		current.Status.Endpoints.Faucet.URL == "http://manager-owned-faucet.cardanonetwork-envtest.svc.cluster.local:8080"
+}
+
+func faucetStatusMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	return current.Status.Faucet != nil &&
+		current.Status.Faucet.AuthSecretName == primaryFaucetAuthSecretName(network)
 }

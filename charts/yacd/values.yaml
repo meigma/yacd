@@ -6,6 +6,12 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
+faucet:
+  image:
+    repository: ghcr.io/meigma/yacd/faucet
+    tag: ""
+    digest: ""
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

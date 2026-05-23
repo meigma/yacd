@@ -57,6 +57,27 @@ const (
 	defaultKupoStorageLimit = "1536Mi"
 	kupoServiceURLType      = "http"
 
+	faucetContainerName      = "faucet"
+	faucetCommand            = "/yacd-faucet"
+	faucetPortName           = "faucet"
+	faucetHostAddress        = "0.0.0.0"
+	faucetChainHostAddress   = "127.0.0.1"
+	faucetAuthVolumeName     = "faucet-auth"
+	faucetAuthTokenKey       = "token"
+	faucetAuthTokenMountDir  = "/var/run/yacd-faucet"
+	faucetAuthTokenPath      = "/var/run/yacd-faucet/token"
+	defaultFaucetImage       = "ghcr.io/meigma/yacd/faucet:dev"
+	defaultFaucetPort        = 8080
+	defaultFaucetSource      = "utxo1"
+	defaultFaucetMinLovelace = 1_000_000
+	defaultFaucetMaxLovelace = 10_000_000_000
+	faucetServiceURLType     = "http"
+	faucetUTXOKeysDir        = "/state/env/utxo-keys"
+	faucetOgmiosURLScheme    = "ws"
+	faucetKupoURLScheme      = "http"
+	faucetHealthPath         = "/healthz"
+	faucetReadinessPath      = "/readyz"
+
 	nodeIPCVolumeName         = "node-ipc"
 	defaultNodeStorageSize    = "10Gi"
 	localnetFingerprintAnno   = "yacd.meigma.io/localnet-fingerprint"
@@ -101,12 +122,15 @@ type primaryWorkloadResources struct {
 	Service               *corev1.Service
 	OgmiosService         *corev1.Service
 	KupoService           *corev1.Service
+	FaucetService         *corev1.Service
+	FaucetAuthSecret      *corev1.Secret
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
 // node workload resources. Reconciliation side effects stay in the controller.
 type primaryWorkloadBuilder struct {
-	scheme *runtime.Scheme
+	scheme             *runtime.Scheme
+	defaultFaucetImage string
 }
 
 type unsupportedSpecError struct {
@@ -125,6 +149,19 @@ type kupoSettings struct {
 	image     string
 	port      int32
 	resources *corev1.ResourceRequirements
+}
+
+type faucetSettings struct {
+	enabled           bool
+	image             string
+	port              int32
+	defaultSource     string
+	minTopUpLovelace  int64
+	maxTopUpLovelace  int64
+	resources         *corev1.ResourceRequirements
+	authSecretName    string
+	authSecretKey     string
+	authTokenFilePath string
 }
 
 func (e unsupportedSpecError) Error() string {
@@ -169,6 +206,10 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if kupo.enabled && !ogmios.enabled {
 		return nil, unsupportedSpec("kupo requires ogmios to be enabled")
 	}
+	faucet, err := b.resolveFaucetSettings(network, ogmios, kupo)
+	if err != nil {
+		return nil, err
+	}
 	if !acceptedLocalnetFingerprintChanged(network, plan.Fingerprint.Value) {
 		err = validateOgmiosCompatibility(network.Spec.Node.Version, ogmios)
 	}
@@ -178,11 +219,11 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err := validateKupoImage(kupo); err != nil {
 		return nil, err
 	}
-	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo); err != nil {
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet); err != nil {
 		return nil, err
 	}
 
-	deployment, err := b.deployment(network, plan, initContainer, ogmios, kupo)
+	deployment, err := b.deployment(network, plan, initContainer, ogmios, kupo, faucet)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +249,18 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	var faucetService *corev1.Service
+	var faucetAuthSecret *corev1.Secret
+	if faucet.enabled {
+		faucetService, err = b.faucetService(network, faucet)
+		if err != nil {
+			return nil, err
+		}
+		faucetAuthSecret, err = b.faucetAuthSecret(network, faucet)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &primaryWorkloadResources{
 		PersistentVolumeClaim: persistentVolumeClaim,
@@ -215,6 +268,8 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		Service:               service,
 		OgmiosService:         ogmiosService,
 		KupoService:           kupoService,
+		FaucetService:         faucetService,
+		FaucetAuthSecret:      faucetAuthSecret,
 	}, nil
 }
 
@@ -335,6 +390,77 @@ func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSett
 	return settings, nil
 }
 
+func (b primaryWorkloadBuilder) resolveFaucetSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSettings, kupo kupoSettings) (faucetSettings, error) {
+	settings := faucetSettings{
+		enabled:           true,
+		image:             b.resolvedDefaultFaucetImage(),
+		port:              defaultFaucetPort,
+		defaultSource:     defaultFaucetSource,
+		minTopUpLovelace:  defaultFaucetMinLovelace,
+		maxTopUpLovelace:  defaultFaucetMaxLovelace,
+		authSecretName:    primaryFaucetAuthSecretName(network),
+		authSecretKey:     faucetAuthTokenKey,
+		authTokenFilePath: faucetAuthTokenPath,
+	}
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Faucet == nil {
+		if !ogmios.enabled || !kupo.enabled {
+			settings.enabled = false
+		}
+		return settings, nil
+	}
+
+	spec := network.Spec.ChainAPI.Faucet
+	if !spec.Enabled {
+		settings.enabled = false
+		return settings, nil
+	}
+	if !ogmios.enabled {
+		return faucetSettings{}, unsupportedSpec("faucet requires ogmios to be enabled")
+	}
+	if !kupo.enabled {
+		return faucetSettings{}, unsupportedSpec("faucet requires kupo to be enabled")
+	}
+
+	if spec.Image != nil {
+		settings.image = strings.TrimSpace(*spec.Image)
+	}
+	if strings.TrimSpace(settings.image) == "" {
+		return faucetSettings{}, unsupportedSpec("faucet image is required")
+	}
+	if spec.Port < 1 || spec.Port > 65535 {
+		return faucetSettings{}, unsupportedSpec("faucet port must be between 1 and 65535")
+	}
+	settings.port = spec.Port
+	settings.defaultSource = strings.TrimSpace(spec.DefaultSource)
+	if err := validateFaucetSourceName(settings.defaultSource); err != nil {
+		return faucetSettings{}, err
+	}
+	if spec.MinTopUpLovelace < 1 {
+		return faucetSettings{}, unsupportedSpec("faucet minTopUpLovelace must be greater than 0")
+	}
+	if spec.MaxTopUpLovelace < 1 {
+		return faucetSettings{}, unsupportedSpec("faucet maxTopUpLovelace must be greater than 0")
+	}
+	if spec.MinTopUpLovelace > spec.MaxTopUpLovelace {
+		return faucetSettings{}, unsupportedSpec("faucet minTopUpLovelace must not exceed maxTopUpLovelace")
+	}
+	settings.minTopUpLovelace = spec.MinTopUpLovelace
+	settings.maxTopUpLovelace = spec.MaxTopUpLovelace
+	if spec.Resources != nil {
+		settings.resources = spec.Resources.DeepCopy()
+	}
+
+	return settings, nil
+}
+
+func (b primaryWorkloadBuilder) resolvedDefaultFaucetImage() string {
+	if strings.TrimSpace(b.defaultFaucetImage) != "" {
+		return strings.TrimSpace(b.defaultFaucetImage)
+	}
+
+	return defaultFaucetImage
+}
+
 func validateKupoImage(settings kupoSettings) error {
 	if !settings.enabled {
 		return nil
@@ -346,7 +472,7 @@ func validateKupoImage(settings kupoSettings) error {
 	return unsupportedSpec("kupo image %q is not supported; supported image: %s", settings.image, defaultKupoImage)
 }
 
-func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings) error {
+func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) error {
 	seen := map[int32]string{
 		nodePort: cardanoNodePortName,
 	}
@@ -359,6 +485,29 @@ func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo ku
 	if kupo.enabled {
 		if owner, ok := seen[kupo.port]; ok {
 			return unsupportedSpec("kupo port %d conflicts with %s port", kupo.port, owner)
+		}
+		seen[kupo.port] = kupoPortName
+	}
+	if faucet.enabled {
+		if owner, ok := seen[faucet.port]; ok {
+			return unsupportedSpec("faucet port %d conflicts with %s port", faucet.port, owner)
+		}
+	}
+
+	return nil
+}
+
+func validateFaucetSourceName(sourceName string) error {
+	if !strings.HasPrefix(sourceName, "utxo") || len(sourceName) < len("utxo1") {
+		return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
+	}
+	digits := sourceName[len("utxo"):]
+	if digits[0] == '0' {
+		return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
+	}
+	for _, char := range digits {
+		if char < '0' || char > '9' {
+			return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
 		}
 	}
 
@@ -441,7 +590,7 @@ func mustContainerImageTag(image string) string {
 	return tag
 }
 
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings, kupo kupoSettings) (*appsv1.Deployment, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
@@ -451,6 +600,13 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	}
 	if kupo.enabled {
 		containers = append(containers, b.kupoContainer(kupo, ogmios))
+	}
+	if faucet.enabled {
+		containers = append(containers, b.faucetContainer(faucet, ogmios, kupo, plan))
+	}
+	initContainers := []corev1.Container{initContainer}
+	if faucet.enabled {
+		initContainers = append(initContainers, faucetSourceAddressInitContainer(plan))
 	}
 	volumes := []corev1.Volume{
 		{
@@ -488,6 +644,24 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			},
 		)
 	}
+	if faucet.enabled {
+		optional := false
+		volumes = append(volumes, corev1.Volume{
+			Name: faucetAuthVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: faucet.authSecretName,
+					Items: []corev1.KeyToPath{
+						{
+							Key:  faucet.authSecretKey,
+							Path: faucet.authSecretKey,
+						},
+					},
+					Optional: &optional,
+				},
+			},
+		})
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -521,7 +695,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
-					InitContainers: []corev1.Container{initContainer},
+					InitContainers: initContainers,
 					Containers:     containers,
 					Volumes:        volumes,
 				},
@@ -710,6 +884,68 @@ func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmi
 	return container
 }
 
+func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios ogmiosSettings, kupo kupoSettings, plan localnet.Plan) corev1.Container {
+	container := corev1.Container{
+		Name:            faucetContainerName,
+		Image:           settings.image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{faucetCommand},
+		Args: []string{
+			"--listen-address", fmt.Sprintf("%s:%d", faucetHostAddress, settings.port),
+			"--utxo-keys-dir", faucetUTXOKeysDir,
+			"--default-source", settings.defaultSource,
+			"--ogmios-url", fmt.Sprintf("%s://%s:%d", faucetOgmiosURLScheme, faucetChainHostAddress, ogmios.port),
+			"--kupo-url", fmt.Sprintf("%s://%s:%d", faucetKupoURLScheme, faucetChainHostAddress, kupo.port),
+			"--auth-token-file", settings.authTokenFilePath,
+			"--allow-remote-listen",
+			"--min-topup-lovelace", strconv.FormatInt(settings.minTopUpLovelace, 10),
+			"--max-topup-lovelace", strconv.FormatInt(settings.maxTopUpLovelace, 10),
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          faucetPortName,
+				ContainerPort: settings.port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		StartupProbe:   faucetHTTPProbe(faucetHealthPath, settings.port, 5, 2, 60),
+		LivenessProbe:  faucetHTTPProbe(faucetHealthPath, settings.port, 10, 5, 12),
+		ReadinessProbe: faucetHTTPProbe(faucetReadinessPath, settings.port, 5, 2, 3),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: plan.Layout.StateDir,
+				ReadOnly:  true,
+			},
+			{
+				Name:      faucetAuthVolumeName,
+				MountPath: faucetAuthTokenMountDir,
+				ReadOnly:  true,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+	if settings.resources != nil {
+		container.Resources = *settings.resources.DeepCopy()
+	}
+
+	return container
+}
+
 func defaultKupoResources() corev1.ResourceRequirements {
 	return corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
@@ -718,6 +954,20 @@ func defaultKupoResources() corev1.ResourceRequirements {
 		Limits: corev1.ResourceList{
 			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoStorageLimit),
 		},
+	}
+}
+
+func faucetHTTPProbe(probePath string, port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: probePath,
+				Port: intstr.FromInt(int(port)),
+			},
+		},
+		PeriodSeconds:    periodSeconds,
+		TimeoutSeconds:   timeoutSeconds,
+		FailureThreshold: failureThreshold,
 	}
 }
 
@@ -872,6 +1122,51 @@ func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork
 	return service, nil
 }
 
+func (b primaryWorkloadBuilder) faucetService(network *yacdv1alpha1.CardanoNetwork, settings faucetSettings) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetServiceName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       faucetPortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       settings.port,
+					TargetPort: intstr.FromString(faucetPortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set faucet Service owner reference: %w", err)
+	}
+
+	return service, nil
+}
+
+func (b primaryWorkloadBuilder) faucetAuthSecret(network *yacdv1alpha1.CardanoNetwork, settings faucetSettings) (*corev1.Secret, error) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      settings.authSecretName,
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
+		return nil, fmt.Errorf("set faucet auth Secret owner reference: %w", err)
+	}
+
+	return secret, nil
+}
+
 func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {
 	annotations := map[string]string{
 		localnetFingerprintAnno: plan.Fingerprint.Value,
@@ -916,6 +1211,14 @@ func primaryOgmiosServiceName(network *yacdv1alpha1.CardanoNetwork) string {
 
 func primaryKupoServiceName(network *yacdv1alpha1.CardanoNetwork) string {
 	return safeDNSLabelWithSuffix(network.Name, "kupo")
+}
+
+func primaryFaucetServiceName(network *yacdv1alpha1.CardanoNetwork) string {
+	return safeDNSLabelWithSuffix(network.Name, "faucet")
+}
+
+func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {
+	return safeDNSLabelWithSuffix(network.Name, "faucet-auth")
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {

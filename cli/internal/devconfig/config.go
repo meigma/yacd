@@ -136,6 +136,15 @@ func validateExplicitFields(data []byte, environment Environment) error {
 			[]string{"spec", "network", "chainAPI", "kupo", "port"},
 		)
 	}
+	if environment.Spec.Network.ChainAPI != nil && environment.Spec.Network.ChainAPI.Faucet != nil {
+		requiredPaths = append(requiredPaths,
+			[]string{"spec", "network", "chainAPI", "faucet", "enabled"},
+			[]string{"spec", "network", "chainAPI", "faucet", "port"},
+			[]string{"spec", "network", "chainAPI", "faucet", "defaultSource"},
+			[]string{"spec", "network", "chainAPI", "faucet", "minTopUpLovelace"},
+			[]string{"spec", "network", "chainAPI", "faucet", "maxTopUpLovelace"},
+		)
+	}
 
 	for _, path := range requiredPaths {
 		if !hasPath(document, path...) {

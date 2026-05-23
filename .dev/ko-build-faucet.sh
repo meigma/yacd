@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${EXPECTED_REF:?Tilt must set EXPECTED_REF for the faucet image build}"
+
+export CGO_ENABLED="${CGO_ENABLED:-0}"
+
+built_ref="$(ko build --local ./services/faucet/cmd/yacd-faucet | tail -n 1)"
+docker tag "$built_ref" "$EXPECTED_REF"
