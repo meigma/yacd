@@ -101,6 +101,15 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 
+{{- define "yacd.faucetImage" -}}
+{{- if .Values.faucet.image.digest -}}
+{{- printf "%s@%s" .Values.faucet.image.repository .Values.faucet.image.digest -}}
+{{- else -}}
+{{- $tag := default .Chart.AppVersion .Values.faucet.image.tag -}}
+{{- printf "%s:%s" .Values.faucet.image.repository $tag -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "yacd.validateValues" -}}
 {{- $reservedLabels := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/managed-by" "app.kubernetes.io/version" "helm.sh/chart" "control-plane" -}}
 {{- range $source, $labels := dict "commonLabels" .Values.commonLabels "podLabels" .Values.podLabels -}}

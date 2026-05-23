@@ -35,6 +35,15 @@ rules:
   - apiGroups:
       - ""
     resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
       - pods
     verbs:
       - get

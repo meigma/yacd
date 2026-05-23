@@ -18,7 +18,7 @@ func main() {
 	ctrl.SetLogger(mustNewControllerLogger(options, os.Stderr))
 
 	mgr := mustNewManager(options)
-	mustRegisterControllers(mgr)
+	mustRegisterControllers(mgr, options)
 	mustRegisterHealthChecks(mgr)
 	mustStartManager(mgr)
 }

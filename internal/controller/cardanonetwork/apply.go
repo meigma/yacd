@@ -2,9 +2,13 @@ package cardanonetwork
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
+	"unicode"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -207,6 +211,65 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	return controllerutil.OperationResultUpdated, nil
 }
 
+func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
+	ctx context.Context,
+	desired *corev1.Secret,
+) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	if err := r.defaultObject(desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	current := &corev1.Secret{}
+	err := r.liveReader().Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		token, err := generateFaucetAuthToken()
+		if err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+		desired.Data = map[string][]byte{
+			faucetAuthTokenKey: []byte(token),
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Type = corev1.SecretTypeOpaque
+	if current.Data == nil {
+		current.Data = map[string][]byte{}
+	}
+	if !validFaucetAuthToken(string(current.Data[faucetAuthTokenKey])) {
+		token, err := generateFaucetAuthToken()
+		if err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+		current.Data[faucetAuthTokenKey] = []byte(token)
+	}
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
 func (r *CardanoNetworkReconciler) deletePrimaryOgmiosService(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -219,6 +282,45 @@ func (r *CardanoNetworkReconciler) deletePrimaryKupoService(
 	network *yacdv1alpha1.CardanoNetwork,
 ) (controllerutil.OperationResult, error) {
 	return r.deletePrimaryChainAPIService(ctx, network, primaryKupoServiceName(network), "Kupo")
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetService(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (controllerutil.OperationResult, error) {
+	return r.deletePrimaryChainAPIService(ctx, network, primaryFaucetServiceName(network), "faucet")
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecret(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (controllerutil.OperationResult, error) {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetAuthSecretName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return controllerutil.OperationResultNone, fmt.Errorf("set desired faucet auth Secret owner reference: %w", err)
+	}
+
+	current := &corev1.Secret{}
+	err := r.liveReader().Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	if err := r.Delete(ctx, current); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return operationResultDeleted, nil
 }
 
 func (r *CardanoNetworkReconciler) deletePrimaryChainAPIService(
@@ -253,6 +355,171 @@ func (r *CardanoNetworkReconciler) deletePrimaryChainAPIService(
 	}
 
 	return operationResultDeleted, nil
+}
+
+func (r *CardanoNetworkReconciler) revokePrimaryFaucetExposure(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	return errors.Join(
+		r.deletePrimaryFaucetServiceIfOwned(ctx, network),
+		r.deletePrimaryFaucetAuthSecretIfOwned(ctx, network),
+		r.removePrimaryFaucetFromDeploymentIfOwned(ctx, network),
+	)
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetServiceIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetServiceName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired faucet Service owner reference: %w", err)
+	}
+
+	return r.deleteObjectIfOwned(ctx, desired, &corev1.Service{})
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecretIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetAuthSecretName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired faucet auth Secret owner reference: %w", err)
+	}
+
+	return r.deleteObjectIfOwnedWithReader(ctx, desired, &corev1.Secret{}, r.liveReader())
+}
+
+func (r *CardanoNetworkReconciler) deleteObjectIfOwned(
+	ctx context.Context,
+	desired client.Object,
+	current client.Object,
+) error {
+	return r.deleteObjectIfOwnedWithReader(ctx, desired, current, r.Client)
+}
+
+func (r *CardanoNetworkReconciler) deleteObjectIfOwnedWithReader(
+	ctx context.Context,
+	desired client.Object,
+	current client.Object,
+	reader client.Reader,
+) error {
+	err := reader.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if validateControllerOwner(current, desired) != nil {
+		return nil
+	}
+
+	return r.Delete(ctx, current)
+}
+
+func (r *CardanoNetworkReconciler) removePrimaryFaucetFromDeploymentIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired primary Deployment owner reference: %w", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, clientObjectKey(desired), deployment)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if validateControllerOwner(deployment, desired) != nil {
+		return nil
+	}
+
+	before := deployment.DeepCopy()
+	deployment.Spec.Template.Spec.InitContainers = removeContainersByName(
+		deployment.Spec.Template.Spec.InitContainers,
+		faucetSourceAddressInitContainerName,
+	)
+	deployment.Spec.Template.Spec.Containers = removeContainersByName(
+		deployment.Spec.Template.Spec.Containers,
+		faucetContainerName,
+	)
+	deployment.Spec.Template.Spec.Volumes = removeVolumesByName(
+		deployment.Spec.Template.Spec.Volumes,
+		faucetAuthVolumeName,
+	)
+	if equality.Semantic.DeepEqual(before, deployment) {
+		return nil
+	}
+
+	return r.Patch(ctx, deployment, client.MergeFrom(before))
+}
+
+func removeContainersByName(containers []corev1.Container, name string) []corev1.Container {
+	filtered := containers[:0]
+	for _, container := range containers {
+		if container.Name == name {
+			continue
+		}
+		filtered = append(filtered, container)
+	}
+
+	return filtered
+}
+
+func removeVolumesByName(volumes []corev1.Volume, name string) []corev1.Volume {
+	filtered := volumes[:0]
+	for _, volume := range volumes {
+		if volume.Name == name {
+			continue
+		}
+		filtered = append(filtered, volume)
+	}
+
+	return filtered
+}
+
+func generateFaucetAuthToken() (string, error) {
+	var tokenBytes [32]byte
+	if _, err := rand.Read(tokenBytes[:]); err != nil {
+		return "", fmt.Errorf("generate faucet auth token: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(tokenBytes[:]), nil
+}
+
+func validFaucetAuthToken(token string) bool {
+	if len(token) < 32 {
+		return false
+	}
+	for _, char := range token {
+		if unicode.IsSpace(char) || unicode.IsControl(char) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *CardanoNetworkReconciler) defaultObject(object client.Object) error {

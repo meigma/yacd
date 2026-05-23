@@ -211,6 +211,118 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "kupo port 1337 conflicts with ogmios port",
 		},
 		{
+			name: "blank faucet image",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				image := " "
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Image:            &image,
+						Port:             defaultFaucetPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: "faucet image is required",
+		},
+		{
+			name: "faucet image from different repository",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				image := "example.com/yacd-faucet:test"
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Image:            &image,
+						Port:             defaultFaucetPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: `faucet image repository must match the configured default faucet image repository "ghcr.io/meigma/yacd/faucet"`,
+		},
+		{
+			name: "invalid faucet port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Port:             65536,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: "faucet port must be between 1 and 65535",
+		},
+		{
+			name: "invalid faucet default source",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Port:             defaultFaucetPort,
+						DefaultSource:    "../utxo1",
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: "faucet defaultSource must use the utxoN source name format",
+		},
+		{
+			name: "faucet min above max",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Port:             defaultFaucetPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: 3_000_000,
+						MaxTopUpLovelace: 2_000_000,
+					},
+				}
+			},
+			wantErr: "faucet minTopUpLovelace must not exceed maxTopUpLovelace",
+		},
+		{
+			name: "explicit faucet with kupo disabled",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: false,
+					},
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Port:             defaultFaucetPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: "faucet requires kupo to be enabled",
+		},
+		{
+			name: "faucet port conflicts with kupo port",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Port:             defaultKupoPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: "faucet port 1442 conflicts with kupo port",
+		},
+		{
 			name: "unsupported ogmios image tag",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -318,6 +430,7 @@ func TestPrimaryWorkloadBuilderRejectsNilInputAndScheme(t *testing.T) {
 // singleton primary node workload shape with the default Ogmios sidecar.
 func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	network := localCardanoNetwork("devnet")
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
@@ -326,8 +439,12 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	service := resources.Service
 	ogmiosService := resources.OgmiosService
 	kupoService := resources.KupoService
+	faucetService := resources.FaucetService
+	faucetAuthSecret := resources.FaucetAuthSecret
 	require.NotNil(t, ogmiosService)
 	require.NotNil(t, kupoService)
+	require.NotNil(t, faucetService)
+	require.NotNil(t, faucetAuthSecret)
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -357,6 +474,14 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, kupoServiceController)
 	assert.Equal(t, "devnet", kupoServiceController.Name)
 	assert.Equal(t, "CardanoNetwork", kupoServiceController.Kind)
+	faucetServiceController := metav1.GetControllerOf(faucetService)
+	require.NotNil(t, faucetServiceController)
+	assert.Equal(t, "devnet", faucetServiceController.Name)
+	assert.Equal(t, "CardanoNetwork", faucetServiceController.Kind)
+	faucetSecretController := metav1.GetControllerOf(faucetAuthSecret)
+	require.NotNil(t, faucetSecretController)
+	assert.Equal(t, "devnet", faucetSecretController.Name)
+	assert.Equal(t, "CardanoNetwork", faucetSecretController.Kind)
 
 	expectedSelector := map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -378,15 +503,27 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
 	assert.Equal(t, localnetCreateEnvInitContainerName, initContainer.Name)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, initContainer.VolumeMounts)
+	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
+	assert.Equal(t, faucetSourceAddressInitContainerName, addressInitContainer.Name)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", addressInitContainer.Image)
+	assert.Equal(t, []string{faucetSourceAddressCommand}, addressInitContainer.Command)
+	addressInitArgs := strings.Join(addressInitContainer.Args, " ")
+	assert.Contains(t, addressInitArgs, "cardano-cli address build")
+	assert.Contains(t, addressInitArgs, "--testnet-magic 42")
+	assert.Contains(t, addressInitArgs, "utxo.vkey")
+	assert.Contains(t, addressInitArgs, "utxo.addr")
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state"},
+	}, addressInitContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 4)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
@@ -483,7 +620,40 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	}, kupoContainer.VolumeMounts)
 	assert.Equal(t, defaultKupoResources(), kupoContainer.Resources)
 
-	require.Len(t, deployment.Spec.Template.Spec.Volumes, 4)
+	faucetContainer := deployment.Spec.Template.Spec.Containers[3]
+	assert.Equal(t, faucetContainerName, faucetContainer.Name)
+	assert.Equal(t, defaultFaucetImage, faucetContainer.Image)
+	assert.Equal(t, []string{faucetCommand}, faucetContainer.Command)
+	assert.Equal(t, []string{
+		"--listen-address", "0.0.0.0:8080",
+		"--utxo-keys-dir", "/state/env/utxo-keys",
+		"--default-source", "utxo1",
+		"--ogmios-url", "ws://127.0.0.1:1337",
+		"--kupo-url", "http://127.0.0.1:1442",
+		"--auth-token-file", "/var/run/yacd-faucet/token",
+		"--allow-remote-listen",
+		"--min-topup-lovelace", "1000000",
+		"--max-topup-lovelace", "10000000000",
+	}, faucetContainer.Args)
+	assert.Equal(t, []corev1.ContainerPort{
+		{
+			Name:          faucetPortName,
+			ContainerPort: defaultFaucetPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}, faucetContainer.Ports)
+	require.NotNil(t, faucetContainer.ReadinessProbe)
+	require.NotNil(t, faucetContainer.StartupProbe)
+	require.NotNil(t, faucetContainer.LivenessProbe)
+	assert.Equal(t, faucetReadinessPath, faucetContainer.ReadinessProbe.HTTPGet.Path)
+	assert.Equal(t, faucetHealthPath, faucetContainer.StartupProbe.HTTPGet.Path)
+	assert.Equal(t, faucetHealthPath, faucetContainer.LivenessProbe.HTTPGet.Path)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state/env/utxo-keys", SubPath: "env/utxo-keys", ReadOnly: true},
+		{Name: faucetAuthVolumeName, MountPath: "/var/run/yacd-faucet", ReadOnly: true},
+	}, faucetContainer.VolumeMounts)
+
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 5)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
 	assert.Equal(t, localnetStateVolumeName, stateVolume.Name)
 	require.NotNil(t, stateVolume.PersistentVolumeClaim)
@@ -501,6 +671,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, kupoTmpVolume.EmptyDir)
 	require.NotNil(t, kupoTmpVolume.EmptyDir.SizeLimit)
 	assert.Zero(t, kupoTmpVolume.EmptyDir.SizeLimit.Cmp(resource.MustParse(defaultKupoTmpSizeLimit)))
+	faucetAuthVolume := deployment.Spec.Template.Spec.Volumes[4]
+	assert.Equal(t, faucetAuthVolumeName, faucetAuthVolume.Name)
+	require.NotNil(t, faucetAuthVolume.Secret)
+	assert.Equal(t, "devnet-faucet-auth", faucetAuthVolume.Secret.SecretName)
 
 	assert.Equal(t, "devnet-node-state", persistentVolumeClaim.Name)
 	assert.Equal(t, "default", persistentVolumeClaim.Namespace)
@@ -551,14 +725,53 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		},
 	}, kupoService.Spec.Ports)
 
+	assert.Equal(t, "devnet-faucet", faucetService.Name)
+	assert.Equal(t, "default", faucetService.Namespace)
+	assert.Equal(t, "yacd", faucetService.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, faucetService.Spec.Type)
+	assert.Equal(t, expectedSelector, faucetService.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       faucetPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultFaucetPort,
+			TargetPort: intstr.FromString(faucetPortName),
+		},
+	}, faucetService.Spec.Ports)
+
+	assert.Equal(t, "devnet-faucet-auth", faucetAuthSecret.Name)
+	assert.Equal(t, "default", faucetAuthSecret.Namespace)
+	assert.Equal(t, "yacd", faucetAuthSecret.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.SecretTypeOpaque, faucetAuthSecret.Type)
+
 	assertPodSecurityContext(t, deployment.Spec.Template.Spec.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, nodeContainer.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, ogmiosContainer.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, kupoContainer.SecurityContext)
+	assertRestrictedContainerSecurityContext(t, faucetContainer.SecurityContext)
+}
+
+func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {
+	network := localCardanoNetwork("faucet-default-disabled")
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
+	assert.NotNil(t, resources.OgmiosService)
+	assert.NotNil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
 }
 
 func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	network := localCardanoNetwork("devnet." + strings.Repeat("a", 80))
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
@@ -573,6 +786,12 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	assert.LessOrEqual(t, len(resources.KupoService.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.KupoService.Name, "-kupo"))
 	assert.NotContains(t, resources.KupoService.Name, ".")
+	assert.LessOrEqual(t, len(resources.FaucetService.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.FaucetService.Name, "-faucet"))
+	assert.NotContains(t, resources.FaucetService.Name, ".")
+	assert.LessOrEqual(t, len(resources.FaucetAuthSecret.Name), maxLabelValueLength)
+	assert.True(t, strings.HasSuffix(resources.FaucetAuthSecret.Name, "-faucet-auth"))
+	assert.NotContains(t, resources.FaucetAuthSecret.Name, ".")
 	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
 	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
@@ -585,9 +804,13 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 }
 
 func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
-	dotted, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo.bar"))
+	dottedNetwork := localCardanoNetwork("foo.bar")
+	enableFaucet(dottedNetwork)
+	dotted, err := newTestPrimaryWorkloadBuilder(t).Build(dottedNetwork)
 	require.NoError(t, err)
-	dashed, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo-bar"))
+	dashedNetwork := localCardanoNetwork("foo-bar")
+	enableFaucet(dashedNetwork)
+	dashed, err := newTestPrimaryWorkloadBuilder(t).Build(dashedNetwork)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, dotted.Deployment.Name, dashed.Deployment.Name)
@@ -595,6 +818,8 @@ func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
 	assert.NotEqual(t, dotted.Service.Name, dashed.Service.Name)
 	assert.NotEqual(t, dotted.OgmiosService.Name, dashed.OgmiosService.Name)
 	assert.NotEqual(t, dotted.KupoService.Name, dashed.KupoService.Name)
+	assert.NotEqual(t, dotted.FaucetService.Name, dashed.FaucetService.Name)
+	assert.NotEqual(t, dotted.FaucetAuthSecret.Name, dashed.FaucetAuthSecret.Name)
 }
 
 func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
@@ -644,12 +869,13 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 			},
 		},
 	}
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
 	require.NotNil(t, resources.OgmiosService)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
 	ogmiosContainer := resources.Deployment.Spec.Template.Spec.Containers[1]
 	assert.Equal(t, "example.com/ogmios:v6.14.0", ogmiosContainer.Image)
 	assert.Contains(t, ogmiosContainer.Args, "1444")
@@ -675,12 +901,13 @@ func TestPrimaryWorkloadBuilderAppliesKupoPortAndResourceOverrides(t *testing.T)
 			},
 		},
 	}
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
 	require.NotNil(t, resources.KupoService)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
 	kupoContainer := resources.Deployment.Spec.Template.Spec.Containers[2]
 	assert.Equal(t, defaultKupoImage, kupoContainer.Image)
 	assert.Contains(t, kupoContainer.Args, "2442")
@@ -688,6 +915,42 @@ func TestPrimaryWorkloadBuilderAppliesKupoPortAndResourceOverrides(t *testing.T)
 	assert.Equal(t, *network.Spec.ChainAPI.Kupo.Resources, kupoContainer.Resources)
 	assert.Equal(t, int32(2442), resources.KupoService.Spec.Ports[0].Port)
 	assert.Equal(t, intstr.FromString(kupoPortName), resources.KupoService.Spec.Ports[0].TargetPort)
+}
+
+func TestPrimaryWorkloadBuilderAppliesFaucetOverrides(t *testing.T) {
+	network := localCardanoNetwork("custom-faucet")
+	image := "ghcr.io/meigma/yacd/faucet:test"
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Faucet: &yacdv1alpha1.FaucetSpec{
+			Enabled:          true,
+			Image:            &image,
+			Port:             18080,
+			DefaultSource:    "utxo2",
+			MinTopUpLovelace: 2_000_000,
+			MaxTopUpLovelace: 5_000_000,
+			Resources: &corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceMemory: resource.MustParse("128Mi"),
+				},
+			},
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.NotNil(t, resources.FaucetService)
+	require.NotNil(t, resources.FaucetAuthSecret)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
+	faucetContainer := resources.Deployment.Spec.Template.Spec.Containers[3]
+	assert.Equal(t, image, faucetContainer.Image)
+	assert.Contains(t, faucetContainer.Args, "0.0.0.0:18080")
+	assert.Contains(t, faucetContainer.Args, "utxo2")
+	assert.Contains(t, faucetContainer.Args, "2000000")
+	assert.Contains(t, faucetContainer.Args, "5000000")
+	assert.Equal(t, *network.Spec.ChainAPI.Faucet.Resources, faucetContainer.Resources)
+	assert.Equal(t, int32(18080), resources.FaucetService.Spec.Ports[0].Port)
+	assert.Equal(t, intstr.FromString(faucetPortName), resources.FaucetService.Spec.Ports[0].TargetPort)
 }
 
 func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
@@ -705,6 +968,8 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Nil(t, resources.OgmiosService)
 	assert.Nil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
 }
 
@@ -724,7 +989,33 @@ func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
 	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.NotNil(t, resources.OgmiosService)
 	assert.Nil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
+}
+
+func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
+	network := localCardanoNetwork("faucet-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Faucet: &yacdv1alpha1.FaucetSpec{
+			Enabled: false,
+		},
+	}
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
+	assert.NotNil(t, resources.OgmiosService)
+	assert.NotNil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {

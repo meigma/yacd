@@ -3,7 +3,7 @@ kind: Test
 metadata:
   name: manager-smoke
 spec:
-  description: Verify the YACD operator foundation deploys, exposes protected metrics, and reconciles one CardanoNetwork to Kubernetes workload plus Ogmios and Kupo readiness.
+  description: Verify the YACD operator foundation deploys, exposes protected metrics, and reconciles one CardanoNetwork to Kubernetes workload plus Ogmios, Kupo, and faucet readiness.
   concurrent: false
   failFast: true
   catch:
@@ -26,7 +26,7 @@ spec:
           echo "== CardanoNetwork smoke resource =="
           kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml
           echo "== CardanoNetwork smoke resources =="
-          kubectl get all,pvc -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
+          kubectl get all,pvc,secret -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
           echo "== CardanoNetwork smoke events =="
           kubectl get events -n yacd-smoke --sort-by=.lastTimestamp
           echo "== CardanoNetwork smoke child descriptions =="
@@ -34,12 +34,16 @@ spec:
           kubectl describe service -n yacd-smoke phase4-smoke-node
           kubectl describe service -n yacd-smoke phase4-smoke-ogmios
           kubectl describe service -n yacd-smoke phase4-smoke-kupo
+          kubectl describe service -n yacd-smoke phase4-smoke-faucet
+          kubectl describe secret -n yacd-smoke phase4-smoke-faucet-auth
           kubectl describe deployment -n yacd-smoke phase4-smoke-node
           kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node
           echo "== Ogmios curl logs =="
           kubectl logs -n yacd-smoke curl-ogmios || true
           echo "== Kupo curl logs =="
           kubectl logs -n yacd-smoke curl-kupo || true
+          echo "== Faucet curl logs =="
+          kubectl logs -n yacd-smoke curl-faucet || true
           echo "== CardanoNetwork smoke pod logs =="
           kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
           exit 0
@@ -54,7 +58,7 @@ spec:
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl create namespace yacd-system --dry-run=client -o yaml | kubectl apply -f -
               kubectl label --overwrite namespace yacd-system pod-security.kubernetes.io/enforce=restricted
-              IMG="${IMG:-example.com/yacd:v0.0.1}" LOCAL_IMAGE=true moon run root:deploy
+              IMG="${IMG:-example.com/yacd:v0.0.1}" FAUCET_IMG="${FAUCET_IMG:-example.com/yacd-faucet:v0.0.1}" LOCAL_IMAGE=true moon run root:deploy
         - wait:
             apiVersion: apps/v1
             kind: Deployment
@@ -226,6 +230,28 @@ spec:
                     protocol: TCP
                     port: 1442
                     targetPort: kupo
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Service
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-faucet
+              spec:
+                type: ClusterIP
+                ports:
+                  - name: faucet
+                    protocol: TCP
+                    port: 8080
+                    targetPort: faucet
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-faucet-auth
+              type: Opaque
         - wait:
             apiVersion: apps/v1
             kind: Deployment
@@ -253,6 +279,7 @@ spec:
                 node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
                 ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
                 kupo_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].status}' 2>/dev/null || true)"
+                faucet_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="FaucetReady")].status}' 2>/dev/null || true)"
                 progressing="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null || true)"
                 degraded="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Degraded")].status}' 2>/dev/null || true)"
                 service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.nodeToNode.serviceName}' 2>/dev/null || true)"
@@ -264,10 +291,15 @@ spec:
                 kupo_service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.serviceName}' 2>/dev/null || true)"
                 kupo_port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.port}' 2>/dev/null || true)"
                 kupo_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.url}' 2>/dev/null || true)"
+                faucet_service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.serviceName}' 2>/dev/null || true)"
+                faucet_port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.port}' 2>/dev/null || true)"
+                faucet_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.url}' 2>/dev/null || true)"
+                faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${kupo_ready}" = "True" ] &&
+                  [ "${faucet_ready}" = "True" ] &&
                   [ "${progressing}" = "False" ] &&
                   [ "${degraded}" = "False" ] &&
                   [ "${service_name}" = "phase4-smoke-node" ] &&
@@ -278,7 +310,11 @@ spec:
                   [ "${ogmios_url}" = "ws://phase4-smoke-ogmios.yacd-smoke.svc.cluster.local:1337" ] &&
                   [ "${kupo_service_name}" = "phase4-smoke-kupo" ] &&
                   [ "${kupo_port}" = "1442" ] &&
-                  [ "${kupo_url}" = "http://phase4-smoke-kupo.yacd-smoke.svc.cluster.local:1442" ]; then
+                  [ "${kupo_url}" = "http://phase4-smoke-kupo.yacd-smoke.svc.cluster.local:1442" ] &&
+                  [ "${faucet_service_name}" = "phase4-smoke-faucet" ] &&
+                  [ "${faucet_port}" = "8080" ] &&
+                  [ "${faucet_url}" = "http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080" ] &&
+                  [ "${faucet_auth_secret}" = "phase4-smoke-faucet-auth" ]; then
                   exit 0
                 fi
                 kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true
@@ -302,6 +338,8 @@ spec:
               assert data["namespace"] == "yacd-smoke"
               assert data["endpoints"]["ogmios"]["url"] == "ws://phase4-smoke-ogmios.yacd-smoke.svc.cluster.local:1337"
               assert data["endpoints"]["kupo"]["url"] == "http://phase4-smoke-kupo.yacd-smoke.svc.cluster.local:1442"
+              assert data["endpoints"]["faucet"]["url"] == "http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080"
+              assert data["faucet"]["authSecretName"] == "phase4-smoke-faucet-auth"
               assert any(condition["type"] == "Ready" and condition["status"] == "True" for condition in data["conditions"])
               PY
               kubectl apply -f - <<'YAML'
@@ -345,6 +383,97 @@ spec:
                           sleep 2
                         done
                         exit 1
+                    securityContext:
+                      readOnlyRootFilesystem: true
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop:
+                          - ALL
+                      runAsNonRoot: true
+                      runAsUser: 1000
+                      seccompProfile:
+                        type: RuntimeDefault
+              ---
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: curl-faucet
+                namespace: yacd-smoke
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                volumes:
+                  - name: tmp
+                    emptyDir: {}
+                containers:
+                  - name: curl
+                    image: curlimages/curl:8.11.1
+                    env:
+                      - name: FAUCET_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: phase4-smoke-faucet-auth
+                            key: token
+                    volumeMounts:
+                      - name: tmp
+                        mountPath: /tmp
+                    command:
+                      - /bin/sh
+                      - -c
+                    args:
+                      - |
+                        set -eu
+                        for i in $(seq 1 30); do
+                          ready_status="$(curl -sS -o /tmp/faucet-ready.json -w '%{http_code}' \
+                            'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/readyz' || true)"
+                          echo "faucet ready status: ${ready_status}"
+                          cat /tmp/faucet-ready.json || true
+                          if [ "${ready_status}" = "200" ]; then
+                            break
+                          fi
+                          sleep 2
+                        done
+                        [ "${ready_status}" = "200" ]
+
+                        unauthorized_status="$(curl -sS -o /tmp/faucet-unauthorized.json -w '%{http_code}' \
+                          -H 'Content-Type: application/json' \
+                          -d '{"address":"addr_test1invalid","lovelace":1000000}' \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/topups' || true)"
+                        echo "faucet unauthorized status: ${unauthorized_status}"
+                        cat /tmp/faucet-unauthorized.json || true
+                        [ "${unauthorized_status}" = "401" ]
+
+                        authed_status="$(curl -sS -o /tmp/faucet-authed.json -w '%{http_code}' \
+                          -H "Authorization: Bearer ${FAUCET_TOKEN}" \
+                          -H 'Content-Type: application/json' \
+                          -d '{"address":"","lovelace":1000000}' \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/topups' || true)"
+                        echo "faucet authed validation status: ${authed_status}"
+                        cat /tmp/faucet-authed.json || true
+                        [ "${authed_status}" = "400" ]
+
+                        source_status="$(curl -sS -o /tmp/faucet-source.json -w '%{http_code}' \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/sources/utxo1' || true)"
+                        echo "faucet source status: ${source_status}"
+                        cat /tmp/faucet-source.json || true
+                        [ "${source_status}" = "200" ]
+                        destination="$(sed -n 's/.*"address":"\([^"]*\)".*/\1/p' /tmp/faucet-source.json)"
+                        [ -n "${destination}" ]
+
+                        topup_status="$(curl -sS -o /tmp/faucet-topup.json -w '%{http_code}' \
+                          -H "Authorization: Bearer ${FAUCET_TOKEN}" \
+                          -H 'Content-Type: application/json' \
+                          -d "{\"address\":\"${destination}\",\"lovelace\":1000000,\"source\":\"utxo2\"}" \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/topups' || true)"
+                        echo "faucet top-up status: ${topup_status}"
+                        cat /tmp/faucet-topup.json || true
+                        [ "${topup_status}" = "200" ]
+                        grep -q '"txId"' /tmp/faucet-topup.json
+                        grep -q '"source":"utxo2"' /tmp/faucet-topup.json
+                        grep -q '"lovelace":1000000' /tmp/faucet-topup.json
                     securityContext:
                       readOnlyRootFilesystem: true
                       allowPrivilegeEscalation: false
@@ -423,14 +552,32 @@ spec:
               jsonPath:
                 path: '{.status.phase}'
                 value: Succeeded
+        - wait:
+            apiVersion: v1
+            kind: Pod
+            namespace: yacd-smoke
+            name: curl-faucet
+            timeout: 3m
+            for:
+              jsonPath:
+                path: '{.status.phase}'
+                value: Succeeded
         - script:
             timeout: 5m
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442}}}}'
+              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442},"faucet":{"enabled":false,"port":8080,"defaultSource":"utxo1","minTopUpLovelace":1000000,"maxTopUpLovelace":10000000000}}}}'
               for _ in $(seq 1 60); do
                 if kubectl get service -n yacd-smoke phase4-smoke-kupo >/dev/null 2>&1; then
+                  sleep 5
+                  continue
+                fi
+                if kubectl get service -n yacd-smoke phase4-smoke-faucet >/dev/null 2>&1; then
+                  sleep 5
+                  continue
+                fi
+                if kubectl get secret -n yacd-smoke phase4-smoke-faucet-auth >/dev/null 2>&1; then
                   sleep 5
                   continue
                 fi
@@ -439,13 +586,21 @@ spec:
                 ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
                 kupo_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].status}' 2>/dev/null || true)"
                 kupo_reason="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].reason}' 2>/dev/null || true)"
+                faucet_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="FaucetReady")].status}' 2>/dev/null || true)"
+                faucet_reason="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="FaucetReady")].reason}' 2>/dev/null || true)"
                 kupo_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.serviceName}' 2>/dev/null || true)"
+                faucet_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.serviceName}' 2>/dev/null || true)"
+                faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${kupo_ready}" = "False" ] &&
                   [ "${kupo_reason}" = "KupoDisabled" ] &&
-                  [ -z "${kupo_endpoint}" ]; then
+                  [ "${faucet_ready}" = "False" ] &&
+                  [ "${faucet_reason}" = "FaucetDisabled" ] &&
+                  [ -z "${kupo_endpoint}" ] &&
+                  [ -z "${faucet_endpoint}" ] &&
+                  [ -z "${faucet_auth_secret}" ]; then
                   exit 0
                 fi
                 kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true

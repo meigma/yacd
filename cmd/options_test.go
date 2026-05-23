@@ -32,6 +32,7 @@ func TestParseManagerOptions(t *testing.T) {
 				assert.False(t, options.EnableHTTP2)
 				assert.Equal(t, "json", options.LogFormat)
 				assert.Equal(t, "info", options.LogLevel)
+				assert.Equal(t, "ghcr.io/meigma/yacd/faucet:dev", options.DefaultFaucetImage)
 			},
 		},
 		{
@@ -67,6 +68,13 @@ func TestParseManagerOptions(t *testing.T) {
 			assert: func(t *testing.T, options managerOptions) {
 				assert.Equal(t, "text", options.LogFormat)
 				assert.Equal(t, "debug", options.LogLevel)
+			},
+		},
+		{
+			name: "accepts default faucet image",
+			args: []string{"--default-faucet-image=example.com/yacd-faucet:test"},
+			assert: func(t *testing.T, options managerOptions) {
+				assert.Equal(t, "example.com/yacd-faucet:test", options.DefaultFaucetImage)
 			},
 		},
 	}

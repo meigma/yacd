@@ -36,12 +36,12 @@ func WaitReady(
 		}
 		latest = network
 
-		degraded := freshCondition(network, conditionDegraded)
+		degraded := FreshCondition(network, conditionDegraded)
 		if degraded != nil && degraded.Status == metav1.ConditionTrue {
 			return false, fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
 		}
 
-		ready := freshCondition(network, conditionReady)
+		ready := FreshCondition(network, conditionReady)
 		if ready != nil && ready.Status == metav1.ConditionTrue {
 			return true, nil
 		}
@@ -70,7 +70,8 @@ func WaitReady(
 	return latest, nil
 }
 
-func freshCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
+// FreshCondition returns a condition only when it observes the current generation.
+func FreshCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
 	condition := apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
 	if condition == nil {
 		return nil

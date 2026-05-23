@@ -21,6 +21,7 @@ const (
 	conditionTypeNodeReady   = "NodeReady"
 	conditionTypeOgmiosReady = "OgmiosReady"
 	conditionTypeKupoReady   = "KupoReady"
+	conditionTypeFaucetReady = "FaucetReady"
 
 	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
@@ -36,6 +37,8 @@ const (
 	conditionReasonOgmiosDisabled              = "OgmiosDisabled"
 	conditionReasonKupoReady                   = "KupoReady"
 	conditionReasonKupoDisabled                = "KupoDisabled"
+	conditionReasonFaucetReady                 = "FaucetReady"
+	conditionReasonFaucetDisabled              = "FaucetDisabled"
 	conditionReasonPrimaryWorkloadMissing      = "PrimaryWorkloadMissing"
 	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, Service, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
@@ -45,14 +48,16 @@ const (
 	conditionMessageOgmiosDisabled             = "Ogmios chain API is disabled"
 	conditionMessageKupoReady                  = "Kupo sidecar is available through its Service"
 	conditionMessageKupoDisabled               = "Kupo chain index API is disabled"
+	conditionMessageFaucetReady                = "Faucet sidecar is available through its Service"
+	conditionMessageFaucetDisabled             = "Faucet API is disabled"
 )
 
-func (r *CardanoNetworkReconciler) patchStatusConditions(
+func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, true, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
@@ -62,6 +67,8 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
+	faucetService *corev1.Service,
+	faucetAuthSecret *corev1.Secret,
 ) (metav1.Condition, error) {
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
@@ -75,15 +82,20 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, kupoService != nil)
+	faucetReady, err := r.primaryFaucetReadyCondition(ctx, network, faucetService != nil)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, faucetReady, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
 		nodeReady,
 		ogmiosReady,
 		kupoReady,
+		faucetReady,
 	); err != nil {
 		return metav1.Condition{}, err
 	}
@@ -98,6 +110,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
+	faucetService *corev1.Service,
+	faucetAuthSecret *corev1.Secret,
+	clearFaucet bool,
 	conditions ...metav1.Condition,
 ) error {
 	original := network.DeepCopy()
@@ -106,7 +121,10 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		setLocalnetIdentityStatus(network, localnetFingerprint)
 	}
 	if nodeService != nil {
-		setEndpointStatus(network, nodeService, ogmiosService, kupoService)
+		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
+		setFaucetStatus(network, faucetAuthSecret)
+	} else if clearFaucet {
+		clearFaucetStatus(network)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -118,6 +136,13 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	}
 
 	return r.Status().Patch(ctx, network, client.MergeFrom(original))
+}
+
+func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
+	if network.Status.Endpoints != nil {
+		network.Status.Endpoints.Faucet = nil
+	}
+	network.Status.Faucet = nil
 }
 
 func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {
@@ -137,7 +162,7 @@ func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFin
 	network.Status.Network.Era = &era
 }
 
-func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service) {
+func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service, faucetService *corev1.Service) {
 	if network.Status.Endpoints == nil {
 		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
 	}
@@ -158,13 +183,34 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 	}
 	if kupoService == nil {
 		network.Status.Endpoints.Kupo = nil
+	} else {
+		network.Status.Endpoints.Kupo = &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: kupoService.Name,
+			Port:        kupoService.Spec.Ports[0].Port,
+			URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", kupoServiceURLType, kupoService.Name, kupoService.Namespace, kupoService.Spec.Ports[0].Port),
+		}
+	}
+
+	if faucetService == nil {
+		network.Status.Endpoints.Faucet = nil
 		return
 	}
 
-	network.Status.Endpoints.Kupo = &yacdv1alpha1.ServiceEndpointStatus{
-		ServiceName: kupoService.Name,
-		Port:        kupoService.Spec.Ports[0].Port,
-		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", kupoServiceURLType, kupoService.Name, kupoService.Namespace, kupoService.Spec.Ports[0].Port),
+	network.Status.Endpoints.Faucet = &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: faucetService.Name,
+		Port:        faucetService.Spec.Ports[0].Port,
+		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", faucetServiceURLType, faucetService.Name, faucetService.Namespace, faucetService.Spec.Ports[0].Port),
+	}
+}
+
+func setFaucetStatus(network *yacdv1alpha1.CardanoNetwork, faucetAuthSecret *corev1.Secret) {
+	if faucetAuthSecret == nil {
+		network.Status.Faucet = nil
+		return
+	}
+
+	network.Status.Faucet = &yacdv1alpha1.FaucetStatus{
+		AuthSecretName: faucetAuthSecret.Name,
 	}
 }
 
@@ -382,6 +428,95 @@ func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
 	), nil
 }
 
+func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	enabled bool,
+) (metav1.Condition, error) {
+	if !enabled {
+		return faucetReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonFaucetDisabled,
+			conditionMessageFaucetDisabled,
+		), nil
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetServiceName(network)}, service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return faucetReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Faucet Service is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.liveReader().Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return faucetReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Faucet auth Secret is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+	if !validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])) {
+		return faucetReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Faucet auth Secret token is not ready",
+		), nil
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return faucetReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Primary node Deployment is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+	if deployment.Status.ObservedGeneration != deployment.Generation {
+		return faucetReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		), nil
+	}
+	if deployment.Status.UpdatedReplicas < 1 {
+		return faucetReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Faucet sidecar is not available",
+		), nil
+	}
+
+	containerReady, err := r.primaryPodContainerReady(ctx, network, faucetContainerName)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	if !containerReady {
+		return faucetReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Faucet sidecar is not ready",
+		), nil
+	}
+
+	return faucetReadyCondition(
+		metav1.ConditionTrue,
+		conditionReasonFaucetReady,
+		conditionMessageFaucetReady,
+	), nil
+}
+
 func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -407,6 +542,10 @@ func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 }
 
 func (r *CardanoNetworkReconciler) statusReader() client.Reader {
+	return r.liveReader()
+}
+
+func (r *CardanoNetworkReconciler) liveReader() client.Reader {
 	if r.Reader != nil {
 		return r.Reader
 	}
@@ -428,8 +567,11 @@ func podContainerReady(pod *corev1.Pod, containerName string) bool {
 	return false
 }
 
-func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, kupoEnabled bool) metav1.Condition {
-	if nodeReady.Status == metav1.ConditionTrue && ogmiosReady.Status == metav1.ConditionTrue && (!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) {
+func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
+	if nodeReady.Status == metav1.ConditionTrue &&
+		ogmiosReady.Status == metav1.ConditionTrue &&
+		(!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) &&
+		(!faucetEnabled || faucetReady.Status == metav1.ConditionTrue) {
 		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 	}
 	if nodeReady.Status != metav1.ConditionTrue {
@@ -438,8 +580,11 @@ func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, ku
 	if ogmiosReady.Status != metav1.ConditionTrue {
 		return condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
 	}
+	if kupoEnabled && kupoReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
+	}
 
-	return condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
+	return condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
@@ -456,6 +601,10 @@ func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message 
 
 func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
 	return condition(conditionTypeKupoReady, status, reason, message)
+}
+
+func faucetReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeFaucetReady, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {

@@ -1,6 +1,7 @@
 EXPECTED_CONTEXT = 'kind-yacd-dev'
 NAMESPACE = 'yacd-system'
 IMAGE = 'ghcr.io/meigma/yacd'
+FAUCET_IMAGE = 'ghcr.io/meigma/yacd/faucet'
 CHART = 'charts/yacd'
 
 allow_k8s_contexts(EXPECTED_CONTEXT)
@@ -24,6 +25,12 @@ custom_build(
     deps=['cmd', 'api', 'internal', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build.sh'],
 )
 
+custom_build(
+    FAUCET_IMAGE,
+    './.dev/ko-build-faucet.sh',
+    deps=['services/faucet', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build-faucet.sh'],
+)
+
 k8s_yaml(helm(
     CHART,
     name='yacd',
@@ -32,6 +39,8 @@ k8s_yaml(helm(
         'image.repository=%s' % IMAGE,
         'image.tag=tilt',
         'image.pullPolicy=IfNotPresent',
+        'faucet.image.repository=%s' % FAUCET_IMAGE,
+        'faucet.image.tag=tilt',
         'leaderElection.enabled=false',
         'manager.logLevel=debug',
     ],

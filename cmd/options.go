@@ -64,6 +64,11 @@ type managerOptions struct {
 	// LogLevel sets the minimum slog level emitted by the controller-runtime
 	// logger. Allowed values are "debug", "info", "warn", and "error".
 	LogLevel string `name:"log-level" enum:"debug,info,warn,error" default:"info" help:"Minimum log level."`
+
+	// DefaultFaucetImage is the faucet image used when a CardanoNetwork does
+	// not provide spec.chainAPI.faucet.image.
+	//nolint:lll // Kong option tags are intentionally kept on a single struct field line.
+	DefaultFaucetImage string `name:"default-faucet-image" default:"ghcr.io/meigma/yacd/faucet:dev" help:"Default faucet image for CardanoNetwork faucet sidecars."`
 }
 
 // newManagerParser constructs the Kong parser bound to the supplied options

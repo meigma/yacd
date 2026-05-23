@@ -30,17 +30,18 @@ func init() {
 
 // mustRegisterControllers registers every reconciler with the manager and
 // exits the process on failure.
-func mustRegisterControllers(mgr manager.Manager) {
-	exitOnError(registerControllers(mgr), "Failed to register controllers")
+func mustRegisterControllers(mgr manager.Manager, options managerOptions) {
+	exitOnError(registerControllers(mgr, options), "Failed to register controllers")
 }
 
 // registerControllers constructs and registers every reconciler with the
 // manager.
-func registerControllers(mgr manager.Manager) error {
+func registerControllers(mgr manager.Manager, options managerOptions) error {
 	err := (&cardanonetwork.CardanoNetworkReconciler{
-		Client: mgr.GetClient(),
-		Reader: mgr.GetAPIReader(),
-		Scheme: mgr.GetScheme(),
+		Client:             mgr.GetClient(),
+		Reader:             mgr.GetAPIReader(),
+		Scheme:             mgr.GetScheme(),
+		DefaultFaucetImage: options.DefaultFaucetImage,
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err

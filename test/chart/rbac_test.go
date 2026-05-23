@@ -75,6 +75,22 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 		"--set", "kyverno.imageVerification.enabled=true",
 	)
 	policy := findObject(t, rendered, "ClusterPolicy", "yacd-verify-image")
+	requireNestedString(
+		t,
+		policy.Object,
+		"Verify YACD Image Attestations",
+		"metadata",
+		"annotations",
+		"policies.kyverno.io/title",
+	)
+	requireNestedString(
+		t,
+		policy.Object,
+		"Verify release attestations for YACD manager and faucet images.",
+		"metadata",
+		"annotations",
+		"policies.kyverno.io/description",
+	)
 
 	requireNestedString(t, policy.Object, "Enforce", "spec", "validationFailureAction")
 	requireNestedInt64(t, policy.Object, 30, "spec", "webhookTimeoutSeconds")
@@ -85,7 +101,12 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	verifyImage := requireFirstMap(t, verifyImages, "verifyImages")
 	requireNestedString(t, verifyImage, "SigstoreBundle", "type")
 	gotRefs := stringSlice(t, requireNestedSlice(t, verifyImage, "imageReferences"))
-	wantRefs := []string{"ghcr.io/meigma/yacd:*", "ghcr.io/meigma/yacd@*"}
+	wantRefs := []string{
+		"ghcr.io/meigma/yacd:*",
+		"ghcr.io/meigma/yacd@*",
+		"ghcr.io/meigma/yacd/faucet:*",
+		"ghcr.io/meigma/yacd/faucet@*",
+	}
 	if !reflect.DeepEqual(gotRefs, wantRefs) {
 		t.Fatalf("unexpected imageReferences: got %v, want %v", gotRefs, wantRefs)
 	}
@@ -122,6 +143,27 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	requireNestedString(t, buildType, "{{ buildDefinition.buildType }}", "key")
 	requireNestedString(t, buildType, "Equals", "operator")
 	requireNestedString(t, buildType, "https://actions.github.io/buildtypes/workflow/v1", "value")
+}
+
+func TestKyvernoImageVerificationPolicyAllowsExplicitImageReferenceOverride(t *testing.T) {
+	repoRoot := repoRoot(t)
+	rendered := run(t, repoRoot,
+		"helm", "template", "yacd", "charts/yacd",
+		"--namespace", "yacd-system",
+		"--set", "kyverno.imageVerification.enabled=true",
+		"--set", "kyverno.imageVerification.imageReferences[0]=example.com/custom:*",
+		"--set", "kyverno.imageVerification.imageReferences[1]=example.com/custom@*",
+	)
+	policy := findObject(t, rendered, "ClusterPolicy", "yacd-verify-image")
+	rules := requireNestedSlice(t, policy.Object, "spec", "rules")
+	rule := requireFirstMap(t, rules, "rule")
+	verifyImages := requireNestedSlice(t, rule, "verifyImages")
+	verifyImage := requireFirstMap(t, verifyImages, "verifyImages")
+	gotRefs := stringSlice(t, requireNestedSlice(t, verifyImage, "imageReferences"))
+	wantRefs := []string{"example.com/custom:*", "example.com/custom@*"}
+	if !reflect.DeepEqual(gotRefs, wantRefs) {
+		t.Fatalf("unexpected imageReferences: got %v, want %v", gotRefs, wantRefs)
+	}
 }
 
 // repoRoot walks up from the current working directory until it finds the

@@ -30,7 +30,7 @@ func TestFoundationManagerConstruction(t *testing.T) {
 		MetricsSecure:          true,
 	}))
 	require.NoError(t, err)
-	require.NoError(t, registerControllers(mgr))
+	require.NoError(t, registerControllers(mgr, managerOptions{}))
 
 	_, _, err = scheme.ObjectKinds(&corev1.Pod{})
 	require.NoError(t, err)

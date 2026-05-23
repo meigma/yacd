@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "== go format =="
-go_roots=(cli cmd test)
+go_roots=(cli cmd services test)
 for optional_dir in api internal; do
   if [ -d "$optional_dir" ]; then
     go_roots+=("$optional_dir")

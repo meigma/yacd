@@ -66,6 +66,7 @@ type infoOutput struct {
 	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
 	Network            networkOutput     `json:"network"`
 	Endpoints          endpointsOutput   `json:"endpoints"`
+	Faucet             *faucetOutput     `json:"faucet,omitempty"`
 	Conditions         []conditionOutput `json:"conditions"`
 }
 
@@ -81,12 +82,17 @@ type endpointsOutput struct {
 	NodeToNode *endpointOutput `json:"nodeToNode,omitempty"`
 	Ogmios     *endpointOutput `json:"ogmios,omitempty"`
 	Kupo       *endpointOutput `json:"kupo,omitempty"`
+	Faucet     *endpointOutput `json:"faucet,omitempty"`
 }
 
 type endpointOutput struct {
 	ServiceName string `json:"serviceName,omitempty"`
 	Port        int32  `json:"port,omitempty"`
 	URL         string `json:"url,omitempty"`
+}
+
+type faucetOutput struct {
+	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
 type conditionOutput struct {
@@ -120,6 +126,12 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 		info.Endpoints.NodeToNode = endpointInfo(network.Status.Endpoints.NodeToNode)
 		info.Endpoints.Ogmios = endpointInfo(network.Status.Endpoints.Ogmios)
 		info.Endpoints.Kupo = endpointInfo(network.Status.Endpoints.Kupo)
+		info.Endpoints.Faucet = endpointInfo(network.Status.Endpoints.Faucet)
+	}
+	if network.Status.Faucet != nil {
+		info.Faucet = &faucetOutput{
+			AuthSecretName: network.Status.Faucet.AuthSecretName,
+		}
 	}
 
 	info.Conditions = make([]conditionOutput, 0, len(network.Status.Conditions))
@@ -160,6 +172,9 @@ func printInfo(out io.Writer, info infoOutput) error {
 		return err
 	}
 	if err := printEndpointsInfo(out, info.Endpoints); err != nil {
+		return err
+	}
+	if err := printFaucetInfo(out, info.Faucet); err != nil {
 		return err
 	}
 
@@ -257,6 +272,23 @@ func printEndpointsInfo(out io.Writer, endpoints endpointsOutput) error {
 	}
 	if err := printEndpointInfo(out, "kupo", endpoints.Kupo); err != nil {
 		return err
+	}
+	if err := printEndpointInfo(out, "faucet", endpoints.Faucet); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func printFaucetInfo(out io.Writer, faucet *faucetOutput) error {
+	if faucet == nil || faucet.AuthSecretName == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintln(out, "\nFaucet:"); err != nil {
+		return fmt.Errorf("write info: %w", err)
+	}
+	if _, err := fmt.Fprintf(out, "  Auth Secret: %s\n", faucet.AuthSecretName); err != nil {
+		return fmt.Errorf("write info: %w", err)
 	}
 
 	return nil

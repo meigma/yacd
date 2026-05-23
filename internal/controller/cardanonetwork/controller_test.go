@@ -63,6 +63,7 @@ func TestCardanoNetworkReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
 func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("creates-workload")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -74,6 +75,8 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	service := requirePrimaryService(t, ctx, reconciler, network)
 	ogmiosService := requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	kupoService := requirePrimaryKupoService(t, ctx, reconciler, network)
+	faucetService := requirePrimaryFaucetService(t, ctx, reconciler, network)
+	faucetAuthSecret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	assert.Equal(t, []corev1.ServicePort{
 		{
 			Name:       cardanoNodePortName,
@@ -98,6 +101,15 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 			TargetPort: intstr.FromString(kupoPortName),
 		},
 	}, kupoService.Spec.Ports)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       faucetPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultFaucetPort,
+			TargetPort: intstr.FromString(faucetPortName),
+		},
+	}, faucetService.Spec.Ports)
+	assert.True(t, validFaucetAuthToken(string(faucetAuthSecret.Data[faucetAuthTokenKey])))
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
@@ -105,24 +117,48 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
 	assertOgmiosEndpoint(t, ctx, reconciler, network, ogmiosService.Name, defaultOgmiosPort)
 	assertKupoEndpoint(t, ctx, reconciler, network, kupoService.Name, defaultKupoPort)
+	assertFaucetEndpoint(t, ctx, reconciler, network, faucetService.Name, defaultFaucetPort)
+	assertFaucetStatus(t, ctx, reconciler, network, faucetAuthSecret.Name)
+}
+
+func TestCardanoNetworkReconcilerReconcileLeavesFaucetDisabledByDefault(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("faucet-default-disabled")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 }
 
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("node-ready")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, faucetContainerName)
 
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, result)
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
@@ -130,11 +166,13 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionTrue, conditionReasonFaucetReady)
 }
 
 func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("node-ready-ogmios-waiting")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -150,12 +188,14 @@ func TestCardanoNetworkReconcilerReconcileKeepsNodeReadySeparateFromOgmios(t *te
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
 
 func TestCardanoNetworkReconcilerReconcileRequiresKupoReadyWhenEnabled(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("ogmios-ready-kupo-waiting")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -171,6 +211,7 @@ func TestCardanoNetworkReconcilerReconcileRequiresKupoReadyWhenEnabled(t *testin
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
 
@@ -192,12 +233,17 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
@@ -207,6 +253,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 }
@@ -214,12 +261,15 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("deletes-ogmios-service")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	requirePrimaryKupoService(t, ctx, reconciler, network)
+	requirePrimaryFaucetService(t, ctx, reconciler, network)
+	requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 
 	current := requireNetwork(t, ctx, reconciler, network)
 	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -234,12 +284,17 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonOgmiosDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 }
 
 func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
@@ -261,10 +316,15 @@ func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
 	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
 	requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
@@ -274,6 +334,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
 }
@@ -281,11 +342,14 @@ func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
 func TestCardanoNetworkReconcilerReconcileDeletesOwnedKupoServiceWhenDisabled(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("deletes-kupo-service")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	requirePrimaryKupoService(t, ctx, reconciler, network)
+	requirePrimaryFaucetService(t, ctx, reconciler, network)
+	requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 
 	current := requireNetwork(t, ctx, reconciler, network)
 	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -299,15 +363,112 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedKupoServiceWhenDisabled(t 
 	require.NoError(t, err)
 
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonKupoDisabled)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
+}
+
+func TestCardanoNetworkReconcilerReconcileRequiresFaucetReadyWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("kupo-ready-faucet-waiting")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+}
+
+func TestCardanoNetworkReconcilerReconcileDisablesFaucet(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("faucet-disabled")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Faucet: &yacdv1alpha1.FaucetSpec{
+			Enabled: false,
+		},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, kupoContainerName, deployment.Spec.Template.Spec.Containers[2].Name)
+	requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	requirePrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
+
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
+}
+
+func TestCardanoNetworkReconcilerReconcileDeletesOwnedFaucetChildrenWhenDisabled(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("deletes-faucet-children")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	requirePrimaryFaucetService(t, ctx, reconciler, network)
+	requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Faucet: &yacdv1alpha1.FaucetSpec{
+			Enabled: false,
+		},
+	}
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	current = requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
 }
 
 func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("idempotent")
+	enableFaucet(network)
 	reconciler := newTestReconciler(t, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -323,7 +484,10 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	assert.Len(t, persistentVolumeClaims.Items, 1)
 	var services corev1.ServiceList
 	require.NoError(t, reconciler.List(ctx, &services))
-	assert.Len(t, services.Items, 3)
+	assert.Len(t, services.Items, 4)
+	var secrets corev1.SecretList
+	require.NoError(t, reconciler.List(ctx, &secrets))
+	assert.Len(t, secrets.Items, 1)
 }
 
 func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
@@ -564,6 +728,144 @@ func TestCardanoNetworkReconcilerReconcileCorrectsKupoServiceAndPreservesMetadat
 	assert.Equal(t, []corev1.IPFamily{corev1.IPv4Protocol}, service.Spec.IPFamilies)
 	require.NotNil(t, service.Spec.IPFamilyPolicy)
 	assert.Equal(t, corev1.IPFamilyPolicySingleStack, *service.Spec.IPFamilyPolicy)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileCorrectsFaucetServiceAndPreservesMetadata(t *testing.T) {
+	const (
+		clusterIP            = "10.0.0.45"
+		foreignMetadataValue = "keep"
+	)
+
+	ctx := context.Background()
+	network := localCardanoNetwork("corrects-faucet-service")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service := requirePrimaryFaucetService(t, ctx, reconciler, network)
+	ipFamilyPolicy := corev1.IPFamilyPolicySingleStack
+	service.Labels["example.com/foreign-label"] = foreignMetadataValue
+	service.Labels[labelAppManagedBy] = wrongManagedByLabelValue
+	service.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
+	service.Spec.Type = corev1.ServiceTypeNodePort
+	service.Spec.Selector = map[string]string{"unexpected": "true"}
+	service.Spec.Ports = []corev1.ServicePort{
+		{
+			Name:       "wrong",
+			Protocol:   corev1.ProtocolTCP,
+			Port:       9996,
+			TargetPort: intstr.FromInt(9996),
+			NodePort:   32003,
+		},
+	}
+	service.Spec.ClusterIP = clusterIP
+	service.Spec.ClusterIPs = []string{clusterIP}
+	service.Spec.IPFamilies = []corev1.IPFamily{corev1.IPv4Protocol}
+	service.Spec.IPFamilyPolicy = &ipFamilyPolicy
+	require.NoError(t, reconciler.Update(ctx, service))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service = requirePrimaryFaucetService(t, ctx, reconciler, network)
+	assert.Equal(t, foreignMetadataValue, service.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", service.Labels[labelAppManagedBy])
+	assert.Equal(t, foreignMetadataValue, service.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, service.Spec.Type)
+	assert.Equal(t, primaryWorkloadSelectorLabels(network), service.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       faucetPortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultFaucetPort,
+			TargetPort: intstr.FromString(faucetPortName),
+		},
+	}, service.Spec.Ports)
+	assert.Equal(t, clusterIP, service.Spec.ClusterIP)
+	assert.Equal(t, []string{clusterIP}, service.Spec.ClusterIPs)
+	assert.Equal(t, []corev1.IPFamily{corev1.IPv4Protocol}, service.Spec.IPFamilies)
+	require.NotNil(t, service.Spec.IPFamilyPolicy)
+	assert.Equal(t, corev1.IPFamilyPolicySingleStack, *service.Spec.IPFamilyPolicy)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcilePreservesValidFaucetAuthToken(t *testing.T) {
+	const (
+		foreignMetadataValue = "keep"
+		validToken           = "abcdefghijklmnopqrstuvwxyzABCDEF1234567890"
+	)
+
+	ctx := context.Background()
+	network := localCardanoNetwork("preserves-faucet-token")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	secret.Labels["example.com/foreign-label"] = foreignMetadataValue
+	secret.Labels[labelAppManagedBy] = wrongManagedByLabelValue
+	secret.Annotations = map[string]string{"example.com/foreign-annotation": foreignMetadataValue}
+	secret.Type = corev1.SecretTypeBasicAuth
+	secret.Data[faucetAuthTokenKey] = []byte(validToken)
+	require.NoError(t, reconciler.Update(ctx, secret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assert.Equal(t, foreignMetadataValue, secret.Labels["example.com/foreign-label"])
+	assert.Equal(t, "yacd", secret.Labels[labelAppManagedBy])
+	assert.Equal(t, foreignMetadataValue, secret.Annotations["example.com/foreign-annotation"])
+	assert.Equal(t, corev1.SecretTypeOpaque, secret.Type)
+	assert.Equal(t, validToken, string(secret.Data[faucetAuthTokenKey]))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileRegeneratesInvalidFaucetAuthToken(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("regenerates-faucet-token")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	secret.Data[faucetAuthTokenKey] = []byte("short")
+	require.NoError(t, reconciler.Update(ctx, secret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	token := string(secret.Data[faucetAuthTokenKey])
+	assert.NotEqual(t, "short", token)
+	assert.True(t, validFaucetAuthToken(token))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileRepairsMissingFaucetAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("repairs-faucet-token")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	require.NoError(t, reconciler.Delete(ctx, secret))
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assert.True(t, validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -1011,6 +1313,52 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 				}
 			},
 		},
+		{
+			name: "foreign-owned-faucet-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryFaucetServiceName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-faucet-service",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Service{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryFaucetServiceName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
+		{
+			name: "foreign-owned-faucet-secret",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            primaryFaucetAuthSecretName(network),
+						Namespace:       network.Namespace,
+						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
+					},
+				}
+			},
+		},
+		{
+			name: "unowned-faucet-secret",
+			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
+				return &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      primaryFaucetAuthSecretName(network),
+						Namespace: network.Namespace,
+					},
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1030,6 +1378,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 			assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 			assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonResourceConflict)
+			assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 		})
 	}
 }
@@ -1067,8 +1416,43 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	current := requireNetwork(t, ctx, reconciler, network)
 	assert.Nil(t, current.Status.Endpoints)
+}
+
+func TestCardanoNetworkReconcilerReconcileRevokesFaucetOnUnsupportedSpec(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("revokes-unsupported-faucet")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	requirePrimaryFaucetService(t, ctx, reconciler, network)
+	requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assertFaucetEndpoint(t, ctx, reconciler, network, primaryFaucetServiceName(network), defaultFaucetPort)
+	assertFaucetStatus(t, ctx, reconciler, network, primaryFaucetAuthSecretName(network))
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.ChainAPI.Faucet.DefaultSource = "../utxo1"
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.InitContainers, faucetSourceAddressInitContainerName)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, faucetAuthVolumeName)
+	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+	current = requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
 }
 
 func TestCardanoNetworkReconcilerPrimaryNodeReadyConditionReportsMissingChildren(t *testing.T) {
@@ -1148,6 +1532,19 @@ func localCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 				},
 			},
 		},
+	}
+}
+
+func enableFaucet(network *yacdv1alpha1.CardanoNetwork) {
+	if network.Spec.ChainAPI == nil {
+		network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{}
+	}
+	network.Spec.ChainAPI.Faucet = &yacdv1alpha1.FaucetSpec{
+		Enabled:          true,
+		Port:             defaultFaucetPort,
+		DefaultSource:    defaultFaucetSource,
+		MinTopUpLovelace: defaultFaucetMinLovelace,
+		MaxTopUpLovelace: defaultFaucetMaxLovelace,
 	}
 }
 
@@ -1287,6 +1684,40 @@ func requirePrimaryKupoService(
 	return service
 }
 
+func requirePrimaryFaucetService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Service {
+	t.Helper()
+
+	service := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetServiceName(network),
+	}, service))
+
+	return service
+}
+
+func requirePrimaryFaucetAuthSecret(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Secret {
+	t.Helper()
+
+	secret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetAuthSecretName(network),
+	}, secret))
+
+	return secret
+}
+
 func foreignControllerOwnerReference() metav1.OwnerReference {
 	controller := true
 
@@ -1401,6 +1832,8 @@ func assertNoPrimaryChildren(
 
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 }
 
 func assertNoPrimaryOgmiosService(
@@ -1431,6 +1864,52 @@ func assertNoPrimaryKupoService(
 		Name:      primaryKupoServiceName(network),
 	}, &corev1.Service{})
 	assert.True(t, apierrors.IsNotFound(err), "expected Kupo Service to be absent, got %v", err)
+}
+
+func assertNoPrimaryFaucetService(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetServiceName(network),
+	}, &corev1.Service{})
+	assert.True(t, apierrors.IsNotFound(err), "expected faucet Service to be absent, got %v", err)
+}
+
+func assertNoPrimaryFaucetAuthSecret(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetAuthSecretName(network),
+	}, &corev1.Secret{})
+	assert.True(t, apierrors.IsNotFound(err), "expected faucet auth Secret to be absent, got %v", err)
+}
+
+func assertNoContainerNamed(t *testing.T, containers []corev1.Container, name string) {
+	t.Helper()
+
+	for _, container := range containers {
+		assert.NotEqual(t, name, container.Name)
+	}
+}
+
+func assertNoVolumeNamed(t *testing.T, volumes []corev1.Volume, name string) {
+	t.Helper()
+
+	for _, volume := range volumes {
+		assert.NotEqual(t, name, volume.Name)
+	}
 }
 
 func assertCondition(
@@ -1514,6 +1993,41 @@ func assertKupoEndpoint(
 		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
 		current.Status.Endpoints.Kupo.URL,
 	)
+}
+
+func assertFaucetEndpoint(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	serviceName string,
+	port int32,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.Faucet)
+	assert.Equal(t, serviceName, current.Status.Endpoints.Faucet.ServiceName)
+	assert.Equal(t, port, current.Status.Endpoints.Faucet.Port)
+	assert.Equal(t,
+		fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", serviceName, network.Namespace, port),
+		current.Status.Endpoints.Faucet.URL,
+	)
+}
+
+func assertFaucetStatus(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	authSecretName string,
+) {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Faucet)
+	assert.Equal(t, authSecretName, current.Status.Faucet.AuthSecretName)
 }
 
 // reconcileRequestFor returns a reconcile request targeting object.
