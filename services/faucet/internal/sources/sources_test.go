@@ -10,8 +10,10 @@ import (
 )
 
 const (
+	testDefaultSource     = "utxo1"
 	testAddress           = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
 	testKeyCBORHex        = "58200101010101010101010101010101010101010101010101010101010101010101"
+	testRawKeyHex         = "0101010101010101010101010101010101010101010101010101010101010101"
 	testSecretMaterial    = "secret-cbor-material"
 	oversizedFileContents = 5 * 1024
 )
@@ -21,19 +23,19 @@ func TestStoreListDiscoversValidSources(t *testing.T) {
 
 	rootDir := t.TempDir()
 	writeSource(t, rootDir, "utxo3")
-	writeSource(t, rootDir, "utxo1")
+	writeSource(t, rootDir, testDefaultSource)
 	writeSource(t, rootDir, "utxo2")
 	writeSourceFile(t, filepath.Join(rootDir, "README.md"), "ignored")
 	writeSourceFile(t, filepath.Join(rootDir, "loose-file"), "ignored")
 	requireNoError(t, os.Mkdir(filepath.Join(rootDir, "incomplete"), 0o700))
 
-	list, err := NewStore(rootDir, "utxo1").List()
+	list, err := NewStore(rootDir, testDefaultSource).List()
 	requireNoError(t, err)
 
-	if got, want := list.DefaultSource, "utxo1"; got != want {
+	if got, want := list.DefaultSource, testDefaultSource; got != want {
 		t.Fatalf("DefaultSource = %q, want %q", got, want)
 	}
-	if got, want := sourceNames(list.Sources), []string{"utxo1", "utxo2", "utxo3"}; !equalStrings(got, want) {
+	if got, want := sourceNames(list.Sources), []string{testDefaultSource, "utxo2", "utxo3"}; !equalStrings(got, want) {
 		t.Fatalf("sources = %#v, want %#v", got, want)
 	}
 	if !list.Sources[0].Default {
@@ -53,7 +55,7 @@ func TestStoreReadyRequiresDefaultSource(t *testing.T) {
 	rootDir := t.TempDir()
 	writeSource(t, rootDir, "utxo2")
 
-	err := NewStore(rootDir, "utxo1").Ready()
+	err := NewStore(rootDir, testDefaultSource).Ready()
 	if err == nil {
 		t.Fatal("Ready succeeded, want missing default source error")
 	}
@@ -65,7 +67,7 @@ func TestStoreReadyRequiresDefaultSource(t *testing.T) {
 func TestStoreRejectsTraversalNames(t *testing.T) {
 	t.Parallel()
 
-	store := NewStore(t.TempDir(), "utxo1")
+	store := NewStore(t.TempDir(), testDefaultSource)
 	for _, name := range []string{"../utxo1", "utxo/1", `utxo\1`, "..", "utxo..1", "wallet1", "utxo0", "utxo01", "utxo1\x00"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -85,13 +87,15 @@ func TestSourceJSONDoesNotExposeCBORHex(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
-	writeSource(t, rootDir, "utxo1")
-	source, err := NewStore(rootDir, "utxo1").Get("utxo1")
+	writeSource(t, rootDir, testDefaultSource)
+	source, err := NewStore(rootDir, testDefaultSource).Get(testDefaultSource)
 	requireNoError(t, err)
 
 	encoded, err := json.Marshal(source)
 	requireNoError(t, err)
-	if strings.Contains(string(encoded), "cborHex") || strings.Contains(string(encoded), testSecretMaterial) {
+	if strings.Contains(string(encoded), "cborHex") ||
+		strings.Contains(string(encoded), testSecretMaterial) ||
+		strings.Contains(string(encoded), testRawKeyHex) {
 		t.Fatalf("source JSON exposed key material: %s", encoded)
 	}
 	for _, secretPathDetail := range []string{"verificationKeyPath", "signingKeyPath", rootDir, "utxo.skey"} {
@@ -105,12 +109,12 @@ func TestStoreGetReturnsValidSource(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
-	writeSource(t, rootDir, "utxo1")
+	writeSource(t, rootDir, testDefaultSource)
 
-	source, err := NewStore(rootDir, "utxo1").Get("utxo1")
+	source, err := NewStore(rootDir, testDefaultSource).Get(testDefaultSource)
 	requireNoError(t, err)
 
-	if got, want := source.Name, "utxo1"; got != want {
+	if got, want := source.Name, testDefaultSource; got != want {
 		t.Fatalf("Name = %q, want %q", got, want)
 	}
 	if got, want := source.SigningKeyType, signingKeyType; got != want {
@@ -121,15 +125,38 @@ func TestStoreGetReturnsValidSource(t *testing.T) {
 	}
 }
 
+func TestStoreReadFundingSourceReturnsRawKeyHex(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	writeSource(t, rootDir, testDefaultSource)
+
+	source, err := NewStore(rootDir, testDefaultSource).ReadFundingSource(t.Context(), testDefaultSource)
+	requireNoError(t, err)
+
+	if got, want := source.Name, testDefaultSource; got != want {
+		t.Fatalf("Name = %q, want %q", got, want)
+	}
+	if got, want := source.Address, testAddress; got != want {
+		t.Fatalf("Address = %q, want %q", got, want)
+	}
+	if got, want := source.VerificationKeyHex, testRawKeyHex; got != want {
+		t.Fatalf("VerificationKeyHex = %q, want %q", got, want)
+	}
+	if got, want := source.SigningKeyHex, testRawKeyHex; got != want {
+		t.Fatalf("SigningKeyHex = %q, want %q", got, want)
+	}
+}
+
 func TestStoreRejectsSymlinkedSource(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
 	outsideDir := t.TempDir()
 	writeSource(t, outsideDir, "external")
-	requireNoError(t, os.Symlink(filepath.Join(outsideDir, "external"), filepath.Join(rootDir, "utxo1")))
+	requireNoError(t, os.Symlink(filepath.Join(outsideDir, "external"), filepath.Join(rootDir, testDefaultSource)))
 
-	err := NewStore(rootDir, "utxo1").Ready()
+	err := NewStore(rootDir, testDefaultSource).Ready()
 	if err == nil {
 		t.Fatal("Ready succeeded, want symlinked source rejection")
 	}
@@ -142,7 +169,7 @@ func TestStoreRejectsSymlinkedKeyFiles(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
-	sourceDir := filepath.Join(rootDir, "utxo1")
+	sourceDir := filepath.Join(rootDir, testDefaultSource)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 	outsideKey := filepath.Join(t.TempDir(), "utxo.vkey")
 	writeKey(t, outsideKey, verificationKeyType)
@@ -150,7 +177,7 @@ func TestStoreRejectsSymlinkedKeyFiles(t *testing.T) {
 	writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
 	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
 
-	_, err := NewStore(rootDir, "utxo1").Get("utxo1")
+	_, err := NewStore(rootDir, testDefaultSource).Get(testDefaultSource)
 	if err == nil {
 		t.Fatal("Get succeeded, want symlinked key rejection")
 	}
@@ -163,13 +190,13 @@ func TestStoreRejectsUnexpectedKeyType(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
-	sourceDir := filepath.Join(rootDir, "utxo1")
+	sourceDir := filepath.Join(rootDir, testDefaultSource)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 	writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
 	writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), "PaymentVerificationKeyShelley_ed25519")
 	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
 
-	err := NewStore(rootDir, "utxo1").Ready()
+	err := NewStore(rootDir, testDefaultSource).Ready()
 	if err == nil {
 		t.Fatal("Ready succeeded, want unexpected key type error")
 	}
@@ -218,7 +245,7 @@ func TestStoreRequiresUsableAddress(t *testing.T) {
 			t.Parallel()
 
 			rootDir := t.TempDir()
-			sourceDir := filepath.Join(rootDir, "utxo1")
+			sourceDir := filepath.Join(rootDir, testDefaultSource)
 			requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 			if !tt.omitAddress {
 				writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), tt.address)
@@ -226,7 +253,7 @@ func TestStoreRequiresUsableAddress(t *testing.T) {
 			writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), verificationKeyType)
 			writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
 
-			err := NewStore(rootDir, "utxo1").Ready()
+			err := NewStore(rootDir, testDefaultSource).Ready()
 			if err == nil {
 				t.Fatal("Ready succeeded, want unusable address error")
 			}
@@ -265,13 +292,13 @@ func TestStoreRejectsInvalidKeyCBORHex(t *testing.T) {
 			t.Parallel()
 
 			rootDir := t.TempDir()
-			sourceDir := filepath.Join(rootDir, "utxo1")
+			sourceDir := filepath.Join(rootDir, testDefaultSource)
 			requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 			writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
 			writeKeyWithCBORHex(t, filepath.Join(sourceDir, "utxo.vkey"), verificationKeyType, tt.cborHex)
 			writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
 
-			err := NewStore(rootDir, "utxo1").Ready()
+			err := NewStore(rootDir, testDefaultSource).Ready()
 			if err == nil {
 				t.Fatal("Ready succeeded, want invalid cborHex error")
 			}
@@ -286,13 +313,13 @@ func TestStoreRejectsOversizedKeyFile(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
-	sourceDir := filepath.Join(rootDir, "utxo1")
+	sourceDir := filepath.Join(rootDir, testDefaultSource)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 	writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), strings.Repeat("x", oversizedFileContents))
 	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
 
-	err := NewStore(rootDir, "utxo1").Ready()
+	err := NewStore(rootDir, testDefaultSource).Ready()
 	if err == nil {
 		t.Fatal("Ready succeeded, want oversized key error")
 	}
@@ -309,7 +336,7 @@ func TestStoreRejectsTooManySourceEntries(t *testing.T) {
 		writeSource(t, rootDir, fmt.Sprintf("utxo%d", i))
 	}
 
-	_, err := NewStore(rootDir, "utxo1").List()
+	_, err := NewStore(rootDir, testDefaultSource).List()
 	if err == nil {
 		t.Fatal("List succeeded, want source count cap error")
 	}

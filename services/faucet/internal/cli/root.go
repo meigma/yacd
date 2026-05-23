@@ -5,18 +5,25 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/meigma/yacd/services/faucet/internal/server"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
+	"github.com/meigma/yacd/services/faucet/internal/topup"
+	topupapollo "github.com/meigma/yacd/services/faucet/internal/topup/apollo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
 const (
-	defaultListenAddress = "127.0.0.1:8080"
-	defaultUTXOKeysDir   = "/state/env/utxo-keys"
-	defaultSource        = "utxo1"
+	defaultListenAddress       = "127.0.0.1:8080"
+	defaultUTXOKeysDir         = "/state/env/utxo-keys"
+	defaultSource              = "utxo1"
+	defaultOgmiosURL           = "ws://127.0.0.1:1337"
+	defaultKupoURL             = "http://127.0.0.1:1442"
+	defaultChainRequestTimeout = 15 * time.Second
+	defaultTxTTLSlots          = 300
 )
 
 // BuildInfo describes linker-injected build metadata printed by --version.
@@ -46,11 +53,16 @@ type commandContext struct {
 
 // RuntimeConfig is the faucet process runtime configuration.
 type RuntimeConfig struct {
-	ListenAddress string
-	UTXOKeysDir   string
-	DefaultSource string
-	LogLevel      string
-	LogFormat     string
+	ListenAddress       string
+	UTXOKeysDir         string
+	DefaultSource       string
+	OgmiosURL           string
+	KupoURL             string
+	MaxTopUpLovelace    int64
+	ChainRequestTimeout time.Duration
+	TxTTLSlots          int64
+	LogLevel            string
+	LogFormat           string
 }
 
 // NewRootCommand creates the YACD faucet service command.
@@ -107,12 +119,25 @@ func NewRootCommand(options Options) *cobra.Command {
 				return err
 			}
 
+			sourceStore := sources.NewStore(
+				runtimeConfig.UTXOKeysDir,
+				runtimeConfig.DefaultSource,
+			)
+			transactionSubmitter := topupapollo.Client{
+				OgmiosURL:      runtimeConfig.OgmiosURL,
+				KupoURL:        runtimeConfig.KupoURL,
+				RequestTimeout: runtimeConfig.ChainRequestTimeout,
+				TTLSlots:       runtimeConfig.TxTTLSlots,
+			}
+
 			return commandContext.serverRunner(&server.Config{
 				Context:       cmd.Context(),
 				ListenAddress: runtimeConfig.ListenAddress,
-				Sources: sources.NewStore(
-					runtimeConfig.UTXOKeysDir,
-					runtimeConfig.DefaultSource,
+				Sources:       sourceStore,
+				TopUps: topup.NewService(
+					sourceStore,
+					transactionSubmitter,
+					runtimeConfig.MaxTopUpLovelace,
 				),
 				Logger: commandContext.logger,
 			})
@@ -137,6 +162,11 @@ func NewRootCommand(options Options) *cobra.Command {
 	)
 	root.Flags().String("utxo-keys-dir", defaultUTXOKeysDir, "Path to the cardano-testnet utxo-keys directory")
 	root.Flags().String("default-source", defaultSource, "Default faucet source name")
+	root.Flags().String("ogmios-url", defaultOgmiosURL, "Ogmios websocket URL for transaction submission")
+	root.Flags().String("kupo-url", defaultKupoURL, "Kupo HTTP URL for transaction building")
+	root.Flags().Int64("max-topup-lovelace", topup.DefaultMaxLovelace, "Maximum lovelace accepted for one top-up")
+	root.Flags().Duration("chain-request-timeout", defaultChainRequestTimeout, "Timeout for individual chain requests")
+	root.Flags().Int64("tx-ttl-slots", defaultTxTTLSlots, "Transaction TTL measured in slots after the latest block")
 	root.Flags().String("log-level", "info", "Log level: debug, info, warn, error")
 	root.Flags().String("log-format", "text", "Log format: text, json")
 
@@ -160,6 +190,11 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 	vp.SetDefault("listen-address", defaultListenAddress)
 	vp.SetDefault("utxo-keys-dir", defaultUTXOKeysDir)
 	vp.SetDefault("default-source", defaultSource)
+	vp.SetDefault("ogmios-url", defaultOgmiosURL)
+	vp.SetDefault("kupo-url", defaultKupoURL)
+	vp.SetDefault("max-topup-lovelace", topup.DefaultMaxLovelace)
+	vp.SetDefault("chain-request-timeout", defaultChainRequestTimeout)
+	vp.SetDefault("tx-ttl-slots", defaultTxTTLSlots)
 	vp.SetDefault("log-level", "info")
 	vp.SetDefault("log-format", "text")
 	vp.SetEnvPrefix("YACD_FAUCET")
@@ -174,6 +209,11 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 		{key: "listen-address", name: "listen-address"},
 		{key: "utxo-keys-dir", name: "utxo-keys-dir"},
 		{key: "default-source", name: "default-source"},
+		{key: "ogmios-url", name: "ogmios-url"},
+		{key: "kupo-url", name: "kupo-url"},
+		{key: "max-topup-lovelace", name: "max-topup-lovelace"},
+		{key: "chain-request-timeout", name: "chain-request-timeout"},
+		{key: "tx-ttl-slots", name: "tx-ttl-slots"},
 		{key: "log-level", name: "log-level"},
 		{key: "log-format", name: "log-format"},
 	} {
@@ -198,11 +238,16 @@ func bindFlag(vp *viper.Viper, key string, flag *pflag.Flag) error {
 
 func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	config := RuntimeConfig{
-		ListenAddress: strings.TrimSpace(vp.GetString("listen-address")),
-		UTXOKeysDir:   strings.TrimSpace(vp.GetString("utxo-keys-dir")),
-		DefaultSource: strings.TrimSpace(vp.GetString("default-source")),
-		LogLevel:      strings.TrimSpace(vp.GetString("log-level")),
-		LogFormat:     strings.TrimSpace(vp.GetString("log-format")),
+		ListenAddress:       strings.TrimSpace(vp.GetString("listen-address")),
+		UTXOKeysDir:         strings.TrimSpace(vp.GetString("utxo-keys-dir")),
+		DefaultSource:       strings.TrimSpace(vp.GetString("default-source")),
+		OgmiosURL:           strings.TrimSpace(vp.GetString("ogmios-url")),
+		KupoURL:             strings.TrimSpace(vp.GetString("kupo-url")),
+		MaxTopUpLovelace:    vp.GetInt64("max-topup-lovelace"),
+		ChainRequestTimeout: vp.GetDuration("chain-request-timeout"),
+		TxTTLSlots:          vp.GetInt64("tx-ttl-slots"),
+		LogLevel:            strings.TrimSpace(vp.GetString("log-level")),
+		LogFormat:           strings.TrimSpace(vp.GetString("log-format")),
 	}
 	if config.ListenAddress == "" {
 		return RuntimeConfig{}, fmt.Errorf("--listen-address is required")
@@ -212,6 +257,21 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	}
 	if err := sources.ValidateName(config.DefaultSource); err != nil {
 		return RuntimeConfig{}, fmt.Errorf("invalid --default-source: %w", err)
+	}
+	if config.OgmiosURL == "" {
+		return RuntimeConfig{}, fmt.Errorf("--ogmios-url is required")
+	}
+	if config.KupoURL == "" {
+		return RuntimeConfig{}, fmt.Errorf("--kupo-url is required")
+	}
+	if config.MaxTopUpLovelace <= 0 {
+		return RuntimeConfig{}, fmt.Errorf("--max-topup-lovelace must be positive")
+	}
+	if config.ChainRequestTimeout <= 0 {
+		return RuntimeConfig{}, fmt.Errorf("--chain-request-timeout must be positive")
+	}
+	if config.TxTTLSlots <= 0 {
+		return RuntimeConfig{}, fmt.Errorf("--tx-ttl-slots must be positive")
 	}
 	if config.LogLevel == "" {
 		config.LogLevel = "info"

@@ -1,6 +1,7 @@
 package sources
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -66,6 +67,19 @@ type Source struct {
 	SigningKeyDescription      string `json:"signingKeyDescription,omitempty"`
 }
 
+// FundingSource contains the private key material needed to submit faucet
+// transactions. It must never be returned directly from HTTP handlers.
+type FundingSource struct {
+	// Name is the source directory name such as utxo1.
+	Name string
+	// Address is the source payment address.
+	Address string
+	// VerificationKeyHex is the lowercase raw verification key bytes encoded as hex.
+	VerificationKeyHex string
+	// SigningKeyHex is the lowercase raw signing key bytes encoded as hex.
+	SigningKeyHex string
+}
+
 // Error is a structured source discovery error.
 type Error struct {
 	Code    string
@@ -76,6 +90,7 @@ type keyMetadata struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
 	CBORHex     string `json:"cborHex"`
+	rawHex      string
 }
 
 // NewStore returns a source store rooted at rootDir.
@@ -219,6 +234,38 @@ func (s Store) Get(name string) (Source, error) {
 	return source, nil
 }
 
+// ReadFundingSource returns private source data for transaction submission.
+func (s Store) ReadFundingSource(ctx context.Context, name string) (FundingSource, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return FundingSource{}, sourceError(CodeSourceReadFailed, "read faucet source %q: %v", name, err)
+	}
+	if err := ValidateName(name); err != nil {
+		return FundingSource{}, err
+	}
+
+	root, err := s.openRoot()
+	if err != nil {
+		return FundingSource{}, err
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
+	source, err := s.readFundingSource(root, name)
+	if err != nil {
+		if IsCode(err, CodeSourceIncomplete) {
+			return FundingSource{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
+		}
+
+		return FundingSource{}, err
+	}
+
+	return source, nil
+}
+
 // Ready returns nil when the source directory and default source are usable.
 func (s Store) Ready() error {
 	root, err := s.openRoot()
@@ -269,39 +316,7 @@ func readDir(root *os.Root, name string, maxEntries int) ([]os.DirEntry, error) 
 }
 
 func (s Store) readSource(root *os.Root, name string) (Source, error) {
-	info, err := root.Lstat(name)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
-		}
-
-		return Source{}, sourceError(CodeSourceReadFailed, "stat source %q: %v", name, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
-	}
-
-	address, err := readAddress(root, filepath.Join(name, addressFile), name)
-	if err != nil {
-		return Source{}, err
-	}
-	verificationKey, err := readKeyMetadata(
-		root,
-		filepath.Join(name, verificationKeyFile),
-		name,
-		"verification",
-		verificationKeyType,
-	)
-	if err != nil {
-		return Source{}, err
-	}
-	signingKey, err := readKeyMetadata(
-		root,
-		filepath.Join(name, signingKeyFile),
-		name,
-		"signing",
-		signingKeyType,
-	)
+	address, verificationKey, signingKey, err := readSourceFiles(root, name)
 	if err != nil {
 		return Source{}, err
 	}
@@ -315,6 +330,61 @@ func (s Store) readSource(root *os.Root, name string) (Source, error) {
 		VerificationKeyDescription: verificationKey.Description,
 		SigningKeyDescription:      signingKey.Description,
 	}, nil
+}
+
+func (s Store) readFundingSource(root *os.Root, name string) (FundingSource, error) {
+	address, verificationKey, signingKey, err := readSourceFiles(root, name)
+	if err != nil {
+		return FundingSource{}, err
+	}
+
+	return FundingSource{
+		Name:               name,
+		Address:            address,
+		VerificationKeyHex: verificationKey.rawHex,
+		SigningKeyHex:      signingKey.rawHex,
+	}, nil
+}
+
+func readSourceFiles(root *os.Root, name string) (string, keyMetadata, keyMetadata, error) {
+	info, err := root.Lstat(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", keyMetadata{}, keyMetadata{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
+		}
+
+		return "", keyMetadata{}, keyMetadata{}, sourceError(CodeSourceReadFailed, "stat source %q: %v", name, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return "", keyMetadata{}, keyMetadata{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
+	}
+
+	address, err := readAddress(root, filepath.Join(name, addressFile), name)
+	if err != nil {
+		return "", keyMetadata{}, keyMetadata{}, err
+	}
+	verificationKey, err := readKeyMetadata(
+		root,
+		filepath.Join(name, verificationKeyFile),
+		name,
+		"verification",
+		verificationKeyType,
+	)
+	if err != nil {
+		return "", keyMetadata{}, keyMetadata{}, err
+	}
+	signingKey, err := readKeyMetadata(
+		root,
+		filepath.Join(name, signingKeyFile),
+		name,
+		"signing",
+		signingKeyType,
+	)
+	if err != nil {
+		return "", keyMetadata{}, keyMetadata{}, err
+	}
+
+	return address, verificationKey, signingKey, nil
 }
 
 func readKeyMetadata(
@@ -357,9 +427,11 @@ func readKeyMetadata(
 			expectedType,
 		)
 	}
-	if err := validateKeyCBOR(metadata.CBORHex, sourceName, keyKind); err != nil {
+	rawHex, err := decodeKeyCBORHex(metadata.CBORHex, sourceName, keyKind)
+	if err != nil {
 		return keyMetadata{}, err
 	}
+	metadata.rawHex = rawHex
 
 	return metadata, nil
 }
@@ -371,22 +443,34 @@ func readAddress(root *os.Root, path string, sourceName string) (string, error) 
 	}
 
 	address := strings.TrimSpace(string(contents))
+	if err := ValidateTestnetAddress(address); err != nil {
+		return "", sourceError(CodeSourceInvalidKey, "address for source %q is invalid: %v", sourceName, err)
+	}
+
+	return address, nil
+}
+
+// ValidateTestnetAddress validates a bech32 Cardano testnet payment address.
+func ValidateTestnetAddress(address string) error {
+	if strings.TrimSpace(address) != address {
+		return errors.New("address must not contain leading or trailing whitespace")
+	}
 	if address == "" {
-		return "", sourceError(CodeSourceInvalidKey, "address for source %q is empty", sourceName)
+		return errors.New("address is required")
 	}
 	if strings.ContainsFunc(address, func(char rune) bool {
 		return unicode.IsControl(char) || unicode.IsSpace(char)
 	}) {
-		return "", sourceError(CodeSourceInvalidKey, "address for source %q must not contain whitespace or control characters", sourceName)
+		return errors.New("address must not contain whitespace or control characters")
 	}
 	if !strings.HasPrefix(address, addressPrefix) {
-		return "", sourceError(CodeSourceInvalidKey, "address for source %q must start with %q", sourceName, addressPrefix)
+		return fmt.Errorf("address must start with %q", addressPrefix)
 	}
 	if !validBech32(address) {
-		return "", sourceError(CodeSourceInvalidKey, "address for source %q is not valid bech32", sourceName)
+		return errors.New("address is not valid bech32")
 	}
 
-	return address, nil
+	return nil
 }
 
 func readRegularFile(
@@ -478,23 +562,23 @@ func readRegularFile(
 	return contents, nil
 }
 
-func validateKeyCBOR(cborHex string, sourceName string, keyKind string) error {
+func decodeKeyCBORHex(cborHex string, sourceName string, keyKind string) (string, error) {
 	cborHex = strings.TrimSpace(cborHex)
 	if cborHex == "" {
-		return sourceError(CodeSourceInvalidKey, "%s key for source %q is missing cborHex", keyKind, sourceName)
+		return "", sourceError(CodeSourceInvalidKey, "%s key for source %q is missing cborHex", keyKind, sourceName)
 	}
 
 	rawCBOR, err := hex.DecodeString(cborHex)
 	if err != nil {
-		return sourceError(CodeSourceInvalidKey, "decode %s key cborHex for source %q: %v", keyKind, sourceName, err)
+		return "", sourceError(CodeSourceInvalidKey, "decode %s key cborHex for source %q: %v", keyKind, sourceName, err)
 	}
 
 	var keyBytes []byte
 	if err := cbor.Unmarshal(rawCBOR, &keyBytes); err != nil {
-		return sourceError(CodeSourceInvalidKey, "parse %s key cborHex for source %q: %v", keyKind, sourceName, err)
+		return "", sourceError(CodeSourceInvalidKey, "parse %s key cborHex for source %q: %v", keyKind, sourceName, err)
 	}
 	if len(keyBytes) != keyCBORBytesLength {
-		return sourceError(
+		return "", sourceError(
 			CodeSourceInvalidKey,
 			"%s key cborHex for source %q decodes to %d bytes, want %d",
 			keyKind,
@@ -504,7 +588,7 @@ func validateKeyCBOR(cborHex string, sourceName string, keyKind string) error {
 		)
 	}
 
-	return nil
+	return hex.EncodeToString(keyBytes), nil
 }
 
 func validBech32(value string) bool {

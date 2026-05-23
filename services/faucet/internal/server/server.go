@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -12,12 +13,15 @@ import (
 	"time"
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
+	"github.com/meigma/yacd/services/faucet/internal/topup"
 )
 
 const (
 	codeMethodNotAllowed = "method_not_allowed"
 	codeNotFound         = "not_found"
 	codeNotReady         = "not_ready"
+	codeInternalError    = "internal_error"
+	maxTopUpBodyBytes    = 4 * 1024
 )
 
 // Config describes the faucet HTTP server runtime configuration.
@@ -25,11 +29,13 @@ type Config struct {
 	Context       context.Context
 	ListenAddress string
 	Sources       sources.Store
+	TopUps        topup.Service
 	Logger        *slog.Logger
 }
 
 type handler struct {
 	sources sources.Store
+	topups  topup.Service
 	logger  *slog.Logger
 }
 
@@ -46,14 +52,21 @@ type responseError struct {
 	Message string `json:"message"`
 }
 
+type topUpRequest struct {
+	Address  string `json:"address"`
+	Lovelace *int64 `json:"lovelace"`
+	Source   string `json:"source,omitempty"`
+}
+
 // NewHandler builds the faucet HTTP handler.
-func NewHandler(store sources.Store, logger *slog.Logger) http.Handler {
+func NewHandler(store sources.Store, topups topup.Service, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &handler{
 		sources: store,
+		topups:  topups,
 		logger:  logger,
 	}
 }
@@ -70,7 +83,7 @@ func Run(config *Config) error {
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress,
-		Handler:           NewHandler(config.Sources, config.Logger),
+		Handler:           NewHandler(config.Sources, config.TopUps, config.Logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -113,6 +126,8 @@ func (h *handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		h.handleReady(writer, request)
 	case request.URL.Path == "/v1/sources":
 		h.handleSourceList(writer, request)
+	case request.URL.Path == "/v1/topups":
+		h.handleTopUp(writer, request)
 	case strings.HasPrefix(request.URL.Path, "/v1/sources/"):
 		h.handleSource(writer, request)
 	default:
@@ -175,11 +190,39 @@ func (h *handler) handleSource(writer http.ResponseWriter, request *http.Request
 	writeJSON(writer, http.StatusOK, source)
 }
 
+func (h *handler) handleTopUp(writer http.ResponseWriter, request *http.Request) {
+	if !requireMethod(writer, request, http.MethodPost) {
+		return
+	}
+
+	var body topUpRequest
+	if err := decodeRequestBody(writer, request, &body); err != nil {
+		writeError(writer, http.StatusBadRequest, topup.CodeInvalidRequest, err.Error())
+		return
+	}
+	if body.Lovelace == nil {
+		writeError(writer, http.StatusBadRequest, topup.CodeInvalidRequest, "lovelace is required")
+		return
+	}
+
+	result, err := h.topups.Submit(request.Context(), topup.Request{
+		Source:             body.Source,
+		DestinationAddress: body.Address,
+		Lovelace:           *body.Lovelace,
+	})
+	if err != nil {
+		h.writeTopUpError(writer, err)
+		return
+	}
+
+	writeJSON(writer, http.StatusOK, result)
+}
+
 func (h *handler) writeSourceError(writer http.ResponseWriter, err error) {
 	var sourceErr *sources.Error
 	if !errors.As(err, &sourceErr) {
 		h.logger.Error("Unhandled source error", "error", err)
-		writeError(writer, http.StatusInternalServerError, "internal_error", "source error")
+		writeError(writer, http.StatusInternalServerError, codeInternalError, "source error")
 		return
 	}
 
@@ -195,12 +238,37 @@ func (h *handler) writeSourceError(writer http.ResponseWriter, err error) {
 	}
 }
 
+func (h *handler) writeTopUpError(writer http.ResponseWriter, err error) {
+	var topUpErr *topup.Error
+	if !errors.As(err, &topUpErr) {
+		h.logger.Error("Unhandled top-up error", "error", err)
+		writeError(writer, http.StatusInternalServerError, codeInternalError, "top-up error")
+		return
+	}
+
+	switch topUpErr.Code {
+	case topup.CodeInvalidRequest:
+		writeError(writer, http.StatusBadRequest, topUpErr.Code, topUpErr.Message)
+	case topup.CodeSourceNotFound:
+		writeError(writer, http.StatusNotFound, topUpErr.Code, topUpErr.Message)
+	case topup.CodeSourceUnavailable, topup.CodeChainUnavailable:
+		writeError(writer, http.StatusServiceUnavailable, topUpErr.Code, topUpErr.Message)
+	default:
+		h.logger.Error("Unhandled structured top-up error", "code", topUpErr.Code, "error", err)
+		writeError(writer, http.StatusInternalServerError, codeInternalError, topUpErr.Message)
+	}
+}
+
 func requireGet(writer http.ResponseWriter, request *http.Request) bool {
-	if request.Method == http.MethodGet {
+	return requireMethod(writer, request, http.MethodGet)
+}
+
+func requireMethod(writer http.ResponseWriter, request *http.Request, method string) bool {
+	if request.Method == method {
 		return true
 	}
 
-	writer.Header().Set("Allow", http.MethodGet)
+	writer.Header().Set("Allow", method)
 	writeError(
 		writer,
 		http.StatusMethodNotAllowed,
@@ -209,6 +277,20 @@ func requireGet(writer http.ResponseWriter, request *http.Request) bool {
 	)
 
 	return false
+}
+
+func decodeRequestBody(writer http.ResponseWriter, request *http.Request, target any) error {
+	reader := http.MaxBytesReader(writer, request.Body, maxTopUpBodyBytes)
+	decoder := json.NewDecoder(reader)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode JSON request body: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("decode JSON request body: multiple JSON values are not allowed")
+	}
+
+	return nil
 }
 
 func writeJSON(writer http.ResponseWriter, statusCode int, body any) {
