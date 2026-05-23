@@ -600,7 +600,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 		containers = append(containers, b.kupoContainer(kupo, ogmios))
 	}
 	if faucet.enabled {
-		containers = append(containers, b.faucetContainer(faucet, ogmios, kupo, plan))
+		containers = append(containers, b.faucetContainer(faucet, ogmios, kupo))
 	}
 	initContainers := []corev1.Container{initContainer}
 	if faucet.enabled {
@@ -882,7 +882,7 @@ func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmi
 	return container
 }
 
-func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios ogmiosSettings, kupo kupoSettings, plan localnet.Plan) corev1.Container {
+func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios ogmiosSettings, kupo kupoSettings) corev1.Container {
 	container := corev1.Container{
 		Name:            faucetContainerName,
 		Image:           settings.image,
@@ -912,7 +912,8 @@ func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios 
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      localnetStateVolumeName,
-				MountPath: plan.Layout.StateDir,
+				MountPath: faucetUTXOKeysDir,
+				SubPath:   "env/utxo-keys",
 				ReadOnly:  true,
 			},
 			{

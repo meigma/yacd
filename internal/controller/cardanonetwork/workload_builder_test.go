@@ -632,7 +632,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, faucetHealthPath, faucetContainer.StartupProbe.HTTPGet.Path)
 	assert.Equal(t, faucetHealthPath, faucetContainer.LivenessProbe.HTTPGet.Path)
 	assert.Equal(t, []corev1.VolumeMount{
-		{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
+		{Name: localnetStateVolumeName, MountPath: "/state/env/utxo-keys", SubPath: "env/utxo-keys", ReadOnly: true},
 		{Name: faucetAuthVolumeName, MountPath: "/var/run/yacd-faucet", ReadOnly: true},
 	}, faucetContainer.VolumeMounts)
 

@@ -397,6 +397,31 @@ func TestTopUpRejectsStaleOrNotReadyStatus(t *testing.T) {
 			},
 			wantErr: "is not faucet-ready",
 		},
+		{
+			name: "stale ready condition",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				for i := range network.Status.Conditions {
+					if network.Status.Conditions[i].Type == "Ready" {
+						network.Status.Conditions[i].ObservedGeneration = 0
+					}
+				}
+			},
+			wantErr: "Ready condition is missing or stale",
+		},
+		{
+			name: "degraded",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Status.Conditions = append(network.Status.Conditions, metav1.Condition{
+					Type:               "Degraded",
+					Status:             metav1.ConditionTrue,
+					Reason:             "UnsupportedSpec",
+					Message:            "bad faucet config",
+					ObservedGeneration: 1,
+					LastTransitionTime: metav1.Now(),
+				})
+			},
+			wantErr: "is degraded: UnsupportedSpec: bad faucet config",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

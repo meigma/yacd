@@ -172,19 +172,21 @@ func TestFilterExcludedUTxOs(t *testing.T) {
 	assert.Equal(t, second.GetKey(), filtered[0].GetKey())
 }
 
-func TestValidateTransactionOutputs(t *testing.T) {
+func TestValidateTransaction(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name    string
-		tx      *apolloTx.Transaction
-		amount  int64
-		wantErr string
+		name        string
+		tx          *apolloTx.Transaction
+		sourceUTxOs []apolloUTxO.UTxO
+		amount      int64
+		wantErr     string
 	}{
 		{
-			name:   "exact output",
-			tx:     testTransaction(t, testDestinationAddress),
-			amount: 1_000_000,
+			name:        "exact output",
+			tx:          testTransaction(t, testDestinationAddress),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 1_000_001)},
+			amount:      1_000_000,
 		},
 		{
 			name: "allows source change",
@@ -192,19 +194,22 @@ func TestValidateTransactionOutputs(t *testing.T) {
 				testOutput(t, testDestinationAddress, 1_000_000),
 				testOutput(t, testSourceAddress, 2_000_000),
 			),
-			amount: 1_000_000,
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 3_000_001)},
+			amount:      1_000_000,
 		},
 		{
-			name:    "mutated amount",
-			tx:      testTransaction(t, testDestinationAddress),
-			amount:  999_999,
-			wantErr: "changed destination lovelace",
+			name:        "mutated amount",
+			tx:          testTransaction(t, testDestinationAddress),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 1_000_001)},
+			amount:      999_999,
+			wantErr:     "changed destination lovelace",
 		},
 		{
-			name:    "missing destination",
-			tx:      testTransaction(t, testSourceAddress),
-			amount:  1_000_000,
-			wantErr: "created 0 destination outputs",
+			name:        "missing destination",
+			tx:          testTransaction(t, testSourceAddress),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 1_000_001)},
+			amount:      1_000_000,
+			wantErr:     "created 0 destination outputs",
 		},
 		{
 			name: "unexpected non-source output",
@@ -212,15 +217,45 @@ func TestValidateTransactionOutputs(t *testing.T) {
 				testOutput(t, testDestinationAddress, 1_000_000),
 				testOutput(t, mustDeriveTestnetPaymentAddress(deriveTestVerificationKeyHex(strings.Repeat("05", 32))), 1_000_000),
 			),
-			amount:  1_000_000,
-			wantErr: "created an unexpected output",
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 2_000_001)},
+			amount:      1_000_000,
+			wantErr:     "created an unexpected output",
+		},
+		{
+			name: "oversized fee",
+			tx: testTransactionWithBody(
+				[]TransactionInput.TransactionInput{testInput(testTransactionIDBytes, 0)},
+				[]TransactionOutput.TransactionOutput{testOutput(t, testDestinationAddress, 1_000_000)},
+				2_000_000,
+			),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 3_000_000)},
+			amount:      1_000_000,
+			wantErr:     "fee 2000000 exceeds maximum",
+		},
+		{
+			name: "unknown input",
+			tx: testTransactionWithBody(
+				[]TransactionInput.TransactionInput{testInput(testOtherTransactionIDBytes, 0)},
+				[]TransactionOutput.TransactionOutput{testOutput(t, testDestinationAddress, 1_000_000)},
+				1,
+			),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 1_000_001)},
+			amount:      1_000_000,
+			wantErr:     "spent non-source input",
+		},
+		{
+			name:        "excess source loss",
+			tx:          testTransaction(t, testDestinationAddress),
+			sourceUTxOs: []apolloUTxO.UTxO{testSourceUTxO(t, testTransactionIDBytes, 3_000_000)},
+			amount:      1_000_000,
+			wantErr:     "consumed 3000000 source lovelace",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateTransactionOutputs(tt.tx, testDestinationAddress, testSourceAddress, tt.amount)
+			err := validateTransaction(tt.tx, testDestinationAddress, testSourceAddress, tt.amount, tt.sourceUTxOs, defaultMaxFeeLovelace)
 
 			if tt.wantErr == "" {
 				require.NoError(t, err)
@@ -314,13 +349,23 @@ func testTransaction(t *testing.T, destinationAddress string) *apolloTx.Transact
 func testTransactionWithOutputs(t *testing.T, outputs ...TransactionOutput.TransactionOutput) *apolloTx.Transaction {
 	t.Helper()
 
+	return testTransactionWithBody(
+		[]TransactionInput.TransactionInput{testInput(testTransactionIDBytes, 0)},
+		outputs,
+		1,
+	)
+}
+
+func testTransactionWithBody(
+	inputs []TransactionInput.TransactionInput,
+	outputs []TransactionOutput.TransactionOutput,
+	fee int64,
+) *apolloTx.Transaction {
 	return &apolloTx.Transaction{
 		TransactionBody: TransactionBody.TransactionBody{
-			Inputs: []TransactionInput.TransactionInput{
-				testInput(testTransactionIDBytes, 0),
-			},
+			Inputs:  inputs,
 			Outputs: outputs,
-			Fee:     1,
+			Fee:     fee,
 		},
 		Valid: true,
 	}
@@ -337,7 +382,17 @@ func testOutput(t *testing.T, destinationAddress string, lovelace int64) Transac
 
 func testUTxO(transactionID []byte, index int) apolloUTxO.UTxO {
 	return apolloUTxO.UTxO{
-		Input: testInput(transactionID, index),
+		Input:  testInput(transactionID, index),
+		Output: testOutputNoT(testSourceAddress, 2_000_000),
+	}
+}
+
+func testSourceUTxO(t *testing.T, transactionID []byte, lovelace int64) apolloUTxO.UTxO {
+	t.Helper()
+
+	return apolloUTxO.UTxO{
+		Input:  testInput(transactionID, 0),
+		Output: testOutput(t, testSourceAddress, lovelace),
 	}
 }
 
@@ -346,6 +401,15 @@ func testInput(transactionID []byte, index int) TransactionInput.TransactionInpu
 		TransactionId: transactionID,
 		Index:         index,
 	}
+}
+
+func testOutputNoT(destinationAddress string, lovelace int64) TransactionOutput.TransactionOutput {
+	address, err := apolloAddress.DecodeAddress(destinationAddress)
+	if err != nil {
+		panic(err)
+	}
+
+	return TransactionOutput.SimpleTransactionOutput(address, Value.SimpleValue(lovelace, nil))
 }
 
 type fakeOgmiosSubmitter struct {

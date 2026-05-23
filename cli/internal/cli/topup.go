@@ -13,7 +13,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/spf13/cobra"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -127,9 +126,15 @@ func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, 
 			network.Generation,
 		)
 	}
+	if degraded := kube.FreshCondition(network, "Degraded"); degraded != nil && degraded.Status == metav1.ConditionTrue {
+		return fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
+	}
 	for _, conditionType := range []string{"Ready", "FaucetReady"} {
-		condition := apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
-		if condition == nil || condition.Status != metav1.ConditionTrue {
+		condition := kube.FreshCondition(network, conditionType)
+		if condition == nil {
+			return fmt.Errorf("cardanonetwork %s/%s is not faucet-ready: %s condition is missing or stale", namespace, name, conditionType)
+		}
+		if condition.Status != metav1.ConditionTrue {
 			return fmt.Errorf("cardanonetwork %s/%s is not faucet-ready", namespace, name)
 		}
 	}

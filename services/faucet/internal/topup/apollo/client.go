@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 const (
 	defaultRequestTimeout = 15 * time.Second
 	defaultTTLSlots       = 300
+	defaultMaxFeeLovelace = 1_000_000
 	rawKeyLength          = 32
 )
 
@@ -37,6 +39,8 @@ type Client struct {
 	RequestTimeout time.Duration
 	// TTLSlots is the transaction validity window measured from the latest slot.
 	TTLSlots int64
+	// MaxFeeLovelace bounds the fee a completed transaction may pay. Zero selects a default.
+	MaxFeeLovelace int64
 
 	submitter ogmiosSubmitter
 }
@@ -169,11 +173,13 @@ func (c Client) submit(
 	if err != nil {
 		return "", nil, topup.WrapError(topup.CodeChainUnavailable, "complete top-up transaction", err)
 	}
-	if err := validateTransactionOutputs(
+	if err := validateTransaction(
 		builder.GetTx(),
 		request.DestinationAddress,
 		request.Source.Address,
 		request.Lovelace,
+		sourceUTxOs,
+		c.maxFeeLovelace(),
 	); err != nil {
 		return "", nil, err
 	}
@@ -243,20 +249,66 @@ func filterExcludedUTxOs(utxos []apolloUTxO.UTxO, excludedInputKeys []string) []
 	return filtered
 }
 
-func validateTransactionOutputs(
+func validateTransaction(
 	tx *apolloTx.Transaction,
 	destinationAddress string,
 	sourceAddress string,
 	lovelace int64,
+	sourceUTxOs []apolloUTxO.UTxO,
+	maxFeeLovelace int64,
 ) error {
 	if tx == nil {
 		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction returned nil transaction")
 	}
+	if tx.TransactionBody.Fee < 0 {
+		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction created a negative fee")
+	}
+	if tx.TransactionBody.Fee > maxFeeLovelace {
+		return topup.Errorf(
+			topup.CodeChainUnavailable,
+			"complete top-up transaction fee %d exceeds maximum %d",
+			tx.TransactionBody.Fee,
+			maxFeeLovelace,
+		)
+	}
+	if lovelace > math.MaxInt64-tx.TransactionBody.Fee {
+		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction lovelace and fee overflow")
+	}
+
+	sourceByInput := make(map[string]apolloUTxO.UTxO, len(sourceUTxOs))
+	for _, sourceUTxO := range sourceUTxOs {
+		if sourceUTxO.Output.GetAddress().String() != sourceAddress {
+			return topup.Errorf(
+				topup.CodeChainUnavailable,
+				"source UTxO %s has unexpected address %s",
+				sourceUTxO.GetKey(),
+				sourceUTxO.Output.GetAddress().String(),
+			)
+		}
+		sourceByInput[strings.ToLower(sourceUTxO.GetKey())] = sourceUTxO
+	}
+	if len(tx.TransactionBody.Inputs) == 0 {
+		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction spent no source inputs")
+	}
 
 	matches := 0
+	sourceInputLovelace := int64(0)
+	sourceChangeLovelace := int64(0)
+	for _, input := range tx.TransactionBody.Inputs {
+		sourceUTxO, ok := sourceByInput[strings.ToLower(inputKey(input))]
+		if !ok {
+			return topup.Errorf(
+				topup.CodeChainUnavailable,
+				"complete top-up transaction spent non-source input %s",
+				inputKey(input),
+			)
+		}
+		sourceInputLovelace += sourceUTxO.Output.Lovelace()
+	}
 	for _, output := range tx.TransactionBody.Outputs {
 		outputAddress := output.GetAddress().String()
 		if outputAddress == sourceAddress {
+			sourceChangeLovelace += output.Lovelace()
 			continue
 		}
 		if outputAddress != destinationAddress {
@@ -285,6 +337,16 @@ func validateTransactionOutputs(
 			topup.CodeChainUnavailable,
 			"complete top-up transaction created %d destination outputs, want 1",
 			matches,
+		)
+	}
+	sourceLoss := sourceInputLovelace - sourceChangeLovelace
+	expectedLoss := lovelace + tx.TransactionBody.Fee
+	if sourceLoss != expectedLoss {
+		return topup.Errorf(
+			topup.CodeChainUnavailable,
+			"complete top-up transaction consumed %d source lovelace, want %d",
+			sourceLoss,
+			expectedLoss,
 		)
 	}
 
@@ -424,4 +486,12 @@ func (c Client) ttlSlots() int64 {
 	}
 
 	return c.TTLSlots
+}
+
+func (c Client) maxFeeLovelace() int64 {
+	if c.MaxFeeLovelace <= 0 {
+		return defaultMaxFeeLovelace
+	}
+
+	return c.MaxFeeLovelace
 }

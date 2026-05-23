@@ -52,11 +52,15 @@ Deploy the example environment and wait for the operator to report readiness:
 kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
 go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait
 go run ./cli/cmd/yacd info phase4-smoke --namespace yacd-smoke
-go run ./cli/cmd/yacd topup phase4-smoke --namespace yacd-smoke --address addr_test... --lovelace 1000000
+kubectl -n yacd-smoke port-forward svc/phase4-smoke-faucet 8080:8080
+# In another terminal:
+go run ./cli/cmd/yacd topup phase4-smoke --namespace yacd-smoke --faucet-url http://127.0.0.1:8080 --address addr_test... --lovelace 1000000
 ```
 
 The checked-in local example opts into the faucet. A minimal `CardanoNetwork`
-does not expose the faucet unless `spec.chainAPI.faucet.enabled` is set.
+does not expose the faucet unless `spec.chainAPI.faucet.enabled` is set. The
+published faucet endpoint is an in-cluster Service URL; host-side top-ups need a
+local forwarded URL or another externally routable Service address.
 
 Run the local development stack with Kind, ctlptl, Tilt, and ko:
 
