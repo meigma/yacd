@@ -17,6 +17,14 @@
   is proven.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
+- The local dev stack builds the faucet image through the `faucet-image` Tilt
+  local resource, which runs the ko helper and loads
+  `ghcr.io/meigma/yacd/faucet:tilt` into `kind-yacd-dev`. Keep this explicit:
+  the faucet image appears as a manager default flag, not as a Kubernetes image
+  reference that Tilt can discover from rendered YAML.
+- Faucet workload containers should leave `command` empty and rely on the image
+  entrypoint. This keeps ko-built development images and release Dockerfile
+  images compatible.
 - The companion CLI now lives under `cli/`. It uses Cobra/Viper, builds the
   release binary from `./cli/cmd/yacd`, and keeps the operator manager image
   entrypoint on `./cmd`.

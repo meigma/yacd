@@ -11,3 +11,4 @@
 | 007 | 2026-05-21 | Ogmios chain API | complete | Added Ogmios as the default `CardanoNetwork` chain API with sidecar, Service, status endpoint, readiness, compatibility checks, and protocol-level smoke coverage. |
 | 008 | 2026-05-22 | Developer CLI foundation | complete | Added the first `yacd` developer CLI with config-driven deploy, readiness waiting, status/connection info, release wiring, and installed-operator smoke coverage. |
 | 009 | 2026-05-23 | Phase 5 Kupo and faucet | complete | Added Kupo as a first-class chain API and merged the opt-in authenticated faucet/top-up vertical with CLI, Secret, sidecar, Service, and smoke coverage. |
+| 010 | 2026-05-23 | Faucet E2E assessment and dev image fix | complete | Verified the CLI-to-faucet funding path end to end, fixed ko-compatible local faucet image wiring, merged PR #16, and cleaned up the dev stack/worktree. |
