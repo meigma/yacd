@@ -25,9 +25,9 @@ custom_build(
     deps=['cmd', 'api', 'internal', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build.sh'],
 )
 
-custom_build(
-    FAUCET_IMAGE,
-    './.dev/ko-build-faucet.sh',
+local_resource(
+    name='faucet-image',
+    cmd='EXPECTED_REF=%s:tilt ./.dev/ko-build-faucet.sh && kind load docker-image --name yacd-dev %s:tilt' % (FAUCET_IMAGE, FAUCET_IMAGE),
     deps=['services/faucet', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build-faucet.sh'],
 )
 
@@ -49,4 +49,5 @@ k8s_yaml(helm(
 k8s_resource(
     workload='yacd-controller-manager',
     new_name='controller',
+    resource_deps=['faucet-image'],
 )
