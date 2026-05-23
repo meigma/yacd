@@ -32,19 +32,21 @@ const (
 
 // Config describes the faucet HTTP server runtime configuration.
 type Config struct {
-	Context       context.Context
-	ListenAddress string
-	Sources       sources.Store
-	TopUps        topup.Service
-	AuthToken     string
-	Logger        *slog.Logger
+	Context         context.Context
+	ListenAddress   string
+	Sources         sources.Store
+	TopUps          topup.Service
+	AuthToken       string
+	AuthTokenFile   string
+	AuthTokenLoader func(string) (string, error)
+	Logger          *slog.Logger
 }
 
 type handler struct {
-	sources   sources.Store
-	topups    topup.Service
-	authToken string
-	logger    *slog.Logger
+	sources         sources.Store
+	topups          topup.Service
+	authTokenSource func() (string, error)
+	logger          *slog.Logger
 }
 
 type statusResponse struct {
@@ -73,10 +75,40 @@ func NewHandler(store sources.Store, topups topup.Service, authToken string, log
 	}
 
 	return &handler{
-		sources:   store,
-		topups:    topups,
-		authToken: authToken,
-		logger:    logger,
+		sources: store,
+		topups:  topups,
+		authTokenSource: func() (string, error) {
+			return authToken, nil
+		},
+		logger: logger,
+	}
+}
+
+// NewHandlerWithAuthTokenFile builds a handler that reloads the auth token file
+// for each mutating request.
+func NewHandlerWithAuthTokenFile(
+	store sources.Store,
+	topups topup.Service,
+	authTokenFile string,
+	loadAuthToken func(string) (string, error),
+	logger *slog.Logger,
+) http.Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if loadAuthToken == nil {
+		loadAuthToken = func(string) (string, error) {
+			return "", fmt.Errorf("auth token loader is not configured")
+		}
+	}
+
+	return &handler{
+		sources: store,
+		topups:  topups,
+		authTokenSource: func() (string, error) {
+			return loadAuthToken(authTokenFile)
+		},
+		logger: logger,
 	}
 }
 
@@ -92,7 +124,7 @@ func Run(config *Config) error {
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress,
-		Handler:           NewHandler(config.Sources, config.TopUps, config.AuthToken, config.Logger),
+		Handler:           newConfiguredHandler(config),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -125,6 +157,20 @@ func Run(config *Config) error {
 
 		return nil
 	}
+}
+
+func newConfiguredHandler(config *Config) http.Handler {
+	if strings.TrimSpace(config.AuthTokenFile) != "" {
+		return NewHandlerWithAuthTokenFile(
+			config.Sources,
+			config.TopUps,
+			config.AuthTokenFile,
+			config.AuthTokenLoader,
+			config.Logger,
+		)
+	}
+
+	return NewHandler(config.Sources, config.TopUps, config.AuthToken, config.Logger)
 }
 
 func (h *handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -234,7 +280,13 @@ func (h *handler) handleTopUp(writer http.ResponseWriter, request *http.Request)
 }
 
 func (h *handler) requireAuth(writer http.ResponseWriter, request *http.Request) bool {
-	if strings.TrimSpace(h.authToken) == "" {
+	authToken, err := h.authTokenSource()
+	if err != nil {
+		h.logger.Error("Top-up auth token could not be loaded", "error", err)
+		writeError(writer, http.StatusInternalServerError, codeInternalError, "top-up auth is not configured")
+		return false
+	}
+	if strings.TrimSpace(authToken) == "" {
 		h.logger.Error("Top-up auth token is not configured")
 		writeError(writer, http.StatusInternalServerError, codeInternalError, "top-up auth is not configured")
 		return false
@@ -247,7 +299,7 @@ func (h *handler) requireAuth(writer http.ResponseWriter, request *http.Request)
 		return false
 	}
 
-	expected := sha256.Sum256([]byte(h.authToken))
+	expected := sha256.Sum256([]byte(authToken))
 	got := sha256.Sum256([]byte(fields[1]))
 	if subtle.ConstantTimeCompare(expected[:], got[:]) != 1 {
 		writeUnauthorized(writer)

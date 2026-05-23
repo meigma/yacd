@@ -10,8 +10,11 @@ import (
 	"net/url"
 	"strings"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/spf13/cobra"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const faucetAuthTokenKey = "token"
@@ -54,6 +57,9 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 
 			network, err := kubeClient.GetCardanoNetwork(cmd.Context(), namespace, args[0])
 			if err != nil {
+				return err
+			}
+			if err := requireFaucetReady(network, namespace, args[0]); err != nil {
 				return err
 			}
 			if faucetURL == "" {
@@ -109,6 +115,26 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
+}
+
+func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) error {
+	if network.Status.ObservedGeneration != network.Generation {
+		return fmt.Errorf(
+			"cardanonetwork %s/%s status is stale: observedGeneration=%d generation=%d",
+			namespace,
+			name,
+			network.Status.ObservedGeneration,
+			network.Generation,
+		)
+	}
+	for _, conditionType := range []string{"Ready", "FaucetReady"} {
+		condition := apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
+		if condition == nil || condition.Status != metav1.ConditionTrue {
+			return fmt.Errorf("cardanonetwork %s/%s is not faucet-ready", namespace, name)
+		}
+	}
+
+	return nil
 }
 
 type topUpHTTPPayload struct {

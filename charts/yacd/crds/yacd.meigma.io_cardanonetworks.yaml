@@ -42,8 +42,9 @@ spec:
               chainAPI:
                 description: |-
                   chainAPI configures network-facing APIs exposed next to the primary node.
-                  Ogmios, Kupo, and the faucet are enabled by default as the first chain
-                  API, chain index, and local top-up endpoints.
+                  Ogmios and Kupo are enabled by default as the first chain API and chain
+                  index endpoints. The faucet is opt-in because it exposes a spending
+                  endpoint.
                 properties:
                   faucet:
                     description: faucet configures the faucet sidecar and Service.
@@ -55,7 +56,7 @@ spec:
                           request does not select one explicitly.
                         type: string
                       enabled:
-                        default: true
+                        default: false
                         description: enabled controls whether the faucet sidecar is
                           deployed.
                         type: boolean

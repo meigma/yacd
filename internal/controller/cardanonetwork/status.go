@@ -52,12 +52,12 @@ const (
 	conditionMessageFaucetDisabled             = "Faucet API is disabled"
 )
 
-func (r *CardanoNetworkReconciler) patchStatusConditions(
+func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, true, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
@@ -88,7 +88,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	}
 	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, faucetReady, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -112,6 +112,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	kupoService *corev1.Service,
 	faucetService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
+	clearFaucet bool,
 	conditions ...metav1.Condition,
 ) error {
 	original := network.DeepCopy()
@@ -122,6 +123,8 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
 		setFaucetStatus(network, faucetAuthSecret)
+	} else if clearFaucet {
+		clearFaucetStatus(network)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -133,6 +136,13 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	}
 
 	return r.Status().Patch(ctx, network, client.MergeFrom(original))
+}
+
+func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
+	if network.Status.Endpoints != nil {
+		network.Status.Endpoints.Faucet = nil
+	}
+	network.Status.Faucet = nil
 }
 
 func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {

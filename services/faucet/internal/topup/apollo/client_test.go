@@ -172,7 +172,7 @@ func TestFilterExcludedUTxOs(t *testing.T) {
 	assert.Equal(t, second.GetKey(), filtered[0].GetKey())
 }
 
-func TestValidateRecipientOutput(t *testing.T) {
+func TestValidateTransactionOutputs(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -187,6 +187,14 @@ func TestValidateRecipientOutput(t *testing.T) {
 			amount: 1_000_000,
 		},
 		{
+			name: "allows source change",
+			tx: testTransactionWithOutputs(t,
+				testOutput(t, testDestinationAddress, 1_000_000),
+				testOutput(t, testSourceAddress, 2_000_000),
+			),
+			amount: 1_000_000,
+		},
+		{
 			name:    "mutated amount",
 			tx:      testTransaction(t, testDestinationAddress),
 			amount:  999_999,
@@ -198,12 +206,21 @@ func TestValidateRecipientOutput(t *testing.T) {
 			amount:  1_000_000,
 			wantErr: "created 0 destination outputs",
 		},
+		{
+			name: "unexpected non-source output",
+			tx: testTransactionWithOutputs(t,
+				testOutput(t, testDestinationAddress, 1_000_000),
+				testOutput(t, mustDeriveTestnetPaymentAddress(deriveTestVerificationKeyHex(strings.Repeat("05", 32))), 1_000_000),
+			),
+			amount:  1_000_000,
+			wantErr: "created an unexpected output",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateRecipientOutput(tt.tx, testDestinationAddress, tt.amount)
+			err := validateTransactionOutputs(tt.tx, testDestinationAddress, testSourceAddress, tt.amount)
 
 			if tt.wantErr == "" {
 				require.NoError(t, err)
@@ -291,21 +308,31 @@ func testFundingSource() sources.FundingSource {
 func testTransaction(t *testing.T, destinationAddress string) *apolloTx.Transaction {
 	t.Helper()
 
-	address, err := apolloAddress.DecodeAddress(destinationAddress)
-	require.NoError(t, err)
+	return testTransactionWithOutputs(t, testOutput(t, destinationAddress, 1_000_000))
+}
+
+func testTransactionWithOutputs(t *testing.T, outputs ...TransactionOutput.TransactionOutput) *apolloTx.Transaction {
+	t.Helper()
 
 	return &apolloTx.Transaction{
 		TransactionBody: TransactionBody.TransactionBody{
 			Inputs: []TransactionInput.TransactionInput{
 				testInput(testTransactionIDBytes, 0),
 			},
-			Outputs: []TransactionOutput.TransactionOutput{
-				TransactionOutput.SimpleTransactionOutput(address, Value.SimpleValue(1_000_000, nil)),
-			},
-			Fee: 1,
+			Outputs: outputs,
+			Fee:     1,
 		},
 		Valid: true,
 	}
+}
+
+func testOutput(t *testing.T, destinationAddress string, lovelace int64) TransactionOutput.TransactionOutput {
+	t.Helper()
+
+	address, err := apolloAddress.DecodeAddress(destinationAddress)
+	require.NoError(t, err)
+
+	return TransactionOutput.SimpleTransactionOutput(address, Value.SimpleValue(lovelace, nil))
 }
 
 func testUTxO(transactionID []byte, index int) apolloUTxO.UTxO {

@@ -11,6 +11,13 @@ spec:
       port: 3001
       storage:
         size: 2Gi
+    chainAPI:
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
     local:
       networkMagic: 42
       era: conway

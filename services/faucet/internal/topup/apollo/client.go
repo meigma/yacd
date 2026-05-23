@@ -169,7 +169,12 @@ func (c Client) submit(
 	if err != nil {
 		return "", nil, topup.WrapError(topup.CodeChainUnavailable, "complete top-up transaction", err)
 	}
-	if err := validateRecipientOutput(builder.GetTx(), request.DestinationAddress, request.Lovelace); err != nil {
+	if err := validateTransactionOutputs(
+		builder.GetTx(),
+		request.DestinationAddress,
+		request.Source.Address,
+		request.Lovelace,
+	); err != nil {
 		return "", nil, err
 	}
 	builder.Sign()
@@ -238,15 +243,28 @@ func filterExcludedUTxOs(utxos []apolloUTxO.UTxO, excludedInputKeys []string) []
 	return filtered
 }
 
-func validateRecipientOutput(tx *apolloTx.Transaction, destinationAddress string, lovelace int64) error {
+func validateTransactionOutputs(
+	tx *apolloTx.Transaction,
+	destinationAddress string,
+	sourceAddress string,
+	lovelace int64,
+) error {
 	if tx == nil {
 		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction returned nil transaction")
 	}
 
 	matches := 0
 	for _, output := range tx.TransactionBody.Outputs {
-		if output.GetAddress().String() != destinationAddress {
+		outputAddress := output.GetAddress().String()
+		if outputAddress == sourceAddress {
 			continue
+		}
+		if outputAddress != destinationAddress {
+			return topup.Errorf(
+				topup.CodeChainUnavailable,
+				"complete top-up transaction created an unexpected output to %s",
+				outputAddress,
+			)
 		}
 
 		matches++

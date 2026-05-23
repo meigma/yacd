@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -354,6 +355,140 @@ func (r *CardanoNetworkReconciler) deletePrimaryChainAPIService(
 	}
 
 	return operationResultDeleted, nil
+}
+
+func (r *CardanoNetworkReconciler) revokePrimaryFaucetExposure(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	return errors.Join(
+		r.deletePrimaryFaucetServiceIfOwned(ctx, network),
+		r.deletePrimaryFaucetAuthSecretIfOwned(ctx, network),
+		r.removePrimaryFaucetFromDeploymentIfOwned(ctx, network),
+	)
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetServiceIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetServiceName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired faucet Service owner reference: %w", err)
+	}
+
+	return r.deleteObjectIfOwned(ctx, desired, &corev1.Service{})
+}
+
+func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecretIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryFaucetAuthSecretName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired faucet auth Secret owner reference: %w", err)
+	}
+
+	return r.deleteObjectIfOwned(ctx, desired, &corev1.Secret{})
+}
+
+func (r *CardanoNetworkReconciler) deleteObjectIfOwned(
+	ctx context.Context,
+	desired client.Object,
+	current client.Object,
+) error {
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if validateControllerOwner(current, desired) != nil {
+		return nil
+	}
+
+	return r.Delete(ctx, current)
+}
+
+func (r *CardanoNetworkReconciler) removePrimaryFaucetFromDeploymentIfOwned(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) error {
+	desired := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network),
+			Namespace: network.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired primary Deployment owner reference: %w", err)
+	}
+
+	deployment := &appsv1.Deployment{}
+	err := r.Get(ctx, clientObjectKey(desired), deployment)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if validateControllerOwner(deployment, desired) != nil {
+		return nil
+	}
+
+	before := deployment.DeepCopy()
+	deployment.Spec.Template.Spec.InitContainers = removeContainersByName(
+		deployment.Spec.Template.Spec.InitContainers,
+		faucetSourceAddressInitContainerName,
+	)
+	deployment.Spec.Template.Spec.Containers = removeContainersByName(
+		deployment.Spec.Template.Spec.Containers,
+		faucetContainerName,
+	)
+	deployment.Spec.Template.Spec.Volumes = removeVolumesByName(
+		deployment.Spec.Template.Spec.Volumes,
+		faucetAuthVolumeName,
+	)
+	if equality.Semantic.DeepEqual(before, deployment) {
+		return nil
+	}
+
+	return r.Patch(ctx, deployment, client.MergeFrom(before))
+}
+
+func removeContainersByName(containers []corev1.Container, name string) []corev1.Container {
+	filtered := containers[:0]
+	for _, container := range containers {
+		if container.Name == name {
+			continue
+		}
+		filtered = append(filtered, container)
+	}
+
+	return filtered
+}
+
+func removeVolumesByName(volumes []corev1.Volume, name string) []corev1.Volume {
+	filtered := volumes[:0]
+	for _, volume := range volumes {
+		if volume.Name == name {
+			continue
+		}
+		filtered = append(filtered, volume)
+	}
+
+	return filtered
 }
 
 func generateFaucetAuthToken() (string, error) {

@@ -372,6 +372,60 @@ func TestHandlerTopUpReportsChainFailure(t *testing.T) {
 	}
 }
 
+func TestHandlerTopUpReloadsAuthTokenFile(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	writeSource(t, rootDir, testDefaultSource)
+	store := sources.NewStore(rootDir, testDefaultSource)
+	currentToken := testAuthToken
+	handler := NewHandlerWithAuthTokenFile(
+		store,
+		topup.NewService(store, &fakeSubmitter{
+			result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
+		}, topup.Config{MaxLovelace: 10_000_000}),
+		"/token",
+		func(string) (string, error) {
+			return currentToken, nil
+		},
+		slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	)
+
+	response := performTopUpRequest(
+		t,
+		handler,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	currentToken = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	response = performTopUpRequest(
+		t,
+		handler,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+	)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status with old token = %d, want %d", response.Code, http.StatusUnauthorized)
+	}
+
+	response = performRawRequestBody(
+		t,
+		handler,
+		http.MethodPost,
+		"/v1/topups",
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+		map[string]string{
+			"Authorization": "Bearer " + currentToken,
+			"Content-Type":  "application/json",
+		},
+	)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status with new token = %d, want %d", response.Code, http.StatusOK)
+	}
+}
+
 func TestHandlerRejectsUnsupportedMethod(t *testing.T) {
 	t.Parallel()
 

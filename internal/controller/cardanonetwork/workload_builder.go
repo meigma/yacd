@@ -392,7 +392,7 @@ func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSett
 
 func (b primaryWorkloadBuilder) resolveFaucetSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSettings, kupo kupoSettings) (faucetSettings, error) {
 	settings := faucetSettings{
-		enabled:           true,
+		enabled:           false,
 		image:             b.resolvedDefaultFaucetImage(),
 		port:              defaultFaucetPort,
 		defaultSource:     defaultFaucetSource,
@@ -403,9 +403,6 @@ func (b primaryWorkloadBuilder) resolveFaucetSettings(network *yacdv1alpha1.Card
 		authTokenFilePath: faucetAuthTokenPath,
 	}
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Faucet == nil {
-		if !ogmios.enabled || !kupo.enabled {
-			settings.enabled = false
-		}
 		return settings, nil
 	}
 
@@ -414,6 +411,7 @@ func (b primaryWorkloadBuilder) resolveFaucetSettings(network *yacdv1alpha1.Card
 		settings.enabled = false
 		return settings, nil
 	}
+	settings.enabled = true
 	if !ogmios.enabled {
 		return faucetSettings{}, unsupportedSpec("faucet requires ogmios to be enabled")
 	}

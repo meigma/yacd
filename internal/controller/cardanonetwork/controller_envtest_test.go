@@ -73,6 +73,7 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 
 	network := localCardanoNetwork("manager-owned")
 	network.Namespace = namespace.Name
+	enableFaucet(network)
 	require.NoError(t, apiClient.Create(ctx, network))
 
 	deploymentKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}

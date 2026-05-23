@@ -155,8 +155,10 @@ func NewRootCommand(options Options) *cobra.Command {
 						MaxLovelace: runtimeConfig.MaxTopUpLovelace,
 					},
 				),
-				AuthToken: authToken,
-				Logger:    commandContext.logger,
+				AuthToken:       authToken,
+				AuthTokenFile:   runtimeConfig.AuthTokenFile,
+				AuthTokenLoader: loadAuthTokenFile,
+				Logger:          commandContext.logger,
 			})
 		},
 	}

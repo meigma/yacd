@@ -86,8 +86,9 @@ type CardanoNetworkSpec struct {
 	Public *PublicNetworkSpec `json:"public,omitempty"`
 
 	// chainAPI configures network-facing APIs exposed next to the primary node.
-	// Ogmios, Kupo, and the faucet are enabled by default as the first chain
-	// API, chain index, and local top-up endpoints.
+	// Ogmios and Kupo are enabled by default as the first chain API and chain
+	// index endpoints. The faucet is opt-in because it exposes a spending
+	// endpoint.
 	// +optional
 	ChainAPI *ChainAPISpec `json:"chainAPI,omitempty"`
 }
@@ -352,7 +353,7 @@ type KupoSpec struct {
 // FaucetSpec configures the local development faucet API.
 type FaucetSpec struct {
 	// enabled controls whether the faucet sidecar is deployed.
-	// +kubebuilder:default=true
+	// +kubebuilder:default=false
 	// +required
 	Enabled bool `json:"enabled"`
 

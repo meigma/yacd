@@ -413,6 +413,7 @@ func TestPrimaryWorkloadBuilderRejectsNilInputAndScheme(t *testing.T) {
 // singleton primary node workload shape with the default Ogmios sidecar.
 func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	network := localCardanoNetwork("devnet")
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
@@ -733,8 +734,27 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assertRestrictedContainerSecurityContext(t, faucetContainer.SecurityContext)
 }
 
+func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {
+	network := localCardanoNetwork("faucet-default-disabled")
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
+	assert.NotNil(t, resources.OgmiosService)
+	assert.NotNil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
+}
+
 func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	network := localCardanoNetwork("devnet." + strings.Repeat("a", 80))
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
@@ -767,9 +787,13 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 }
 
 func TestPrimaryWorkloadBuilderAvoidsSanitizedNameCollisions(t *testing.T) {
-	dotted, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo.bar"))
+	dottedNetwork := localCardanoNetwork("foo.bar")
+	enableFaucet(dottedNetwork)
+	dotted, err := newTestPrimaryWorkloadBuilder(t).Build(dottedNetwork)
 	require.NoError(t, err)
-	dashed, err := newTestPrimaryWorkloadBuilder(t).Build(localCardanoNetwork("foo-bar"))
+	dashedNetwork := localCardanoNetwork("foo-bar")
+	enableFaucet(dashedNetwork)
+	dashed, err := newTestPrimaryWorkloadBuilder(t).Build(dashedNetwork)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, dotted.Deployment.Name, dashed.Deployment.Name)
@@ -828,6 +852,7 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 			},
 		},
 	}
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
@@ -859,6 +884,7 @@ func TestPrimaryWorkloadBuilderAppliesKupoPortAndResourceOverrides(t *testing.T)
 			},
 		},
 	}
+	enableFaucet(network)
 
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)

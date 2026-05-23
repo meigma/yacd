@@ -371,6 +371,61 @@ func TestTopUpReportsFaucetErrors(t *testing.T) {
 	}
 }
 
+func TestTopUpRejectsStaleOrNotReadyStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(*yacdv1alpha1.CardanoNetwork)
+		wantErr string
+	}{
+		{
+			name: "stale status",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Status.ObservedGeneration = 0
+			},
+			wantErr: "status is stale",
+		},
+		{
+			name: "faucet not ready",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				for i := range network.Status.Conditions {
+					if network.Status.Conditions[i].Type == "FaucetReady" {
+						network.Status.Conditions[i].Status = metav1.ConditionFalse
+					}
+				}
+			},
+			wantErr: "is not faucet-ready",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			network := readyNetwork("default-ns")
+			tt.mutate(network)
+			root := NewRootCommand(Options{
+				Viper: viper.New(),
+				KubeClientFactory: func(kube.Config) (kube.Client, error) {
+					return &fakeKubeClient{
+						defaultNamespace: "default-ns",
+						network:          network,
+					}, nil
+				},
+			})
+			root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000"})
+
+			err := root.ExecuteContext(context.Background())
+			if err == nil {
+				t.Fatal("ExecuteContext succeeded, want readiness error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %q, want %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
 func writeTempConfig(t *testing.T, contents string) string {
 	t.Helper()
 
@@ -421,8 +476,9 @@ func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 
 	return &yacdv1alpha1.CardanoNetwork{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
+			Name:       name,
+			Namespace:  namespace,
+			Generation: 1,
 		},
 		Status: yacdv1alpha1.CardanoNetworkStatus{
 			ObservedGeneration: 1,
@@ -456,6 +512,14 @@ func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 					Type:               "Ready",
 					Status:             metav1.ConditionTrue,
 					Reason:             "Ready",
+					Message:            "ready",
+					ObservedGeneration: 1,
+					LastTransitionTime: metav1.Now(),
+				},
+				{
+					Type:               "FaucetReady",
+					Status:             metav1.ConditionTrue,
+					Reason:             "FaucetReady",
 					Message:            "ready",
 					ObservedGeneration: 1,
 					LastTransitionTime: metav1.Now(),

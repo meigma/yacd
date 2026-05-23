@@ -84,7 +84,10 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 
 		log.Info("CardanoNetwork primary workload is not supported yet", "error", err)
-		if statusErr := r.patchStatusConditions(ctx, network,
+		if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
+			return ctrl.Result{}, revokeErr
+		}
+		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -253,7 +256,10 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		return ctrl.Result{}, err
 	}
 
-	if statusErr := r.patchStatusConditions(ctx, network,
+	if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
+		return ctrl.Result{}, revokeErr
+	}
+	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 		degradedCondition(metav1.ConditionTrue, unsupported.reason, unsupported.message),
 		progressingCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		condition(conditionTypeReady, metav1.ConditionFalse, unsupported.reason, unsupported.message),

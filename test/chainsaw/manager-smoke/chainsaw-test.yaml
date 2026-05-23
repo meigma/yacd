@@ -454,6 +454,26 @@ spec:
                         echo "faucet authed validation status: ${authed_status}"
                         cat /tmp/faucet-authed.json || true
                         [ "${authed_status}" = "400" ]
+
+                        source_status="$(curl -sS -o /tmp/faucet-source.json -w '%{http_code}' \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/sources/utxo1' || true)"
+                        echo "faucet source status: ${source_status}"
+                        cat /tmp/faucet-source.json || true
+                        [ "${source_status}" = "200" ]
+                        destination="$(sed -n 's/.*"address":"\([^"]*\)".*/\1/p' /tmp/faucet-source.json)"
+                        [ -n "${destination}" ]
+
+                        topup_status="$(curl -sS -o /tmp/faucet-topup.json -w '%{http_code}' \
+                          -H "Authorization: Bearer ${FAUCET_TOKEN}" \
+                          -H 'Content-Type: application/json' \
+                          -d "{\"address\":\"${destination}\",\"lovelace\":1000000,\"source\":\"utxo2\"}" \
+                          'http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080/v1/topups' || true)"
+                        echo "faucet top-up status: ${topup_status}"
+                        cat /tmp/faucet-topup.json || true
+                        [ "${topup_status}" = "200" ]
+                        grep -q '"txId"' /tmp/faucet-topup.json
+                        grep -q '"source":"utxo2"' /tmp/faucet-topup.json
+                        grep -q '"lovelace":1000000' /tmp/faucet-topup.json
                     securityContext:
                       readOnlyRootFilesystem: true
                       allowPrivilegeEscalation: false
@@ -547,7 +567,7 @@ spec:
             content: |
               set -euo pipefail
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442}}}}'
+              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442},"faucet":{"enabled":false,"port":8080,"defaultSource":"utxo1","minTopUpLovelace":1000000,"maxTopUpLovelace":10000000000}}}}'
               for _ in $(seq 1 60); do
                 if kubectl get service -n yacd-smoke phase4-smoke-kupo >/dev/null 2>&1; then
                   sleep 5
