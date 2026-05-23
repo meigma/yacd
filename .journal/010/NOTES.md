@@ -50,3 +50,19 @@ received tx `901a9422a6f88c0feec6169e0c5720c7ebedcc02c73158666c5c4f4ebeb367be`,
 and verified the recipient UTxO contains exactly `1000000` lovelace. The
 temporary `yacd-smoke` namespace was deleted; the session dev stack remains
 running.
+
+## 2026-05-23 13:29 — Faucet image correction
+The user clarified that ko usage was intentional and the incompatibility should
+be fixed at the thing that made ko images incompatible. Corrected the branch:
+restored `.dev/ko-build-faucet.sh` to the ko build path, kept the Tilt
+`faucet-image` local resource so the ko image is explicitly loaded into Kind,
+and removed the hardcoded `/yacd-faucet` command from the faucet container so
+the image entrypoint is the runtime contract. This keeps ko dev images and the
+release Dockerfile image both valid.
+Validation after correction: the live faucet pod used
+`ghcr.io/meigma/yacd/faucet:tilt` with an empty container `command`, reached
+`FaucetReady=True`, and a fresh CLI top-up succeeded with tx
+`92484431419fc0bffadb96133a7b6d76c1e01067682dfc69a18165a362768467`; querying
+the recipient address showed exactly `1000000` lovelace. `moon run root:check`,
+`moon run root:test`, and `git diff --check` passed. The implementation commit
+was amended to `98145f8` (`fix(dev): preserve ko faucet entrypoint`).
