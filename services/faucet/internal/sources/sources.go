@@ -1,29 +1,43 @@
 package sources
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+
+	"github.com/fxamacker/cbor/v2"
 )
 
 const (
 	verificationKeyFile     = "utxo.vkey"
 	signingKeyFile          = "utxo.skey"
+	addressFile             = "utxo.addr"
 	verificationKeyType     = "GenesisUTxOVerificationKey_ed25519"
 	signingKeyType          = "GenesisUTxOSigningKey_ed25519"
 	sourceDirectoryPathName = "."
+	sourceNamePrefix        = "utxo"
+	addressHRP              = "addr_test"
+	addressPrefix           = addressHRP + "1"
+	bech32Charset           = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+	maxSourceEntries        = 64
+	maxKeyFileSize          = 4 * 1024
+	maxAddressFileSize      = 512
+	keyCBORBytesLength      = 32
 
 	// CodeInvalidSourceName identifies a source name validation error.
 	CodeInvalidSourceName = "invalid_source_name"
 	// CodeSourceNotFound identifies a missing or unusable source.
 	CodeSourceNotFound = "source_not_found"
-	// CodeSourceIncomplete identifies a source missing required key files.
+	// CodeSourceIncomplete identifies a source missing required source files.
 	CodeSourceIncomplete = "source_incomplete"
-	// CodeSourceInvalidKey identifies malformed source key metadata.
+	// CodeSourceInvalidKey identifies malformed source file metadata.
 	CodeSourceInvalidKey = "source_invalid_key"
 	// CodeSourceReadFailed identifies a filesystem read failure.
 	CodeSourceReadFailed = "source_read_failed"
@@ -45,6 +59,7 @@ type List struct {
 type Source struct {
 	Name                       string `json:"name"`
 	Default                    bool   `json:"default"`
+	Address                    string `json:"address"`
 	VerificationKeyType        string `json:"verificationKeyType"`
 	SigningKeyType             string `json:"signingKeyType"`
 	VerificationKeyDescription string `json:"verificationKeyDescription,omitempty"`
@@ -60,6 +75,7 @@ type Error struct {
 type keyMetadata struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
+	CBORHex     string `json:"cborHex"`
 }
 
 // NewStore returns a source store rooted at rootDir.
@@ -109,6 +125,21 @@ func ValidateName(name string) error {
 	if filepath.Base(name) != name {
 		return sourceError(CodeInvalidSourceName, "source name must be a single path segment")
 	}
+	if strings.ContainsFunc(name, unicode.IsControl) {
+		return sourceError(CodeInvalidSourceName, "source name must not contain control characters")
+	}
+	if !strings.HasPrefix(name, sourceNamePrefix) || len(name) == len(sourceNamePrefix) {
+		return sourceError(CodeInvalidSourceName, "source name must match utxo[1-9][0-9]*")
+	}
+	digits := name[len(sourceNamePrefix):]
+	if digits[0] == '0' {
+		return sourceError(CodeInvalidSourceName, "source name must match utxo[1-9][0-9]*")
+	}
+	for _, char := range digits {
+		if char < '0' || char > '9' {
+			return sourceError(CodeInvalidSourceName, "source name must match utxo[1-9][0-9]*")
+		}
+	}
 
 	return nil
 }
@@ -127,7 +158,7 @@ func (s Store) List() (List, error) {
 		_ = root.Close()
 	}()
 
-	entries, err := readDir(root, sourceDirectoryPathName)
+	entries, err := readDir(root, sourceDirectoryPathName, maxSourceEntries)
 	if err != nil {
 		return List{}, sourceError(CodeSourceReadFailed, "read source directory %q: %v", s.rootDir, err)
 	}
@@ -198,7 +229,7 @@ func (s Store) Ready() error {
 		_ = root.Close()
 	}()
 
-	if _, err := readDir(root, sourceDirectoryPathName); err != nil {
+	if _, err := readDir(root, sourceDirectoryPathName, maxSourceEntries); err != nil {
 		return sourceError(CodeSourceReadFailed, "read source directory %q: %v", s.rootDir, err)
 	}
 	if _, err := s.readSource(root, s.defaultName); err != nil {
@@ -217,7 +248,7 @@ func (s Store) openRoot() (*os.Root, error) {
 	return root, nil
 }
 
-func readDir(root *os.Root, name string) ([]os.DirEntry, error) {
+func readDir(root *os.Root, name string, maxEntries int) ([]os.DirEntry, error) {
 	dir, err := root.Open(name)
 	if err != nil {
 		return nil, err
@@ -226,7 +257,15 @@ func readDir(root *os.Root, name string) ([]os.DirEntry, error) {
 		_ = dir.Close()
 	}()
 
-	return dir.ReadDir(-1)
+	entries, err := dir.ReadDir(maxEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if len(entries) > maxEntries {
+		return nil, fmt.Errorf("source directory has more than %d entries", maxEntries)
+	}
+
+	return entries, nil
 }
 
 func (s Store) readSource(root *os.Root, name string) (Source, error) {
@@ -242,6 +281,10 @@ func (s Store) readSource(root *os.Root, name string) (Source, error) {
 		return Source{}, sourceError(CodeSourceNotFound, "faucet source %q was not found", name)
 	}
 
+	address, err := readAddress(root, filepath.Join(name, addressFile), name)
+	if err != nil {
+		return Source{}, err
+	}
 	verificationKey, err := readKeyMetadata(
 		root,
 		filepath.Join(name, verificationKeyFile),
@@ -266,6 +309,7 @@ func (s Store) readSource(root *os.Root, name string) (Source, error) {
 	return Source{
 		Name:                       name,
 		Default:                    name == s.defaultName,
+		Address:                    address,
 		VerificationKeyType:        verificationKey.Type,
 		SigningKeyType:             signingKey.Type,
 		VerificationKeyDescription: verificationKey.Description,
@@ -280,51 +324,9 @@ func readKeyMetadata(
 	keyKind string,
 	expectedType string,
 ) (keyMetadata, error) {
-	info, err := root.Lstat(path)
+	contents, err := readRegularFile(root, path, maxKeyFileSize, sourceName, keyKind+" key")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return keyMetadata{}, sourceError(
-				CodeSourceIncomplete,
-				"faucet source %q is missing %s key",
-				sourceName,
-				keyKind,
-			)
-		}
-
-		return keyMetadata{}, sourceError(
-			CodeSourceReadFailed,
-			"read %s key for source %q: %v",
-			keyKind,
-			sourceName,
-			err,
-		)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return keyMetadata{}, sourceError(
-			CodeSourceInvalidKey,
-			"%s key for source %q must not be a symlink",
-			keyKind,
-			sourceName,
-		)
-	}
-	if !info.Mode().IsRegular() {
-		return keyMetadata{}, sourceError(
-			CodeSourceInvalidKey,
-			"%s key for source %q must be a regular file",
-			keyKind,
-			sourceName,
-		)
-	}
-
-	contents, err := root.ReadFile(path)
-	if err != nil {
-		return keyMetadata{}, sourceError(
-			CodeSourceReadFailed,
-			"read %s key for source %q: %v",
-			keyKind,
-			sourceName,
-			err,
-		)
+		return keyMetadata{}, err
 	}
 
 	var metadata keyMetadata
@@ -355,8 +357,216 @@ func readKeyMetadata(
 			expectedType,
 		)
 	}
+	if err := validateKeyCBOR(metadata.CBORHex, sourceName, keyKind); err != nil {
+		return keyMetadata{}, err
+	}
 
 	return metadata, nil
+}
+
+func readAddress(root *os.Root, path string, sourceName string) (string, error) {
+	contents, err := readRegularFile(root, path, maxAddressFileSize, sourceName, "address")
+	if err != nil {
+		return "", err
+	}
+
+	address := strings.TrimSpace(string(contents))
+	if address == "" {
+		return "", sourceError(CodeSourceInvalidKey, "address for source %q is empty", sourceName)
+	}
+	if strings.ContainsFunc(address, func(char rune) bool {
+		return unicode.IsControl(char) || unicode.IsSpace(char)
+	}) {
+		return "", sourceError(CodeSourceInvalidKey, "address for source %q must not contain whitespace or control characters", sourceName)
+	}
+	if !strings.HasPrefix(address, addressPrefix) {
+		return "", sourceError(CodeSourceInvalidKey, "address for source %q must start with %q", sourceName, addressPrefix)
+	}
+	if !validBech32(address) {
+		return "", sourceError(CodeSourceInvalidKey, "address for source %q is not valid bech32", sourceName)
+	}
+
+	return address, nil
+}
+
+func readRegularFile(
+	root *os.Root,
+	path string,
+	maxSize int64,
+	sourceName string,
+	fieldName string,
+) ([]byte, error) {
+	info, err := root.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, sourceError(
+				CodeSourceIncomplete,
+				"faucet source %q is missing %s",
+				sourceName,
+				fieldName,
+			)
+		}
+
+		return nil, sourceError(
+			CodeSourceReadFailed,
+			"read %s for source %q: %v",
+			fieldName,
+			sourceName,
+			err,
+		)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, sourceError(
+			CodeSourceInvalidKey,
+			"%s for source %q must not be a symlink",
+			fieldName,
+			sourceName,
+		)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, sourceError(
+			CodeSourceInvalidKey,
+			"%s for source %q must be a regular file",
+			fieldName,
+			sourceName,
+		)
+	}
+	if info.Size() > maxSize {
+		return nil, sourceError(
+			CodeSourceInvalidKey,
+			"%s for source %q is larger than %d bytes",
+			fieldName,
+			sourceName,
+			maxSize,
+		)
+	}
+
+	file, err := root.Open(path)
+	if err != nil {
+		return nil, sourceError(
+			CodeSourceReadFailed,
+			"read %s for source %q: %v",
+			fieldName,
+			sourceName,
+			err,
+		)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	contents, err := io.ReadAll(io.LimitReader(file, maxSize+1))
+	if err != nil {
+		return nil, sourceError(
+			CodeSourceReadFailed,
+			"read %s for source %q: %v",
+			fieldName,
+			sourceName,
+			err,
+		)
+	}
+	if int64(len(contents)) > maxSize {
+		return nil, sourceError(
+			CodeSourceInvalidKey,
+			"%s for source %q is larger than %d bytes",
+			fieldName,
+			sourceName,
+			maxSize,
+		)
+	}
+
+	return contents, nil
+}
+
+func validateKeyCBOR(cborHex string, sourceName string, keyKind string) error {
+	cborHex = strings.TrimSpace(cborHex)
+	if cborHex == "" {
+		return sourceError(CodeSourceInvalidKey, "%s key for source %q is missing cborHex", keyKind, sourceName)
+	}
+
+	rawCBOR, err := hex.DecodeString(cborHex)
+	if err != nil {
+		return sourceError(CodeSourceInvalidKey, "decode %s key cborHex for source %q: %v", keyKind, sourceName, err)
+	}
+
+	var keyBytes []byte
+	if err := cbor.Unmarshal(rawCBOR, &keyBytes); err != nil {
+		return sourceError(CodeSourceInvalidKey, "parse %s key cborHex for source %q: %v", keyKind, sourceName, err)
+	}
+	if len(keyBytes) != keyCBORBytesLength {
+		return sourceError(
+			CodeSourceInvalidKey,
+			"%s key cborHex for source %q decodes to %d bytes, want %d",
+			keyKind,
+			sourceName,
+			len(keyBytes),
+			keyCBORBytesLength,
+		)
+	}
+
+	return nil
+}
+
+func validBech32(value string) bool {
+	if value != strings.ToLower(value) {
+		return false
+	}
+
+	separatorIndex := strings.LastIndexByte(value, '1')
+	if separatorIndex != len(addressHRP) {
+		return false
+	}
+	if value[:separatorIndex] != addressHRP {
+		return false
+	}
+
+	data := value[separatorIndex+1:]
+	if len(data) < 6 {
+		return false
+	}
+
+	values := make([]byte, 0, len(addressHRP)*2+1+len(data))
+	for _, char := range addressHRP {
+		if char < 33 || char > 126 {
+			return false
+		}
+		values = append(values, byte(char>>5))
+	}
+	values = append(values, 0)
+	for _, char := range addressHRP {
+		values = append(values, byte(char&31))
+	}
+	for _, char := range data {
+		index := strings.IndexRune(bech32Charset, char)
+		if index < 0 || index > 31 {
+			return false
+		}
+		values = append(values, byte(index))
+	}
+
+	return bech32Polymod(values) == 1
+}
+
+func bech32Polymod(values []byte) uint32 {
+	generators := [...]uint32{
+		0x3b6a57b2,
+		0x26508e6d,
+		0x1ea119fa,
+		0x3d4233dd,
+		0x2a1462b3,
+	}
+	checksum := uint32(1)
+	for _, value := range values {
+		top := checksum >> 25
+		checksum = (checksum&0x1ffffff)<<5 ^ uint32(value)
+		for i, generator := range generators {
+			if (top>>uint(i))&1 != 0 {
+				checksum ^= generator
+			}
+		}
+	}
+
+	return checksum
 }
 
 func sourceError(code string, format string, args ...any) *Error {

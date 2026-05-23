@@ -12,6 +12,11 @@ import (
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 )
 
+const (
+	testAddress    = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
+	testKeyCBORHex = "58200101010101010101010101010101010101010101010101010101010101010101"
+)
+
 func TestHandlerHealth(t *testing.T) {
 	t.Parallel()
 
@@ -159,15 +164,16 @@ func writeSource(t *testing.T, rootDir string, name string) {
 
 	sourceDir := filepath.Join(rootDir, name)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
+	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{
   "type": "GenesisUTxOVerificationKey_ed25519",
   "description": "Genesis Initial UTxO Verification Key",
-  "cborHex": "public-cbor"
+  "cborHex": "`+testKeyCBORHex+`"
 }`)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{
   "type": "GenesisUTxOSigningKey_ed25519",
   "description": "Genesis Initial UTxO Signing Key",
-  "cborHex": "secret-cbor"
+  "cborHex": "`+testKeyCBORHex+`"
 }`)
 }
 
