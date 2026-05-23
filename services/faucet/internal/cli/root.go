@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ type RuntimeConfig struct {
 	ListenAddress       string
 	UTXOKeysDir         string
 	DefaultSource       string
+	AllowRemoteListen   bool
 	OgmiosURL           string
 	KupoURL             string
 	MaxTopUpLovelace    int64
@@ -158,8 +160,9 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.Flags().String(
 		"listen-address",
 		defaultListenAddress,
-		"Address for the HTTP server to listen on; set 0.0.0.0:8080 to expose beyond loopback",
+		"Address for the HTTP server to listen on",
 	)
+	root.Flags().Bool("allow-remote-listen", false, "Allow non-loopback listen addresses for intentional network exposure")
 	root.Flags().String("utxo-keys-dir", defaultUTXOKeysDir, "Path to the cardano-testnet utxo-keys directory")
 	root.Flags().String("default-source", defaultSource, "Default faucet source name")
 	root.Flags().String("ogmios-url", defaultOgmiosURL, "Ogmios websocket URL for transaction submission")
@@ -188,6 +191,7 @@ func (b BuildInfo) withDefaults() BuildInfo {
 
 func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 	vp.SetDefault("listen-address", defaultListenAddress)
+	vp.SetDefault("allow-remote-listen", false)
 	vp.SetDefault("utxo-keys-dir", defaultUTXOKeysDir)
 	vp.SetDefault("default-source", defaultSource)
 	vp.SetDefault("ogmios-url", defaultOgmiosURL)
@@ -207,6 +211,7 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 		name string
 	}{
 		{key: "listen-address", name: "listen-address"},
+		{key: "allow-remote-listen", name: "allow-remote-listen"},
 		{key: "utxo-keys-dir", name: "utxo-keys-dir"},
 		{key: "default-source", name: "default-source"},
 		{key: "ogmios-url", name: "ogmios-url"},
@@ -239,6 +244,7 @@ func bindFlag(vp *viper.Viper, key string, flag *pflag.Flag) error {
 func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	config := RuntimeConfig{
 		ListenAddress:       strings.TrimSpace(vp.GetString("listen-address")),
+		AllowRemoteListen:   vp.GetBool("allow-remote-listen"),
 		UTXOKeysDir:         strings.TrimSpace(vp.GetString("utxo-keys-dir")),
 		DefaultSource:       strings.TrimSpace(vp.GetString("default-source")),
 		OgmiosURL:           strings.TrimSpace(vp.GetString("ogmios-url")),
@@ -251,6 +257,9 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	}
 	if config.ListenAddress == "" {
 		return RuntimeConfig{}, fmt.Errorf("--listen-address is required")
+	}
+	if err := validateListenAddress(config.ListenAddress, config.AllowRemoteListen); err != nil {
+		return RuntimeConfig{}, err
 	}
 	if config.UTXOKeysDir == "" {
 		return RuntimeConfig{}, fmt.Errorf("--utxo-keys-dir is required")
@@ -292,6 +301,25 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	}
 
 	return config, nil
+}
+
+func validateListenAddress(address string, allowRemote bool) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("invalid --listen-address: %w", err)
+	}
+	if allowRemote {
+		return nil
+	}
+	if host == "localhost" {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+
+	return fmt.Errorf("--listen-address %q is not loopback; set --allow-remote-listen for intentional network exposure", address)
 }
 
 func newLogger(config RuntimeConfig, out io.Writer) *slog.Logger {

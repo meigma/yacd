@@ -165,12 +165,6 @@ func validateRequest(request topup.ChainRequest) error {
 	if strings.TrimSpace(request.Source.Name) == "" {
 		return topup.Errorf(topup.CodeInvalidRequest, "submit top-up with Apollo: source name is required")
 	}
-	if strings.TrimSpace(request.Source.Address) == "" {
-		return topup.Errorf(topup.CodeInvalidRequest, "submit top-up with Apollo: source address is required")
-	}
-	if err := sources.ValidateTestnetAddress(request.Source.Address); err != nil {
-		return topup.WrapError(topup.CodeInvalidRequest, "submit top-up with Apollo: invalid source address", err)
-	}
 	if strings.TrimSpace(request.DestinationAddress) == "" {
 		return topup.Errorf(topup.CodeInvalidRequest, "submit top-up with Apollo: destination address is required")
 	}
@@ -180,11 +174,8 @@ func validateRequest(request topup.ChainRequest) error {
 	if request.Lovelace <= 0 {
 		return topup.Errorf(topup.CodeInvalidRequest, "submit top-up with Apollo: lovelace must be positive")
 	}
-	if _, err := validateRawKeyHex(request.Source.Name, "verification", request.Source.VerificationKeyHex); err != nil {
-		return err
-	}
-	if _, err := validateRawKeyHex(request.Source.Name, "signing", request.Source.SigningKeyHex); err != nil {
-		return err
+	if err := sources.ValidateFundingSource(request.Source); err != nil {
+		return topup.WrapError(topup.CodeInvalidRequest, "submit top-up with Apollo: invalid source", err)
 	}
 
 	return nil

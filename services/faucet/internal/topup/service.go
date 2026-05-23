@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 )
@@ -42,6 +43,12 @@ type Service struct {
 	sourceReader SourceReader
 	submitter    TransactionSubmitter
 	maxLovelace  int64
+	locks        *sourceLocks
+}
+
+type sourceLocks struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
 }
 
 // Request describes one exact top-up submission request.
@@ -100,6 +107,7 @@ func NewService(sourceReader SourceReader, submitter TransactionSubmitter, maxLo
 		sourceReader: sourceReader,
 		submitter:    submitter,
 		maxLovelace:  maxLovelace,
+		locks:        newSourceLocks(),
 	}
 }
 
@@ -130,6 +138,9 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, mapSourceError(sourceName, err)
 	}
+
+	unlock := s.lockSource(source.Name)
+	defer unlock()
 
 	chainResult, err := s.submitter.SubmitTopUp(ctx, ChainRequest{
 		Source:             source,
@@ -191,6 +202,36 @@ func (s Service) limit() int64 {
 	}
 
 	return s.maxLovelace
+}
+
+func (s Service) lockSource(sourceName string) func() {
+	if s.locks == nil {
+		lock := &sync.Mutex{}
+		lock.Lock()
+		return lock.Unlock
+	}
+
+	return s.locks.lock(sourceName)
+}
+
+func newSourceLocks() *sourceLocks {
+	return &sourceLocks{
+		locks: make(map[string]*sync.Mutex),
+	}
+}
+
+func (s *sourceLocks) lock(sourceName string) func() {
+	s.mu.Lock()
+	lock, ok := s.locks[sourceName]
+	if !ok {
+		lock = &sync.Mutex{}
+		s.locks[sourceName] = lock
+	}
+	s.mu.Unlock()
+
+	lock.Lock()
+
+	return lock.Unlock
 }
 
 func (e *Error) Error() string {

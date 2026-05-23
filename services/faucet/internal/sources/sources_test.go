@@ -1,6 +1,8 @@
 package sources
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,11 +13,17 @@ import (
 
 const (
 	testDefaultSource     = "utxo1"
-	testAddress           = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
-	testKeyCBORHex        = "58200101010101010101010101010101010101010101010101010101010101010101"
-	testRawKeyHex         = "0101010101010101010101010101010101010101010101010101010101010101"
+	otherTestAddress      = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
 	testSecretMaterial    = "secret-cbor-material"
 	oversizedFileContents = 5 * 1024
+)
+
+var (
+	testSigningRawKeyHex       = strings.Repeat("01", keyCBORBytesLength)
+	testVerificationRawKeyHex  = deriveTestVerificationKeyHex(testSigningRawKeyHex)
+	testVerificationKeyCBORHex = cborHexForRawKey(testVerificationRawKeyHex)
+	testSigningKeyCBORHex      = cborHexForRawKey(testSigningRawKeyHex)
+	testAddress                = mustDeriveTestnetPaymentAddress(testVerificationRawKeyHex)
 )
 
 func TestStoreListDiscoversValidSources(t *testing.T) {
@@ -95,7 +103,8 @@ func TestSourceJSONDoesNotExposeCBORHex(t *testing.T) {
 	requireNoError(t, err)
 	if strings.Contains(string(encoded), "cborHex") ||
 		strings.Contains(string(encoded), testSecretMaterial) ||
-		strings.Contains(string(encoded), testRawKeyHex) {
+		strings.Contains(string(encoded), testVerificationRawKeyHex) ||
+		strings.Contains(string(encoded), testSigningRawKeyHex) {
 		t.Fatalf("source JSON exposed key material: %s", encoded)
 	}
 	for _, secretPathDetail := range []string{"verificationKeyPath", "signingKeyPath", rootDir, "utxo.skey"} {
@@ -140,10 +149,10 @@ func TestStoreReadFundingSourceReturnsRawKeyHex(t *testing.T) {
 	if got, want := source.Address, testAddress; got != want {
 		t.Fatalf("Address = %q, want %q", got, want)
 	}
-	if got, want := source.VerificationKeyHex, testRawKeyHex; got != want {
+	if got, want := source.VerificationKeyHex, testVerificationRawKeyHex; got != want {
 		t.Fatalf("VerificationKeyHex = %q, want %q", got, want)
 	}
-	if got, want := source.SigningKeyHex, testRawKeyHex; got != want {
+	if got, want := source.SigningKeyHex, testSigningRawKeyHex; got != want {
 		t.Fatalf("SigningKeyHex = %q, want %q", got, want)
 	}
 }
@@ -264,6 +273,49 @@ func TestStoreRequiresUsableAddress(t *testing.T) {
 	}
 }
 
+func TestStoreRejectsAddressThatDoesNotMatchKeys(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	sourceDir := filepath.Join(rootDir, testDefaultSource)
+	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
+	writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), otherTestAddress)
+	writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), verificationKeyType)
+	writeKey(t, filepath.Join(sourceDir, "utxo.skey"), signingKeyType)
+
+	err := NewStore(rootDir, testDefaultSource).Ready()
+	if err == nil {
+		t.Fatal("Ready succeeded, want mismatched address error")
+	}
+	if !IsCode(err, CodeSourceInvalidKey) {
+		t.Fatalf("error = %v, want %s", err, CodeSourceInvalidKey)
+	}
+}
+
+func TestStoreRejectsSigningKeyThatDoesNotMatchVerificationKey(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	sourceDir := filepath.Join(rootDir, testDefaultSource)
+	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
+	writeAddress(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
+	writeKey(t, filepath.Join(sourceDir, "utxo.vkey"), verificationKeyType)
+	writeKeyWithCBORHex(
+		t,
+		filepath.Join(sourceDir, "utxo.skey"),
+		signingKeyType,
+		cborHexForRawKey(strings.Repeat("02", keyCBORBytesLength)),
+	)
+
+	err := NewStore(rootDir, testDefaultSource).Ready()
+	if err == nil {
+		t.Fatal("Ready succeeded, want mismatched keypair error")
+	}
+	if !IsCode(err, CodeSourceInvalidKey) {
+		t.Fatalf("error = %v, want %s", err, CodeSourceInvalidKey)
+	}
+}
+
 func TestStoreRejectsInvalidKeyCBORHex(t *testing.T) {
 	t.Parallel()
 
@@ -364,7 +416,11 @@ func writeAddress(t *testing.T, path string, address string) {
 func writeKey(t *testing.T, path string, keyType string) {
 	t.Helper()
 
-	writeKeyWithCBORHex(t, path, keyType, testKeyCBORHex)
+	cborHex := testVerificationKeyCBORHex
+	if keyType == signingKeyType {
+		cborHex = testSigningKeyCBORHex
+	}
+	writeKeyWithCBORHex(t, path, keyType, cborHex)
 }
 
 func writeKeyWithCBORHex(t *testing.T, path string, keyType string, cborHex string) {
@@ -412,4 +468,34 @@ func requireNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func deriveTestVerificationKeyHex(signingKeyHex string) string {
+	signingKey := mustDecodeHex(signingKeyHex)
+	privateKey := ed25519.NewKeyFromSeed(signingKey)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+
+	return hex.EncodeToString(publicKey)
+}
+
+func mustDeriveTestnetPaymentAddress(verificationKeyHex string) string {
+	address, err := DeriveTestnetPaymentAddress(verificationKeyHex)
+	if err != nil {
+		panic(err)
+	}
+
+	return address
+}
+
+func cborHexForRawKey(rawHex string) string {
+	return "5820" + rawHex
+}
+
+func mustDecodeHex(value string) []byte {
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		panic(err)
+	}
+
+	return decoded
 }

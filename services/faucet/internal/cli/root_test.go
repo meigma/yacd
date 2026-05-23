@@ -126,6 +126,30 @@ func TestRootCommandReadsEnvironment(t *testing.T) {
 	assertTopUpCode(t, err, topup.CodeInvalidRequest)
 }
 
+func TestRootCommandAllowsRemoteListenWhenExplicit(t *testing.T) {
+	t.Parallel()
+
+	var captured *server.Config
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		ServerRunner: func(config *server.Config) error {
+			captured = config
+			return nil
+		},
+	})
+	root.SetArgs([]string{"--listen-address", "0.0.0.0:8080", "--allow-remote-listen"})
+
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("ExecuteContext returned an error: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("server did not run")
+	}
+	if got, want := captured.ListenAddress, "0.0.0.0:8080"; got != want {
+		t.Fatalf("listen address = %q, want %q", got, want)
+	}
+}
+
 func TestRootCommandRejectsInvalidTopUpConfig(t *testing.T) {
 	t.Parallel()
 
@@ -134,6 +158,11 @@ func TestRootCommandRejectsInvalidTopUpConfig(t *testing.T) {
 		args []string
 		want string
 	}{
+		{
+			name: "remote listen without opt-in",
+			args: []string{"--listen-address", "0.0.0.0:8080"},
+			want: "not loopback",
+		},
 		{
 			name: "missing Ogmios URL",
 			args: []string{"--ogmios-url", ""},

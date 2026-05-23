@@ -1,7 +1,9 @@
 package sources
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +15,9 @@ import (
 	"strings"
 	"unicode"
 
+	apolloBech32 "github.com/Salvionied/apollo/crypto/bech32"
+	apolloAddress "github.com/Salvionied/apollo/serialization/Address"
+	apolloKey "github.com/Salvionied/apollo/serialization/Key"
 	"github.com/fxamacker/cbor/v2"
 )
 
@@ -26,11 +31,13 @@ const (
 	sourceNamePrefix        = "utxo"
 	addressHRP              = "addr_test"
 	addressPrefix           = addressHRP + "1"
-	bech32Charset           = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
 	maxSourceEntries        = 64
 	maxKeyFileSize          = 4 * 1024
 	maxAddressFileSize      = 512
 	keyCBORBytesLength      = 32
+	keyHashBytesLength      = 28
+	baseAddressBytesLength  = 1 + keyHashBytesLength + keyHashBytesLength
+	shortAddressBytesLength = 1 + keyHashBytesLength
 
 	// CodeInvalidSourceName identifies a source name validation error.
 	CodeInvalidSourceName = "invalid_source_name"
@@ -91,6 +98,7 @@ type keyMetadata struct {
 	Description string `json:"description"`
 	CBORHex     string `json:"cborHex"`
 	rawHex      string
+	rawBytes    []byte
 }
 
 // NewStore returns a source store rooted at rootDir.
@@ -121,6 +129,39 @@ func IsCode(err error, code string) bool {
 	ok := errors.As(err, &sourceErr)
 
 	return ok && sourceErr.Code == code
+}
+
+// DeriveTestnetPaymentAddress returns the enterprise testnet address for a raw
+// 32-byte payment verification key encoded as lowercase or uppercase hex.
+func DeriveTestnetPaymentAddress(verificationKeyHex string) (string, error) {
+	verificationKeyBytes, err := decodeRawKeyHex(verificationKeyHex, "verification key")
+	if err != nil {
+		return "", err
+	}
+
+	return deriveTestnetPaymentAddress(verificationKeyBytes)
+}
+
+// ValidateFundingSource validates private source material before transaction
+// submission.
+func ValidateFundingSource(source FundingSource) error {
+	if err := ValidateName(source.Name); err != nil {
+		return err
+	}
+	if err := ValidateTestnetAddress(source.Address); err != nil {
+		return sourceError(CodeSourceInvalidKey, "address for source %q is invalid: %v", source.Name, err)
+	}
+
+	verificationKeyBytes, err := decodeRawKeyHex(source.VerificationKeyHex, "verification key")
+	if err != nil {
+		return sourceError(CodeSourceInvalidKey, "verification key for source %q is invalid: %v", source.Name, err)
+	}
+	signingKeyBytes, err := decodeRawKeyHex(source.SigningKeyHex, "signing key")
+	if err != nil {
+		return sourceError(CodeSourceInvalidKey, "signing key for source %q is invalid: %v", source.Name, err)
+	}
+
+	return validateFundingSource(source.Name, source.Address, verificationKeyBytes, signingKeyBytes)
 }
 
 // ValidateName validates a request/config source name.
@@ -383,6 +424,9 @@ func readSourceFiles(root *os.Root, name string) (string, keyMetadata, keyMetada
 	if err != nil {
 		return "", keyMetadata{}, keyMetadata{}, err
 	}
+	if err := validateFundingSource(name, address, verificationKey.rawBytes, signingKey.rawBytes); err != nil {
+		return "", keyMetadata{}, keyMetadata{}, err
+	}
 
 	return address, verificationKey, signingKey, nil
 }
@@ -432,6 +476,17 @@ func readKeyMetadata(
 		return keyMetadata{}, err
 	}
 	metadata.rawHex = rawHex
+	rawBytes, err := hex.DecodeString(rawHex)
+	if err != nil {
+		return keyMetadata{}, sourceError(
+			CodeSourceInvalidKey,
+			"decode %s key raw hex for source %q: %v",
+			keyKind,
+			sourceName,
+			err,
+		)
+	}
+	metadata.rawBytes = rawBytes
 
 	return metadata, nil
 }
@@ -466,8 +521,38 @@ func ValidateTestnetAddress(address string) error {
 	if !strings.HasPrefix(address, addressPrefix) {
 		return fmt.Errorf("address must start with %q", addressPrefix)
 	}
-	if !validBech32(address) {
-		return errors.New("address is not valid bech32")
+	hrp, data, err := apolloBech32.Decode(address)
+	if err != nil {
+		return fmt.Errorf("address is not valid bech32: %w", err)
+	}
+	if hrp != addressHRP {
+		return fmt.Errorf("address human-readable prefix must be %q", addressHRP)
+	}
+	payload, err := apolloBech32.ConvertBits(data, 5, 8, false)
+	if err != nil {
+		return fmt.Errorf("address payload is invalid: %w", err)
+	}
+	if len(payload) == 0 {
+		return errors.New("address payload is empty")
+	}
+
+	header := payload[0]
+	network := header & 0x0f
+	addressType := (header & 0xf0) >> 4
+	if network != apolloAddress.TESTNET {
+		return errors.New("address network must be testnet")
+	}
+	switch addressType {
+	case apolloAddress.KEY_KEY, apolloAddress.SCRIPT_KEY, apolloAddress.KEY_SCRIPT, apolloAddress.SCRIPT_SCRIPT:
+		if len(payload) != baseAddressBytesLength {
+			return fmt.Errorf("address payload length is %d bytes, want %d", len(payload), baseAddressBytesLength)
+		}
+	case apolloAddress.KEY_NONE, apolloAddress.SCRIPT_NONE:
+		if len(payload) != shortAddressBytesLength {
+			return fmt.Errorf("address payload length is %d bytes, want %d", len(payload), shortAddressBytesLength)
+		}
+	default:
+		return errors.New("address must be a payment address")
 	}
 
 	return nil
@@ -591,71 +676,84 @@ func decodeKeyCBORHex(cborHex string, sourceName string, keyKind string) (string
 	return hex.EncodeToString(keyBytes), nil
 }
 
-func validBech32(value string) bool {
-	if value != strings.ToLower(value) {
-		return false
-	}
-
-	separatorIndex := strings.LastIndexByte(value, '1')
-	if separatorIndex != len(addressHRP) {
-		return false
-	}
-	if value[:separatorIndex] != addressHRP {
-		return false
-	}
-
-	data := value[separatorIndex+1:]
-	if len(data) < 6 {
-		return false
-	}
-
-	values := make([]byte, 0, len(addressHRP)*2+1+len(data))
-	for _, char := range addressHRP {
-		if char < 33 || char > 126 {
-			return false
-		}
-		values = append(values, byte(char>>5))
-	}
-	values = append(values, 0)
-	for _, char := range addressHRP {
-		values = append(values, byte(char&31))
-	}
-	for _, char := range data {
-		index := strings.IndexRune(bech32Charset, char)
-		if index < 0 || index > 31 {
-			return false
-		}
-		values = append(values, byte(index))
-	}
-
-	return bech32Polymod(values) == 1
-}
-
-func bech32Polymod(values []byte) uint32 {
-	generators := [...]uint32{
-		0x3b6a57b2,
-		0x26508e6d,
-		0x1ea119fa,
-		0x3d4233dd,
-		0x2a1462b3,
-	}
-	checksum := uint32(1)
-	for _, value := range values {
-		top := checksum >> 25
-		checksum = (checksum&0x1ffffff)<<5 ^ uint32(value)
-		for i, generator := range generators {
-			if (top>>uint(i))&1 != 0 {
-				checksum ^= generator
-			}
-		}
-	}
-
-	return checksum
-}
-
 func sourceError(code string, format string, args ...any) *Error {
 	return &Error{
 		Code:    code,
 		Message: fmt.Sprintf(format, args...),
 	}
+}
+
+func decodeRawKeyHex(value string, fieldName string) ([]byte, error) {
+	trimmed := strings.TrimSpace(value)
+	decoded, err := hex.DecodeString(trimmed)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s hex: %w", fieldName, err)
+	}
+	if len(decoded) != keyCBORBytesLength {
+		return nil, fmt.Errorf("%s must be %d bytes, got %d", fieldName, keyCBORBytesLength, len(decoded))
+	}
+
+	return decoded, nil
+}
+
+func validateFundingSource(sourceName string, address string, verificationKeyBytes []byte, signingKeyBytes []byte) error {
+	if len(verificationKeyBytes) != keyCBORBytesLength {
+		return sourceError(
+			CodeSourceInvalidKey,
+			"verification key for source %q must be %d bytes, got %d",
+			sourceName,
+			keyCBORBytesLength,
+			len(verificationKeyBytes),
+		)
+	}
+	if len(signingKeyBytes) != keyCBORBytesLength {
+		return sourceError(
+			CodeSourceInvalidKey,
+			"signing key for source %q must be %d bytes, got %d",
+			sourceName,
+			keyCBORBytesLength,
+			len(signingKeyBytes),
+		)
+	}
+
+	signingKey := ed25519.NewKeyFromSeed(signingKeyBytes)
+	signingPublicKey, ok := signingKey.Public().(ed25519.PublicKey)
+	if !ok {
+		return sourceError(CodeSourceInvalidKey, "signing key for source %q cannot derive a public key", sourceName)
+	}
+	if !bytes.Equal(verificationKeyBytes, signingPublicKey) {
+		return sourceError(CodeSourceInvalidKey, "signing key for source %q does not match verification key", sourceName)
+	}
+
+	derivedAddress, err := deriveTestnetPaymentAddress(verificationKeyBytes)
+	if err != nil {
+		return sourceError(CodeSourceInvalidKey, "derive address for source %q: %v", sourceName, err)
+	}
+	if address != derivedAddress {
+		return sourceError(
+			CodeSourceInvalidKey,
+			"address for source %q does not match verification key",
+			sourceName,
+		)
+	}
+
+	return nil
+}
+
+func deriveTestnetPaymentAddress(verificationKeyBytes []byte) (string, error) {
+	verificationKey := apolloKey.VerificationKey{Payload: verificationKeyBytes}
+	paymentHash, err := verificationKey.Hash()
+	if err != nil {
+		return "", err
+	}
+
+	address := apolloAddress.Address{
+		PaymentPart: paymentHash[:],
+		Network:     apolloAddress.TESTNET,
+		AddressType: apolloAddress.KEY_NONE,
+		HeaderByte:  0b01100000,
+		Hrp:         addressHRP,
+	}
+
+	return address.String(), nil
 }

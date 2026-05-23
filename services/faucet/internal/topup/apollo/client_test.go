@@ -2,6 +2,9 @@ package apollo
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
+	"strings"
 	"testing"
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
@@ -10,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	testAddress         = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
-	testVerificationHex = "ab4347962023a11f117f6938eda423a4d2e8310fbfe482399c9de30c18cb3680"
-	testSigningHex      = "743e2f0f3495cad915c458eea209c3a2890f22452287832ee8016bfde7884e2d"
+var (
+	testSigningHex      = strings.Repeat("01", 32)
+	testVerificationHex = deriveTestVerificationKeyHex(testSigningHex)
+	testAddress         = mustDeriveTestnetPaymentAddress(testVerificationHex)
 )
 
 func TestSourceKeyAddressDerivesTestnetAddress(t *testing.T) {
@@ -95,7 +98,7 @@ func TestClientSubmitTopUpValidatesRequestBeforeNetwork(t *testing.T) {
 			mutate: func(request *topup.ChainRequest) {
 				request.Source.Address = ""
 			},
-			wantErr: "source address is required",
+			wantErr: "invalid source",
 		},
 		{
 			name: "missing destination",
@@ -116,7 +119,7 @@ func TestClientSubmitTopUpValidatesRequestBeforeNetwork(t *testing.T) {
 			mutate: func(request *topup.ChainRequest) {
 				request.Source.VerificationKeyHex = "abcd"
 			},
-			wantErr: "expected 32 bytes",
+			wantErr: "invalid source",
 		},
 	}
 	for _, tt := range tests {
@@ -158,4 +161,24 @@ func assertTopUpCode(t *testing.T, err error, code string) {
 	var topupErr *topup.Error
 	require.ErrorAs(t, err, &topupErr)
 	assert.Equal(t, code, topupErr.Code)
+}
+
+func deriveTestVerificationKeyHex(signingKeyHex string) string {
+	signingKey, err := hex.DecodeString(signingKeyHex)
+	if err != nil {
+		panic(err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(signingKey)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+
+	return hex.EncodeToString(publicKey)
+}
+
+func mustDeriveTestnetPaymentAddress(verificationKeyHex string) string {
+	address, err := sources.DeriveTestnetPaymentAddress(verificationKeyHex)
+	if err != nil {
+		panic(err)
+	}
+
+	return address
 }

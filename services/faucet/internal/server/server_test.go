@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -10,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
@@ -18,8 +21,14 @@ import (
 
 const (
 	testDefaultSource = "utxo1"
-	testAddress       = "addr_test1vqy2n0vz5rlpykf6dcqn55xdcpey7mejyexlgj6370leayst4k6ta"
-	testKeyCBORHex    = "58200101010101010101010101010101010101010101010101010101010101010101"
+)
+
+var (
+	testSigningRawKeyHex       = strings.Repeat("01", 32)
+	testVerificationRawKeyHex  = deriveTestVerificationKeyHex(testSigningRawKeyHex)
+	testVerificationKeyCBORHex = "5820" + testVerificationRawKeyHex
+	testSigningKeyCBORHex      = "5820" + testSigningRawKeyHex
+	testAddress                = mustDeriveTestnetPaymentAddress(testVerificationRawKeyHex)
 )
 
 func TestHandlerHealth(t *testing.T) {
@@ -222,8 +231,8 @@ func TestHandlerTopUpReportsSourceUnavailable(t *testing.T) {
 	sourceDir := filepath.Join(rootDir, testDefaultSource)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{"type":"bad","cborHex":"`+testKeyCBORHex+`"}`)
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{"type":"GenesisUTxOSigningKey_ed25519","cborHex":"`+testKeyCBORHex+`"}`)
+	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{"type":"bad","cborHex":"`+testVerificationKeyCBORHex+`"}`)
+	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{"type":"GenesisUTxOSigningKey_ed25519","cborHex":"`+testSigningKeyCBORHex+`"}`)
 	store := sources.NewStore(rootDir, testDefaultSource)
 	handler := NewHandler(
 		store,
@@ -347,12 +356,12 @@ func writeSource(t *testing.T, rootDir string, name string) {
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{
   "type": "GenesisUTxOVerificationKey_ed25519",
   "description": "Genesis Initial UTxO Verification Key",
-  "cborHex": "`+testKeyCBORHex+`"
+  "cborHex": "`+testVerificationKeyCBORHex+`"
 }`)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{
   "type": "GenesisUTxOSigningKey_ed25519",
   "description": "Genesis Initial UTxO Signing Key",
-  "cborHex": "`+testKeyCBORHex+`"
+  "cborHex": "`+testSigningKeyCBORHex+`"
 }`)
 }
 
@@ -368,6 +377,26 @@ func requireNoError(t *testing.T, err error) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func deriveTestVerificationKeyHex(signingKeyHex string) string {
+	signingKey, err := hex.DecodeString(signingKeyHex)
+	if err != nil {
+		panic(err)
+	}
+	privateKey := ed25519.NewKeyFromSeed(signingKey)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+
+	return hex.EncodeToString(publicKey)
+}
+
+func mustDeriveTestnetPaymentAddress(verificationKeyHex string) string {
+	address, err := sources.DeriveTestnetPaymentAddress(verificationKeyHex)
+	if err != nil {
+		panic(err)
+	}
+
+	return address
 }
 
 type fakeSubmitter struct {

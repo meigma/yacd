@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 	"github.com/stretchr/testify/assert"
@@ -192,6 +195,51 @@ func TestServiceSubmitMapsTransactionFailure(t *testing.T) {
 	assertTopUpCode(t, err, CodeChainUnavailable)
 }
 
+func TestServiceSubmitSerializesSameSource(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakeSourceReader{
+		defaultName: "utxo1",
+		sources: map[string]sources.FundingSource{
+			"utxo1": testFundingSource("utxo1"),
+		},
+	}
+	submitter := newBlockingSubmitter()
+	service := NewService(reader, submitter, 10_000_000)
+	errs := make(chan error, 2)
+
+	go func() {
+		_, err := service.Submit(context.Background(), Request{
+			DestinationAddress: testDestinationAddress,
+			Lovelace:           1,
+		})
+		errs <- err
+	}()
+	waitForSubmitStart(t, submitter)
+
+	go func() {
+		_, err := service.Submit(context.Background(), Request{
+			DestinationAddress: testDestinationAddress,
+			Lovelace:           1,
+		})
+		errs <- err
+	}()
+
+	select {
+	case <-submitter.started:
+		t.Fatal("second same-source top-up started before the first finished")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	submitter.release()
+	waitForSubmitStart(t, submitter)
+	submitter.release()
+
+	require.NoError(t, <-errs)
+	require.NoError(t, <-errs)
+	assert.Zero(t, submitter.overlaps.Load())
+}
+
 func TestResultJSONDoesNotExposeKeyMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +274,7 @@ func testFundingSource(name string) sources.FundingSource {
 }
 
 type fakeSourceReader struct {
+	mu          sync.Mutex
 	defaultName string
 	sources     map[string]sources.FundingSource
 	err         error
@@ -237,6 +286,9 @@ func (f *fakeSourceReader) DefaultName() string {
 }
 
 func (f *fakeSourceReader) ReadFundingSource(_ context.Context, name string) (sources.FundingSource, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	f.names = append(f.names, name)
 	if f.err != nil {
 		return sources.FundingSource{}, f.err
@@ -262,6 +314,45 @@ func (f *fakeSubmitter) SubmitTopUp(_ context.Context, request ChainRequest) (Ch
 	}
 
 	return f.result, nil
+}
+
+type blockingSubmitter struct {
+	started  chan struct{}
+	releases chan struct{}
+	active   atomic.Int32
+	overlaps atomic.Int32
+}
+
+func newBlockingSubmitter() *blockingSubmitter {
+	return &blockingSubmitter{
+		started:  make(chan struct{}),
+		releases: make(chan struct{}),
+	}
+}
+
+func (b *blockingSubmitter) SubmitTopUp(_ context.Context, _ ChainRequest) (ChainResult, error) {
+	if !b.active.CompareAndSwap(0, 1) {
+		b.overlaps.Add(1)
+	}
+	b.started <- struct{}{}
+	<-b.releases
+	b.active.Store(0)
+
+	return ChainResult{TxID: "abc123"}, nil
+}
+
+func (b *blockingSubmitter) release() {
+	b.releases <- struct{}{}
+}
+
+func waitForSubmitStart(t *testing.T, submitter *blockingSubmitter) {
+	t.Helper()
+
+	select {
+	case <-submitter.started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for top-up submission to start")
+	}
 }
 
 func assertTopUpCode(t *testing.T, err error, code string) {
