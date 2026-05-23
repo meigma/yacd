@@ -5,8 +5,10 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/meigma/yacd/services/faucet/internal/server"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
@@ -23,8 +25,11 @@ const (
 	defaultSource              = "utxo1"
 	defaultOgmiosURL           = "ws://127.0.0.1:1337"
 	defaultKupoURL             = "http://127.0.0.1:1442"
+	defaultAuthTokenFile       = "/var/run/yacd-faucet/token" // #nosec G101 -- this is a token file path, not token material.
 	defaultChainRequestTimeout = 15 * time.Second
 	defaultTxTTLSlots          = 300
+	maxAuthTokenBytes          = 8 * 1024
+	minAuthTokenLength         = 32
 )
 
 // BuildInfo describes linker-injected build metadata printed by --version.
@@ -60,6 +65,8 @@ type RuntimeConfig struct {
 	AllowRemoteListen   bool
 	OgmiosURL           string
 	KupoURL             string
+	AuthTokenFile       string
+	MinTopUpLovelace    int64
 	MaxTopUpLovelace    int64
 	ChainRequestTimeout time.Duration
 	TxTTLSlots          int64
@@ -120,6 +127,10 @@ func NewRootCommand(options Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			authToken, err := loadAuthTokenFile(runtimeConfig.AuthTokenFile)
+			if err != nil {
+				return err
+			}
 
 			sourceStore := sources.NewStore(
 				runtimeConfig.UTXOKeysDir,
@@ -139,9 +150,13 @@ func NewRootCommand(options Options) *cobra.Command {
 				TopUps: topup.NewService(
 					sourceStore,
 					transactionSubmitter,
-					runtimeConfig.MaxTopUpLovelace,
+					topup.Config{
+						MinLovelace: runtimeConfig.MinTopUpLovelace,
+						MaxLovelace: runtimeConfig.MaxTopUpLovelace,
+					},
 				),
-				Logger: commandContext.logger,
+				AuthToken: authToken,
+				Logger:    commandContext.logger,
 			})
 		},
 	}
@@ -167,6 +182,8 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.Flags().String("default-source", defaultSource, "Default faucet source name")
 	root.Flags().String("ogmios-url", defaultOgmiosURL, "Ogmios websocket URL for transaction submission")
 	root.Flags().String("kupo-url", defaultKupoURL, "Kupo HTTP URL for transaction building")
+	root.Flags().String("auth-token-file", defaultAuthTokenFile, "Path to a file containing the bearer token required for top-up requests")
+	root.Flags().Int64("min-topup-lovelace", topup.DefaultMinLovelace, "Minimum lovelace accepted for one top-up")
 	root.Flags().Int64("max-topup-lovelace", topup.DefaultMaxLovelace, "Maximum lovelace accepted for one top-up")
 	root.Flags().Duration("chain-request-timeout", defaultChainRequestTimeout, "Timeout for individual chain requests")
 	root.Flags().Int64("tx-ttl-slots", defaultTxTTLSlots, "Transaction TTL measured in slots after the latest block")
@@ -196,6 +213,8 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 	vp.SetDefault("default-source", defaultSource)
 	vp.SetDefault("ogmios-url", defaultOgmiosURL)
 	vp.SetDefault("kupo-url", defaultKupoURL)
+	vp.SetDefault("auth-token-file", defaultAuthTokenFile)
+	vp.SetDefault("min-topup-lovelace", topup.DefaultMinLovelace)
 	vp.SetDefault("max-topup-lovelace", topup.DefaultMaxLovelace)
 	vp.SetDefault("chain-request-timeout", defaultChainRequestTimeout)
 	vp.SetDefault("tx-ttl-slots", defaultTxTTLSlots)
@@ -216,6 +235,8 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 		{key: "default-source", name: "default-source"},
 		{key: "ogmios-url", name: "ogmios-url"},
 		{key: "kupo-url", name: "kupo-url"},
+		{key: "auth-token-file", name: "auth-token-file"},
+		{key: "min-topup-lovelace", name: "min-topup-lovelace"},
 		{key: "max-topup-lovelace", name: "max-topup-lovelace"},
 		{key: "chain-request-timeout", name: "chain-request-timeout"},
 		{key: "tx-ttl-slots", name: "tx-ttl-slots"},
@@ -249,6 +270,8 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 		DefaultSource:       strings.TrimSpace(vp.GetString("default-source")),
 		OgmiosURL:           strings.TrimSpace(vp.GetString("ogmios-url")),
 		KupoURL:             strings.TrimSpace(vp.GetString("kupo-url")),
+		AuthTokenFile:       strings.TrimSpace(vp.GetString("auth-token-file")),
+		MinTopUpLovelace:    vp.GetInt64("min-topup-lovelace"),
 		MaxTopUpLovelace:    vp.GetInt64("max-topup-lovelace"),
 		ChainRequestTimeout: vp.GetDuration("chain-request-timeout"),
 		TxTTLSlots:          vp.GetInt64("tx-ttl-slots"),
@@ -273,8 +296,17 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	if config.KupoURL == "" {
 		return RuntimeConfig{}, fmt.Errorf("--kupo-url is required")
 	}
+	if config.AuthTokenFile == "" {
+		return RuntimeConfig{}, fmt.Errorf("--auth-token-file is required")
+	}
+	if config.MinTopUpLovelace <= 0 {
+		return RuntimeConfig{}, fmt.Errorf("--min-topup-lovelace must be positive")
+	}
 	if config.MaxTopUpLovelace <= 0 {
 		return RuntimeConfig{}, fmt.Errorf("--max-topup-lovelace must be positive")
+	}
+	if config.MinTopUpLovelace > config.MaxTopUpLovelace {
+		return RuntimeConfig{}, fmt.Errorf("--min-topup-lovelace must be less than or equal to --max-topup-lovelace")
 	}
 	if config.ChainRequestTimeout <= 0 {
 		return RuntimeConfig{}, fmt.Errorf("--chain-request-timeout must be positive")
@@ -301,6 +333,41 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	}
 
 	return config, nil
+}
+
+func loadAuthTokenFile(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("--auth-token-file is required")
+	}
+
+	// #nosec G304 -- the token file is an explicit operator-controlled configuration path.
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("read --auth-token-file: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	contents, err := io.ReadAll(io.LimitReader(file, maxAuthTokenBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("read --auth-token-file: %w", err)
+	}
+	if len(contents) > maxAuthTokenBytes {
+		return "", fmt.Errorf("--auth-token-file is larger than %d bytes", maxAuthTokenBytes)
+	}
+
+	token := strings.TrimSpace(string(contents))
+	if len(token) < minAuthTokenLength {
+		return "", fmt.Errorf("--auth-token-file token must be at least %d characters", minAuthTokenLength)
+	}
+	for _, character := range token {
+		if unicode.IsSpace(character) || unicode.IsControl(character) {
+			return "", fmt.Errorf("--auth-token-file token must not contain whitespace or control characters")
+		}
+	}
+
+	return token, nil
 }
 
 func validateListenAddress(address string, allowRemote bool) error {

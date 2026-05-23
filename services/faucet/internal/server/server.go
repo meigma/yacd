@@ -2,11 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,11 +20,14 @@ import (
 )
 
 const (
-	codeMethodNotAllowed = "method_not_allowed"
-	codeNotFound         = "not_found"
-	codeNotReady         = "not_ready"
-	codeInternalError    = "internal_error"
-	maxTopUpBodyBytes    = 4 * 1024
+	codeMethodNotAllowed   = "method_not_allowed"
+	codeNotFound           = "not_found"
+	codeNotReady           = "not_ready"
+	codeInternalError      = "internal_error"
+	codeUnauthorized       = "unauthorized"
+	codeUnsupportedMedia   = "unsupported_media_type"
+	maxTopUpBodyBytes      = 4 * 1024
+	requiredTopUpMediaType = "application/json"
 )
 
 // Config describes the faucet HTTP server runtime configuration.
@@ -30,13 +36,15 @@ type Config struct {
 	ListenAddress string
 	Sources       sources.Store
 	TopUps        topup.Service
+	AuthToken     string
 	Logger        *slog.Logger
 }
 
 type handler struct {
-	sources sources.Store
-	topups  topup.Service
-	logger  *slog.Logger
+	sources   sources.Store
+	topups    topup.Service
+	authToken string
+	logger    *slog.Logger
 }
 
 type statusResponse struct {
@@ -59,15 +67,16 @@ type topUpRequest struct {
 }
 
 // NewHandler builds the faucet HTTP handler.
-func NewHandler(store sources.Store, topups topup.Service, logger *slog.Logger) http.Handler {
+func NewHandler(store sources.Store, topups topup.Service, authToken string, logger *slog.Logger) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &handler{
-		sources: store,
-		topups:  topups,
-		logger:  logger,
+		sources:   store,
+		topups:    topups,
+		authToken: authToken,
+		logger:    logger,
 	}
 }
 
@@ -83,7 +92,7 @@ func Run(config *Config) error {
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress,
-		Handler:           NewHandler(config.Sources, config.TopUps, config.Logger),
+		Handler:           NewHandler(config.Sources, config.TopUps, config.AuthToken, config.Logger),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -194,6 +203,12 @@ func (h *handler) handleTopUp(writer http.ResponseWriter, request *http.Request)
 	if !requireMethod(writer, request, http.MethodPost) {
 		return
 	}
+	if !h.requireAuth(writer, request) {
+		return
+	}
+	if !requireJSONContentType(writer, request) {
+		return
+	}
 
 	var body topUpRequest
 	if err := decodeRequestBody(writer, request, &body); err != nil {
@@ -216,6 +231,30 @@ func (h *handler) handleTopUp(writer http.ResponseWriter, request *http.Request)
 	}
 
 	writeJSON(writer, http.StatusOK, result)
+}
+
+func (h *handler) requireAuth(writer http.ResponseWriter, request *http.Request) bool {
+	if strings.TrimSpace(h.authToken) == "" {
+		h.logger.Error("Top-up auth token is not configured")
+		writeError(writer, http.StatusInternalServerError, codeInternalError, "top-up auth is not configured")
+		return false
+	}
+
+	authorization := request.Header.Get("Authorization")
+	fields := strings.Fields(authorization)
+	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+		writeUnauthorized(writer)
+		return false
+	}
+
+	expected := sha256.Sum256([]byte(h.authToken))
+	got := sha256.Sum256([]byte(fields[1]))
+	if subtle.ConstantTimeCompare(expected[:], got[:]) != 1 {
+		writeUnauthorized(writer)
+		return false
+	}
+
+	return true
 }
 
 func (h *handler) writeSourceError(writer http.ResponseWriter, err error) {
@@ -279,6 +318,26 @@ func requireMethod(writer http.ResponseWriter, request *http.Request, method str
 	return false
 }
 
+func requireJSONContentType(writer http.ResponseWriter, request *http.Request) bool {
+	contentType := request.Header.Get("Content-Type")
+	if contentType == "" {
+		writeError(writer, http.StatusUnsupportedMediaType, codeUnsupportedMedia, "Content-Type must be application/json")
+		return false
+	}
+
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		writeError(writer, http.StatusUnsupportedMediaType, codeUnsupportedMedia, "Content-Type must be application/json")
+		return false
+	}
+	if mediaType != requiredTopUpMediaType {
+		writeError(writer, http.StatusUnsupportedMediaType, codeUnsupportedMedia, "Content-Type must be application/json")
+		return false
+	}
+
+	return true
+}
+
 func decodeRequestBody(writer http.ResponseWriter, request *http.Request, target any) error {
 	reader := http.MaxBytesReader(writer, request.Body, maxTopUpBodyBytes)
 	decoder := json.NewDecoder(reader)
@@ -308,4 +367,9 @@ func writeError(writer http.ResponseWriter, statusCode int, code string, message
 			Message: message,
 		},
 	})
+}
+
+func writeUnauthorized(writer http.ResponseWriter) {
+	writer.Header().Set("WWW-Authenticate", "Bearer")
+	writeError(writer, http.StatusUnauthorized, codeUnauthorized, "top-up request is unauthorized")
 }

@@ -10,6 +10,8 @@ import (
 
 	apolloapi "github.com/Salvionied/apollo"
 	"github.com/Salvionied/apollo/constants"
+	apolloTx "github.com/Salvionied/apollo/serialization/Transaction"
+	"github.com/Salvionied/apollo/serialization/TransactionInput"
 	apolloUTxO "github.com/Salvionied/apollo/serialization/UTxO"
 	"github.com/Salvionied/apollo/txBuilding/Backend/OgmiosChainContext"
 	"github.com/SundaeSwap-finance/kugo"
@@ -35,6 +37,12 @@ type Client struct {
 	RequestTimeout time.Duration
 	// TTLSlots is the transaction validity window measured from the latest slot.
 	TTLSlots int64
+
+	submitter ogmiosSubmitter
+}
+
+type ogmiosSubmitter interface {
+	SubmitTx(ctx context.Context, data string) (*ogmigo.SubmitTxResponse, error)
 }
 
 // SubmitTopUp submits one exact faucet top-up transaction.
@@ -63,13 +71,21 @@ func (c Client) SubmitTopUp(ctx context.Context, request topup.ChainRequest) (to
 			request.Source.Name,
 		)
 	}
+	sourceUTxOs = filterExcludedUTxOs(sourceUTxOs, request.ExcludeInputKeys)
+	if len(sourceUTxOs) == 0 {
+		return topup.ChainResult{}, topup.Errorf(
+			topup.CodeChainUnavailable,
+			"submit top-up with Apollo: source %q has no available UTxOs after pending submissions; retry after the chain state advances",
+			request.Source.Name,
+		)
+	}
 
-	txID, err := c.submit(chainContext, request, sourceUTxOs)
+	txID, spentInputKeys, err := c.submit(ctx, chainContext, request, sourceUTxOs)
 	if err != nil {
 		return topup.ChainResult{}, err
 	}
 
-	return topup.ChainResult{TxID: txID}, nil
+	return topup.ChainResult{TxID: txID, SpentInputKeys: spentInputKeys}, nil
 }
 
 func (c Client) newChainContext(ctx context.Context) (*OgmiosChainContext.OgmiosChainContext, error) {
@@ -115,33 +131,34 @@ func (c Client) sourceUTxOs(ctx context.Context, address string) ([]apolloUTxO.U
 }
 
 func (c Client) submit(
+	ctx context.Context,
 	chainContext *OgmiosChainContext.OgmiosChainContext,
 	request topup.ChainRequest,
 	sourceUTxOs []apolloUTxO.UTxO,
-) (string, error) {
+) (string, []string, error) {
 	vkey, err := validateRawKeyHex(request.Source.Name, "verification", request.Source.VerificationKeyHex)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	skey, err := validateRawKeyHex(request.Source.Name, "signing", request.Source.SigningKeyHex)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	lovelace, err := intLovelace(request.Lovelace)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	builder := apolloapi.New(chainContext).SetWalletFromKeypair(vkey, skey, constants.TESTNET)
 	builder = builder.AddLoadedUTxOs(sourceUTxOs...)
 	builder, err = builder.SetWalletAsChangeAddress()
 	if err != nil {
-		return "", topup.WrapError(topup.CodeChainUnavailable, "set faucet source as change address", err)
+		return "", nil, topup.WrapError(topup.CodeChainUnavailable, "set faucet source as change address", err)
 	}
 
 	slot, err := chainContext.LastBlockSlot()
 	if err != nil {
-		return "", topup.WrapError(topup.CodeChainUnavailable, "read latest block slot", err)
+		return "", nil, topup.WrapError(topup.CodeChainUnavailable, "read latest block slot", err)
 	}
 	builder.
 		SetValidityStart(int64(slot)).
@@ -150,15 +167,24 @@ func (c Client) submit(
 
 	builder, _, err = builder.Complete()
 	if err != nil {
-		return "", topup.WrapError(topup.CodeChainUnavailable, "complete top-up transaction", err)
+		return "", nil, topup.WrapError(topup.CodeChainUnavailable, "complete top-up transaction", err)
+	}
+	if err := validateRecipientOutput(builder.GetTx(), request.DestinationAddress, request.Lovelace); err != nil {
+		return "", nil, err
 	}
 	builder.Sign()
-	txID, err := builder.Submit()
-	if err != nil {
-		return "", topup.WrapError(topup.CodeChainUnavailable, "submit top-up transaction", err)
+	tx := builder.GetTx()
+	spentKeys := spentInputKeys(tx.TransactionBody.Inputs)
+	if len(spentKeys) == 0 {
+		return "", nil, topup.Errorf(topup.CodeChainUnavailable, "submit top-up transaction spent no source inputs")
 	}
 
-	return hex.EncodeToString(txID.Payload), nil
+	txID, err := c.submitSignedTransaction(ctx, tx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return txID, spentKeys, nil
 }
 
 func validateRequest(request topup.ChainRequest) error {
@@ -177,8 +203,132 @@ func validateRequest(request topup.ChainRequest) error {
 	if err := sources.ValidateFundingSource(request.Source); err != nil {
 		return topup.WrapError(topup.CodeInvalidRequest, "submit top-up with Apollo: invalid source", err)
 	}
+	if request.DestinationAddress == request.Source.Address {
+		return topup.Errorf(topup.CodeInvalidRequest, "submit top-up with Apollo: destination address must not equal source address")
+	}
 
 	return nil
+}
+
+func filterExcludedUTxOs(utxos []apolloUTxO.UTxO, excludedInputKeys []string) []apolloUTxO.UTxO {
+	if len(utxos) == 0 || len(excludedInputKeys) == 0 {
+		return utxos
+	}
+
+	excluded := make(map[string]struct{}, len(excludedInputKeys))
+	for _, inputKey := range excludedInputKeys {
+		inputKey = strings.ToLower(strings.TrimSpace(inputKey))
+		if inputKey == "" {
+			continue
+		}
+		excluded[inputKey] = struct{}{}
+	}
+	if len(excluded) == 0 {
+		return utxos
+	}
+
+	filtered := make([]apolloUTxO.UTxO, 0, len(utxos))
+	for _, utxo := range utxos {
+		if _, ok := excluded[strings.ToLower(utxo.GetKey())]; ok {
+			continue
+		}
+		filtered = append(filtered, utxo)
+	}
+
+	return filtered
+}
+
+func validateRecipientOutput(tx *apolloTx.Transaction, destinationAddress string, lovelace int64) error {
+	if tx == nil {
+		return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction returned nil transaction")
+	}
+
+	matches := 0
+	for _, output := range tx.TransactionBody.Outputs {
+		if output.GetAddress().String() != destinationAddress {
+			continue
+		}
+
+		matches++
+		if output.Lovelace() != lovelace {
+			return topup.Errorf(
+				topup.CodeChainUnavailable,
+				"complete top-up transaction changed destination lovelace from %d to %d",
+				lovelace,
+				output.Lovelace(),
+			)
+		}
+		if !output.GetValue().GetAssets().RemoveZeroAssets().IsEmpty() {
+			return topup.Errorf(topup.CodeChainUnavailable, "complete top-up transaction added assets to destination output")
+		}
+	}
+	if matches != 1 {
+		return topup.Errorf(
+			topup.CodeChainUnavailable,
+			"complete top-up transaction created %d destination outputs, want 1",
+			matches,
+		)
+	}
+
+	return nil
+}
+
+func spentInputKeys(inputs []TransactionInput.TransactionInput) []string {
+	result := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		result = append(result, inputKey(input))
+	}
+
+	return result
+}
+
+func inputKey(input TransactionInput.TransactionInput) string {
+	return fmt.Sprintf("%s:%d", hex.EncodeToString(input.TransactionId), input.Index)
+}
+
+func (c Client) submitSignedTransaction(ctx context.Context, tx *apolloTx.Transaction) (string, error) {
+	if tx == nil {
+		return "", topup.Errorf(topup.CodeChainUnavailable, "submit top-up transaction: transaction is nil")
+	}
+
+	txBytes, err := tx.Bytes()
+	if err != nil {
+		return "", topup.WrapError(topup.CodeChainUnavailable, "encode top-up transaction", err)
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, c.requestTimeout())
+	defer cancel()
+
+	response, err := c.ogmiosSubmitter().SubmitTx(requestCtx, hex.EncodeToString(txBytes))
+	if err != nil {
+		return "", topup.WrapError(topup.CodeChainUnavailable, "submit top-up transaction to Ogmios", err)
+	}
+	if response == nil {
+		return "", topup.Errorf(topup.CodeChainUnavailable, "submit top-up transaction to Ogmios returned no response")
+	}
+	if response.Error != nil {
+		return "", topup.Errorf(
+			topup.CodeChainUnavailable,
+			"submit top-up transaction rejected by Ogmios: code %d: %s",
+			response.Error.Code,
+			strings.TrimSpace(response.Error.Message),
+		)
+	}
+
+	txID, err := tx.TransactionBody.Id()
+	if err != nil {
+		return "", topup.WrapError(topup.CodeChainUnavailable, "compute submitted transaction id", err)
+	}
+
+	return hex.EncodeToString(txID.Payload), nil
+}
+
+func (c Client) ogmiosSubmitter() ogmiosSubmitter {
+	if c.submitter != nil {
+		return c.submitter
+	}
+
+	return ogmigo.New(ogmigo.WithEndpoint(c.OgmiosURL))
 }
 
 func sourceKeyAddress(source sources.FundingSource) (string, error) {

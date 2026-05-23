@@ -20,6 +20,7 @@ const (
 	testSourceAddress      = "addr_test1vqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqs8fu43"
 	testVerificationHex    = "0101010101010101010101010101010101010101010101010101010101010101"
 	testSigningHex         = "0202020202020202020202020202020202020202020202020202020202020202"
+	testSpentInputKey      = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0"
 )
 
 func TestServiceSubmitUsesDefaultSource(t *testing.T) {
@@ -31,8 +32,8 @@ func TestServiceSubmitUsesDefaultSource(t *testing.T) {
 			"utxo1": testFundingSource("utxo1"),
 		},
 	}
-	submitter := &fakeSubmitter{result: ChainResult{TxID: "ABC123"}}
-	service := NewService(reader, submitter, 10_000_000)
+	submitter := &fakeSubmitter{result: ChainResult{TxID: "ABC123", SpentInputKeys: []string{testSpentInputKey}}}
+	service := NewService(reader, submitter, testConfig())
 
 	result, err := service.Submit(context.Background(), Request{
 		DestinationAddress: testDestinationAddress,
@@ -61,8 +62,8 @@ func TestServiceSubmitUsesSelectedSource(t *testing.T) {
 			"utxo2": testFundingSource("utxo2"),
 		},
 	}
-	submitter := &fakeSubmitter{result: ChainResult{TxID: "def456"}}
-	service := NewService(reader, submitter, 10_000_000)
+	submitter := &fakeSubmitter{result: ChainResult{TxID: "def456", SpentInputKeys: []string{testSpentInputKey}}}
+	service := NewService(reader, submitter, testConfig())
 
 	_, err := service.Submit(context.Background(), Request{
 		Source:             "utxo2",
@@ -87,14 +88,14 @@ func TestServiceSubmitRejectsInvalidRequests(t *testing.T) {
 			request: Request{
 				Source:             "wallet1",
 				DestinationAddress: testDestinationAddress,
-				Lovelace:           1,
+				Lovelace:           1_000_000,
 			},
 		},
 		{
 			name: "invalid address",
 			request: Request{
 				DestinationAddress: "addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3l62x5n0x",
-				Lovelace:           1,
+				Lovelace:           1_000_000,
 			},
 		},
 		{
@@ -111,6 +112,13 @@ func TestServiceSubmitRejectsInvalidRequests(t *testing.T) {
 			},
 		},
 		{
+			name: "below min",
+			request: Request{
+				DestinationAddress: testDestinationAddress,
+				Lovelace:           999_999,
+			},
+		},
+		{
 			name: "over max",
 			request: Request{
 				DestinationAddress: testDestinationAddress,
@@ -122,7 +130,7 @@ func TestServiceSubmitRejectsInvalidRequests(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			service := NewService(&fakeSourceReader{defaultName: "utxo1"}, &fakeSubmitter{}, 10_000_000)
+			service := NewService(&fakeSourceReader{defaultName: "utxo1"}, &fakeSubmitter{}, testConfig())
 
 			_, err := service.Submit(context.Background(), tt.request)
 
@@ -158,12 +166,12 @@ func TestServiceSubmitMapsSourceErrors(t *testing.T) {
 			service := NewService(
 				&fakeSourceReader{defaultName: "utxo1", err: tt.sourceErr},
 				&fakeSubmitter{},
-				10_000_000,
+				testConfig(),
 			)
 
 			_, err := service.Submit(context.Background(), Request{
 				DestinationAddress: testDestinationAddress,
-				Lovelace:           1,
+				Lovelace:           1_000_000,
 			})
 
 			require.Error(t, err)
@@ -183,16 +191,36 @@ func TestServiceSubmitMapsTransactionFailure(t *testing.T) {
 			},
 		},
 		&fakeSubmitter{err: errors.New("chain failed")},
-		10_000_000,
+		testConfig(),
 	)
 
 	_, err := service.Submit(context.Background(), Request{
 		DestinationAddress: testDestinationAddress,
-		Lovelace:           1,
+		Lovelace:           1_000_000,
 	})
 
 	require.Error(t, err)
 	assertTopUpCode(t, err, CodeChainUnavailable)
+}
+
+func TestServiceSubmitRejectsSourceEqualsDestination(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakeSourceReader{
+		defaultName: "utxo1",
+		sources: map[string]sources.FundingSource{
+			"utxo1": testFundingSource("utxo1"),
+		},
+	}
+	service := NewService(reader, &fakeSubmitter{}, testConfig())
+
+	_, err := service.Submit(context.Background(), Request{
+		DestinationAddress: testSourceAddress,
+		Lovelace:           1_000_000,
+	})
+
+	require.Error(t, err)
+	assertTopUpCode(t, err, CodeInvalidRequest)
 }
 
 func TestServiceSubmitSerializesSameSource(t *testing.T) {
@@ -205,13 +233,13 @@ func TestServiceSubmitSerializesSameSource(t *testing.T) {
 		},
 	}
 	submitter := newBlockingSubmitter()
-	service := NewService(reader, submitter, 10_000_000)
+	service := NewService(reader, submitter, testConfig())
 	errs := make(chan error, 2)
 
 	go func() {
 		_, err := service.Submit(context.Background(), Request{
 			DestinationAddress: testDestinationAddress,
-			Lovelace:           1,
+			Lovelace:           1_000_000,
 		})
 		errs <- err
 	}()
@@ -220,7 +248,7 @@ func TestServiceSubmitSerializesSameSource(t *testing.T) {
 	go func() {
 		_, err := service.Submit(context.Background(), Request{
 			DestinationAddress: testDestinationAddress,
-			Lovelace:           1,
+			Lovelace:           1_000_000,
 		})
 		errs <- err
 	}()
@@ -240,6 +268,79 @@ func TestServiceSubmitSerializesSameSource(t *testing.T) {
 	assert.Zero(t, submitter.overlaps.Load())
 }
 
+func TestServiceSubmitPassesPendingInputExclusions(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakeSourceReader{
+		defaultName: "utxo1",
+		sources: map[string]sources.FundingSource{
+			"utxo1": testFundingSource("utxo1"),
+		},
+	}
+	submitter := &fakeSubmitter{
+		results: []ChainResult{
+			{TxID: "first", SpentInputKeys: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0"}},
+			{TxID: "second", SpentInputKeys: []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"}},
+		},
+	}
+	service := NewService(reader, submitter, testConfig())
+
+	_, err := service.Submit(context.Background(), Request{
+		DestinationAddress: testDestinationAddress,
+		Lovelace:           1_000_000,
+	})
+	require.NoError(t, err)
+	_, err = service.Submit(context.Background(), Request{
+		DestinationAddress: testDestinationAddress,
+		Lovelace:           1_000_000,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, submitter.requests, 2)
+	assert.Empty(t, submitter.requests[0].ExcludeInputKeys)
+	assert.ElementsMatch(
+		t,
+		[]string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0"},
+		submitter.requests[1].ExcludeInputKeys,
+	)
+}
+
+func TestServiceSubmitDoesNotRecordPendingInputsOnFailure(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakeSourceReader{
+		defaultName: "utxo1",
+		sources: map[string]sources.FundingSource{
+			"utxo1": testFundingSource("utxo1"),
+		},
+	}
+	submitter := &fakeSubmitter{
+		errs: []error{
+			Errorf(CodeChainUnavailable, "chain failed"),
+			nil,
+		},
+		results: []ChainResult{
+			{},
+			{TxID: "second", SpentInputKeys: []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"}},
+		},
+	}
+	service := NewService(reader, submitter, testConfig())
+
+	_, err := service.Submit(context.Background(), Request{
+		DestinationAddress: testDestinationAddress,
+		Lovelace:           1_000_000,
+	})
+	require.Error(t, err)
+	_, err = service.Submit(context.Background(), Request{
+		DestinationAddress: testDestinationAddress,
+		Lovelace:           1_000_000,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, submitter.requests, 2)
+	assert.Empty(t, submitter.requests[1].ExcludeInputKeys)
+}
+
 func TestResultJSONDoesNotExposeKeyMaterial(t *testing.T) {
 	t.Parallel()
 
@@ -249,11 +350,11 @@ func TestResultJSONDoesNotExposeKeyMaterial(t *testing.T) {
 			"utxo1": testFundingSource("utxo1"),
 		},
 	}
-	service := NewService(reader, &fakeSubmitter{result: ChainResult{TxID: "abc123"}}, 10_000_000)
+	service := NewService(reader, &fakeSubmitter{result: ChainResult{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}}, testConfig())
 
 	result, err := service.Submit(context.Background(), Request{
 		DestinationAddress: testDestinationAddress,
-		Lovelace:           1,
+		Lovelace:           1_000_000,
 	})
 	require.NoError(t, err)
 
@@ -262,6 +363,13 @@ func TestResultJSONDoesNotExposeKeyMaterial(t *testing.T) {
 	assert.NotContains(t, string(encoded), testVerificationHex)
 	assert.NotContains(t, string(encoded), testSigningHex)
 	assert.False(t, strings.Contains(string(encoded), "SigningKey"), string(encoded))
+}
+
+func testConfig() Config {
+	return Config{
+		MinLovelace: DefaultMinLovelace,
+		MaxLovelace: 10_000_000,
+	}
 }
 
 func testFundingSource(name string) sources.FundingSource {
@@ -302,18 +410,36 @@ func (f *fakeSourceReader) ReadFundingSource(_ context.Context, name string) (so
 }
 
 type fakeSubmitter struct {
+	mu       sync.Mutex
 	result   ChainResult
+	results  []ChainResult
 	err      error
+	errs     []error
 	requests []ChainRequest
 }
 
 func (f *fakeSubmitter) SubmitTopUp(_ context.Context, request ChainRequest) (ChainResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	index := len(f.requests)
 	f.requests = append(f.requests, request)
+	if index < len(f.errs) && f.errs[index] != nil {
+		return ChainResult{}, f.errs[index]
+	}
 	if f.err != nil {
 		return ChainResult{}, f.err
 	}
 
-	return f.result, nil
+	result := f.result
+	if index < len(f.results) {
+		result = f.results[index]
+	}
+	if len(result.SpentInputKeys) == 0 {
+		result.SpentInputKeys = []string{testSpentInputKey}
+	}
+
+	return result, nil
 }
 
 type blockingSubmitter struct {
@@ -338,7 +464,7 @@ func (b *blockingSubmitter) SubmitTopUp(_ context.Context, _ ChainRequest) (Chai
 	<-b.releases
 	b.active.Store(0)
 
-	return ChainResult{TxID: "abc123"}, nil
+	return ChainResult{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}, nil
 }
 
 func (b *blockingSubmitter) release() {

@@ -11,6 +11,9 @@ import (
 )
 
 const (
+	// DefaultMinLovelace is the default lower bound for exact top-up requests.
+	DefaultMinLovelace int64 = 1_000_000
+
 	// DefaultMaxLovelace is the default upper bound for a single top-up request.
 	DefaultMaxLovelace int64 = 10_000_000_000
 
@@ -42,8 +45,17 @@ type TransactionSubmitter interface {
 type Service struct {
 	sourceReader SourceReader
 	submitter    TransactionSubmitter
-	maxLovelace  int64
+	config       Config
 	locks        *sourceLocks
+	pending      *pendingInputs
+}
+
+// Config describes top-up service limits.
+type Config struct {
+	// MinLovelace is the lower bound for a single top-up request.
+	MinLovelace int64
+	// MaxLovelace is the upper bound for a single top-up request.
+	MaxLovelace int64
 }
 
 type sourceLocks struct {
@@ -83,12 +95,16 @@ type ChainRequest struct {
 	DestinationAddress string
 	// Lovelace is the exact amount to submit.
 	Lovelace int64
+	// ExcludeInputKeys are source UTxO input keys already pending from earlier submissions.
+	ExcludeInputKeys []string
 }
 
 // ChainResult is the transaction-level result returned by the chain submitter.
 type ChainResult struct {
 	// TxID is the submitted transaction id as lowercase hex.
 	TxID string
+	// SpentInputKeys are source UTxO input keys consumed by the submitted transaction.
+	SpentInputKeys []string
 }
 
 // Error is a structured top-up error.
@@ -102,12 +118,13 @@ type Error struct {
 }
 
 // NewService constructs a top-up service from source and transaction dependencies.
-func NewService(sourceReader SourceReader, submitter TransactionSubmitter, maxLovelace int64) Service {
+func NewService(sourceReader SourceReader, submitter TransactionSubmitter, config Config) Service {
 	return Service{
 		sourceReader: sourceReader,
 		submitter:    submitter,
-		maxLovelace:  maxLovelace,
+		config:       config,
 		locks:        newSourceLocks(),
+		pending:      newPendingInputs(),
 	}
 }
 
@@ -130,7 +147,8 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	if sourceName == "" {
 		sourceName = s.sourceReader.DefaultName()
 	}
-	if err := validateRequest(sourceName, request, s.limit()); err != nil {
+	config := s.normalizedConfig()
+	if err := validateRequest(sourceName, request, config); err != nil {
 		return Result{}, err
 	}
 
@@ -138,14 +156,19 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	if err != nil {
 		return Result{}, mapSourceError(sourceName, err)
 	}
+	if request.DestinationAddress == source.Address {
+		return Result{}, Errorf(CodeInvalidRequest, "destination address must not equal source address")
+	}
 
 	unlock := s.lockSource(source.Name)
 	defer unlock()
 
+	excludedInputKeys := s.pending.snapshot(source.Name)
 	chainResult, err := s.submitter.SubmitTopUp(ctx, ChainRequest{
 		Source:             source,
 		DestinationAddress: request.DestinationAddress,
 		Lovelace:           request.Lovelace,
+		ExcludeInputKeys:   excludedInputKeys,
 	})
 	if err != nil {
 		var topupErr *Error
@@ -158,6 +181,10 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	if strings.TrimSpace(chainResult.TxID) == "" {
 		return Result{}, Errorf(CodeChainUnavailable, "submit top-up transaction returned an empty transaction id")
 	}
+	if len(chainResult.SpentInputKeys) == 0 {
+		return Result{}, Errorf(CodeChainUnavailable, "submit top-up transaction returned no spent source inputs")
+	}
+	s.pending.add(source.Name, chainResult.SpentInputKeys)
 
 	return Result{
 		TxID:               strings.ToLower(strings.TrimSpace(chainResult.TxID)),
@@ -168,7 +195,7 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	}, nil
 }
 
-func validateRequest(sourceName string, request Request, maxLovelace int64) error {
+func validateRequest(sourceName string, request Request, config Config) error {
 	if err := sources.ValidateName(sourceName); err != nil {
 		return WrapError(CodeInvalidRequest, "invalid source name", err)
 	}
@@ -178,8 +205,11 @@ func validateRequest(sourceName string, request Request, maxLovelace int64) erro
 	if request.Lovelace <= 0 {
 		return Errorf(CodeInvalidRequest, "lovelace must be positive")
 	}
-	if request.Lovelace > maxLovelace {
-		return Errorf(CodeInvalidRequest, "lovelace must be at most %d", maxLovelace)
+	if request.Lovelace < config.MinLovelace {
+		return Errorf(CodeInvalidRequest, "lovelace must be at least %d", config.MinLovelace)
+	}
+	if request.Lovelace > config.MaxLovelace {
+		return Errorf(CodeInvalidRequest, "lovelace must be at most %d", config.MaxLovelace)
 	}
 
 	return nil
@@ -196,12 +226,16 @@ func mapSourceError(sourceName string, err error) error {
 	}
 }
 
-func (s Service) limit() int64 {
-	if s.maxLovelace <= 0 {
-		return DefaultMaxLovelace
+func (s Service) normalizedConfig() Config {
+	config := s.config
+	if config.MinLovelace <= 0 {
+		config.MinLovelace = DefaultMinLovelace
+	}
+	if config.MaxLovelace <= 0 {
+		config.MaxLovelace = DefaultMaxLovelace
 	}
 
-	return s.maxLovelace
+	return config
 }
 
 func (s Service) lockSource(sourceName string) func() {
@@ -217,6 +251,60 @@ func (s Service) lockSource(sourceName string) func() {
 func newSourceLocks() *sourceLocks {
 	return &sourceLocks{
 		locks: make(map[string]*sync.Mutex),
+	}
+}
+
+type pendingInputs struct {
+	mu       sync.Mutex
+	bySource map[string]map[string]struct{}
+}
+
+func newPendingInputs() *pendingInputs {
+	return &pendingInputs{
+		bySource: make(map[string]map[string]struct{}),
+	}
+}
+
+func (p *pendingInputs) snapshot(sourceName string) []string {
+	if p == nil {
+		return nil
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	inputs := p.bySource[sourceName]
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	result := make([]string, 0, len(inputs))
+	for input := range inputs {
+		result = append(result, input)
+	}
+
+	return result
+}
+
+func (p *pendingInputs) add(sourceName string, inputKeys []string) {
+	if p == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	inputs := p.bySource[sourceName]
+	if inputs == nil {
+		inputs = make(map[string]struct{})
+		p.bySource[sourceName] = inputs
+	}
+	for _, inputKey := range inputKeys {
+		inputKey = strings.ToLower(strings.TrimSpace(inputKey))
+		if inputKey == "" {
+			continue
+		}
+		inputs[inputKey] = struct{}{}
 	}
 }
 

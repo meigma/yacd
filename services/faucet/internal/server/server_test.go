@@ -21,6 +21,8 @@ import (
 
 const (
 	testDefaultSource = "utxo1"
+	testAuthToken     = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testInputKey      = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:0"
 )
 
 var (
@@ -28,7 +30,8 @@ var (
 	testVerificationRawKeyHex  = deriveTestVerificationKeyHex(testSigningRawKeyHex)
 	testVerificationKeyCBORHex = "5820" + testVerificationRawKeyHex
 	testSigningKeyCBORHex      = "5820" + testSigningRawKeyHex
-	testAddress                = mustDeriveTestnetPaymentAddress(testVerificationRawKeyHex)
+	testSourceAddress          = mustDeriveTestnetPaymentAddress(testVerificationRawKeyHex)
+	testDestinationAddress     = mustDeriveTestnetPaymentAddress(deriveTestVerificationKeyHex(strings.Repeat("02", 32)))
 )
 
 func TestHandlerHealth(t *testing.T) {
@@ -124,13 +127,11 @@ func TestHandlerReturnsSourceNotFound(t *testing.T) {
 func TestHandlerSubmitsTopUp(t *testing.T) {
 	t.Parallel()
 
-	submitter := &fakeSubmitter{result: topup.ChainResult{TxID: "abc123"}}
-	response := performRequestBody(
+	submitter := &fakeSubmitter{result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}}}
+	response := performTopUpRequest(
 		t,
 		testHandlerWithSubmitter(t, testDefaultSource, submitter),
-		http.MethodPost,
-		"/v1/topups",
-		`{"address":"`+testAddress+`","lovelace":1000000}`,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
 	)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
@@ -144,8 +145,8 @@ func TestHandlerSubmitsTopUp(t *testing.T) {
 	if body.Source != testDefaultSource {
 		t.Fatalf("source = %q, want utxo1", body.Source)
 	}
-	if body.DestinationAddress != testAddress {
-		t.Fatalf("destinationAddress = %q, want %q", body.DestinationAddress, testAddress)
+	if body.DestinationAddress != testDestinationAddress {
+		t.Fatalf("destinationAddress = %q, want %q", body.DestinationAddress, testDestinationAddress)
 	}
 	if len(submitter.requests) != 1 {
 		t.Fatalf("submitter requests = %d, want 1", len(submitter.requests))
@@ -158,11 +159,9 @@ func TestHandlerSubmitsTopUp(t *testing.T) {
 func TestHandlerRejectsMalformedTopUpJSON(t *testing.T) {
 	t.Parallel()
 
-	response := performRequestBody(
+	response := performTopUpRequest(
 		t,
 		testHandler(t, testDefaultSource),
-		http.MethodPost,
-		"/v1/topups",
 		`{"address":`,
 	)
 	if response.Code != http.StatusBadRequest {
@@ -179,12 +178,10 @@ func TestHandlerRejectsMalformedTopUpJSON(t *testing.T) {
 func TestHandlerRejectsUnknownTopUpFields(t *testing.T) {
 	t.Parallel()
 
-	response := performRequestBody(
+	response := performTopUpRequest(
 		t,
 		testHandler(t, testDefaultSource),
-		http.MethodPost,
-		"/v1/topups",
-		`{"address":"`+testAddress+`","lovelace":1,"extra":true}`,
+		`{"address":"`+testDestinationAddress+`","lovelace":1,"extra":true}`,
 	)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusBadRequest)
@@ -203,15 +200,114 @@ func TestHandlerRejectsTopUpUnsupportedMethod(t *testing.T) {
 	}
 }
 
-func TestHandlerTopUpReportsSourceNotFound(t *testing.T) {
+func TestHandlerTopUpRequiresBearerAuth(t *testing.T) {
 	t.Parallel()
 
-	response := performRequestBody(
+	tests := []struct {
+		name          string
+		authorization string
+	}{
+		{name: "missing"},
+		{name: "wrong scheme", authorization: "Basic " + testAuthToken},
+		{name: "wrong token", authorization: "Bearer wrong"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			response := performRawRequestBody(
+				t,
+				testHandler(t, testDefaultSource),
+				http.MethodPost,
+				"/v1/topups",
+				`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+				map[string]string{
+					"Authorization": tt.authorization,
+					"Content-Type":  "application/json",
+				},
+			)
+
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
+			}
+			if got, want := response.Header().Get("WWW-Authenticate"), "Bearer"; got != want {
+				t.Fatalf("WWW-Authenticate = %q, want %q", got, want)
+			}
+			var body errorResponse
+			decodeResponse(t, response, &body)
+			if body.Error.Code != codeUnauthorized {
+				t.Fatalf("error code = %q, want %q", body.Error.Code, codeUnauthorized)
+			}
+		})
+	}
+}
+
+func TestHandlerTopUpRequiresJSONContentType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		contentType string
+	}{
+		{name: "missing"},
+		{name: "text plain", contentType: "text/plain"},
+		{name: "malformed", contentType: "application/json; charset"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			response := performRawRequestBody(
+				t,
+				testHandler(t, testDefaultSource),
+				http.MethodPost,
+				"/v1/topups",
+				`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+				map[string]string{
+					"Authorization": "Bearer " + testAuthToken,
+					"Content-Type":  tt.contentType,
+				},
+			)
+
+			if response.Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnsupportedMediaType)
+			}
+			var body errorResponse
+			decodeResponse(t, response, &body)
+			if body.Error.Code != codeUnsupportedMedia {
+				t.Fatalf("error code = %q, want %q", body.Error.Code, codeUnsupportedMedia)
+			}
+		})
+	}
+}
+
+func TestHandlerTopUpAllowsJSONContentTypeParameters(t *testing.T) {
+	t.Parallel()
+
+	response := performRawRequestBody(
 		t,
 		testHandler(t, testDefaultSource),
 		http.MethodPost,
 		"/v1/topups",
-		`{"address":"`+testAddress+`","lovelace":1,"source":"utxo9"}`,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
+		map[string]string{
+			"Authorization": "Bearer " + testAuthToken,
+			"Content-Type":  "application/json; charset=utf-8",
+		},
+	)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusOK, response.Body.String())
+	}
+}
+
+func TestHandlerTopUpReportsSourceNotFound(t *testing.T) {
+	t.Parallel()
+
+	response := performTopUpRequest(
+		t,
+		testHandler(t, testDefaultSource),
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000,"source":"utxo9"}`,
 	)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
@@ -230,22 +326,21 @@ func TestHandlerTopUpReportsSourceUnavailable(t *testing.T) {
 	rootDir := t.TempDir()
 	sourceDir := filepath.Join(rootDir, testDefaultSource)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
+	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testSourceAddress)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{"type":"bad","cborHex":"`+testVerificationKeyCBORHex+`"}`)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.skey"), `{"type":"GenesisUTxOSigningKey_ed25519","cborHex":"`+testSigningKeyCBORHex+`"}`)
 	store := sources.NewStore(rootDir, testDefaultSource)
 	handler := NewHandler(
 		store,
-		topup.NewService(store, &fakeSubmitter{}, 10_000_000),
+		topup.NewService(store, &fakeSubmitter{}, topup.Config{MaxLovelace: 10_000_000}),
+		testAuthToken,
 		slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	)
 
-	response := performRequestBody(
+	response := performTopUpRequest(
 		t,
 		handler,
-		http.MethodPost,
-		"/v1/topups",
-		`{"address":"`+testAddress+`","lovelace":1}`,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
 	)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
@@ -261,12 +356,10 @@ func TestHandlerTopUpReportsSourceUnavailable(t *testing.T) {
 func TestHandlerTopUpReportsChainFailure(t *testing.T) {
 	t.Parallel()
 
-	response := performRequestBody(
+	response := performTopUpRequest(
 		t,
 		testHandlerWithSubmitter(t, testDefaultSource, &fakeSubmitter{err: errors.New("chain failed")}),
-		http.MethodPost,
-		"/v1/topups",
-		`{"address":"`+testAddress+`","lovelace":1}`,
+		`{"address":"`+testDestinationAddress+`","lovelace":1000000}`,
 	)
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
@@ -301,7 +394,7 @@ func testHandler(t *testing.T, defaultSource string) http.Handler {
 	t.Helper()
 
 	return testHandlerWithSubmitter(t, defaultSource, &fakeSubmitter{
-		result: topup.ChainResult{TxID: "abc123"},
+		result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
 	})
 }
 
@@ -315,7 +408,8 @@ func testHandlerWithSubmitter(t *testing.T, defaultSource string, submitter topu
 
 	return NewHandler(
 		store,
-		topup.NewService(store, submitter, 10_000_000),
+		topup.NewService(store, submitter, topup.Config{MaxLovelace: 10_000_000}),
+		testAuthToken,
 		slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	)
 }
@@ -329,7 +423,42 @@ func performRequest(t *testing.T, handler http.Handler, method string, path stri
 func performRequestBody(t *testing.T, handler http.Handler, method string, path string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return performRawRequestBody(t, handler, method, path, body, nil)
+}
+
+func performTopUpRequest(t *testing.T, handler http.Handler, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return performRawRequestBody(
+		t,
+		handler,
+		http.MethodPost,
+		"/v1/topups",
+		body,
+		map[string]string{
+			"Authorization": "Bearer " + testAuthToken,
+			"Content-Type":  "application/json",
+		},
+	)
+}
+
+func performRawRequestBody(
+	t *testing.T,
+	handler http.Handler,
+	method string,
+	path string,
+	body string,
+	headers map[string]string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	for key, value := range headers {
+		if value == "" {
+			continue
+		}
+		request.Header.Set(key, value)
+	}
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
@@ -352,7 +481,7 @@ func writeSource(t *testing.T, rootDir string, name string) {
 
 	sourceDir := filepath.Join(rootDir, name)
 	requireNoError(t, os.MkdirAll(sourceDir, 0o700))
-	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testAddress)
+	writeSourceFile(t, filepath.Join(sourceDir, "utxo.addr"), testSourceAddress)
 	writeSourceFile(t, filepath.Join(sourceDir, "utxo.vkey"), `{
   "type": "GenesisUTxOVerificationKey_ed25519",
   "description": "Genesis Initial UTxO Verification Key",
@@ -409,6 +538,9 @@ func (f *fakeSubmitter) SubmitTopUp(_ context.Context, request topup.ChainReques
 	f.requests = append(f.requests, request)
 	if f.err != nil {
 		return topup.ChainResult{}, f.err
+	}
+	if len(f.result.SpentInputKeys) == 0 {
+		f.result.SpentInputKeys = []string{testInputKey}
 	}
 
 	return f.result, nil
