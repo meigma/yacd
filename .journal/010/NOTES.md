@@ -73,3 +73,12 @@ Pushed `feat/faucet-e2e-assessment` to origin and opened draft PR #16:
 `fix(dev): preserve ko faucet entrypoint`.
 GitHub checks completed successfully: `ci` passed in 1m16s and Kusari Inspector
 passed in 21s. Release dry-run jobs were skipped by workflow conditions.
+
+## 2026-05-23 13:50 — PR merged
+Marked PR #16 ready and squash-merged it into `master` as merge commit
+`7b6dc37` (`fix(dev): preserve ko faucet entrypoint (#16)`). The local
+`master` checkout was fast-forwarded to `7b6dc37`.
+Validation after merge: GitHub started post-merge CI run `26343199096` on
+`master`; the `ci` job passed in 1m25s. Release Please completed successfully.
+The implementation worktree remains present because it owns the still-running
+session dev stack.
