@@ -84,6 +84,27 @@
   primary-node Pod labels, targets the named `ogmios` port, and is deleted when
   `spec.chainAPI.ogmios.enabled=false`. `status.endpoints.ogmios` publishes a
   fully qualified `ws://<service>.<namespace>.svc.cluster.local:<port>` URL.
+- The Kupo Service uses `<safe CardanoNetwork name>-kupo`, selects the
+  primary-node Pod labels, targets the named `kupo` port, and is deleted when
+  `spec.chainAPI.kupo.enabled=false`. Kupo defaults to enabled when Ogmios is
+  enabled, uses `cardanosolutions/kupo:v2.11.0`, runs with `--prune-utxo`,
+  bounded ephemeral storage, and publishes
+  `http://<service>.<namespace>.svc.cluster.local:<port>` through
+  `status.endpoints.kupo`.
+- The faucet is opt-in through `spec.chainAPI.faucet`, requires Ogmios and Kupo
+  when enabled, and publishes `status.endpoints.faucet` plus
+  `status.faucet.authSecretName`. The controller creates an owned
+  `<network>-faucet-auth` Secret, mounts only `/state/env/utxo-keys` into the
+  sidecar, and uses live API reads plus periodic requeues instead of Secret
+  watches/list RBAC.
+- `yacd topup` reads the faucet auth Secret and posts to the faucet endpoint.
+  Custom non-loopback `--faucet-url` values require explicit trust flags before
+  the CLI sends the Secret token outside the status-published destination.
+- The faucet transaction path uses Apollo with Ogmios and Kupo today. This
+  brings in `github.com/SundaeSwap-finance/ogmigo/v6`, which Kusari flags
+  because it depends on the discontinued Gorilla WebSocket toolkit; no called
+  vulnerabilities were reported by `govulncheck`, but replacing or upstreaming
+  that Ogmios client dependency is a durable follow-up.
 - `NodeReady` and `OgmiosReady` are Kubernetes-runtime conditions derived from
   live primary Pod container readiness. `NodeReady` is intentionally separate
   from the Ogmios sidecar, and aggregate `Ready` is true only when both are
