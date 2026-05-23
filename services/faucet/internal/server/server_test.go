@@ -17,6 +17,7 @@ import (
 
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 	"github.com/meigma/yacd/services/faucet/internal/topup"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -33,6 +34,19 @@ var (
 	testSourceAddress          = mustDeriveTestnetPaymentAddress(testVerificationRawKeyHex)
 	testDestinationAddress     = mustDeriveTestnetPaymentAddress(deriveTestVerificationKeyHex(strings.Repeat("02", 32)))
 )
+
+func TestNewHTTPServerSetsBoundedTimeouts(t *testing.T) {
+	t.Parallel()
+
+	server := newHTTPServer(&Config{ListenAddress: "127.0.0.1:0"})
+
+	assert.Equal(t, "127.0.0.1:0", server.Addr)
+	assert.Equal(t, faucetReadHeaderTimeout, server.ReadHeaderTimeout)
+	assert.Equal(t, faucetReadTimeout, server.ReadTimeout)
+	assert.Equal(t, faucetWriteTimeout, server.WriteTimeout)
+	assert.Equal(t, faucetIdleTimeout, server.IdleTimeout)
+	assert.NotNil(t, server.Handler)
+}
 
 func TestHandlerHealth(t *testing.T) {
 	t.Parallel()

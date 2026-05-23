@@ -28,6 +28,11 @@ const (
 	codeUnsupportedMedia   = "unsupported_media_type"
 	maxTopUpBodyBytes      = 4 * 1024
 	requiredTopUpMediaType = "application/json"
+
+	faucetReadHeaderTimeout = 5 * time.Second
+	faucetReadTimeout       = 10 * time.Second
+	faucetWriteTimeout      = 30 * time.Second
+	faucetIdleTimeout       = 60 * time.Second
 )
 
 // Config describes the faucet HTTP server runtime configuration.
@@ -122,11 +127,7 @@ func Run(config *Config) error {
 		config.Logger = slog.Default()
 	}
 
-	httpServer := &http.Server{
-		Addr:              config.ListenAddress,
-		Handler:           newConfiguredHandler(config),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	httpServer := newHTTPServer(config)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -156,6 +157,17 @@ func Run(config *Config) error {
 		}
 
 		return nil
+	}
+}
+
+func newHTTPServer(config *Config) *http.Server {
+	return &http.Server{
+		Addr:              config.ListenAddress,
+		Handler:           newConfiguredHandler(config),
+		ReadHeaderTimeout: faucetReadHeaderTimeout,
+		ReadTimeout:       faucetReadTimeout,
+		WriteTimeout:      faucetWriteTimeout,
+		IdleTimeout:       faucetIdleTimeout,
 	}
 }
 
