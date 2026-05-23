@@ -66,3 +66,10 @@ Validation after correction: the live faucet pod used
 the recipient address showed exactly `1000000` lovelace. `moon run root:check`,
 `moon run root:test`, and `git diff --check` passed. The implementation commit
 was amended to `98145f8` (`fix(dev): preserve ko faucet entrypoint`).
+
+## 2026-05-23 13:34 — PR opened and CI verified
+Pushed `feat/faucet-e2e-assessment` to origin and opened draft PR #16:
+`https://github.com/meigma/yacd/pull/16`, titled
+`fix(dev): preserve ko faucet entrypoint`.
+GitHub checks completed successfully: `ci` passed in 1m16s and Kusari Inspector
+passed in 21s. Release dry-run jobs were skipped by workflow conditions.
