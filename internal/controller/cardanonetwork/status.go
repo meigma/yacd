@@ -454,7 +454,7 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 	}
 
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
+	if err := r.liveReader().Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return faucetReadyCondition(
 				metav1.ConditionFalse,
@@ -542,6 +542,10 @@ func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 }
 
 func (r *CardanoNetworkReconciler) statusReader() client.Reader {
+	return r.liveReader()
+}
+
+func (r *CardanoNetworkReconciler) liveReader() client.Reader {
 	if r.Reader != nil {
 		return r.Reader
 	}

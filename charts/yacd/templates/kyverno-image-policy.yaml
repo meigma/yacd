@@ -11,7 +11,8 @@ metadata:
     {{- end }}
   annotations:
     pod-policies.kyverno.io/autogen-controllers: none
-    policies.kyverno.io/title: Verify Operator Image Attestation
+    policies.kyverno.io/title: Verify YACD Image Attestations
+    policies.kyverno.io/description: Verify release attestations for YACD manager and faucet images.
     policies.kyverno.io/category: Software Supply Chain Security
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod
@@ -23,7 +24,7 @@ spec:
   validationFailureAction: {{ $verification.validationFailureAction }}
   webhookTimeoutSeconds: {{ int $verification.webhookTimeoutSeconds }}
   rules:
-    - name: verify-operator-image-attestation
+    - name: verify-yacd-image-attestations
       match:
         any:
           - resources:
@@ -33,7 +34,7 @@ spec:
         - imageReferences:
             {{- $imageReferences := $verification.imageReferences }}
             {{- if not $imageReferences }}
-            {{- $imageReferences = list (printf "%s:*" .Values.image.repository) (printf "%s@*" .Values.image.repository) }}
+            {{- $imageReferences = list (printf "%s:*" .Values.image.repository) (printf "%s@*" .Values.image.repository) (printf "%s:*" .Values.faucet.image.repository) (printf "%s@*" .Values.faucet.image.repository) }}
             {{- end }}
             {{- range $imageReferences }}
             - {{ . | quote }}

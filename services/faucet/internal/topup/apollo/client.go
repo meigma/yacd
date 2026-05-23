@@ -399,8 +399,17 @@ func (c Client) submitSignedTransaction(ctx context.Context, tx *apolloTx.Transa
 	if err != nil {
 		return "", topup.WrapError(topup.CodeChainUnavailable, "compute submitted transaction id", err)
 	}
+	txIDHex := hex.EncodeToString(txID.Payload)
+	if responseID := strings.ToLower(strings.TrimSpace(response.ID)); responseID != "" && responseID != txIDHex {
+		return "", topup.Errorf(
+			topup.CodeChainUnavailable,
+			"submit top-up transaction to Ogmios returned transaction id %q, want %q",
+			response.ID,
+			txIDHex,
+		)
+	}
 
-	return hex.EncodeToString(txID.Payload), nil
+	return txIDHex, nil
 }
 
 func (c Client) ogmiosSubmitter() ogmiosSubmitter {

@@ -156,8 +156,9 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, faucetContainerName)
 
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, result)
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
@@ -845,6 +846,26 @@ func TestCardanoNetworkReconcilerReconcileRegeneratesInvalidFaucetAuthToken(t *t
 	token := string(secret.Data[faucetAuthTokenKey])
 	assert.NotEqual(t, "short", token)
 	assert.True(t, validFaucetAuthToken(token))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileRepairsMissingFaucetAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("repairs-faucet-token")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	require.NoError(t, reconciler.Delete(ctx, secret))
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assert.True(t, validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])))
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 

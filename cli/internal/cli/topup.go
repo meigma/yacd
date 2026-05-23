@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -33,6 +34,9 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			lovelace := commandContext.viper.GetInt64("lovelace")
 			source := strings.TrimSpace(commandContext.viper.GetString("source"))
 			faucetURL := strings.TrimSpace(commandContext.viper.GetString("faucet-url"))
+			customFaucetURL := faucetURL != ""
+			trustFaucetURL := commandContext.viper.GetBool("trust-faucet-url")
+			allowInsecureFaucetURL := commandContext.viper.GetBool("allow-insecure-faucet-url")
 			jsonOutput := commandContext.viper.GetBool("json")
 			if destinationAddress == "" {
 				return fmt.Errorf("--address is required")
@@ -61,17 +65,26 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			if err := requireFaucetReady(network, namespace, args[0]); err != nil {
 				return err
 			}
-			if faucetURL == "" {
-				if network.Status.Endpoints == nil || network.Status.Endpoints.Faucet == nil || strings.TrimSpace(network.Status.Endpoints.Faucet.URL) == "" {
-					return fmt.Errorf("cardanonetwork %s/%s does not publish a faucet endpoint", namespace, args[0])
-				}
-				faucetURL = network.Status.Endpoints.Faucet.URL
-			}
-			if _, err := url.ParseRequestURI(faucetURL); err != nil {
-				return fmt.Errorf("invalid faucet URL %q: %w", faucetURL, err)
+			statusFaucetURL, err := publishedFaucetURL(network, namespace, args[0])
+			if err != nil {
+				return err
 			}
 			if network.Status.Faucet == nil || strings.TrimSpace(network.Status.Faucet.AuthSecretName) == "" {
 				return fmt.Errorf("cardanonetwork %s/%s does not publish a faucet auth Secret", namespace, args[0])
+			}
+			if faucetURL == "" {
+				faucetURL = statusFaucetURL
+			}
+			if err := validateFaucetURLTrust(
+				faucetURL,
+				statusFaucetURL,
+				namespace,
+				network.Status.Faucet.AuthSecretName,
+				customFaucetURL,
+				trustFaucetURL,
+				allowInsecureFaucetURL,
+			); err != nil {
+				return err
 			}
 
 			token, err := kubeClient.GetSecretValue(cmd.Context(), namespace, network.Status.Faucet.AuthSecretName, faucetAuthTokenKey)
@@ -111,6 +124,8 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Int64("lovelace", 0, "Exact lovelace amount to send")
 	cmd.Flags().String("source", "", "Faucet source name, for example utxo1")
 	cmd.Flags().String("faucet-url", "", "Override the faucet URL from CardanoNetwork status")
+	cmd.Flags().Bool("trust-faucet-url", false, "Allow sending the faucet auth token to a custom non-loopback URL")
+	cmd.Flags().Bool("allow-insecure-faucet-url", false, "Allow trusted custom non-loopback HTTP faucet URLs")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
@@ -140,6 +155,70 @@ func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, 
 	}
 
 	return nil
+}
+
+func publishedFaucetURL(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (string, error) {
+	if network.Status.Endpoints == nil || network.Status.Endpoints.Faucet == nil || strings.TrimSpace(network.Status.Endpoints.Faucet.URL) == "" {
+		return "", fmt.Errorf("cardanonetwork %s/%s does not publish a faucet endpoint", namespace, name)
+	}
+
+	return strings.TrimSpace(network.Status.Endpoints.Faucet.URL), nil
+}
+
+func validateFaucetURLTrust(
+	faucetURL string,
+	statusFaucetURL string,
+	namespace string,
+	secretName string,
+	custom bool,
+	trustCustom bool,
+	allowInsecure bool,
+) error {
+	parsed, err := parseHTTPURL(faucetURL)
+	if err != nil {
+		return err
+	}
+	if !custom || sameFaucetURL(faucetURL, statusFaucetURL) || isLoopbackHost(parsed.Hostname()) {
+		return nil
+	}
+
+	secretRef := namespace + "/" + secretName
+	if !trustCustom {
+		return fmt.Errorf("refusing to send faucet auth Secret %s token to custom faucet URL host %q; pass --trust-faucet-url to allow this destination", secretRef, parsed.Host)
+	}
+	if parsed.Scheme == "http" && !allowInsecure {
+		return fmt.Errorf("refusing to send faucet auth Secret %s token to insecure custom faucet URL host %q; pass --allow-insecure-faucet-url with --trust-faucet-url to allow HTTP", secretRef, parsed.Host)
+	}
+
+	return nil
+}
+
+func parseHTTPURL(raw string) (*url.URL, error) {
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid faucet URL %q: %w", raw, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("invalid faucet URL %q: scheme must be http or https", raw)
+	}
+	if strings.TrimSpace(parsed.Hostname()) == "" {
+		return nil, fmt.Errorf("invalid faucet URL %q: host is required", raw)
+	}
+
+	return parsed, nil
+}
+
+func sameFaucetURL(left string, right string) bool {
+	return strings.TrimRight(strings.TrimSpace(left), "/") == strings.TrimRight(strings.TrimSpace(right), "/")
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type topUpHTTPPayload struct {

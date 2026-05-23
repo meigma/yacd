@@ -271,14 +271,14 @@ func TestValidateTransaction(t *testing.T) {
 func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success with empty response id", func(t *testing.T) {
 		t.Parallel()
 
 		tx := testTransaction(t, testDestinationAddress)
 		expectedID, err := tx.TransactionBody.Id()
 		require.NoError(t, err)
 		submitter := &fakeOgmiosSubmitter{
-			response: &ogmigo.SubmitTxResponse{ID: "ignored-by-faucet"},
+			response: &ogmigo.SubmitTxResponse{},
 		}
 
 		txID, err := Client{submitter: submitter}.submitSignedTransaction(context.Background(), tx)
@@ -286,6 +286,37 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, hex.EncodeToString(expectedID.Payload), txID)
 		assert.NotEmpty(t, submitter.data)
+	})
+
+	t.Run("success with matching response id", func(t *testing.T) {
+		t.Parallel()
+
+		tx := testTransaction(t, testDestinationAddress)
+		expectedID, err := tx.TransactionBody.Id()
+		require.NoError(t, err)
+		submitter := &fakeOgmiosSubmitter{
+			response: &ogmigo.SubmitTxResponse{ID: strings.ToUpper(hex.EncodeToString(expectedID.Payload))},
+		}
+
+		txID, err := Client{submitter: submitter}.submitSignedTransaction(context.Background(), tx)
+
+		require.NoError(t, err)
+		assert.Equal(t, hex.EncodeToString(expectedID.Payload), txID)
+		assert.NotEmpty(t, submitter.data)
+	})
+
+	t.Run("mismatched response id", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := Client{
+			submitter: &fakeOgmiosSubmitter{
+				response: &ogmigo.SubmitTxResponse{ID: strings.Repeat("0", 64)},
+			},
+		}.submitSignedTransaction(context.Background(), testTransaction(t, testDestinationAddress))
+
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "returned transaction id")
+		assertTopUpCode(t, err, topup.CodeChainUnavailable)
 	})
 
 	t.Run("protocol rejection", func(t *testing.T) {

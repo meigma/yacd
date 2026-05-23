@@ -60,7 +60,9 @@ go run ./cli/cmd/yacd topup phase4-smoke --namespace yacd-smoke --faucet-url htt
 The checked-in local example opts into the faucet. A minimal `CardanoNetwork`
 does not expose the faucet unless `spec.chainAPI.faucet.enabled` is set. The
 published faucet endpoint is an in-cluster Service URL; host-side top-ups need a
-local forwarded URL or another externally routable Service address.
+local forwarded URL or another externally routable Service address. Custom
+non-loopback `--faucet-url` values require `--trust-faucet-url`; custom
+non-loopback `http://` values also require `--allow-insecure-faucet-url`.
 
 Run the local development stack with Kind, ctlptl, Tilt, and ko:
 
@@ -90,6 +92,11 @@ IMG=ghcr.io/meigma/yacd:<tag> moon run root:deploy
 FAUCET_IMG=ghcr.io/meigma/yacd/faucet:<tag> moon run root:deploy
 LOCAL_IMAGE=true IMG=example.com/yacd:v0.0.1 moon run root:deploy
 ```
+
+`spec.chainAPI.faucet.image` may select a different tag or digest from the
+operator-configured faucet image repository. Custom faucet repositories require
+installing the operator with that repository as the default faucet image and, if
+Kyverno image verification is enabled, matching `imageReferences`.
 
 Uninstall the local deployment:
 

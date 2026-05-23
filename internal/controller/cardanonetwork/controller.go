@@ -27,6 +27,7 @@ const (
 
 	primaryWorkloadReadinessRequeueAfter = 15 * time.Second
 	resourceConflictRequeueAfter         = time.Minute
+	faucetSecretRepairRequeueAfter       = 10 * time.Minute
 	disabledChildResourceLogValue        = "disabled"
 )
 
@@ -53,7 +54,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 
 // Reconcile is the CardanoNetwork controller scaffold.
@@ -156,6 +157,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
 		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, nil
+	}
+	if resources.FaucetAuthSecret != nil {
+		return ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, nil
 	}
 
 	return ctrl.Result{}, nil
@@ -287,7 +291,6 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
 }

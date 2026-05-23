@@ -228,6 +228,23 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "faucet image is required",
 		},
 		{
+			name: "faucet image from different repository",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				image := "example.com/yacd-faucet:test"
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Faucet: &yacdv1alpha1.FaucetSpec{
+						Enabled:          true,
+						Image:            &image,
+						Port:             defaultFaucetPort,
+						DefaultSource:    defaultFaucetSource,
+						MinTopUpLovelace: defaultFaucetMinLovelace,
+						MaxTopUpLovelace: defaultFaucetMaxLovelace,
+					},
+				}
+			},
+			wantErr: `faucet image repository must match the configured default faucet image repository "ghcr.io/meigma/yacd/faucet"`,
+		},
+		{
 			name: "invalid faucet port",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -902,7 +919,7 @@ func TestPrimaryWorkloadBuilderAppliesKupoPortAndResourceOverrides(t *testing.T)
 
 func TestPrimaryWorkloadBuilderAppliesFaucetOverrides(t *testing.T) {
 	network := localCardanoNetwork("custom-faucet")
-	image := "example.com/yacd-faucet:test"
+	image := "ghcr.io/meigma/yacd/faucet:test"
 	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
 		Faucet: &yacdv1alpha1.FaucetSpec{
 			Enabled:          true,

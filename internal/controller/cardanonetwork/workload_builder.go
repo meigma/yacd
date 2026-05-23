@@ -425,6 +425,10 @@ func (b primaryWorkloadBuilder) resolveFaucetSettings(network *yacdv1alpha1.Card
 	if strings.TrimSpace(settings.image) == "" {
 		return faucetSettings{}, unsupportedSpec("faucet image is required")
 	}
+	defaultImageRepo := imageRepository(b.resolvedDefaultFaucetImage())
+	if imageRepository(settings.image) != defaultImageRepo {
+		return faucetSettings{}, unsupportedSpec("faucet image repository must match the configured default faucet image repository %q", defaultImageRepo)
+	}
 	if spec.Port < 1 || spec.Port > 65535 {
 		return faucetSettings{}, unsupportedSpec("faucet port must be between 1 and 65535")
 	}
@@ -457,6 +461,23 @@ func (b primaryWorkloadBuilder) resolvedDefaultFaucetImage() string {
 	}
 
 	return defaultFaucetImage
+}
+
+func imageRepository(image string) string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return ""
+	}
+	if repo, _, ok := strings.Cut(image, "@"); ok {
+		return repo
+	}
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image[:lastColon]
+	}
+
+	return image
 }
 
 func validateKupoImage(settings kupoSettings) error {

@@ -358,7 +358,9 @@ type FaucetSpec struct {
 	Enabled bool `json:"enabled"`
 
 	// image optionally overrides the faucet image reference. When omitted, the
-	// controller uses its configured default faucet image.
+	// controller uses its configured default faucet image. Overrides must use the
+	// same repository as the controller's configured default faucet image; tag or
+	// digest may vary.
 	// +optional
 	Image *string `json:"image,omitempty"`
 

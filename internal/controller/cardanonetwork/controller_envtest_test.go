@@ -181,18 +181,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalFaucetServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
-	faucetAuthSecret := &corev1.Secret{}
-	require.NoError(t, apiClient.Get(ctx, faucetAuthSecretKey, faucetAuthSecret))
-	originalFaucetAuthSecretUID := faucetAuthSecret.UID
-	require.NoError(t, apiClient.Delete(ctx, faucetAuthSecret))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.Secret{}
-		err := apiClient.Get(ctx, faucetAuthSecretKey, got)
-		return err == nil && got.UID != originalFaucetAuthSecretUID &&
-			validFaucetAuthToken(string(got.Data[faucetAuthTokenKey]))
-	}, 10*time.Second, 100*time.Millisecond)
-
 	require.Eventually(t, func() bool {
 		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)

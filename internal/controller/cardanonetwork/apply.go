@@ -221,7 +221,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 	}
 
 	current := &corev1.Secret{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.liveReader().Get(ctx, clientObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		token, err := generateFaucetAuthToken()
 		if err != nil {
@@ -306,7 +306,7 @@ func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecret(
 	}
 
 	current := &corev1.Secret{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.liveReader().Get(ctx, clientObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		return controllerutil.OperationResultNone, nil
 	}
@@ -399,7 +399,7 @@ func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecretIfOwned(
 		return fmt.Errorf("set desired faucet auth Secret owner reference: %w", err)
 	}
 
-	return r.deleteObjectIfOwned(ctx, desired, &corev1.Secret{})
+	return r.deleteObjectIfOwnedWithReader(ctx, desired, &corev1.Secret{}, r.liveReader())
 }
 
 func (r *CardanoNetworkReconciler) deleteObjectIfOwned(
@@ -407,7 +407,16 @@ func (r *CardanoNetworkReconciler) deleteObjectIfOwned(
 	desired client.Object,
 	current client.Object,
 ) error {
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	return r.deleteObjectIfOwnedWithReader(ctx, desired, current, r.Client)
+}
+
+func (r *CardanoNetworkReconciler) deleteObjectIfOwnedWithReader(
+	ctx context.Context,
+	desired client.Object,
+	current client.Object,
+	reader client.Reader,
+) error {
+	err := reader.Get(ctx, clientObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
