@@ -58,7 +58,6 @@ const (
 	kupoServiceURLType      = "http"
 
 	faucetContainerName      = "faucet"
-	faucetCommand            = "/yacd-faucet"
 	faucetPortName           = "faucet"
 	faucetHostAddress        = "0.0.0.0"
 	faucetChainHostAddress   = "127.0.0.1"
@@ -908,7 +907,6 @@ func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios 
 		Name:            faucetContainerName,
 		Image:           settings.image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{faucetCommand},
 		Args: []string{
 			"--listen-address", fmt.Sprintf("%s:%d", faucetHostAddress, settings.port),
 			"--utxo-keys-dir", faucetUTXOKeysDir,

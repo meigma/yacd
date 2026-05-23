@@ -623,7 +623,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	faucetContainer := deployment.Spec.Template.Spec.Containers[3]
 	assert.Equal(t, faucetContainerName, faucetContainer.Name)
 	assert.Equal(t, defaultFaucetImage, faucetContainer.Image)
-	assert.Equal(t, []string{faucetCommand}, faucetContainer.Command)
+	assert.Empty(t, faucetContainer.Command)
 	assert.Equal(t, []string{
 		"--listen-address", "0.0.0.0:8080",
 		"--utxo-keys-dir", "/state/env/utxo-keys",
