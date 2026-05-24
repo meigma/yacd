@@ -656,6 +656,27 @@ spec:
           status:
             description: status defines the observed state of CardanoNetwork
             properties:
+              artifacts:
+                description: |-
+                  artifacts publishes references to generated non-secret network
+                  artifacts once the controller has verified that the artifact bundle
+                  matches the accepted localnet.
+                properties:
+                  dataHash:
+                    description: dataHash is the publisher-computed hash over ConfigMap
+                      data.
+                    type: string
+                  networkConfigMapName:
+                    description: |-
+                      networkConfigMapName is the same-namespace ConfigMap containing
+                      non-secret generated network files and connection metadata.
+                    type: string
+                  schemaVersion:
+                    description: |-
+                      schemaVersion identifies the artifact bundle schema verified by the
+                      controller.
+                    type: string
+                type: object
               conditions:
                 description: |-
                   conditions represent the current state of the CardanoNetwork resource.
@@ -664,6 +685,7 @@ spec:
                   Expected condition types include:
                   - "Ready": the network is usable through its published endpoints
                   - "NodeReady": the primary node container is running
+                  - "ArtifactsReady": the non-secret network artifact bundle is published
                   - "OgmiosReady": Ogmios is enabled and connected to the primary node
                   - "KupoReady": Kupo is enabled and synchronized enough to serve its API
                   - "FaucetReady": the faucet is enabled and available through its Service

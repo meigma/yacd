@@ -26,7 +26,7 @@ spec:
           echo "== CardanoNetwork smoke resource =="
           kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml
           echo "== CardanoNetwork smoke resources =="
-          kubectl get all,pvc,secret -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
+          kubectl get all,pvc,secret,configmap,serviceaccount,role,rolebinding -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
           echo "== CardanoNetwork smoke events =="
           kubectl get events -n yacd-smoke --sort-by=.lastTimestamp
           echo "== CardanoNetwork smoke child descriptions =="
@@ -36,6 +36,10 @@ spec:
           kubectl describe service -n yacd-smoke phase4-smoke-kupo
           kubectl describe service -n yacd-smoke phase4-smoke-faucet
           kubectl describe secret -n yacd-smoke phase4-smoke-faucet-auth
+          kubectl describe configmap -n yacd-smoke phase4-smoke-network-artifacts
+          kubectl describe serviceaccount -n yacd-smoke phase4-smoke-artifact-publisher
+          kubectl describe role -n yacd-smoke phase4-smoke-artifact-publisher
+          kubectl describe rolebinding -n yacd-smoke phase4-smoke-artifact-publisher
           kubectl describe deployment -n yacd-smoke phase4-smoke-node
           kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node
           echo "== Ogmios curl logs =="
@@ -252,6 +256,53 @@ spec:
                 namespace: yacd-smoke
                 name: phase4-smoke-faucet-auth
               type: Opaque
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-network-artifacts
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-artifact-publisher
+              automountServiceAccountToken: false
+        - assert:
+            resource:
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: Role
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-artifact-publisher
+              rules:
+                - apiGroups:
+                    - ""
+                  resources:
+                    - configmaps
+                  resourceNames:
+                    - phase4-smoke-network-artifacts
+                  verbs:
+                    - get
+                    - patch
+        - assert:
+            resource:
+              apiVersion: rbac.authorization.k8s.io/v1
+              kind: RoleBinding
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-artifact-publisher
+              roleRef:
+                apiGroup: rbac.authorization.k8s.io
+                kind: Role
+                name: phase4-smoke-artifact-publisher
+              subjects:
+                - kind: ServiceAccount
+                  name: phase4-smoke-artifact-publisher
+                  namespace: yacd-smoke
         - wait:
             apiVersion: apps/v1
             kind: Deployment
@@ -277,6 +328,7 @@ spec:
               for _ in $(seq 1 120); do
                 ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
                 node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
+                artifacts_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="ArtifactsReady")].status}' 2>/dev/null || true)"
                 ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
                 kupo_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].status}' 2>/dev/null || true)"
                 faucet_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="FaucetReady")].status}' 2>/dev/null || true)"
@@ -295,8 +347,12 @@ spec:
                 faucet_port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.port}' 2>/dev/null || true)"
                 faucet_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.url}' 2>/dev/null || true)"
                 faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
+                artifacts_configmap="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.artifacts.networkConfigMapName}' 2>/dev/null || true)"
+                artifacts_schema="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.artifacts.schemaVersion}' 2>/dev/null || true)"
+                artifacts_hash="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.artifacts.dataHash}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
+                  [ "${artifacts_ready}" = "True" ] &&
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${kupo_ready}" = "True" ] &&
                   [ "${faucet_ready}" = "True" ] &&
@@ -314,13 +370,65 @@ spec:
                   [ "${faucet_service_name}" = "phase4-smoke-faucet" ] &&
                   [ "${faucet_port}" = "8080" ] &&
                   [ "${faucet_url}" = "http://phase4-smoke-faucet.yacd-smoke.svc.cluster.local:8080" ] &&
-                  [ "${faucet_auth_secret}" = "phase4-smoke-faucet-auth" ]; then
+                  [ "${faucet_auth_secret}" = "phase4-smoke-faucet-auth" ] &&
+                  [ "${artifacts_configmap}" = "phase4-smoke-network-artifacts" ] &&
+                  [ "${artifacts_schema}" = "yacd.meigma.io/cardano-network-artifacts/v1alpha1" ] &&
+                  [ "${artifacts_hash#sha256:}" != "${artifacts_hash}" ]; then
                   exit 0
                 fi
                 kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true
                 sleep 5
               done
               exit 1
+        - script:
+            timeout: 1m
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              network_json="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o json)"
+              configmap_json="$(kubectl get configmap -n yacd-smoke phase4-smoke-network-artifacts -o json)"
+              NETWORK_JSON="${network_json}" CONFIGMAP_JSON="${configmap_json}" python3 - <<'PY'
+              import json
+              import os
+
+              network = json.loads(os.environ["NETWORK_JSON"])
+              configmap = json.loads(os.environ["CONFIGMAP_JSON"])
+              required = [
+                  "configuration.yaml",
+                  "byron-genesis.json",
+                  "shelley-genesis.json",
+                  "alonzo-genesis.json",
+                  "conway-genesis.json",
+                  "primary-topology.json",
+                  "yacd-localnet-plan.json",
+                  "connection.json",
+              ]
+
+              artifacts = network["status"]["artifacts"]
+              annotations = configmap["metadata"]["annotations"]
+              data = configmap["data"]
+              assert artifacts["networkConfigMapName"] == "phase4-smoke-network-artifacts"
+              assert artifacts["schemaVersion"] == "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
+              assert artifacts["dataHash"].startswith("sha256:")
+              assert annotations["yacd.meigma.io/artifact-schema-version"] == artifacts["schemaVersion"]
+              assert annotations["yacd.meigma.io/artifact-data-hash"] == artifacts["dataHash"]
+              assert annotations["yacd.meigma.io/localnet-fingerprint"] == network["status"]["network"]["localnetFingerprint"]
+              for key in required:
+                  assert key in data, key
+              connection = json.loads(data["connection.json"])
+              assert connection["schemaVersion"] == artifacts["schemaVersion"]
+              assert connection["network"]["name"] == "phase4-smoke"
+              assert connection["network"]["namespace"] == "yacd-smoke"
+              assert connection["network"]["mode"] == "local"
+              assert connection["network"]["networkMagic"] == 42
+              assert connection["network"]["localnetFingerprint"] == network["status"]["network"]["localnetFingerprint"]
+              assert connection["primaryNodeToNode"]["host"] == "phase4-smoke-node.yacd-smoke.svc.cluster.local"
+              assert connection["primaryNodeToNode"]["port"] == 3001
+              assert connection["primaryNodeToNode"]["url"] == "tcp://phase4-smoke-node.yacd-smoke.svc.cluster.local:3001"
+              for key in required:
+                  assert key in data
+              assert connection["files"]["primaryTopology"] == "primary-topology.json"
+              PY
         - script:
             timeout: 3m
             workDir: ../../..
@@ -583,6 +691,7 @@ spec:
                 fi
                 ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
                 node_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="NodeReady")].status}' 2>/dev/null || true)"
+                artifacts_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="ArtifactsReady")].status}' 2>/dev/null || true)"
                 ogmios_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="OgmiosReady")].status}' 2>/dev/null || true)"
                 kupo_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].status}' 2>/dev/null || true)"
                 kupo_reason="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="KupoReady")].reason}' 2>/dev/null || true)"
@@ -591,8 +700,10 @@ spec:
                 kupo_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.serviceName}' 2>/dev/null || true)"
                 faucet_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.serviceName}' 2>/dev/null || true)"
                 faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
+                artifacts_configmap="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.artifacts.networkConfigMapName}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
+                  [ "${artifacts_ready}" = "True" ] &&
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${kupo_ready}" = "False" ] &&
                   [ "${kupo_reason}" = "KupoDisabled" ] &&
@@ -600,7 +711,8 @@ spec:
                   [ "${faucet_reason}" = "FaucetDisabled" ] &&
                   [ -z "${kupo_endpoint}" ] &&
                   [ -z "${faucet_endpoint}" ] &&
-                  [ -z "${faucet_auth_secret}" ]; then
+                  [ -z "${faucet_auth_secret}" ] &&
+                  [ "${artifacts_configmap}" = "phase4-smoke-network-artifacts" ]; then
                   exit 0
                 fi
                 kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml || true

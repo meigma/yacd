@@ -9,6 +9,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -52,10 +53,14 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 
 // Reconcile is the CardanoNetwork controller scaffold.
 func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -96,6 +101,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			faucetReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			artifactsReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
 		}
@@ -113,7 +119,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret)
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -139,6 +145,14 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		faucetAuthSecretKey = client.ObjectKeyFromObject(resources.FaucetAuthSecret).String()
 	}
 	resultLog.Info("Applied CardanoNetwork primary workload",
+		"networkArtifactsConfigMap", client.ObjectKeyFromObject(resources.NetworkArtifactsConfigMap),
+		"networkArtifactsConfigMapOperation", applyResults.NetworkArtifactsConfigMap,
+		"artifactPublisherServiceAccount", client.ObjectKeyFromObject(resources.ArtifactPublisherServiceAccount),
+		"artifactPublisherServiceAccountOperation", applyResults.ArtifactPublisherServiceAccount,
+		"artifactPublisherRole", client.ObjectKeyFromObject(resources.ArtifactPublisherRole),
+		"artifactPublisherRoleOperation", applyResults.ArtifactPublisherRole,
+		"artifactPublisherRoleBinding", client.ObjectKeyFromObject(resources.ArtifactPublisherRoleBinding),
+		"artifactPublisherRoleBindingOperation", applyResults.ArtifactPublisherRoleBinding,
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
 		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
 		"deployment", client.ObjectKeyFromObject(resources.Deployment),
@@ -166,17 +180,26 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 type primaryWorkloadApplyResults struct {
-	PersistentVolumeClaim controllerutil.OperationResult
-	Deployment            controllerutil.OperationResult
-	Service               controllerutil.OperationResult
-	OgmiosService         controllerutil.OperationResult
-	KupoService           controllerutil.OperationResult
-	FaucetService         controllerutil.OperationResult
-	FaucetAuthSecret      controllerutil.OperationResult
+	NetworkArtifactsConfigMap       controllerutil.OperationResult
+	NetworkArtifactsConfigMapObject *corev1.ConfigMap
+	ArtifactPublisherServiceAccount controllerutil.OperationResult
+	ArtifactPublisherRole           controllerutil.OperationResult
+	ArtifactPublisherRoleBinding    controllerutil.OperationResult
+	PersistentVolumeClaim           controllerutil.OperationResult
+	Deployment                      controllerutil.OperationResult
+	Service                         controllerutil.OperationResult
+	OgmiosService                   controllerutil.OperationResult
+	KupoService                     controllerutil.OperationResult
+	FaucetService                   controllerutil.OperationResult
+	FaucetAuthSecret                controllerutil.OperationResult
 }
 
 func (r primaryWorkloadApplyResults) unchanged() bool {
-	return r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
+	return r.NetworkArtifactsConfigMap == controllerutil.OperationResultNone &&
+		r.ArtifactPublisherServiceAccount == controllerutil.OperationResultNone &&
+		r.ArtifactPublisherRole == controllerutil.OperationResultNone &&
+		r.ArtifactPublisherRoleBinding == controllerutil.OperationResultNone &&
+		r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
 		r.Deployment == controllerutil.OperationResultNone &&
 		r.Service == controllerutil.OperationResultNone &&
 		r.OgmiosService == controllerutil.OperationResultNone &&
@@ -193,6 +216,23 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	var results primaryWorkloadApplyResults
 	var err error
 
+	results.NetworkArtifactsConfigMap, results.NetworkArtifactsConfigMapObject, err = r.applyNetworkArtifactsConfigMap(ctx, resources.NetworkArtifactsConfigMap)
+	if err != nil {
+		return results, err
+	}
+	results.ArtifactPublisherServiceAccount, err = r.applyArtifactPublisherServiceAccount(ctx, resources.ArtifactPublisherServiceAccount)
+	if err != nil {
+		return results, err
+	}
+	results.ArtifactPublisherRole, err = r.applyArtifactPublisherRole(ctx, resources.ArtifactPublisherRole)
+	if err != nil {
+		return results, err
+	}
+	results.ArtifactPublisherRoleBinding, err = r.applyArtifactPublisherRoleBinding(ctx, resources.ArtifactPublisherRoleBinding)
+	if err != nil {
+		return results, err
+	}
+
 	results.PersistentVolumeClaim, err = r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
 	if err != nil {
 		return results, err
@@ -205,6 +245,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		}
 	}
 
+	setDeploymentArtifactConfigMapUID(resources.Deployment, results.NetworkArtifactsConfigMapObject)
 	results.Deployment, err = r.applyPrimaryDeployment(ctx, resources.Deployment)
 	if err != nil {
 		return results, err
@@ -271,6 +312,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		kupoReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 		faucetReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		artifactsReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
@@ -289,8 +331,12 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.ServiceAccount{}).
 		Owns(&corev1.Service{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{}).
 		Named(controllerName).
 		Complete(r)
 }

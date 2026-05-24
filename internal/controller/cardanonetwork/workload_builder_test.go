@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -435,6 +436,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 	deployment := resources.Deployment
+	networkArtifactsConfigMap := resources.NetworkArtifactsConfigMap
+	artifactPublisherServiceAccount := resources.ArtifactPublisherServiceAccount
+	artifactPublisherRole := resources.ArtifactPublisherRole
+	artifactPublisherRoleBinding := resources.ArtifactPublisherRoleBinding
 	persistentVolumeClaim := resources.PersistentVolumeClaim
 	service := resources.Service
 	ogmiosService := resources.OgmiosService
@@ -445,6 +450,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, kupoService)
 	require.NotNil(t, faucetService)
 	require.NotNil(t, faucetAuthSecret)
+	require.NotNil(t, networkArtifactsConfigMap)
+	require.NotNil(t, artifactPublisherServiceAccount)
+	require.NotNil(t, artifactPublisherRole)
+	require.NotNil(t, artifactPublisherRoleBinding)
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -456,6 +465,23 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, controller)
 	assert.Equal(t, "devnet", controller.Name)
 	assert.Equal(t, "CardanoNetwork", controller.Kind)
+
+	artifactsController := metav1.GetControllerOf(networkArtifactsConfigMap)
+	require.NotNil(t, artifactsController)
+	assert.Equal(t, "devnet", artifactsController.Name)
+	assert.Equal(t, "CardanoNetwork", artifactsController.Kind)
+	artifactServiceAccountController := metav1.GetControllerOf(artifactPublisherServiceAccount)
+	require.NotNil(t, artifactServiceAccountController)
+	assert.Equal(t, "devnet", artifactServiceAccountController.Name)
+	assert.Equal(t, "CardanoNetwork", artifactServiceAccountController.Kind)
+	artifactRoleController := metav1.GetControllerOf(artifactPublisherRole)
+	require.NotNil(t, artifactRoleController)
+	assert.Equal(t, "devnet", artifactRoleController.Name)
+	assert.Equal(t, "CardanoNetwork", artifactRoleController.Kind)
+	artifactRoleBindingController := metav1.GetControllerOf(artifactPublisherRoleBinding)
+	require.NotNil(t, artifactRoleBindingController)
+	assert.Equal(t, "devnet", artifactRoleBindingController.Name)
+	assert.Equal(t, "CardanoNetwork", artifactRoleBindingController.Kind)
 
 	pvcController := metav1.GetControllerOf(persistentVolumeClaim)
 	require.NotNil(t, pvcController)
@@ -502,6 +528,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.NotContains(t, persistentVolumeClaim.Annotations, requestedStorageClassAnno)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.Equal(t, "devnet-artifact-publisher", deployment.Spec.Template.Spec.ServiceAccountName)
 
 	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
@@ -509,10 +536,20 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
+		{Name: artifactPublisherTokenVolumeName, MountPath: artifactPublisherServiceAccountMountDir, ReadOnly: true},
 	}, initContainer.VolumeMounts)
+	initEnv := envMap(initContainer)
+	assert.Equal(t, "devnet-network-artifacts", initEnv[artifactConfigMapNameEnv])
+	assert.Equal(t, "devnet", initEnv[artifactNetworkNameEnv])
+	assert.Equal(t, "default", initEnv[artifactNetworkNamespaceEnv])
+	assert.Equal(t, "local", initEnv[artifactNetworkModeEnv])
+	assert.Equal(t, "conway", initEnv[artifactNetworkEraEnv])
+	assert.Equal(t, "devnet-node.default.svc.cluster.local", initEnv[artifactNodeToNodeHostEnv])
+	assert.Equal(t, "3001", initEnv[artifactNodeToNodePortEnv])
+	assert.Equal(t, "tcp://devnet-node.default.svc.cluster.local:3001", initEnv[artifactNodeToNodeURLEnv])
 	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
 	assert.Equal(t, faucetSourceAddressInitContainerName, addressInitContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", addressInitContainer.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3", addressInitContainer.Image)
 	assert.Equal(t, []string{faucetSourceAddressCommand}, addressInitContainer.Command)
 	addressInitArgs := strings.Join(addressInitContainer.Args, " ")
 	assert.Contains(t, addressInitArgs, "cardano-cli address build")
@@ -526,7 +563,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 4)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", nodeContainer.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3", nodeContainer.Image)
 	assert.Equal(t, []string{"cardano-node"}, nodeContainer.Command)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, nodeContainer.TerminationMessagePath)
 	assert.Equal(t, []string{
@@ -653,7 +690,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: faucetAuthVolumeName, MountPath: "/var/run/yacd-faucet", ReadOnly: true},
 	}, faucetContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Volumes, 5)
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 6)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
 	assert.Equal(t, localnetStateVolumeName, stateVolume.Name)
 	require.NotNil(t, stateVolume.PersistentVolumeClaim)
@@ -675,6 +712,38 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, faucetAuthVolumeName, faucetAuthVolume.Name)
 	require.NotNil(t, faucetAuthVolume.Secret)
 	assert.Equal(t, "devnet-faucet-auth", faucetAuthVolume.Secret.SecretName)
+	artifactPublisherTokenVolume := deployment.Spec.Template.Spec.Volumes[5]
+	assert.Equal(t, artifactPublisherTokenVolumeName, artifactPublisherTokenVolume.Name)
+	require.NotNil(t, artifactPublisherTokenVolume.Projected)
+	require.Len(t, artifactPublisherTokenVolume.Projected.Sources, 3)
+	require.NotNil(t, artifactPublisherTokenVolume.Projected.Sources[0].ServiceAccountToken)
+	assert.Empty(t, artifactPublisherTokenVolume.Projected.Sources[0].ServiceAccountToken.Audience)
+
+	assert.Equal(t, "devnet-network-artifacts", networkArtifactsConfigMap.Name)
+	assert.Equal(t, "default", networkArtifactsConfigMap.Namespace)
+	assert.Equal(t, "yacd", networkArtifactsConfigMap.Labels[labelAppManagedBy])
+	assert.Equal(t, persistentVolumeClaim.Annotations[localnetFingerprintAnno], networkArtifactsConfigMap.Annotations[localnetFingerprintAnno])
+
+	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherServiceAccount.Name)
+	assert.Equal(t, "default", artifactPublisherServiceAccount.Namespace)
+	assert.Equal(t, "yacd", artifactPublisherServiceAccount.Labels[labelAppManagedBy])
+	require.NotNil(t, artifactPublisherServiceAccount.AutomountServiceAccountToken)
+	assert.False(t, *artifactPublisherServiceAccount.AutomountServiceAccountToken)
+
+	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRole.Name)
+	require.Len(t, artifactPublisherRole.Rules, 1)
+	assert.Equal(t, []string{""}, artifactPublisherRole.Rules[0].APIGroups)
+	assert.Equal(t, []string{"configmaps"}, artifactPublisherRole.Rules[0].Resources)
+	assert.Equal(t, []string{"devnet-network-artifacts"}, artifactPublisherRole.Rules[0].ResourceNames)
+	assert.Equal(t, []string{"get", "patch"}, artifactPublisherRole.Rules[0].Verbs)
+
+	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.Name)
+	assert.Equal(t, "Role", artifactPublisherRoleBinding.RoleRef.Kind)
+	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.RoleRef.Name)
+	require.Len(t, artifactPublisherRoleBinding.Subjects, 1)
+	assert.Equal(t, rbacv1.ServiceAccountKind, artifactPublisherRoleBinding.Subjects[0].Kind)
+	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.Subjects[0].Name)
+	assert.Equal(t, "default", artifactPublisherRoleBinding.Subjects[0].Namespace)
 
 	assert.Equal(t, "devnet-node-state", persistentVolumeClaim.Name)
 	assert.Equal(t, "default", persistentVolumeClaim.Namespace)
@@ -762,7 +831,11 @@ func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {
 	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
+	assert.NotNil(t, resources.NetworkArtifactsConfigMap)
+	assert.NotNil(t, resources.ArtifactPublisherServiceAccount)
+	assert.NotNil(t, resources.ArtifactPublisherRole)
+	assert.NotNil(t, resources.ArtifactPublisherRoleBinding)
 	assert.NotNil(t, resources.OgmiosService)
 	assert.NotNil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
@@ -970,7 +1043,7 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	assert.Nil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 3)
 }
 
 func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
@@ -992,7 +1065,7 @@ func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 3)
 }
 
 func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
@@ -1015,7 +1088,7 @@ func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {
@@ -1024,6 +1097,8 @@ func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {
 	scheme := runtime.NewScheme()
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, rbacv1.AddToScheme(scheme))
 
 	return primaryWorkloadBuilder{scheme: scheme}
 }

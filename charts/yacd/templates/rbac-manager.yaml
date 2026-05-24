@@ -12,9 +12,11 @@ rules:
   - apiGroups:
       - ""
     resources:
-      - persistentvolumeclaims
+      - configmaps
+      - services
     verbs:
       - create
+      - delete
       - get
       - list
       - patch
@@ -23,10 +25,10 @@ rules:
   - apiGroups:
       - ""
     resources:
-      - services
+      - persistentvolumeclaims
+      - serviceaccounts
     verbs:
       - create
-      - delete
       - get
       - list
       - patch
@@ -52,6 +54,18 @@ rules:
       - apps
     resources:
       - deployments
+    verbs:
+      - create
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - rolebindings
+      - roles
     verbs:
       - create
       - get

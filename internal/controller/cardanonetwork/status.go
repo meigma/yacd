@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	conditionTypeProgressing = "Progressing"
-	conditionTypeDegraded    = "Degraded"
-	conditionTypeReady       = "Ready"
-	conditionTypeNodeReady   = "NodeReady"
-	conditionTypeOgmiosReady = "OgmiosReady"
-	conditionTypeKupoReady   = "KupoReady"
-	conditionTypeFaucetReady = "FaucetReady"
+	conditionTypeProgressing    = "Progressing"
+	conditionTypeDegraded       = "Degraded"
+	conditionTypeReady          = "Ready"
+	conditionTypeNodeReady      = "NodeReady"
+	conditionTypeOgmiosReady    = "OgmiosReady"
+	conditionTypeKupoReady      = "KupoReady"
+	conditionTypeFaucetReady    = "FaucetReady"
+	conditionTypeArtifactsReady = "ArtifactsReady"
 
 	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
@@ -39,8 +40,10 @@ const (
 	conditionReasonKupoDisabled                = "KupoDisabled"
 	conditionReasonFaucetReady                 = "FaucetReady"
 	conditionReasonFaucetDisabled              = "FaucetDisabled"
+	conditionReasonArtifactsReady              = "ArtifactsReady"
+	conditionReasonArtifactsPending            = "ArtifactsPending"
 	conditionReasonPrimaryWorkloadMissing      = "PrimaryWorkloadMissing"
-	conditionMessagePrimaryWorkloadApplied     = "Primary node PVC, Deployment, Service, and chain API resources are applied"
+	conditionMessagePrimaryWorkloadApplied     = "Primary node, artifact publisher, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
 	conditionMessageReady                      = "CardanoNetwork is usable through its published endpoints"
 	conditionMessagePrimaryNodeReady           = "Primary node container is ready"
@@ -50,6 +53,7 @@ const (
 	conditionMessageKupoDisabled               = "Kupo chain index API is disabled"
 	conditionMessageFaucetReady                = "Faucet sidecar is available through its Service"
 	conditionMessageFaucetDisabled             = "Faucet API is disabled"
+	conditionMessageArtifactsReady             = "Network artifact ConfigMap is published and verified"
 )
 
 func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
@@ -57,7 +61,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
@@ -69,6 +73,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	kupoService *corev1.Service,
 	faucetService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
+	networkArtifactsConfigMap *corev1.ConfigMap,
 ) (metav1.Condition, error) {
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
@@ -86,9 +91,24 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, faucetReady, kupoService != nil, faucetService != nil)
+	artifactResult := artifactConfigMapStatus(networkArtifactsConfigMap, localnetFingerprint)
+	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
+	artifactsReady := artifactsReadyCondition(
+		metav1.ConditionFalse,
+		conditionReasonArtifactsPending,
+		artifactResult.reason,
+	)
+	if artifactResult.ready {
+		artifactsStatus = &artifactResult.status
+		artifactsReady = artifactsReadyCondition(
+			metav1.ConditionTrue,
+			conditionReasonArtifactsReady,
+			conditionMessageArtifactsReady,
+		)
+	}
+	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -96,6 +116,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 		ogmiosReady,
 		kupoReady,
 		faucetReady,
+		artifactsReady,
 	); err != nil {
 		return metav1.Condition{}, err
 	}
@@ -112,6 +133,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	kupoService *corev1.Service,
 	faucetService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
+	artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus,
 	clearFaucet bool,
 	conditions ...metav1.Condition,
 ) error {
@@ -123,8 +145,10 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
 		setFaucetStatus(network, faucetAuthSecret)
+		setArtifactsStatus(network, artifactsStatus)
 	} else if clearFaucet {
 		clearFaucetStatus(network)
+		clearArtifactsStatus(network)
 	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = network.Generation
@@ -138,11 +162,25 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	return r.Status().Patch(ctx, network, client.MergeFrom(original))
 }
 
+func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1alpha1.CardanoNetworkArtifactsStatus) {
+	if artifacts == nil {
+		network.Status.Artifacts = nil
+		return
+	}
+
+	copied := *artifacts
+	network.Status.Artifacts = &copied
+}
+
 func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
 	if network.Status.Endpoints != nil {
 		network.Status.Endpoints.Faucet = nil
 	}
 	network.Status.Faucet = nil
+}
+
+func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
+	network.Status.Artifacts = nil
 }
 
 func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {
@@ -567,11 +605,12 @@ func podContainerReady(pod *corev1.Pod, containerName string) bool {
 	return false
 }
 
-func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
+func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, artifactsReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
 	if nodeReady.Status == metav1.ConditionTrue &&
 		ogmiosReady.Status == metav1.ConditionTrue &&
 		(!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) &&
-		(!faucetEnabled || faucetReady.Status == metav1.ConditionTrue) {
+		(!faucetEnabled || faucetReady.Status == metav1.ConditionTrue) &&
+		artifactsReady.Status == metav1.ConditionTrue {
 		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 	}
 	if nodeReady.Status != metav1.ConditionTrue {
@@ -583,8 +622,14 @@ func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, ku
 	if kupoEnabled && kupoReady.Status != metav1.ConditionTrue {
 		return condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
 	}
+	if faucetEnabled && faucetReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
+	}
+	if artifactsReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, artifactsReady.Reason, artifactsReady.Message)
+	}
 
-	return condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
+	return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
@@ -607,6 +652,10 @@ func faucetReadyCondition(status metav1.ConditionStatus, reason string, message 
 	return condition(conditionTypeFaucetReady, status, reason, message)
 }
 
+func artifactsReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
+	return condition(conditionTypeArtifactsReady, status, reason, message)
+}
+
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
 	return condition(conditionTypeProgressing, status, reason, message)
 }
@@ -625,7 +674,9 @@ func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
 	if ready.Status == metav1.ConditionTrue {
 		return progressingCondition(metav1.ConditionFalse, conditionReasonReady, conditionMessageReady)
 	}
-	if ready.Reason == conditionReasonDeploymentProgressing || ready.Reason == conditionReasonPrimaryWorkloadMissing {
+	if ready.Reason == conditionReasonDeploymentProgressing ||
+		ready.Reason == conditionReasonPrimaryWorkloadMissing ||
+		ready.Reason == conditionReasonArtifactsPending {
 		return progressingCondition(metav1.ConditionTrue, ready.Reason, ready.Message)
 	}
 
