@@ -1,0 +1,778 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: cardanodbsyncs.yacd.meigma.io
+spec:
+  group: yacd.meigma.io
+  names:
+    kind: CardanoDBSync
+    listKind: CardanoDBSyncList
+    plural: cardanodbsyncs
+    singular: cardanodbsync
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.networkRef.name
+      name: Network
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Synced")].status
+      name: Synced
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: CardanoDBSync is the Schema for the cardanodbsyncs API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of CardanoDBSync.
+            properties:
+              config:
+                description: |-
+                  config configures upstream db-sync behavior using Kubernetes-style field
+                  names. The controller translates this object into the upstream db-sync
+                  configuration file.
+                properties:
+                  insert:
+                    description: insert configures upstream db-sync insert_options.
+                    properties:
+                      governance:
+                        default: true
+                        description: governance controls governance-related data inserts.
+                        type: boolean
+                      jsonType:
+                        default: text
+                        description: jsonType controls the upstream json_type insert
+                          option.
+                        enum:
+                        - text
+                        - jsonb
+                        - disable
+                        type: string
+                      ledger:
+                        default: enable
+                        description: ledger controls ledger state maintenance and
+                          use.
+                        enum:
+                        - enable
+                        - disable
+                        - ignore
+                        type: string
+                      metadata:
+                        description: metadata configures transaction metadata inserts.
+                        properties:
+                          enabled:
+                            default: true
+                            description: enabled controls transaction metadata inserts.
+                            type: boolean
+                          keys:
+                            description: keys optionally limits metadata inserts to
+                              specific numeric labels.
+                            items:
+                              format: int64
+                              type: integer
+                            type: array
+                        required:
+                        - enabled
+                        type: object
+                      multiAsset:
+                        description: multiAsset configures multi-asset table inserts.
+                        properties:
+                          enabled:
+                            default: true
+                            description: enabled controls multi-asset data inserts.
+                            type: boolean
+                          policies:
+                            description: policies optionally limits multi-asset data
+                              to specific policy hashes.
+                            items:
+                              type: string
+                            type: array
+                        required:
+                        - enabled
+                        type: object
+                      offchainPoolData:
+                        default: false
+                        description: offchainPoolData controls stake pool offchain
+                          metadata fetching.
+                        type: boolean
+                      offchainVoteData:
+                        default: false
+                        description: offchainVoteData controls governance offchain
+                          metadata fetching.
+                        type: boolean
+                      plutus:
+                        description: plutus configures Plutus and script table inserts.
+                        properties:
+                          enabled:
+                            default: true
+                            description: enabled controls Plutus and script data inserts.
+                            type: boolean
+                          scriptHashes:
+                            description: scriptHashes optionally limits Plutus data
+                              to specific script hashes.
+                            items:
+                              type: string
+                            type: array
+                        required:
+                        - enabled
+                        type: object
+                      poolStats:
+                        default: false
+                        description: poolStats controls pool stats inserts.
+                        type: boolean
+                      preset:
+                        default: full
+                        description: |-
+                          preset selects an upstream insert profile. Explicit fields in this object
+                          are interpreted as overrides by the future controller.
+                        enum:
+                        - full
+                        - only_utxo
+                        - only_governance
+                        - disable_all
+                        type: string
+                      removeJsonbFromSchema:
+                        default: false
+                        description: |-
+                          removeJsonbFromSchema controls whether db-sync removes jsonb data types
+                          from affected schema columns.
+                        type: boolean
+                      shelley:
+                        description: shelley configures Shelley-era table inserts.
+                        properties:
+                          enabled:
+                            default: true
+                            description: enabled controls Shelley-era data inserts.
+                            type: boolean
+                          stakeAddresses:
+                            description: |-
+                              stakeAddresses optionally limits Shelley data to specific stake
+                              addresses.
+                            items:
+                              type: string
+                            type: array
+                        required:
+                        - enabled
+                        type: object
+                      txCbor:
+                        default: false
+                        description: txCbor controls transaction CBOR collection.
+                        type: boolean
+                      txOut:
+                        description: txOut configures transaction output storage.
+                        properties:
+                          forceTxIn:
+                            default: false
+                            description: forceTxIn keeps tx_in populated for consumed,
+                              prune, or bootstrap modes.
+                            type: boolean
+                          mode:
+                            default: enable
+                            description: mode selects the upstream tx_out value.
+                            enum:
+                            - enable
+                            - disable
+                            - consumed
+                            - prune
+                            - bootstrap
+                            type: string
+                          useAddressTable:
+                            default: false
+                            description: useAddressTable enables the normalized address
+                              table schema variant.
+                            type: boolean
+                        required:
+                        - forceTxIn
+                        - mode
+                        - useAddressTable
+                        type: object
+                    required:
+                    - governance
+                    - jsonType
+                    - ledger
+                    - offchainPoolData
+                    - offchainVoteData
+                    - poolStats
+                    - preset
+                    - removeJsonbFromSchema
+                    - txCbor
+                    type: object
+                  ipfsGateways:
+                    description: ipfsGateways lists gateways used for offchain metadata
+                      fetching.
+                    items:
+                      type: string
+                    type: array
+                  ledgerBackend:
+                    default: lsm
+                    description: ledgerBackend selects how db-sync stores its ledger
+                      UTxO set.
+                    enum:
+                    - inmemory
+                    - lsm
+                    type: string
+                  runtime:
+                    description: |-
+                      runtime configures db-sync runtime flags that are not part of
+                      insert_options.
+                    properties:
+                      cache:
+                        default: true
+                        description: cache controls whether db-sync caches are enabled.
+                        type: boolean
+                      epochTable:
+                        default: true
+                        description: epochTable controls whether db-sync populates
+                          the epoch table.
+                        type: boolean
+                      forceIndexes:
+                        default: false
+                        description: |-
+                          forceIndexes controls whether db-sync creates indexes at startup rather
+                          than later in the sync lifecycle.
+                        type: boolean
+                      metricsPort:
+                        default: 8080
+                        description: metricsPort is the db-sync Prometheus metrics
+                          port.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    required:
+                    - cache
+                    - epochTable
+                    - forceIndexes
+                    - metricsPort
+                    type: object
+                  snapshot:
+                    description: snapshot configures ledger state snapshot behavior.
+                    properties:
+                      nearTipEpoch:
+                        default: 580
+                        description: |-
+                          nearTipEpoch is the epoch threshold where db-sync considers itself near
+                          tip for snapshot frequency.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    required:
+                    - nearTipEpoch
+                    type: object
+                required:
+                - ledgerBackend
+                type: object
+              database:
+                description: database configures the Postgres database used by db-sync.
+                properties:
+                  authSecretRef:
+                    description: |-
+                      authSecretRef optionally references a same-namespace Secret containing
+                      the Postgres password in the key "password". When omitted, the controller
+                      creates an owned Secret and reports its name in status.
+                    properties:
+                      name:
+                        description: name is the name of the referenced Secret.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  database:
+                    default: cexplorer
+                    description: database is the Postgres database name.
+                    type: string
+                  image:
+                    default: postgres:17.2-alpine
+                    description: image is the Postgres image reference.
+                    type: string
+                  parameters:
+                    description: |-
+                      parameters configures basic Postgres startup parameters used by the
+                      managed local prototype.
+                    properties:
+                      maintenanceWorkMem:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: maintenanceWorkMem sets the Postgres maintenance_work_mem
+                          parameter.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      maxParallelMaintenanceWorkers:
+                        description: |-
+                          maxParallelMaintenanceWorkers sets the Postgres
+                          max_parallel_maintenance_workers parameter.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  resources:
+                    description: resources configures the Postgres container resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  storage:
+                    description: storage configures persistent Postgres data storage.
+                    properties:
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: size is the requested persistent volume size.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClassName:
+                        description: |-
+                          storageClassName optionally selects the Kubernetes StorageClass used for
+                          the persistent volume claim.
+                        type: string
+                    required:
+                    - size
+                    type: object
+                  user:
+                    default: postgres
+                    description: user is the Postgres user name.
+                    type: string
+                required:
+                - database
+                - image
+                - user
+                type: object
+              followerNode:
+                description: |-
+                  followerNode configures the dedicated follower node colocated with
+                  db-sync for local node socket access.
+                properties:
+                  image:
+                    description: |-
+                      image optionally overrides the follower cardano-node image. When omitted,
+                      the controller derives an image from the referenced CardanoNetwork.
+                    type: string
+                  resources:
+                    description: resources configures the follower node container
+                      resources.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  storage:
+                    description: storage configures persistent follower node database
+                      storage.
+                    properties:
+                      size:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: size is the requested persistent volume size.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      storageClassName:
+                        description: |-
+                          storageClassName optionally selects the Kubernetes StorageClass used for
+                          the persistent volume claim.
+                        type: string
+                    required:
+                    - size
+                    type: object
+                type: object
+              image:
+                default: ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0
+                description: image is the cardano-db-sync image reference.
+                type: string
+              networkRef:
+                description: |-
+                  networkRef references the same-namespace CardanoNetwork that db-sync
+                  indexes.
+                properties:
+                  name:
+                    description: name is the name of the referenced CardanoNetwork.
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              resources:
+                description: resources configures the db-sync container resources.
+                properties:
+                  claims:
+                    description: |-
+                      Claims lists the names of resources, defined in spec.resourceClaims,
+                      that are used by this container.
+
+                      This field depends on the
+                      DynamicResourceAllocation feature gate.
+
+                      This field is immutable. It can only be set for containers.
+                    items:
+                      description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                      properties:
+                        name:
+                          description: |-
+                            Name must match the name of one entry in pod.spec.resourceClaims of
+                            the Pod where this field is used. It makes that resource available
+                            inside a container.
+                          type: string
+                        request:
+                          description: |-
+                            Request is the name chosen for a request in the referenced claim.
+                            If empty, everything from the claim is made available, otherwise
+                            only the result of this request.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  limits:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Limits describes the maximum amount of compute resources allowed.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                  requests:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: |-
+                      Requests describes the minimum amount of compute resources required.
+                      If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                      otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                      More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                    type: object
+                type: object
+              stateStorage:
+                description: stateStorage configures persistent storage for db-sync
+                  ledger state.
+                properties:
+                  size:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: size is the requested persistent volume size.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storageClassName:
+                    description: |-
+                      storageClassName optionally selects the Kubernetes StorageClass used for
+                      the persistent volume claim.
+                    type: string
+                required:
+                - size
+                type: object
+            required:
+            - config
+            - database
+            - image
+            - networkRef
+            type: object
+          status:
+            description: status defines the observed state of CardanoDBSync.
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the current state of the CardanoDBSync resource.
+
+                  Expected condition types include:
+                  - "Ready": db-sync is usable through its published database endpoint
+                  - "FollowerNodeReady": the colocated follower node is running
+                  - "PostgresReady": Postgres is running and accepting local connections
+                  - "DBSyncReady": the db-sync process is running
+                  - "Synced": db-sync has caught up to the follower node
+                  - "Progressing": the resource is being created or updated
+                  - "Degraded": the resource failed to reach or maintain desired state
+
+                  The status of each condition is one of True, False, or Unknown.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              database:
+                description: database reports database-specific runtime details.
+                properties:
+                  authSecretName:
+                    description: |-
+                      authSecretName is the same-namespace Secret containing generated
+                      database credentials when the user did not provide authSecretRef.
+                    type: string
+                type: object
+              endpoints:
+                description: |-
+                  endpoints publishes cluster-local connection details for db-sync
+                  dependencies and observability.
+                properties:
+                  metrics:
+                    description: metrics is the db-sync Prometheus metrics endpoint.
+                    properties:
+                      port:
+                        description: port is the Service port.
+                        format: int32
+                        type: integer
+                      serviceName:
+                        description: serviceName is the Kubernetes Service name.
+                        type: string
+                      url:
+                        description: url is a convenience URL for protocols with a
+                          stable URL shape.
+                        type: string
+                    type: object
+                  postgres:
+                    description: postgres is the Postgres endpoint used by db-sync
+                      and clients.
+                    properties:
+                      port:
+                        description: port is the Service port.
+                        format: int32
+                        type: integer
+                      serviceName:
+                        description: serviceName is the Kubernetes Service name.
+                        type: string
+                      url:
+                        description: url is a convenience URL for protocols with a
+                          stable URL shape.
+                        type: string
+                    type: object
+                type: object
+              observedGeneration:
+                description: |-
+                  observedGeneration is the most recent generation observed by the
+                  controller.
+                format: int64
+                type: integer
+              sync:
+                description: sync reports db-sync indexing progress.
+                properties:
+                  dbBlockHeight:
+                    description: dbBlockHeight is the latest block height inserted
+                      into Postgres.
+                    format: int64
+                    type: integer
+                  dbQueueLength:
+                    description: dbQueueLength is the current db-sync database event
+                      queue length.
+                    format: int64
+                    type: integer
+                  dbSlotHeight:
+                    description: dbSlotHeight is the latest slot inserted into Postgres.
+                    format: int64
+                    type: integer
+                  epoch:
+                    description: epoch is the latest epoch observed by db-sync.
+                    format: int64
+                    type: integer
+                  lagBlocks:
+                    description: lagBlocks is the difference between nodeBlockHeight
+                      and dbBlockHeight.
+                    format: int64
+                    type: integer
+                  nodeBlockHeight:
+                    description: nodeBlockHeight is the latest block height reported
+                      by the follower node.
+                    format: int64
+                    type: integer
+                type: object
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

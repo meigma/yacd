@@ -25,7 +25,13 @@ var (
 )
 
 func addKnownTypes(scheme *runtime.Scheme) error {
-	scheme.AddKnownTypes(SchemeGroupVersion, &CardanoNetwork{}, &CardanoNetworkList{})
+	scheme.AddKnownTypes(
+		SchemeGroupVersion,
+		&CardanoNetwork{},
+		&CardanoNetworkList{},
+		&CardanoDBSync{},
+		&CardanoDBSyncList{},
+	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)
 	return nil
 }
