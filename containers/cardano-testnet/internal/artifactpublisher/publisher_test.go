@@ -65,13 +65,13 @@ func TestRunPatchesConfigMapWithArtifacts(t *testing.T) {
 		"connection.json",
 	}
 	for _, key := range requiredKeys {
-		if gotPatch.Data[key] == "" {
+		if gotPatch.Data[key] == nil || *gotPatch.Data[key] == "" {
 			t.Fatalf("patch data missing %s", key)
 		}
 	}
 
 	var connection connectionDocument
-	if err := json.Unmarshal([]byte(gotPatch.Data["connection.json"]), &connection); err != nil {
+	if err := json.Unmarshal([]byte(*gotPatch.Data["connection.json"]), &connection); err != nil {
 		t.Fatalf("parse connection.json: %v", err)
 	}
 	if connection.SchemaVersion != SchemaVersion {
@@ -166,6 +166,25 @@ func TestRunOmitsAbsentOptionalDijkstraGenesis(t *testing.T) {
 	}
 	if _, exists := data["dijkstra-genesis.json"]; exists {
 		t.Fatal("dijkstra-genesis.json was published when source file was absent")
+	}
+}
+
+func TestRunPrunesAbsentOptionalDijkstraGenesis(t *testing.T) {
+	envDir := writeLocalnetArtifacts(t)
+	if err := os.Remove(filepath.Join(envDir, "dijkstra-genesis.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _, err := buildPatchData(testOptions(envDir))
+	if err != nil {
+		t.Fatalf("buildPatchData() error = %v", err)
+	}
+	patch := buildConfigMapDataPatch(data)
+	if _, exists := patch["dijkstra-genesis.json"]; !exists {
+		t.Fatal("dijkstra-genesis.json patch key missing")
+	}
+	if patch["dijkstra-genesis.json"] != nil {
+		t.Fatalf("dijkstra-genesis.json patch value = %q, want null", *patch["dijkstra-genesis.json"])
 	}
 }
 

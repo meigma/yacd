@@ -121,7 +121,7 @@ type connectionEndpoint struct {
 
 type configMapPatch struct {
 	Metadata configMapMetadataPatch `json:"metadata"`
-	Data     map[string]string      `json:"data"`
+	Data     map[string]*string     `json:"data"`
 }
 
 type configMapMetadataPatch struct {
@@ -159,7 +159,7 @@ func Run(ctx context.Context, args []string, env map[string]string, stdout io.Wr
 
 	if err := patchConfigMap(ctx, opts, configMapPatch{
 		Metadata: configMapMetadataPatch{Annotations: annotations},
-		Data:     data,
+		Data:     buildConfigMapDataPatch(data),
 	}); err != nil {
 		return err
 	}
@@ -329,6 +329,22 @@ func buildPatchData(opts options) (map[string]string, map[string]string, error) 
 	}
 
 	return data, annotations, nil
+}
+
+func buildConfigMapDataPatch(data map[string]string) map[string]*string {
+	patch := make(map[string]*string, len(generatedArtifactSources)+2)
+	for _, source := range generatedArtifactSources {
+		patch[source.key] = nil
+	}
+	patch["yacd-localnet-plan.json"] = nil
+	patch["connection.json"] = nil
+
+	for key, value := range data {
+		copied := value
+		patch[key] = &copied
+	}
+
+	return patch
 }
 
 func validatePublicArtifactSource(source artifactSource) error {
