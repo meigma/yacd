@@ -12,3 +12,4 @@
 | 008 | 2026-05-22 | Developer CLI foundation | complete | Added the first `yacd` developer CLI with config-driven deploy, readiness waiting, status/connection info, release wiring, and installed-operator smoke coverage. |
 | 009 | 2026-05-23 | Phase 5 Kupo and faucet | complete | Added Kupo as a first-class chain API and merged the opt-in authenticated faucet/top-up vertical with CLI, Secret, sidecar, Service, and smoke coverage. |
 | 010 | 2026-05-23 | Faucet E2E assessment and dev image fix | complete | Verified the CLI-to-faucet funding path end to end, fixed ko-compatible local faucet image wiring, merged PR #16, and cleaned up the dev stack/worktree. |
+| 011 | 2026-05-23 | Phase 6 db-sync supporting service | complete | Added the first `CardanoDBSync` API-only CRD slice with typed spec/status, generated artifacts, scheme registration, and PR #17 merged. |

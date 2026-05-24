@@ -15,6 +15,14 @@
 - db-sync is the first supporting-service priority. Yaci Store is a later
   optional Blockfrost-like/indexer candidate after the supporting-service model
   is proven.
+- `CardanoDBSync` is now the first supporting-service CRD. Its API-only first
+  slice uses required same-namespace `spec.networkRef.name`, an implicit
+  dedicated follower node, managed Postgres under `spec.database.*`, typed
+  db-sync config fields, and a future status contract for endpoints, generated
+  auth Secret name, sync progress, and conditions. The first controller should
+  derive follower-node join material from the referenced `CardanoNetwork`; add
+  explicit network-artifact status only if the controller prototype proves it is
+  needed.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
