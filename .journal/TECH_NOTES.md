@@ -20,9 +20,8 @@
   dedicated follower node, managed Postgres under `spec.database.*`, typed
   db-sync config fields, and a future status contract for endpoints, generated
   auth Secret name, sync progress, and conditions. The first controller should
-  derive follower-node join material from the referenced `CardanoNetwork`; add
-  explicit network-artifact status only if the controller prototype proves it is
-  needed.
+  derive follower-node join material from the referenced `CardanoNetwork` via
+  `status.artifacts.networkConfigMapName`.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
@@ -71,8 +70,8 @@
   uses tags like `cardano-testnet/v11.0.1-yacd.1`; the OCI image tag is the
   full `11.0.1-yacd.1`, while the release workflow strips the `-yacd.N` suffix
   to download upstream Cardano artifacts.
-- The first published corrected tools image is
-  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1`. Future packaging-only
+- The current published artifact-capable tools image is
+  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3`. Future packaging-only
   fixes should bump `yacd.N`; future upstream Cardano bumps should move the
   base version and reset the YACD packaging revision.
 - The `cardano-testnet` init-container fragment belongs in
@@ -80,6 +79,28 @@
   calls the image-owned `/opt/yacd/bin/yacd-cardano-testnet-init` wrapper,
   passes the compact plan manifest through env, and expects a writable
   `localnet-state` volume mounted at the plan state directory.
+- Local-mode `CardanoNetwork` now owns a same-namespace
+  `<network>-network-artifacts` ConfigMap containing exact non-secret generated
+  localnet files for follower controllers: node configuration, genesis files,
+  primary topology, `yacd-localnet-plan.json`, and `connection.json`. The
+  controller publishes `status.artifacts` only after it verifies the schema
+  annotation, localnet fingerprint annotation, exact `sha256:<64 hex>` data
+  hash, required keys, no `binaryData`, and no unsupported data keys beyond the
+  optional `dijkstra-genesis.json`.
+- The localnet init path publishes artifacts through a dedicated
+  `<network>-artifact-publisher` ServiceAccount whose Role is limited by
+  `resourceNames` to `get`/`patch` only the network artifact ConfigMap. The
+  primary Deployment disables pod-level token automount; only the init container
+  receives a projected token/CA/namespace volume.
+- If a published owned artifact ConfigMap fails verification, the
+  `CardanoNetwork` controller deletes it and waits for a later reconcile to
+  recreate it. The new ConfigMap UID rolls the primary Deployment so the init
+  publisher can republish exact files. This avoids same-reconcile delete/create
+  races with Kubernetes asynchronous deletion or finalizers.
+- The manager Helm chart is intentionally cluster-scoped for the current
+  local/dev operator. Treat the manager ServiceAccount as trusted cluster
+  automation for YACD-managed namespaces; namespace-scoped manager mode is a
+  future hardening path.
 - A `CardanoNetwork` localnet is stable for its lifetime. The accepted localnet
   fingerprint is stored on the owned PVC and in CR status; if localnet inputs
   drift after acceptance, reconcile stops before Deployment updates and sets a
@@ -134,9 +155,10 @@
   `queryNetwork/tip` on localnet.
 - The Chainsaw manager smoke now includes an installed-operator proof that a
   representative local-mode `CardanoNetwork` creates primary resources,
-  publishes node-to-node and Ogmios endpoints, reaches `Ready=True`, returns a
-  real Ogmios `queryNetwork/tip` result through the Service, then disables
-  Ogmios and verifies the owned Service is deleted and the endpoint is cleared.
+  publishes node-to-node/Ogmios endpoints and artifact status, reaches
+  `Ready=True`, returns a real Ogmios `queryNetwork/tip` result through the
+  Service, then disables optional services and verifies owned resources and
+  endpoint/status cleanup.
 - The repo-local development stack is managed by `moon run root:dev-up` and
   `moon run root:dev-down`. The stack uses `.dev/` tooling, shared
   `.run/yacd-dev` runtime state, Kind context `kind-yacd-dev`, and Tilt port

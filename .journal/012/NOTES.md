@@ -145,3 +145,26 @@ Validation after fixes:
 - `moon run root:test-e2e`
 
 The e2e smoke passed again and kube context was restored to `kind-yacd-dev`.
+
+## 2026-05-24 09:06 — Close
+Session work landed and was recorded.
+
+Merged PRs:
+- PR #18: `build(cardano-testnet): add artifact publisher`
+- PR #19: `chore(master): release cardano-testnet 11.0.1-yacd.2`
+- PR #21: `fix(cardano-testnet): prune stale artifact keys`
+- PR #22: `chore(master): release cardano-testnet 11.0.1-yacd.3`
+- PR #20: `feat(cardanonetwork): publish network artifacts configmap`
+
+Closeout state:
+- Local `master` fast-forwarded to `9ac60de`.
+- `moon run root:dev-down` stopped Tilt, deleted `kind-yacd-dev`, and removed
+  the local registry.
+- Session worktrees `feat/cardanonetwork-artifacts-configmap`,
+  `feat/cardano-testnet-publisher-prune-artifacts`, and
+  `feat/cardano-testnet-artifact-publisher` were removed.
+- The lingering remote branch for PR #20 was deleted manually after
+  `gh pr merge` succeeded remotely but hit the known local `master` worktree
+  cleanup issue.
+- `.journal/012/SUMMARY.md`, `.journal/INDEX.md`, and
+  `.journal/TECH_NOTES.md` now capture the final handoff.
