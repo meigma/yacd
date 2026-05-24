@@ -139,8 +139,60 @@ type CardanoDBSyncStorageSpec struct {
 	StorageClassName *string `json:"storageClassName,omitempty"`
 }
 
-// CardanoDBSyncDatabaseSpec configures the YACD-managed Postgres database.
+// CardanoDBSyncDatabaseSpec configures the Postgres database used by db-sync.
+// Exactly one database mode must be selected.
+// +kubebuilder:validation:XValidation:rule="has(self.external) != has(self.managed)",message="exactly one of database.external or database.managed must be set"
 type CardanoDBSyncDatabaseSpec struct {
+	// external references a Postgres instance managed outside this
+	// CardanoDBSync resource.
+	// +optional
+	External *CardanoDBSyncExternalDatabaseSpec `json:"external,omitempty"`
+
+	// managed configures future YACD-managed Postgres. The field is part of
+	// the v1alpha1 shape, but controller support is added in a later slice.
+	// +optional
+	Managed *CardanoDBSyncManagedDatabaseSpec `json:"managed,omitempty"`
+}
+
+// CardanoDBSyncExternalDatabaseSpec references an externally supplied Postgres
+// database.
+type CardanoDBSyncExternalDatabaseSpec struct {
+	// host is the DNS name or IP address of the Postgres server.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Host string `json:"host"`
+
+	// port is the Postgres server port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=5432
+	// +required
+	Port int32 `json:"port"`
+
+	// database is the Postgres database name.
+	// +kubebuilder:default="cexplorer"
+	// +required
+	Database string `json:"database"`
+
+	// user is the Postgres user name.
+	// +kubebuilder:default="postgres"
+	// +required
+	User string `json:"user"`
+
+	// passwordSecretRef references the same-namespace Secret containing the
+	// Postgres password.
+	// +required
+	PasswordSecretRef CardanoDBSyncSecretKeyReference `json:"passwordSecretRef"`
+
+	// sslMode controls Postgres TLS behavior.
+	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+	// +kubebuilder:default=disable
+	// +required
+	SSLMode CardanoDBSyncPostgresSSLMode `json:"sslMode"`
+}
+
+// CardanoDBSyncManagedDatabaseSpec configures future YACD-managed Postgres.
+type CardanoDBSyncManagedDatabaseSpec struct {
 	// image is the Postgres image reference.
 	// +kubebuilder:default="postgres:17.2-alpine"
 	// +required
@@ -176,6 +228,22 @@ type CardanoDBSyncDatabaseSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// CardanoDBSyncPostgresSSLMode selects the libpq sslmode setting used by
+// db-sync for Postgres connections.
+// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+type CardanoDBSyncPostgresSSLMode string
+
+const (
+	// CardanoDBSyncPostgresSSLModeDisable disables Postgres TLS.
+	CardanoDBSyncPostgresSSLModeDisable CardanoDBSyncPostgresSSLMode = "disable"
+	// CardanoDBSyncPostgresSSLModeRequire requires TLS without certificate verification.
+	CardanoDBSyncPostgresSSLModeRequire CardanoDBSyncPostgresSSLMode = "require"
+	// CardanoDBSyncPostgresSSLModeVerifyCA requires TLS and verifies the CA.
+	CardanoDBSyncPostgresSSLModeVerifyCA CardanoDBSyncPostgresSSLMode = "verify-ca"
+	// CardanoDBSyncPostgresSSLModeVerifyFull requires TLS and verifies CA plus hostname.
+	CardanoDBSyncPostgresSSLModeVerifyFull CardanoDBSyncPostgresSSLMode = "verify-full"
+)
+
 // CardanoDBSyncNetworkReference identifies a same-namespace CardanoNetwork.
 type CardanoDBSyncNetworkReference struct {
 	// name is the name of the referenced CardanoNetwork.
@@ -190,6 +258,20 @@ type CardanoDBSyncSecretReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Name string `json:"name"`
+}
+
+// CardanoDBSyncSecretKeyReference identifies a same-namespace Secret key.
+type CardanoDBSyncSecretKeyReference struct {
+	// name is the name of the referenced Secret.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Name string `json:"name"`
+
+	// key is the Secret data key containing the value.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:default=password
+	// +required
+	Key string `json:"key"`
 }
 
 // CardanoDBSyncPostgresParametersSpec configures basic Postgres settings.

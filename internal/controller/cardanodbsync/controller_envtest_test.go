@@ -19,7 +19,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
-func TestCardanoDBSyncControllerManagerReconcilesWhenNetworkArtifactsBecomeReady(t *testing.T) {
+func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDatabaseSecret(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 
@@ -71,6 +71,7 @@ func TestCardanoDBSyncControllerManagerReconcilesWhenNetworkArtifactsBecomeReady
 
 	dbSync := localCardanoDBSync("dbsync", "watched-network")
 	dbSync.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, externalDatabaseSecretFor(dbSync)))
 	require.NoError(t, apiClient.Create(ctx, dbSync))
 
 	network := localCardanoNetwork("watched-network")
@@ -126,6 +127,45 @@ func TestCardanoDBSyncControllerManagerReconcilesWhenNetworkArtifactsBecomeReady
 	require.Eventually(t, func() bool {
 		current := &yacdv1alpha1.CardanoDBSync{}
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
+			return false
+		}
+		progressing := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeProgressing)
+		ready := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeReady)
+		return current.Status.ObservedGeneration == current.Generation &&
+			progressing != nil &&
+			progressing.Status == metav1.ConditionTrue &&
+			progressing.Reason == conditionReasonWorkloadsPending &&
+			ready != nil &&
+			ready.Status == metav1.ConditionFalse &&
+			ready.Reason == conditionReasonWorkloadsPending
+	}, 10*time.Second, 100*time.Millisecond)
+
+	secretWatchedDBSync := localCardanoDBSync("dbsync-secret-watch", "watched-network")
+	secretWatchedDBSync.Namespace = namespace.Name
+	invalidSecret := externalDatabaseSecretFor(secretWatchedDBSync)
+	invalidSecret.Data = map[string][]byte{"other": []byte("secret")}
+	require.NoError(t, apiClient.Create(ctx, invalidSecret))
+	require.NoError(t, apiClient.Create(ctx, secretWatchedDBSync))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(secretWatchedDBSync), current); err != nil {
+			return false
+		}
+		degraded := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeDegraded)
+		return degraded != nil &&
+			degraded.Status == metav1.ConditionTrue &&
+			degraded.Reason == conditionReasonExternalDatabaseSecretInvalid
+	}, 10*time.Second, 100*time.Millisecond)
+
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(invalidSecret), currentSecret))
+	currentSecret.Data = map[string][]byte{"password": []byte("secret")}
+	require.NoError(t, apiClient.Update(ctx, currentSecret))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(secretWatchedDBSync), current); err != nil {
 			return false
 		}
 		progressing := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeProgressing)

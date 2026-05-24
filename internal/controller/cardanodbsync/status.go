@@ -19,13 +19,16 @@ const (
 	conditionTypeDBSyncReady       = "DBSyncReady"
 	conditionTypeSynced            = "Synced"
 
-	conditionReasonReconcileSucceeded        = "ReconcileSucceeded"
-	conditionReasonNetworkUnavailable        = "NetworkUnavailable"
-	conditionReasonNetworkStatusStale        = "NetworkStatusStale"
-	conditionReasonNetworkArtifactsPending   = "NetworkArtifactsPending"
-	conditionReasonNetworkArtifactsMismatch  = "NetworkArtifactsMismatch"
-	conditionReasonNodeToNodeEndpointMissing = "NodeToNodeEndpointMissing"
-	conditionReasonWorkloadsPending          = "WorkloadsPending"
+	conditionReasonReconcileSucceeded            = "ReconcileSucceeded"
+	conditionReasonUnsupportedDatabaseMode       = "UnsupportedDatabaseMode"
+	conditionReasonExternalDatabaseSecretMissing = "ExternalDatabaseSecretMissing"
+	conditionReasonExternalDatabaseSecretInvalid = "ExternalDatabaseSecretInvalid"
+	conditionReasonNetworkUnavailable            = "NetworkUnavailable"
+	conditionReasonNetworkStatusStale            = "NetworkStatusStale"
+	conditionReasonNetworkArtifactsPending       = "NetworkArtifactsPending"
+	conditionReasonNetworkArtifactsMismatch      = "NetworkArtifactsMismatch"
+	conditionReasonNodeToNodeEndpointMissing     = "NodeToNodeEndpointMissing"
+	conditionReasonWorkloadsPending              = "WorkloadsPending"
 )
 
 func networkArtifactsReady(network *yacdv1alpha1.CardanoNetwork) bool {

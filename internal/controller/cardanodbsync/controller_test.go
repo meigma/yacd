@@ -47,10 +47,57 @@ func TestCardanoDBSyncReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
 	assert.Empty(t, current.Status.Conditions)
 }
 
+func TestCardanoDBSyncReconcilerReconcileReportsUnsupportedManagedDatabase(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "devnet")
+	dbSync.Spec.Database.External = nil
+	dbSync.Spec.Database.Managed = &yacdv1alpha1.CardanoDBSyncManagedDatabaseSpec{
+		Image:    "postgres:17.2-alpine",
+		Database: "cexplorer",
+		User:     "postgres",
+	}
+	reconciler := newTestReconciler(t, dbSync)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseMode)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseMode)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseMode)
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsMissingExternalDatabaseSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "devnet")
+	reconciler := newTestReconciler(t, dbSync)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretMissing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretMissing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretMissing)
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsExternalDatabaseSecretMissingKey(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "devnet")
+	secret := externalDatabaseSecretFor(dbSync)
+	secret.Data = map[string][]byte{"other": []byte("secret")}
+	reconciler := newTestReconciler(t, dbSync, secret)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretInvalid)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretInvalid)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretInvalid)
+}
+
 func TestCardanoDBSyncReconcilerReconcileReportsMissingNetwork(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "missing")
-	reconciler := newTestReconciler(t, dbSync)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -66,7 +113,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsDeletingNetwork(t *testing.T) {
 	now := metav1.Now()
 	network.DeletionTimestamp = &now
 	network.Finalizers = []string{"test.yacd.meigma.io/finalizer"}
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -82,7 +129,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForFreshNetworkStatus(t *testing.T
 	network.Generation = 2
 	network.Status.ObservedGeneration = 1
 	network.Status.Conditions[0].ObservedGeneration = 1
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -102,7 +149,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForNetworkArtifactsReady(t *testin
 		ObservedGeneration: network.Generation,
 		LastTransitionTime: metav1.Now(),
 	}}
-	reconciler := newTestReconciler(t, dbSync, network)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -115,7 +162,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactStatusFields(t *testing
 	dbSync := localCardanoDBSync("dbsync", "missing-artifact-status")
 	network := readyCardanoNetwork("missing-artifact-status")
 	network.Status.Artifacts = nil
-	reconciler := newTestReconciler(t, dbSync, network)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -127,7 +174,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactConfigMap(t *testing.T)
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "missing-configmap")
 	network := readyCardanoNetwork("missing-configmap")
-	reconciler := newTestReconciler(t, dbSync, network)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -141,7 +188,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForMatchingArtifactConfigMapMetada
 	network := readyCardanoNetwork("mismatched-configmap")
 	configMap := artifactConfigMapFor(network)
 	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
-	reconciler := newTestReconciler(t, dbSync, network, configMap)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -154,7 +201,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForNodeToNodeEndpoint(t *testing.T
 	dbSync := localCardanoDBSync("dbsync", "missing-node-endpoint")
 	network := readyCardanoNetwork("missing-node-endpoint")
 	network.Status.Endpoints = nil
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -166,7 +213,7 @@ func TestCardanoDBSyncReconcilerReconcileAcceptsPrerequisitesAndWaitsForWorkload
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -263,13 +310,36 @@ func localCardanoDBSync(name string, networkName string) *yacdv1alpha1.CardanoDB
 			NetworkRef: yacdv1alpha1.CardanoDBSyncNetworkReference{Name: networkName},
 			Image:      "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0",
 			Database: yacdv1alpha1.CardanoDBSyncDatabaseSpec{
-				Image:    "postgres:17.2-alpine",
-				Database: "cexplorer",
-				User:     "postgres",
+				External: &yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec{
+					Host:     "postgres.default.svc.cluster.local",
+					Port:     5432,
+					Database: "cexplorer",
+					User:     "postgres",
+					PasswordSecretRef: yacdv1alpha1.CardanoDBSyncSecretKeyReference{
+						Name: name + "-postgres",
+						Key:  "password",
+					},
+					SSLMode: yacdv1alpha1.CardanoDBSyncPostgresSSLModeDisable,
+				},
 			},
 			Config: yacdv1alpha1.CardanoDBSyncConfigSpec{
 				LedgerBackend: yacdv1alpha1.CardanoDBSyncLedgerBackendLSM,
 			},
+		},
+	}
+}
+
+func externalDatabaseSecretFor(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secret {
+	secretName := dbSync.Spec.Database.External.PasswordSecretRef.Name
+	secretKey := externalDatabasePasswordKey(dbSync.Spec.Database.External)
+
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: dbSync.Namespace,
+		},
+		Data: map[string][]byte{
+			secretKey: []byte("secret"),
 		},
 	}
 }

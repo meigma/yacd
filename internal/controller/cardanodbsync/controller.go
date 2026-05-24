@@ -22,10 +22,12 @@ const (
 	// and controller registration.
 	controllerName = "cardanodbsync"
 
-	cardanoDBSyncNetworkRefNameField = "spec.networkRef.name"
+	cardanoDBSyncNetworkRefNameField             = "spec.networkRef.name"
+	cardanoDBSyncExternalDatabaseSecretNameField = "spec.database.external.passwordSecretRef.name"
 
-	networkArtifactSchemaVersionAnno = "yacd.meigma.io/artifact-schema-version"
-	networkArtifactDataHashAnno      = "yacd.meigma.io/artifact-data-hash"
+	networkArtifactSchemaVersionAnno   = "yacd.meigma.io/artifact-schema-version"
+	networkArtifactDataHashAnno        = "yacd.meigma.io/artifact-data-hash"
+	defaultExternalDatabasePasswordKey = "password"
 )
 
 // CardanoDBSyncReconciler reconciles CardanoDBSync resources.
@@ -45,6 +47,7 @@ type CardanoDBSyncReconciler struct {
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
 // Reconcile validates that the referenced CardanoNetwork is ready for a future
 // db-sync workload and publishes honest status while runtime resources remain
@@ -63,6 +66,15 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if !dbSync.DeletionTimestamp.IsZero() {
 		log.V(1).Info("CardanoDBSync is deleting; skipping reconcile")
 		return ctrl.Result{}, nil
+	}
+
+	externalDatabase, ok, err := r.externalDatabaseSpec(ctx, dbSync)
+	if err != nil || !ok {
+		return ctrl.Result{}, err
+	}
+	ok, err = r.validateExternalDatabaseSecret(ctx, dbSync, externalDatabase)
+	if err != nil || !ok {
+		return ctrl.Result{}, err
 	}
 
 	network := &yacdv1alpha1.CardanoNetwork{}
@@ -154,6 +166,15 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}); err != nil {
 		return err
 	}
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncExternalDatabaseSecretNameField, func(object client.Object) []string {
+		dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+		if !ok || dbSync.Spec.Database.External == nil || dbSync.Spec.Database.External.PasswordSecretRef.Name == "" {
+			return nil
+		}
+		return []string{dbSync.Spec.Database.External.PasswordSecretRef.Name}
+	}); err != nil {
+		return err
+	}
 
 	logf.Log.WithName("controllers").WithName(controllerName).
 		Info("Starting CardanoDBSync controller scaffold")
@@ -161,8 +182,72 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForExternalDatabaseSecret)).
 		Named(controllerName).
 		Complete(r)
+}
+
+func (r *CardanoDBSyncReconciler) externalDatabaseSpec(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (*yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec, bool, error) {
+	if dbSync.Spec.Database.Managed != nil || dbSync.Spec.Database.External == nil {
+		err := r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonUnsupportedDatabaseMode,
+			"CardanoDBSync currently supports only spec.database.external",
+		)
+		return nil, false, err
+	}
+
+	return dbSync.Spec.Database.External, true, nil
+}
+
+func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	database *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec,
+) (bool, error) {
+	secretName := database.PasswordSecretRef.Name
+	passwordKey := externalDatabasePasswordKey(database)
+	if secretName == "" || passwordKey == "" {
+		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonExternalDatabaseSecretInvalid,
+			"External Postgres password Secret reference is incomplete",
+		)
+	}
+
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: secretName}, secret)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+				conditionReasonExternalDatabaseSecretMissing,
+				"External Postgres password Secret does not exist",
+			)
+		}
+		return false, err
+	}
+	if !secret.DeletionTimestamp.IsZero() {
+		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonExternalDatabaseSecretMissing,
+			"External Postgres password Secret is deleting",
+		)
+	}
+	if len(secret.Data[passwordKey]) == 0 {
+		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonExternalDatabaseSecretInvalid,
+			"External Postgres password Secret does not contain the configured key",
+		)
+	}
+
+	return true, nil
+}
+
+func externalDatabasePasswordKey(database *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec) string {
+	if database.PasswordSecretRef.Key != "" {
+		return database.PasswordSecretRef.Key
+	}
+	return defaultExternalDatabasePasswordKey
 }
 
 func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, object client.Object) []reconcile.Request {
@@ -177,6 +262,28 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, 
 		client.MatchingFields{cardanoDBSyncNetworkRefNameField: network.Name},
 	); err != nil {
 		logf.FromContext(ctx).Error(err, "Unable to list CardanoDBSync resources for CardanoNetwork", "cardanonetwork", client.ObjectKeyFromObject(network))
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(dbSyncs.Items))
+	for _, dbSync := range dbSyncs.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&dbSync)})
+	}
+	return requests
+}
+
+func (r *CardanoDBSyncReconciler) cardanoDBSyncsForExternalDatabaseSecret(ctx context.Context, object client.Object) []reconcile.Request {
+	secret, ok := object.(*corev1.Secret)
+	if !ok {
+		return nil
+	}
+
+	dbSyncs := &yacdv1alpha1.CardanoDBSyncList{}
+	if err := r.List(ctx, dbSyncs,
+		client.InNamespace(secret.Namespace),
+		client.MatchingFields{cardanoDBSyncExternalDatabaseSecretNameField: secret.Name},
+	); err != nil {
+		logf.FromContext(ctx).Error(err, "Unable to list CardanoDBSync resources for external database Secret", "secret", client.ObjectKeyFromObject(secret))
 		return nil
 	}
 
