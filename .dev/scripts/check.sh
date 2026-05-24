@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "== go format =="
-go_roots=(cli cmd services test)
+go_roots=(cli cmd containers/cardano-testnet services test)
 for optional_dir in api internal; do
   if [ -d "$optional_dir" ]; then
     go_roots+=("$optional_dir")
@@ -18,6 +18,9 @@ fi
 echo "== go lint =="
 golangci-lint config verify --config .golangci.yml
 golangci-lint run --config .golangci.yml ./... --show-stats=false
+
+echo "== cardano-testnet tools tests =="
+(cd containers/cardano-testnet && go test ./...)
 
 echo "== generated artifacts =="
 controller-gen object paths="./..."

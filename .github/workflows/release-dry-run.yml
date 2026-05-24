@@ -337,6 +337,8 @@ jobs:
 
           docker run --rm cardano-testnet:dry-run version >/tmp/cardano-testnet-version.txt
           grep -Fq "cardano-node" /tmp/cardano-testnet-version.txt
+          docker run --rm --entrypoint /bin/sh cardano-testnet:dry-run \
+            -c 'test -x /opt/yacd/bin/yacd-cardano-testnet-publisher'
 
           state_dir="$(mktemp -d)"
           chmod 0777 "$state_dir"
