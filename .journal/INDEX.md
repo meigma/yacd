@@ -14,3 +14,4 @@
 | 010 | 2026-05-23 | Faucet E2E assessment and dev image fix | complete | Verified the CLI-to-faucet funding path end to end, fixed ko-compatible local faucet image wiring, merged PR #16, and cleaned up the dev stack/worktree. |
 | 011 | 2026-05-23 | Phase 6 db-sync supporting service | complete | Added the first `CardanoDBSync` API-only CRD slice with typed spec/status, generated artifacts, scheme registration, and PR #17 merged. |
 | 012 | 2026-05-24 | CardanoNetwork artifact ConfigMap | complete | Added exact localnet artifact publishing through a controller-owned ConfigMap, released the publish-capable tools image, merged PR #20, and cleaned up the session worktrees. |
+| 013 | 2026-05-24 | CardanoDBSync controller runtime | complete | Added the first `CardanoDBSync` controller/runtime path with external Postgres, follower/db-sync workloads, artifact validation, status, and PR #23 merged. |

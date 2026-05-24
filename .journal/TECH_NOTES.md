@@ -15,13 +15,27 @@
 - db-sync is the first supporting-service priority. Yaci Store is a later
   optional Blockfrost-like/indexer candidate after the supporting-service model
   is proven.
-- `CardanoDBSync` is now the first supporting-service CRD. Its API-only first
-  slice uses required same-namespace `spec.networkRef.name`, an implicit
-  dedicated follower node, managed Postgres under `spec.database.*`, typed
-  db-sync config fields, and a future status contract for endpoints, generated
-  auth Secret name, sync progress, and conditions. The first controller should
-  derive follower-node join material from the referenced `CardanoNetwork` via
-  `status.artifacts.networkConfigMapName`.
+- `CardanoDBSync` is the first supporting-service CRD/controller. It uses a
+  required same-namespace `spec.networkRef.name`, consumes fresh verified
+  `CardanoNetwork.status.artifacts.networkConfigMapName`, and currently
+  supports external Postgres only; `database.managed` remains a reserved API
+  branch until the managed database slice exists.
+- The `CardanoDBSync` controller renders an owned config ConfigMap, pgpass
+  Secret, db-sync state PVC, follower-node state PVC, two-container
+  follower/db-sync Deployment, and metrics Service. It validates live network
+  artifact ConfigMap data/hash before applying workloads, scales the Deployment
+  to zero on hard prerequisite failure, and uses owned-child watches rather than
+  placeholder resources.
+- `internal/cardano/dbsync` is the Kubernetes-free planner for db-sync config,
+  topology, invocation args, environment, plan fingerprint, and database
+  identity fingerprint. The accepted database identity includes network
+  artifact hash, external DB address/user, db-sync image, ledger backend, and
+  insert options; changes to that identity are rejected until a recreate or
+  migration story exists.
+- `CardanoDBSync` runtime status is intentionally conservative: the controller
+  reports Deployment availability and follower/db-sync container readiness, but
+  `PostgresReady`, `DBSyncReady`, `Synced`, and aggregate `Ready` stay false
+  with `RuntimeProbesPending` until Postgres and sync-lag probes are added.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
