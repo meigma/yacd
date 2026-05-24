@@ -67,3 +67,45 @@ exists, and controller/API PR #20 is open from
 Plan: monitor PR #20, handle review or CI feedback, merge through GitHub when
 ready, then close this session with the final summary and any durable
 `TECH_NOTES.md` updates.
+
+## 2026-05-23 21:43 — Review fixes
+Review feedback found three real artifact-publication gaps: owned artifact
+ConfigMaps could drift in place without rerunning the init publisher,
+`ArtifactsReady` trusted the hash annotation shape without recomputing the
+data hash, and the publisher's merge patch could leave stale known keys such as
+optional `dijkstra-genesis.json`.
+
+Fix path:
+- Created PR #21 (`fix(cardano-testnet): prune stale artifact keys`) from a
+  fresh Worktrunk branch. The publisher now sends JSON merge-patch `null` for
+  known artifact keys omitted from the current generated bundle while keeping
+  the data hash scoped to actual published data.
+- Verified PR #21 with nested `go test ./...`, `moon run root:check`, and
+  `git diff --check`; GitHub CI and Kusari passed.
+- Squash-merged PR #21 and merged release-please PR #22, publishing
+  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3`.
+- Verified the released multi-arch image with `docker buildx imagetools
+  inspect`; manifest digest is
+  `sha256:21cc598a34384c085433b7876854737ce781965550e7e80458acf3b2b9354d19`.
+- Rebased PR #20 over the new release commits and updated the controller to
+  use `yacd.3`.
+- Added controller-side artifact hash recomputation with exact
+  `sha256:<64 lowercase hex>` validation before publishing
+  `status.artifacts`.
+- Added self-healing for owned ConfigMaps that show published artifact data or
+  artifact annotations but fail verification: the controller deletes and
+  recreates the ConfigMap, and the changed UID rolls the primary Pod so the
+  init publisher can republish exact bytes.
+- Extended direct controller tests and manager-backed envtest for corrupted
+  in-place ConfigMaps, plus RBAC/chart drift coverage for the new ConfigMap
+  delete permission.
+
+Validation after fixes:
+- `moon run root:generate`
+- `moon run root:test`
+- `moon run root:check`
+- `git diff --check`
+- `moon run root:test-e2e`
+
+The e2e smoke passed against the published `yacd.3` tools image and artifact
+status reached `ArtifactsReady=True` with a controller-verified data hash.
