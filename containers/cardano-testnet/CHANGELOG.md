@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.0.1-yacd.3](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.2...cardano-testnet/v11.0.1-yacd.3) (2026-05-24)
+
+
+### Bug Fixes
+
+* **cardano-testnet:** prune stale artifact keys ([#21](https://github.com/meigma/yacd/issues/21)) ([4ab18bb](https://github.com/meigma/yacd/commit/4ab18bb06df98cf64768bfc88328c147033e6157))
+
 ## [11.0.1-yacd.2](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.1...cardano-testnet/v11.0.1-yacd.2) (2026-05-24)
 
 
