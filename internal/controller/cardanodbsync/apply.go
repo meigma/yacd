@@ -55,6 +55,12 @@ type dbSyncWorkloadApplyResults struct {
 	MetricsService                controllerutil.OperationResult
 }
 
+type managedPostgresApplyResults struct {
+	PersistentVolumeClaim controllerutil.OperationResult
+	Service               controllerutil.OperationResult
+	Deployment            controllerutil.OperationResult
+}
+
 func (r dbSyncWorkloadApplyResults) unchanged() bool {
 	return r.ConfigMap == controllerutil.OperationResultNone &&
 		r.PGPassSecret == controllerutil.OperationResultNone &&
@@ -62,6 +68,12 @@ func (r dbSyncWorkloadApplyResults) unchanged() bool {
 		r.FollowerPersistentVolumeClaim == controllerutil.OperationResultNone &&
 		r.Deployment == controllerutil.OperationResultNone &&
 		r.MetricsService == controllerutil.OperationResultNone
+}
+
+func (r managedPostgresApplyResults) unchanged() bool {
+	return r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
+		r.Service == controllerutil.OperationResultNone &&
+		r.Deployment == controllerutil.OperationResultNone
 }
 
 func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
@@ -96,6 +108,26 @@ func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
 	return results, err
 }
 
+func (r *CardanoDBSyncReconciler) applyManagedPostgresResources(
+	ctx context.Context,
+	resources *managedPostgresResources,
+) (managedPostgresApplyResults, error) {
+	var results managedPostgresApplyResults
+	var err error
+
+	results.PersistentVolumeClaim, err = r.applyDBSyncPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
+	if err != nil {
+		return results, err
+	}
+	results.Service, err = r.applyDBSyncMetricsService(ctx, resources.Service)
+	if err != nil {
+		return results, err
+	}
+	results.Deployment, err = r.applyDBSyncDeployment(ctx, resources.Deployment)
+
+	return results, err
+}
+
 func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -119,17 +151,25 @@ func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 	if acceptedFingerprint == "" || acceptedFingerprint == desiredFingerprint {
 		if acceptedFingerprint != "" &&
 			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "") {
-			dbSync.Status.Database = databaseStatusForAcceptedIdentity(acceptedFingerprint)
+			dbSync.Status.Database = databaseStatus(acceptedFingerprint, dbSyncDatabaseAuthSecretName(dbSync))
 		}
 		return nil
 	}
 	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "" {
-		dbSync.Status.Database = databaseStatusForAcceptedIdentity(acceptedFingerprint)
+		dbSync.Status.Database = databaseStatus(acceptedFingerprint, dbSyncDatabaseAuthSecretName(dbSync))
 	}
 
 	return unsupportedDatabaseIdentityChange(
 		"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database",
 	)
+}
+
+func dbSyncDatabaseAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
+	if dbSync.Status.Database == nil {
+		return ""
+	}
+
+	return dbSync.Status.Database.AuthSecretName
 }
 
 func (r *CardanoDBSyncReconciler) acceptedDBSyncDatabaseIdentityFromPVC(

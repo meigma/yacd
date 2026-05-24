@@ -1,0 +1,10 @@
+apiVersion: yacd.meigma.io/v1alpha1
+kind: CardanoDBSync
+metadata:
+  name: dbsync
+  namespace: yacd-smoke
+spec:
+  networkRef:
+    name: devnet
+  database:
+    managed: {}
