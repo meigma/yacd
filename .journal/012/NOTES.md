@@ -109,3 +109,39 @@ Validation after fixes:
 
 The e2e smoke passed against the published `yacd.3` tools image and artifact
 status reached `ArtifactsReady=True` with a controller-verified data hash.
+
+## 2026-05-24 08:58 — Second review fixes
+Follow-up review found two correctness issues worth fixing before PR #20
+merges and one trust-model caveat to document:
+- Artifact ConfigMap recovery deleted and recreated the same name in one
+  reconcile, which could trip over asynchronous Kubernetes deletion or a
+  finalizer.
+- Artifact verification accepted extra data keys if the mutable hash annotation
+  matched the live data.
+- The manager's ClusterRole remains the broad trust boundary even though the
+  per-network publisher Role is tightly scoped.
+
+Fix path:
+- Changed owned artifact ConfigMap recovery to delete-and-return, then recreate
+  only after a later reconcile observes the object missing. Terminating
+  ConfigMaps are now treated as pending instead of being patched or recreated
+  immediately.
+- Tightened artifact verification to reject `binaryData` and data keys outside
+  the schema allowlist: required artifact keys plus optional
+  `dijkstra-genesis.json`.
+- Extended direct controller tests for delete-then-recreate recovery and
+  unsupported-key rejection.
+- Extended manager-backed envtest with a finalizer-blocked corrupted ConfigMap
+  to prove status remains pending while deletion is blocked, then recovers and
+  rolls the Deployment after finalizer release.
+- Added a short README security-model note documenting the current
+  cluster-scoped manager trust boundary and deferring namespace-scoped manager
+  mode to a future hardening slice.
+
+Validation after fixes:
+- `moon run root:test`
+- `moon run root:check`
+- `git diff --check`
+- `moon run root:test-e2e`
+
+The e2e smoke passed again and kube context was restored to `kind-yacd-dev`.
