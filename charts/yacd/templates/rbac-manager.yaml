@@ -76,6 +76,7 @@ rules:
   - apiGroups:
       - yacd.meigma.io
     resources:
+      - cardanodbsyncs
       - cardanonetworks
     verbs:
       - get
@@ -84,6 +85,7 @@ rules:
   - apiGroups:
       - yacd.meigma.io
     resources:
+      - cardanodbsyncs/status
       - cardanonetworks/status
     verbs:
       - get
