@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: dbsync-postgres
+  namespace: yacd-smoke
+type: Opaque
+stringData:
+  password: change-me
+---
+apiVersion: yacd.meigma.io/v1alpha1
+kind: CardanoDBSync
+metadata:
+  name: dbsync
+  namespace: yacd-smoke
+spec:
+  networkRef:
+    name: devnet
+  database:
+    external:
+      host: postgres.yacd-smoke.svc.cluster.local
+      passwordSecretRef:
+        name: dbsync-postgres

@@ -4,6 +4,7 @@ import (
 	"os"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/controller/cardanodbsync"
 	"github.com/meigma/yacd/internal/controller/cardanonetwork"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -42,6 +43,15 @@ func registerControllers(mgr manager.Manager, options managerOptions) error {
 		Reader:             mgr.GetAPIReader(),
 		Scheme:             mgr.GetScheme(),
 		DefaultFaucetImage: options.DefaultFaucetImage,
+	}).SetupWithManager(mgr)
+	if err != nil {
+		return err
+	}
+
+	err = (&cardanodbsync.CardanoDBSyncReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err

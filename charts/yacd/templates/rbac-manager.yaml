@@ -42,7 +42,9 @@ rules:
       - create
       - delete
       - get
+      - list
       - patch
+      - watch
   - apiGroups:
       - ""
     resources:
@@ -76,6 +78,7 @@ rules:
   - apiGroups:
       - yacd.meigma.io
     resources:
+      - cardanodbsyncs
       - cardanonetworks
     verbs:
       - get
@@ -84,6 +87,7 @@ rules:
   - apiGroups:
       - yacd.meigma.io
     resources:
+      - cardanodbsyncs/status
       - cardanonetworks/status
     verbs:
       - get

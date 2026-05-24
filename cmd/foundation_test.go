@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 
 // TestFoundationManagerConstruction proves the current operator shell can
 // construct a controller-runtime manager against envtest, register its API
-// types, and register the CardanoNetwork controller scaffold.
+// types, and register controller scaffolds.
 func TestFoundationManagerConstruction(t *testing.T) {
-	testEnv := &envtest.Environment{}
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "charts", "yacd", "crds")},
+	}
 	cfg, err := testEnv.Start()
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -36,5 +39,8 @@ func TestFoundationManagerConstruction(t *testing.T) {
 	require.NoError(t, err)
 
 	_, _, err = scheme.ObjectKinds(&yacdv1alpha1.CardanoNetwork{})
+	require.NoError(t, err)
+
+	_, _, err = scheme.ObjectKinds(&yacdv1alpha1.CardanoDBSync{})
 	require.NoError(t, err)
 }

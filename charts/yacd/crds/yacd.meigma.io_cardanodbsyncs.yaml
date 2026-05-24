@@ -62,11 +62,9 @@ spec:
                     description: insert configures upstream db-sync insert_options.
                     properties:
                       governance:
-                        default: true
                         description: governance controls governance-related data inserts.
                         type: boolean
                       jsonType:
-                        default: text
                         description: jsonType controls the upstream json_type insert
                           option.
                         enum:
@@ -75,7 +73,6 @@ spec:
                         - disable
                         type: string
                       ledger:
-                        default: enable
                         description: ledger controls ledger state maintenance and
                           use.
                         enum:
@@ -87,7 +84,6 @@ spec:
                         description: metadata configures transaction metadata inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls transaction metadata inserts.
                             type: boolean
                           keys:
@@ -97,14 +93,11 @@ spec:
                               format: int64
                               type: integer
                             type: array
-                        required:
-                        - enabled
                         type: object
                       multiAsset:
                         description: multiAsset configures multi-asset table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls multi-asset data inserts.
                             type: boolean
                           policies:
@@ -113,16 +106,12 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       offchainPoolData:
-                        default: false
                         description: offchainPoolData controls stake pool offchain
                           metadata fetching.
                         type: boolean
                       offchainVoteData:
-                        default: false
                         description: offchainVoteData controls governance offchain
                           metadata fetching.
                         type: boolean
@@ -130,7 +119,6 @@ spec:
                         description: plutus configures Plutus and script table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls Plutus and script data inserts.
                             type: boolean
                           scriptHashes:
@@ -139,18 +127,15 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       poolStats:
-                        default: false
                         description: poolStats controls pool stats inserts.
                         type: boolean
                       preset:
                         default: full
                         description: |-
                           preset selects an upstream insert profile. Explicit fields in this object
-                          are interpreted as overrides by the future controller.
+                          are interpreted as overrides by the controller.
                         enum:
                         - full
                         - only_utxo
@@ -158,7 +143,6 @@ spec:
                         - disable_all
                         type: string
                       removeJsonbFromSchema:
-                        default: false
                         description: |-
                           removeJsonbFromSchema controls whether db-sync removes jsonb data types
                           from affected schema columns.
@@ -167,7 +151,6 @@ spec:
                         description: shelley configures Shelley-era table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls Shelley-era data inserts.
                             type: boolean
                           stakeAddresses:
@@ -177,23 +160,18 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       txCbor:
-                        default: false
                         description: txCbor controls transaction CBOR collection.
                         type: boolean
                       txOut:
                         description: txOut configures transaction output storage.
                         properties:
                           forceTxIn:
-                            default: false
                             description: forceTxIn keeps tx_in populated for consumed,
                               prune, or bootstrap modes.
                             type: boolean
                           mode:
-                            default: enable
                             description: mode selects the upstream tx_out value.
                             enum:
                             - enable
@@ -203,25 +181,12 @@ spec:
                             - bootstrap
                             type: string
                           useAddressTable:
-                            default: false
                             description: useAddressTable enables the normalized address
                               table schema variant.
                             type: boolean
-                        required:
-                        - forceTxIn
-                        - mode
-                        - useAddressTable
                         type: object
                     required:
-                    - governance
-                    - jsonType
-                    - ledger
-                    - offchainPoolData
-                    - offchainVoteData
-                    - poolStats
                     - preset
-                    - removeJsonbFromSchema
-                    - txCbor
                     type: object
                   ipfsGateways:
                     description: ipfsGateways lists gateways used for offchain metadata
@@ -291,134 +256,203 @@ spec:
               database:
                 description: database configures the Postgres database used by db-sync.
                 properties:
-                  authSecretRef:
+                  external:
                     description: |-
-                      authSecretRef optionally references a same-namespace Secret containing
-                      the Postgres password in the key "password". When omitted, the controller
-                      creates an owned Secret and reports its name in status.
+                      external references a Postgres instance managed outside this
+                      CardanoDBSync resource.
                     properties:
-                      name:
-                        description: name is the name of the referenced Secret.
+                      database:
+                        default: cexplorer
+                        description: database is the Postgres database name.
+                        type: string
+                      host:
+                        description: host is the DNS name or IP address of the Postgres
+                          server.
                         minLength: 1
                         type: string
-                    required:
-                    - name
-                    type: object
-                  database:
-                    default: cexplorer
-                    description: database is the Postgres database name.
-                    type: string
-                  image:
-                    default: postgres:17.2-alpine
-                    description: image is the Postgres image reference.
-                    type: string
-                  parameters:
-                    description: |-
-                      parameters configures basic Postgres startup parameters used by the
-                      managed local prototype.
-                    properties:
-                      maintenanceWorkMem:
-                        anyOf:
-                        - type: integer
-                        - type: string
-                        description: maintenanceWorkMem sets the Postgres maintenance_work_mem
-                          parameter.
-                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                        x-kubernetes-int-or-string: true
-                      maxParallelMaintenanceWorkers:
+                      passwordSecretRef:
                         description: |-
-                          maxParallelMaintenanceWorkers sets the Postgres
-                          max_parallel_maintenance_workers parameter.
-                        format: int32
-                        minimum: 0
-                        type: integer
-                    type: object
-                  resources:
-                    description: resources configures the Postgres container resources.
-                    properties:
-                      claims:
-                        description: |-
-                          Claims lists the names of resources, defined in spec.resourceClaims,
-                          that are used by this container.
-
-                          This field depends on the
-                          DynamicResourceAllocation feature gate.
-
-                          This field is immutable. It can only be set for containers.
-                        items:
-                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
-                          properties:
-                            name:
-                              description: |-
-                                Name must match the name of one entry in pod.spec.resourceClaims of
-                                the Pod where this field is used. It makes that resource available
-                                inside a container.
-                              type: string
-                            request:
-                              description: |-
-                                Request is the name chosen for a request in the referenced claim.
-                                If empty, everything from the claim is made available, otherwise
-                                only the result of this request.
-                              type: string
-                          required:
-                          - name
-                          type: object
-                        type: array
-                        x-kubernetes-list-map-keys:
+                          passwordSecretRef references the same-namespace Secret containing the
+                          Postgres password.
+                        properties:
+                          key:
+                            default: password
+                            description: key is the Secret data key containing the
+                              value.
+                            minLength: 1
+                            type: string
+                          name:
+                            description: name is the name of the referenced Secret.
+                            minLength: 1
+                            type: string
+                        required:
+                        - key
                         - name
-                        x-kubernetes-list-type: map
-                      limits:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Limits describes the maximum amount of compute resources allowed.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                         type: object
-                      requests:
-                        additionalProperties:
-                          anyOf:
-                          - type: integer
-                          - type: string
-                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                          x-kubernetes-int-or-string: true
-                        description: |-
-                          Requests describes the minimum amount of compute resources required.
-                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
-                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
-                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
-                        type: object
-                    type: object
-                  storage:
-                    description: storage configures persistent Postgres data storage.
-                    properties:
-                      size:
-                        anyOf:
-                        - type: integer
-                        - type: string
-                        description: size is the requested persistent volume size.
-                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                        x-kubernetes-int-or-string: true
-                      storageClassName:
-                        description: |-
-                          storageClassName optionally selects the Kubernetes StorageClass used for
-                          the persistent volume claim.
+                      port:
+                        default: 5432
+                        description: port is the Postgres server port.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      sslMode:
+                        default: disable
+                        description: sslMode controls Postgres TLS behavior.
+                        enum:
+                        - disable
+                        - require
+                        - verify-ca
+                        - verify-full
+                        type: string
+                      user:
+                        default: postgres
+                        description: user is the Postgres user name.
                         type: string
                     required:
-                    - size
+                    - database
+                    - host
+                    - passwordSecretRef
+                    - port
+                    - sslMode
+                    - user
                     type: object
-                  user:
-                    default: postgres
-                    description: user is the Postgres user name.
-                    type: string
-                required:
-                - database
-                - image
-                - user
+                  managed:
+                    description: |-
+                      managed configures future YACD-managed Postgres. The field is part of
+                      the v1alpha1 shape, but controller support is added in a later slice.
+                    properties:
+                      authSecretRef:
+                        description: |-
+                          authSecretRef optionally references a same-namespace Secret containing
+                          the Postgres password in the key "password". When omitted, the controller
+                          creates an owned Secret and reports its name in status.
+                        properties:
+                          name:
+                            description: name is the name of the referenced Secret.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      database:
+                        default: cexplorer
+                        description: database is the Postgres database name.
+                        type: string
+                      image:
+                        default: postgres:17.2-alpine
+                        description: image is the Postgres image reference.
+                        type: string
+                      parameters:
+                        description: |-
+                          parameters configures basic Postgres startup parameters used by the
+                          managed local prototype.
+                        properties:
+                          maintenanceWorkMem:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: maintenanceWorkMem sets the Postgres maintenance_work_mem
+                              parameter.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          maxParallelMaintenanceWorkers:
+                            description: |-
+                              maxParallelMaintenanceWorkers sets the Postgres
+                              max_parallel_maintenance_workers parameter.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                        type: object
+                      resources:
+                        description: resources configures the Postgres container resources.
+                        properties:
+                          claims:
+                            description: |-
+                              Claims lists the names of resources, defined in spec.resourceClaims,
+                              that are used by this container.
+
+                              This field depends on the
+                              DynamicResourceAllocation feature gate.
+
+                              This field is immutable. It can only be set for containers.
+                            items:
+                              description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                              properties:
+                                name:
+                                  description: |-
+                                    Name must match the name of one entry in pod.spec.resourceClaims of
+                                    the Pod where this field is used. It makes that resource available
+                                    inside a container.
+                                  type: string
+                                request:
+                                  description: |-
+                                    Request is the name chosen for a request in the referenced claim.
+                                    If empty, everything from the claim is made available, otherwise
+                                    only the result of this request.
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            type: array
+                            x-kubernetes-list-map-keys:
+                            - name
+                            x-kubernetes-list-type: map
+                          limits:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Limits describes the maximum amount of compute resources allowed.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                          requests:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            description: |-
+                              Requests describes the minimum amount of compute resources required.
+                              If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                              otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                              More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                            type: object
+                        type: object
+                      storage:
+                        description: storage configures persistent Postgres data storage.
+                        properties:
+                          size:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            description: size is the requested persistent volume size.
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          storageClassName:
+                            description: |-
+                              storageClassName optionally selects the Kubernetes StorageClass used for
+                              the persistent volume claim.
+                            type: string
+                        type: object
+                      user:
+                        default: postgres
+                        description: user is the Postgres user name.
+                        type: string
+                    required:
+                    - database
+                    - image
+                    - user
+                    type: object
                 type: object
+                x-kubernetes-validations:
+                - message: exactly one of database.external or database.managed must
+                    be set
+                  rule: has(self.external) != has(self.managed)
               followerNode:
                 description: |-
                   followerNode configures the dedicated follower node colocated with
@@ -505,8 +539,6 @@ spec:
                           storageClassName optionally selects the Kubernetes StorageClass used for
                           the persistent volume claim.
                         type: string
-                    required:
-                    - size
                     type: object
                 type: object
               image:
@@ -600,11 +632,8 @@ spec:
                       storageClassName optionally selects the Kubernetes StorageClass used for
                       the persistent volume claim.
                     type: string
-                required:
-                - size
                 type: object
             required:
-            - config
             - database
             - image
             - networkRef
@@ -687,6 +716,12 @@ spec:
               database:
                 description: database reports database-specific runtime details.
                 properties:
+                  acceptedIdentityFingerprint:
+                    description: |-
+                      acceptedIdentityFingerprint is the database-affecting plan identity that
+                      this resource accepted. Changing it requires deleting and recreating the
+                      CardanoDBSync with a fresh or compatible external database.
+                    type: string
                   authSecretName:
                     description: |-
                       authSecretName is the same-namespace Secret containing generated

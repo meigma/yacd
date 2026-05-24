@@ -107,8 +107,8 @@ type CardanoDBSyncSpec struct {
 	// config configures upstream db-sync behavior using Kubernetes-style field
 	// names. The controller translates this object into the upstream db-sync
 	// configuration file.
-	// +required
-	Config CardanoDBSyncConfigSpec `json:"config"`
+	// +optional
+	Config CardanoDBSyncConfigSpec `json:"config,omitempty"`
 }
 
 // CardanoDBSyncFollowerNodeSpec configures the follower node owned by db-sync.
@@ -130,8 +130,8 @@ type CardanoDBSyncFollowerNodeSpec struct {
 // CardanoDBSyncStorageSpec configures persistent storage for db-sync resources.
 type CardanoDBSyncStorageSpec struct {
 	// size is the requested persistent volume size.
-	// +required
-	Size resource.Quantity `json:"size"`
+	// +optional
+	Size *resource.Quantity `json:"size,omitempty"`
 
 	// storageClassName optionally selects the Kubernetes StorageClass used for
 	// the persistent volume claim.
@@ -139,8 +139,60 @@ type CardanoDBSyncStorageSpec struct {
 	StorageClassName *string `json:"storageClassName,omitempty"`
 }
 
-// CardanoDBSyncDatabaseSpec configures the YACD-managed Postgres database.
+// CardanoDBSyncDatabaseSpec configures the Postgres database used by db-sync.
+// Exactly one database mode must be selected.
+// +kubebuilder:validation:XValidation:rule="has(self.external) != has(self.managed)",message="exactly one of database.external or database.managed must be set"
 type CardanoDBSyncDatabaseSpec struct {
+	// external references a Postgres instance managed outside this
+	// CardanoDBSync resource.
+	// +optional
+	External *CardanoDBSyncExternalDatabaseSpec `json:"external,omitempty"`
+
+	// managed configures future YACD-managed Postgres. The field is part of
+	// the v1alpha1 shape, but controller support is added in a later slice.
+	// +optional
+	Managed *CardanoDBSyncManagedDatabaseSpec `json:"managed,omitempty"`
+}
+
+// CardanoDBSyncExternalDatabaseSpec references an externally supplied Postgres
+// database.
+type CardanoDBSyncExternalDatabaseSpec struct {
+	// host is the DNS name or IP address of the Postgres server.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Host string `json:"host"`
+
+	// port is the Postgres server port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=5432
+	// +required
+	Port int32 `json:"port"`
+
+	// database is the Postgres database name.
+	// +kubebuilder:default="cexplorer"
+	// +required
+	Database string `json:"database"`
+
+	// user is the Postgres user name.
+	// +kubebuilder:default="postgres"
+	// +required
+	User string `json:"user"`
+
+	// passwordSecretRef references the same-namespace Secret containing the
+	// Postgres password.
+	// +required
+	PasswordSecretRef CardanoDBSyncSecretKeyReference `json:"passwordSecretRef"`
+
+	// sslMode controls Postgres TLS behavior.
+	// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+	// +kubebuilder:default=disable
+	// +required
+	SSLMode CardanoDBSyncPostgresSSLMode `json:"sslMode"`
+}
+
+// CardanoDBSyncManagedDatabaseSpec configures future YACD-managed Postgres.
+type CardanoDBSyncManagedDatabaseSpec struct {
 	// image is the Postgres image reference.
 	// +kubebuilder:default="postgres:17.2-alpine"
 	// +required
@@ -176,6 +228,22 @@ type CardanoDBSyncDatabaseSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
+// CardanoDBSyncPostgresSSLMode selects the libpq sslmode setting used by
+// db-sync for Postgres connections.
+// +kubebuilder:validation:Enum=disable;require;verify-ca;verify-full
+type CardanoDBSyncPostgresSSLMode string
+
+const (
+	// CardanoDBSyncPostgresSSLModeDisable disables Postgres TLS.
+	CardanoDBSyncPostgresSSLModeDisable CardanoDBSyncPostgresSSLMode = "disable"
+	// CardanoDBSyncPostgresSSLModeRequire requires TLS without certificate verification.
+	CardanoDBSyncPostgresSSLModeRequire CardanoDBSyncPostgresSSLMode = "require"
+	// CardanoDBSyncPostgresSSLModeVerifyCA requires TLS and verifies the CA.
+	CardanoDBSyncPostgresSSLModeVerifyCA CardanoDBSyncPostgresSSLMode = "verify-ca"
+	// CardanoDBSyncPostgresSSLModeVerifyFull requires TLS and verifies CA plus hostname.
+	CardanoDBSyncPostgresSSLModeVerifyFull CardanoDBSyncPostgresSSLMode = "verify-full"
+)
+
 // CardanoDBSyncNetworkReference identifies a same-namespace CardanoNetwork.
 type CardanoDBSyncNetworkReference struct {
 	// name is the name of the referenced CardanoNetwork.
@@ -190,6 +258,20 @@ type CardanoDBSyncSecretReference struct {
 	// +kubebuilder:validation:MinLength=1
 	// +required
 	Name string `json:"name"`
+}
+
+// CardanoDBSyncSecretKeyReference identifies a same-namespace Secret key.
+type CardanoDBSyncSecretKeyReference struct {
+	// name is the name of the referenced Secret.
+	// +kubebuilder:validation:MinLength=1
+	// +required
+	Name string `json:"name"`
+
+	// key is the Secret data key containing the value.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:default=password
+	// +required
+	Key string `json:"key"`
 }
 
 // CardanoDBSyncPostgresParametersSpec configures basic Postgres settings.
@@ -269,24 +351,22 @@ type CardanoDBSyncSnapshotSpec struct {
 // CardanoDBSyncInsertSpec configures upstream db-sync insert_options.
 type CardanoDBSyncInsertSpec struct {
 	// preset selects an upstream insert profile. Explicit fields in this object
-	// are interpreted as overrides by the future controller.
+	// are interpreted as overrides by the controller.
 	// +kubebuilder:default=full
 	// +required
 	Preset CardanoDBSyncInsertPreset `json:"preset"`
 
 	// txCbor controls transaction CBOR collection.
-	// +kubebuilder:default=false
-	// +required
-	TxCBOR bool `json:"txCbor"`
+	// +optional
+	TxCBOR *bool `json:"txCbor,omitempty"`
 
 	// txOut configures transaction output storage.
 	// +optional
 	TxOut *CardanoDBSyncTxOutSpec `json:"txOut,omitempty"`
 
 	// ledger controls ledger state maintenance and use.
-	// +kubebuilder:default=enable
-	// +required
-	Ledger CardanoDBSyncLedgerMode `json:"ledger"`
+	// +optional
+	Ledger *CardanoDBSyncLedgerMode `json:"ledger,omitempty"`
 
 	// shelley configures Shelley-era table inserts.
 	// +optional
@@ -305,61 +385,51 @@ type CardanoDBSyncInsertSpec struct {
 	Plutus *CardanoDBSyncPlutusInsertSpec `json:"plutus,omitempty"`
 
 	// governance controls governance-related data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Governance bool `json:"governance"`
+	// +optional
+	Governance *bool `json:"governance,omitempty"`
 
 	// offchainPoolData controls stake pool offchain metadata fetching.
-	// +kubebuilder:default=false
-	// +required
-	OffchainPoolData bool `json:"offchainPoolData"`
+	// +optional
+	OffchainPoolData *bool `json:"offchainPoolData,omitempty"`
 
 	// offchainVoteData controls governance offchain metadata fetching.
-	// +kubebuilder:default=false
-	// +required
-	OffchainVoteData bool `json:"offchainVoteData"`
+	// +optional
+	OffchainVoteData *bool `json:"offchainVoteData,omitempty"`
 
 	// poolStats controls pool stats inserts.
-	// +kubebuilder:default=false
-	// +required
-	PoolStats bool `json:"poolStats"`
+	// +optional
+	PoolStats *bool `json:"poolStats,omitempty"`
 
 	// jsonType controls the upstream json_type insert option.
-	// +kubebuilder:default=text
-	// +required
-	JSONType CardanoDBSyncJSONType `json:"jsonType"`
+	// +optional
+	JSONType *CardanoDBSyncJSONType `json:"jsonType,omitempty"`
 
 	// removeJsonbFromSchema controls whether db-sync removes jsonb data types
 	// from affected schema columns.
-	// +kubebuilder:default=false
-	// +required
-	RemoveJSONBFromSchema bool `json:"removeJsonbFromSchema"`
+	// +optional
+	RemoveJSONBFromSchema *bool `json:"removeJsonbFromSchema,omitempty"`
 }
 
 // CardanoDBSyncTxOutSpec configures upstream tx_out insert_options.
 type CardanoDBSyncTxOutSpec struct {
 	// mode selects the upstream tx_out value.
-	// +kubebuilder:default=enable
-	// +required
-	Mode CardanoDBSyncTxOutMode `json:"mode"`
+	// +optional
+	Mode *CardanoDBSyncTxOutMode `json:"mode,omitempty"`
 
 	// forceTxIn keeps tx_in populated for consumed, prune, or bootstrap modes.
-	// +kubebuilder:default=false
-	// +required
-	ForceTxIn bool `json:"forceTxIn"`
+	// +optional
+	ForceTxIn *bool `json:"forceTxIn,omitempty"`
 
 	// useAddressTable enables the normalized address table schema variant.
-	// +kubebuilder:default=false
-	// +required
-	UseAddressTable bool `json:"useAddressTable"`
+	// +optional
+	UseAddressTable *bool `json:"useAddressTable,omitempty"`
 }
 
 // CardanoDBSyncShelleyInsertSpec configures Shelley-era inserts.
 type CardanoDBSyncShelleyInsertSpec struct {
 	// enabled controls Shelley-era data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// stakeAddresses optionally limits Shelley data to specific stake
 	// addresses.
@@ -370,9 +440,8 @@ type CardanoDBSyncShelleyInsertSpec struct {
 // CardanoDBSyncMultiAssetInsertSpec configures multi-asset inserts.
 type CardanoDBSyncMultiAssetInsertSpec struct {
 	// enabled controls multi-asset data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// policies optionally limits multi-asset data to specific policy hashes.
 	// +optional
@@ -382,9 +451,8 @@ type CardanoDBSyncMultiAssetInsertSpec struct {
 // CardanoDBSyncMetadataInsertSpec configures metadata inserts.
 type CardanoDBSyncMetadataInsertSpec struct {
 	// enabled controls transaction metadata inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// keys optionally limits metadata inserts to specific numeric labels.
 	// +optional
@@ -394,9 +462,8 @@ type CardanoDBSyncMetadataInsertSpec struct {
 // CardanoDBSyncPlutusInsertSpec configures Plutus inserts.
 type CardanoDBSyncPlutusInsertSpec struct {
 	// enabled controls Plutus and script data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// scriptHashes optionally limits Plutus data to specific script hashes.
 	// +optional
@@ -454,6 +521,12 @@ type CardanoDBSyncEndpointsStatus struct {
 
 // CardanoDBSyncDatabaseStatus reports database-specific runtime details.
 type CardanoDBSyncDatabaseStatus struct {
+	// acceptedIdentityFingerprint is the database-affecting plan identity that
+	// this resource accepted. Changing it requires deleting and recreating the
+	// CardanoDBSync with a fresh or compatible external database.
+	// +optional
+	AcceptedIdentityFingerprint string `json:"acceptedIdentityFingerprint,omitempty"`
+
 	// authSecretName is the same-namespace Secret containing generated
 	// database credentials when the user did not provide authSecretRef.
 	// +optional
