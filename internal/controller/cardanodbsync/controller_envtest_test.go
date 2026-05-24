@@ -134,10 +134,24 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonWorkloadsPending &&
+			progressing.Reason == conditionReasonWorkloadsApplied &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonWorkloadsPending
+			ready.Reason == conditionReasonWorkloadsApplied
+	}, 10*time.Second, 100*time.Millisecond)
+
+	ownedConfigMap := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncConfigMapName(dbSync)}, ownedConfigMap))
+	ownedConfigMap.Data[dbSyncConfigFileName] = driftedDBSyncConfig
+	require.NoError(t, apiClient.Update(ctx, ownedConfigMap))
+
+	require.Eventually(t, func() bool {
+		current := &corev1.ConfigMap{}
+		if err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncConfigMapName(dbSync)}, current); err != nil {
+			return false
+		}
+		return current.Data[dbSyncConfigFileName] != driftedDBSyncConfig &&
+			current.Data[dbSyncConfigFileName] != ""
 	}, 10*time.Second, 100*time.Millisecond)
 
 	secretWatchedDBSync := localCardanoDBSync("dbsync-secret-watch", "watched-network")
@@ -173,10 +187,10 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonWorkloadsPending &&
+			progressing.Reason == conditionReasonWorkloadsApplied &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonWorkloadsPending
+			ready.Reason == conditionReasonWorkloadsApplied
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

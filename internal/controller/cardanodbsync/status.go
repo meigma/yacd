@@ -2,8 +2,10 @@ package cardanodbsync
 
 import (
 	"context"
+	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,7 +30,12 @@ const (
 	conditionReasonNetworkArtifactsPending       = "NetworkArtifactsPending"
 	conditionReasonNetworkArtifactsMismatch      = "NetworkArtifactsMismatch"
 	conditionReasonNodeToNodeEndpointMissing     = "NodeToNodeEndpointMissing"
-	conditionReasonWorkloadsPending              = "WorkloadsPending"
+	conditionReasonWorkloadsApplied              = "WorkloadsApplied"
+	conditionReasonExternalDatabaseNotProbed     = "ExternalDatabaseNotProbed"
+	conditionReasonUnsupportedSpec               = "UnsupportedSpec"
+	conditionReasonUnsupportedStorageChange      = "UnsupportedStorageChange"
+	conditionReasonUnsupportedWorkloadChange     = "UnsupportedWorkloadChange"
+	conditionReasonResourceConflict              = "ResourceConflict"
 )
 
 func networkArtifactsReady(network *yacdv1alpha1.CardanoNetwork) bool {
@@ -47,11 +54,11 @@ func (r *CardanoDBSyncReconciler) patchDependencyUnavailableStatus(
 	return r.patchStatusConditions(ctx, dbSync,
 		degradedCondition(metav1.ConditionTrue, reason, message),
 		progressingCondition(metav1.ConditionFalse, reason, message),
-		readyCondition(metav1.ConditionFalse, reason, message),
-		followerNodeReadyCondition(metav1.ConditionFalse, reason, message),
-		postgresReadyCondition(metav1.ConditionFalse, reason, message),
-		dbSyncReadyCondition(metav1.ConditionFalse, reason, message),
-		syncedCondition(metav1.ConditionFalse, reason, message),
+		readyCondition(reason, message),
+		followerNodeReadyCondition(reason, message),
+		postgresReadyCondition(reason, message),
+		dbSyncReadyCondition(reason, message),
+		syncedCondition(reason, message),
 	)
 }
 
@@ -64,27 +71,53 @@ func (r *CardanoDBSyncReconciler) patchDependencyWaitingStatus(
 	return r.patchStatusConditions(ctx, dbSync,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "CardanoDBSync dependencies are still converging"),
 		progressingCondition(metav1.ConditionTrue, reason, message),
-		readyCondition(metav1.ConditionFalse, reason, message),
-		followerNodeReadyCondition(metav1.ConditionFalse, reason, message),
-		postgresReadyCondition(metav1.ConditionFalse, reason, message),
-		dbSyncReadyCondition(metav1.ConditionFalse, reason, message),
-		syncedCondition(metav1.ConditionFalse, reason, message),
+		readyCondition(reason, message),
+		followerNodeReadyCondition(reason, message),
+		postgresReadyCondition(reason, message),
+		dbSyncReadyCondition(reason, message),
+		syncedCondition(reason, message),
 	)
 }
 
-func (r *CardanoDBSyncReconciler) patchWorkloadsPendingStatus(
+func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
+	metricsService *corev1.Service,
 ) error {
-	message := "CardanoDBSync dependencies are accepted; runtime workloads are pending a later controller slice"
+	message := "CardanoDBSync workloads are applied; runtime readiness checks are pending a later controller slice"
+	postgresMessage := "External Postgres was accepted by reference but is not probed by this controller slice"
+
+	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
+		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
+			Metrics: serviceEndpointFor(metricsService, "http", "/metrics"),
+		}
+		status.Database = nil
+		status.Sync = nil
+	},
+		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "CardanoDBSync workloads are applied"),
+		progressingCondition(metav1.ConditionTrue, conditionReasonWorkloadsApplied, message),
+		readyCondition(conditionReasonWorkloadsApplied, message),
+		followerNodeReadyCondition(conditionReasonWorkloadsApplied, message),
+		postgresReadyCondition(conditionReasonExternalDatabaseNotProbed, postgresMessage),
+		dbSyncReadyCondition(conditionReasonWorkloadsApplied, message),
+		syncedCondition(conditionReasonWorkloadsApplied, message),
+	)
+}
+
+func (r *CardanoDBSyncReconciler) patchWorkloadApplyBlockedStatus(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	reason string,
+	message string,
+) error {
 	return r.patchStatusConditions(ctx, dbSync,
-		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "CardanoDBSync dependencies are accepted"),
-		progressingCondition(metav1.ConditionTrue, conditionReasonWorkloadsPending, message),
-		readyCondition(metav1.ConditionFalse, conditionReasonWorkloadsPending, message),
-		followerNodeReadyCondition(metav1.ConditionFalse, conditionReasonWorkloadsPending, message),
-		postgresReadyCondition(metav1.ConditionFalse, conditionReasonWorkloadsPending, message),
-		dbSyncReadyCondition(metav1.ConditionFalse, conditionReasonWorkloadsPending, message),
-		syncedCondition(metav1.ConditionFalse, conditionReasonWorkloadsPending, message),
+		degradedCondition(metav1.ConditionTrue, reason, message),
+		progressingCondition(metav1.ConditionFalse, reason, message),
+		readyCondition(reason, message),
+		followerNodeReadyCondition(reason, message),
+		postgresReadyCondition(reason, message),
+		dbSyncReadyCondition(reason, message),
+		syncedCondition(reason, message),
 	)
 }
 
@@ -93,11 +126,24 @@ func (r *CardanoDBSyncReconciler) patchStatusConditions(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	conditions ...metav1.Condition,
 ) error {
+	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
+		status.Endpoints = nil
+		status.Database = nil
+		status.Sync = nil
+	}, conditions...)
+}
+
+func (r *CardanoDBSyncReconciler) patchStatus(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	mutate func(*yacdv1alpha1.CardanoDBSyncStatus),
+	conditions ...metav1.Condition,
+) error {
 	original := dbSync.DeepCopy()
 	dbSync.Status.ObservedGeneration = dbSync.Generation
-	dbSync.Status.Endpoints = nil
-	dbSync.Status.Database = nil
-	dbSync.Status.Sync = nil
+	if mutate != nil {
+		mutate(&dbSync.Status)
+	}
 	for _, condition := range conditions {
 		condition.ObservedGeneration = dbSync.Generation
 		apimeta.SetStatusCondition(&dbSync.Status.Conditions, condition)
@@ -110,6 +156,23 @@ func (r *CardanoDBSyncReconciler) patchStatusConditions(
 	return r.Status().Patch(ctx, dbSync, client.MergeFrom(original))
 }
 
+func serviceEndpointFor(service *corev1.Service, scheme string, path string) *yacdv1alpha1.ServiceEndpointStatus {
+	if service == nil || len(service.Spec.Ports) == 0 {
+		return nil
+	}
+
+	port := service.Spec.Ports[0].Port
+	status := &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: service.Name,
+		Port:        port,
+	}
+	if scheme != "" {
+		status.URL = fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d%s", scheme, service.Name, service.Namespace, port, path)
+	}
+
+	return status
+}
+
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
 	return condition(conditionTypeDegraded, status, reason, message)
 }
@@ -118,24 +181,24 @@ func progressingCondition(status metav1.ConditionStatus, reason string, message 
 	return condition(conditionTypeProgressing, status, reason, message)
 }
 
-func readyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeReady, status, reason, message)
+func readyCondition(reason string, message string) metav1.Condition {
+	return condition(conditionTypeReady, metav1.ConditionFalse, reason, message)
 }
 
-func followerNodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeFollowerNodeReady, status, reason, message)
+func followerNodeReadyCondition(reason string, message string) metav1.Condition {
+	return condition(conditionTypeFollowerNodeReady, metav1.ConditionFalse, reason, message)
 }
 
-func postgresReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypePostgresReady, status, reason, message)
+func postgresReadyCondition(reason string, message string) metav1.Condition {
+	return condition(conditionTypePostgresReady, metav1.ConditionFalse, reason, message)
 }
 
-func dbSyncReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeDBSyncReady, status, reason, message)
+func dbSyncReadyCondition(reason string, message string) metav1.Condition {
+	return condition(conditionTypeDBSyncReady, metav1.ConditionFalse, reason, message)
 }
 
-func syncedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeSynced, status, reason, message)
+func syncedCondition(reason string, message string) metav1.Condition {
+	return condition(conditionTypeSynced, metav1.ConditionFalse, reason, message)
 }
 
 func condition(conditionType string, status metav1.ConditionStatus, reason string, message string) metav1.Condition {

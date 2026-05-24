@@ -5,6 +5,7 @@ import (
 	"context"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,12 +47,15 @@ type CardanoDBSyncReconciler struct {
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 
-// Reconcile validates that the referenced CardanoNetwork is ready for a future
-// db-sync workload and publishes honest status while runtime resources remain
-// intentionally out of scope.
+// Reconcile validates CardanoDBSync dependencies, applies the external-Postgres
+// workload resources, and publishes conservative status until runtime readiness
+// checks are added.
 func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx, "cardanodbsync", req.String())
 
@@ -72,7 +76,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil || !ok {
 		return ctrl.Result{}, err
 	}
-	ok, err = r.validateExternalDatabaseSecret(ctx, dbSync, externalDatabase)
+	externalDatabaseSecret, ok, err := r.validateExternalDatabaseSecret(ctx, dbSync, externalDatabase)
 	if err != nil || !ok {
 		return ctrl.Result{}, err
 	}
@@ -152,7 +156,31 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		)
 	}
 
-	return ctrl.Result{}, r.patchWorkloadsPendingStatus(ctx, dbSync)
+	resources, err := (dbSyncWorkloadBuilder{scheme: r.Scheme}).Build(dbSync, network, configMap, externalDatabaseSecret)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	applyResults, err := r.applyDBSyncWorkloadResources(ctx, resources)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+
+	resultLog := log
+	if applyResults.unchanged() {
+		resultLog = log.V(1)
+	}
+	resultLog.Info("Applied CardanoDBSync workloads",
+		"configMap", client.ObjectKeyFromObject(resources.ConfigMap),
+		"configMapOperation", applyResults.ConfigMap,
+		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
+		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
+		"deployment", client.ObjectKeyFromObject(resources.Deployment),
+		"deploymentOperation", applyResults.Deployment,
+		"metricsService", client.ObjectKeyFromObject(resources.MetricsService),
+		"metricsServiceOperation", applyResults.MetricsService,
+		"planFingerprint", resources.Plan.Fingerprint.Value)
+
+	return ctrl.Result{}, r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService)
 }
 
 // SetupWithManager sets up the CardanoDBSync controller with the manager.
@@ -177,12 +205,16 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	logf.Log.WithName("controllers").WithName(controllerName).
-		Info("Starting CardanoDBSync controller scaffold")
+		Info("Starting CardanoDBSync controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForExternalDatabaseSecret)).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&corev1.Service{}).
 		Named(controllerName).
 		Complete(r)
 }
@@ -206,11 +238,11 @@ func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	database *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec,
-) (bool, error) {
+) (*corev1.Secret, bool, error) {
 	secretName := database.PasswordSecretRef.Name
 	passwordKey := externalDatabasePasswordKey(database)
 	if secretName == "" || passwordKey == "" {
-		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+		return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
 			conditionReasonExternalDatabaseSecretInvalid,
 			"External Postgres password Secret reference is incomplete",
 		)
@@ -220,27 +252,27 @@ func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 	err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: secretName}, secret)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
 				conditionReasonExternalDatabaseSecretMissing,
 				"External Postgres password Secret does not exist",
 			)
 		}
-		return false, err
+		return nil, false, err
 	}
 	if !secret.DeletionTimestamp.IsZero() {
-		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+		return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
 			conditionReasonExternalDatabaseSecretMissing,
 			"External Postgres password Secret is deleting",
 		)
 	}
 	if len(secret.Data[passwordKey]) == 0 {
-		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+		return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
 			conditionReasonExternalDatabaseSecretInvalid,
 			"External Postgres password Secret does not contain the configured key",
 		)
 	}
 
-	return true, nil
+	return secret, true, nil
 }
 
 func externalDatabasePasswordKey(database *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec) string {

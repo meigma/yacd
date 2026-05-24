@@ -8,6 +8,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,6 +21,8 @@ import (
 const testNetworkArtifactSchemaVersion = "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
 
 var testNetworkArtifactDataHash = "sha256:" + strings.Repeat("a", 64)
+
+const driftedDBSyncConfig = "drifted"
 
 func TestCardanoDBSyncReconcilerReconcileHandlesMissingObject(t *testing.T) {
 	ctx := context.Background()
@@ -209,7 +212,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForNodeToNodeEndpoint(t *testing.T
 	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNodeToNodeEndpointMissing)
 }
 
-func TestCardanoDBSyncReconcilerReconcileAcceptsPrerequisitesAndWaitsForWorkloads(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileAppliesExternalDatabaseWorkloads(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
@@ -219,12 +222,67 @@ func TestCardanoDBSyncReconcilerReconcileAcceptsPrerequisitesAndWaitsForWorkload
 
 	require.NoError(t, err)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonWorkloadsPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonWorkloadsPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionFalse, conditionReasonWorkloadsPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonWorkloadsPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonWorkloadsPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonWorkloadsPending)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonWorkloadsApplied)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonWorkloadsApplied)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionFalse, conditionReasonWorkloadsApplied)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonExternalDatabaseNotProbed)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonWorkloadsApplied)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonWorkloadsApplied)
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.Metrics)
+	assert.Equal(t, "dbsync-dbsync-metrics", current.Status.Endpoints.Metrics.ServiceName)
+	assert.Equal(t, int32(8080), current.Status.Endpoints.Metrics.Port)
+	assert.Equal(t, "http://dbsync-dbsync-metrics.default.svc.cluster.local:8080/metrics", current.Status.Endpoints.Metrics.URL)
+
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, &corev1.PersistentVolumeClaim{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncMetricsServiceName(dbSync)}, &corev1.Service{}))
+}
+
+func TestCardanoDBSyncReconcilerReconcileRepairsOwnedConfigMapDrift(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, configMap))
+	configMap.Data[dbSyncConfigFileName] = driftedDBSyncConfig
+	require.NoError(t, reconciler.Update(ctx, configMap))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	repaired := &corev1.ConfigMap{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, repaired))
+	assert.NotEqual(t, driftedDBSyncConfig, repaired.Data[dbSyncConfigFileName])
+	assert.Contains(t, repaired.Data[dbSyncConfigFileName], "NetworkName: ready-network")
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsResourceConflict(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	conflictingConfigMap := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dbSyncConfigMapName(dbSync),
+			Namespace: dbSync.Namespace,
+		},
+	}
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network), conflictingConfigMap)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.NotZero(t, result.RequeueAfter)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 }
 
 func assertDependencyWaiting(
@@ -266,6 +324,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoDBSyncRec
 
 	scheme := runtime.NewScheme()
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().
@@ -350,6 +409,11 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 			Name:       name,
 			Namespace:  "default",
 			Generation: 1,
+		},
+		Spec: yacdv1alpha1.CardanoNetworkSpec{
+			Node: yacdv1alpha1.CardanoNodeSpec{
+				Version: "11.0.1",
+			},
 		},
 		Status: yacdv1alpha1.CardanoNetworkStatus{
 			ObservedGeneration: 1,
