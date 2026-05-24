@@ -97,6 +97,7 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 				networkArtifactDataHashAnno:      testNetworkArtifactDataHash,
 			},
 		},
+		Data: testNetworkArtifactsData(),
 	}))
 
 	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
@@ -134,10 +135,10 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonWorkloadsApplied &&
+			progressing.Reason == conditionReasonDeploymentProgressing &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonWorkloadsApplied
+			ready.Reason == conditionReasonDeploymentProgressing
 	}, 10*time.Second, 100*time.Millisecond)
 
 	ownedConfigMap := &corev1.ConfigMap{}
@@ -201,10 +202,10 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonWorkloadsApplied &&
+			progressing.Reason == conditionReasonDeploymentProgressing &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonWorkloadsApplied
+			ready.Reason == conditionReasonDeploymentProgressing
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

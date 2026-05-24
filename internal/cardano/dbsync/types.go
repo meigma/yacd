@@ -4,6 +4,8 @@ package dbsync
 type Spec struct {
 	NetworkName          string
 	RequiresNetworkMagic bool
+	NetworkArtifactHash  string
+	Image                string
 	NodeToNode           NodeToNode
 	Database             Database
 	Runtime              Runtime
@@ -60,7 +62,7 @@ type InsertOptions struct {
 	OffchainVoteData      string
 	PoolStats             string
 	JSONType              string
-	RemoveJSONBFromSchema bool
+	RemoveJSONBFromSchema string
 }
 
 // TxOutOption describes the upstream tx_out option.
@@ -87,18 +89,18 @@ type Paths struct {
 	NodeConfig   string
 	SocketPath   string
 	StateDir     string
-	SchemaDir    string
 	PGPassFile   string
 }
 
 // Plan is the deterministic db-sync runtime plan consumed by Kubernetes
 // workload builders.
 type Plan struct {
-	Spec         Spec
-	ConfigYAML   string
-	TopologyJSON string
-	Run          Invocation
-	Fingerprint  Fingerprint
+	Spec                        Spec
+	ConfigYAML                  string
+	TopologyJSON                string
+	Run                         Invocation
+	Fingerprint                 Fingerprint
+	DatabaseIdentityFingerprint Fingerprint
 }
 
 // Invocation describes a command invocation without executing it.

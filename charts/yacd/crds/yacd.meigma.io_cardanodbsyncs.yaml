@@ -62,11 +62,9 @@ spec:
                     description: insert configures upstream db-sync insert_options.
                     properties:
                       governance:
-                        default: true
                         description: governance controls governance-related data inserts.
                         type: boolean
                       jsonType:
-                        default: text
                         description: jsonType controls the upstream json_type insert
                           option.
                         enum:
@@ -75,7 +73,6 @@ spec:
                         - disable
                         type: string
                       ledger:
-                        default: enable
                         description: ledger controls ledger state maintenance and
                           use.
                         enum:
@@ -87,7 +84,6 @@ spec:
                         description: metadata configures transaction metadata inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls transaction metadata inserts.
                             type: boolean
                           keys:
@@ -97,14 +93,11 @@ spec:
                               format: int64
                               type: integer
                             type: array
-                        required:
-                        - enabled
                         type: object
                       multiAsset:
                         description: multiAsset configures multi-asset table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls multi-asset data inserts.
                             type: boolean
                           policies:
@@ -113,16 +106,12 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       offchainPoolData:
-                        default: false
                         description: offchainPoolData controls stake pool offchain
                           metadata fetching.
                         type: boolean
                       offchainVoteData:
-                        default: false
                         description: offchainVoteData controls governance offchain
                           metadata fetching.
                         type: boolean
@@ -130,7 +119,6 @@ spec:
                         description: plutus configures Plutus and script table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls Plutus and script data inserts.
                             type: boolean
                           scriptHashes:
@@ -139,18 +127,15 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       poolStats:
-                        default: false
                         description: poolStats controls pool stats inserts.
                         type: boolean
                       preset:
                         default: full
                         description: |-
                           preset selects an upstream insert profile. Explicit fields in this object
-                          are interpreted as overrides by the future controller.
+                          are interpreted as overrides by the controller.
                         enum:
                         - full
                         - only_utxo
@@ -158,7 +143,6 @@ spec:
                         - disable_all
                         type: string
                       removeJsonbFromSchema:
-                        default: false
                         description: |-
                           removeJsonbFromSchema controls whether db-sync removes jsonb data types
                           from affected schema columns.
@@ -167,7 +151,6 @@ spec:
                         description: shelley configures Shelley-era table inserts.
                         properties:
                           enabled:
-                            default: true
                             description: enabled controls Shelley-era data inserts.
                             type: boolean
                           stakeAddresses:
@@ -177,23 +160,18 @@ spec:
                             items:
                               type: string
                             type: array
-                        required:
-                        - enabled
                         type: object
                       txCbor:
-                        default: false
                         description: txCbor controls transaction CBOR collection.
                         type: boolean
                       txOut:
                         description: txOut configures transaction output storage.
                         properties:
                           forceTxIn:
-                            default: false
                             description: forceTxIn keeps tx_in populated for consumed,
                               prune, or bootstrap modes.
                             type: boolean
                           mode:
-                            default: enable
                             description: mode selects the upstream tx_out value.
                             enum:
                             - enable
@@ -203,25 +181,12 @@ spec:
                             - bootstrap
                             type: string
                           useAddressTable:
-                            default: false
                             description: useAddressTable enables the normalized address
                               table schema variant.
                             type: boolean
-                        required:
-                        - forceTxIn
-                        - mode
-                        - useAddressTable
                         type: object
                     required:
-                    - governance
-                    - jsonType
-                    - ledger
-                    - offchainPoolData
-                    - offchainVoteData
-                    - poolStats
                     - preset
-                    - removeJsonbFromSchema
-                    - txCbor
                     type: object
                   ipfsGateways:
                     description: ipfsGateways lists gateways used for offchain metadata
@@ -473,8 +438,6 @@ spec:
                               storageClassName optionally selects the Kubernetes StorageClass used for
                               the persistent volume claim.
                             type: string
-                        required:
-                        - size
                         type: object
                       user:
                         default: postgres
@@ -576,8 +539,6 @@ spec:
                           storageClassName optionally selects the Kubernetes StorageClass used for
                           the persistent volume claim.
                         type: string
-                    required:
-                    - size
                     type: object
                 type: object
               image:
@@ -671,11 +632,8 @@ spec:
                       storageClassName optionally selects the Kubernetes StorageClass used for
                       the persistent volume claim.
                     type: string
-                required:
-                - size
                 type: object
             required:
-            - config
             - database
             - image
             - networkRef
@@ -758,6 +716,12 @@ spec:
               database:
                 description: database reports database-specific runtime details.
                 properties:
+                  acceptedIdentityFingerprint:
+                    description: |-
+                      acceptedIdentityFingerprint is the database-affecting plan identity that
+                      this resource accepted. Changing it requires deleting and recreating the
+                      CardanoDBSync with a fresh or compatible external database.
+                    type: string
                   authSecretName:
                     description: |-
                       authSecretName is the same-namespace Secret containing generated

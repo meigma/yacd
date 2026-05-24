@@ -25,9 +25,8 @@ const (
 	defaultTopologyFile = "/config/follower-topology.json"
 	defaultNodeConfig   = "/network-artifacts/configuration.yaml"
 	defaultSocketPath   = "/ipc/node.socket"
-	defaultStateDir     = "/state/db-sync-ledger"
-	defaultSchemaDir    = "/opt/cardano-db-sync/schema"
-	defaultPGPassFile   = "/secrets/postgres/.pgpass"
+	defaultStateDir     = "/var/lib/cexplorer"
+	defaultPGPassFile   = "/configuration/pgpass"
 
 	defaultLedgerBackend = "lsm"
 	defaultTxCBOR        = "disable"
@@ -60,18 +59,25 @@ func BuildPlan(spec Spec) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	databaseIdentityFingerprint, err := computeDatabaseIdentityFingerprint(normalized)
+	if err != nil {
+		return Plan{}, err
+	}
 
 	return Plan{
-		Spec:         normalized,
-		ConfigYAML:   configYAML,
-		TopologyJSON: topologyJSON,
-		Run:          run,
-		Fingerprint:  fingerprint,
+		Spec:                        normalized,
+		ConfigYAML:                  configYAML,
+		TopologyJSON:                topologyJSON,
+		Run:                         run,
+		Fingerprint:                 fingerprint,
+		DatabaseIdentityFingerprint: databaseIdentityFingerprint,
 	}, nil
 }
 
 func normalizeSpec(spec Spec) (Spec, error) {
 	spec.NetworkName = strings.TrimSpace(spec.NetworkName)
+	spec.NetworkArtifactHash = strings.TrimSpace(spec.NetworkArtifactHash)
+	spec.Image = strings.TrimSpace(spec.Image)
 	spec.NodeToNode.Host = strings.TrimSpace(spec.NodeToNode.Host)
 	spec.Database.Host = strings.TrimSpace(spec.Database.Host)
 	spec.Database.Name = strings.TrimSpace(spec.Database.Name)
@@ -88,6 +94,7 @@ func normalizeSpec(spec Spec) (Spec, error) {
 	spec.Insert.OffchainVoteData = strings.TrimSpace(spec.Insert.OffchainVoteData)
 	spec.Insert.PoolStats = strings.TrimSpace(spec.Insert.PoolStats)
 	spec.Insert.JSONType = strings.TrimSpace(spec.Insert.JSONType)
+	spec.Insert.RemoveJSONBFromSchema = strings.TrimSpace(spec.Insert.RemoveJSONBFromSchema)
 	spec.IPFSGateways = trimStrings(spec.IPFSGateways)
 	if insertOptionsZero(spec.Insert) {
 		spec.Insert = defaultInsertOptions()
@@ -139,10 +146,13 @@ func normalizeSpec(spec Spec) (Spec, error) {
 		spec.Insert.OffchainVoteData = insertOptionDisable
 	}
 	if spec.Insert.PoolStats == "" {
-		spec.Insert.PoolStats = insertOptionDisable
+		spec.Insert.PoolStats = insertOptionEnable
 	}
 	if spec.Insert.JSONType == "" {
 		spec.Insert.JSONType = defaultJSONType
+	}
+	if spec.Insert.RemoveJSONBFromSchema == "" {
+		spec.Insert.RemoveJSONBFromSchema = insertOptionDisable
 	}
 
 	spec.Paths.ConfigFile = defaultPath(spec.Paths.ConfigFile, defaultConfigFile)
@@ -150,7 +160,6 @@ func normalizeSpec(spec Spec) (Spec, error) {
 	spec.Paths.NodeConfig = defaultPath(spec.Paths.NodeConfig, defaultNodeConfig)
 	spec.Paths.SocketPath = defaultPath(spec.Paths.SocketPath, defaultSocketPath)
 	spec.Paths.StateDir = defaultPath(spec.Paths.StateDir, defaultStateDir)
-	spec.Paths.SchemaDir = defaultPath(spec.Paths.SchemaDir, defaultSchemaDir)
 	spec.Paths.PGPassFile = defaultPath(spec.Paths.PGPassFile, defaultPGPassFile)
 
 	if err := validateSpec(spec); err != nil {
@@ -192,7 +201,7 @@ func insertOptionsZero(options InsertOptions) bool {
 		options.OffchainVoteData == "" &&
 		options.PoolStats == "" &&
 		options.JSONType == "" &&
-		!options.RemoveJSONBFromSchema
+		options.RemoveJSONBFromSchema == ""
 }
 
 func featureSelectionZero(feature FeatureSelection) bool {
@@ -209,16 +218,17 @@ func defaultInsertOptions() InsertOptions {
 		TxOut: TxOutOption{
 			Mode: defaultTxOutMode,
 		},
-		Ledger:           defaultLedger,
-		Shelley:          FeatureSelection{Enabled: true},
-		MultiAsset:       FeatureSelection{Enabled: true},
-		Metadata:         FeatureSelection{Enabled: true},
-		Plutus:           FeatureSelection{Enabled: true},
-		Governance:       insertOptionEnable,
-		OffchainPoolData: insertOptionDisable,
-		OffchainVoteData: insertOptionDisable,
-		PoolStats:        insertOptionDisable,
-		JSONType:         defaultJSONType,
+		Ledger:                defaultLedger,
+		Shelley:               FeatureSelection{Enabled: true},
+		MultiAsset:            FeatureSelection{Enabled: true},
+		Metadata:              FeatureSelection{Enabled: true},
+		Plutus:                FeatureSelection{Enabled: true},
+		Governance:            insertOptionEnable,
+		OffchainPoolData:      insertOptionDisable,
+		OffchainVoteData:      insertOptionDisable,
+		PoolStats:             insertOptionEnable,
+		JSONType:              defaultJSONType,
+		RemoveJSONBFromSchema: insertOptionDisable,
 	}
 }
 
@@ -234,6 +244,8 @@ func validateSpec(spec Spec) error {
 	switch {
 	case spec.NetworkName == "":
 		return fmt.Errorf("network name is required")
+	case spec.Image == "":
+		return fmt.Errorf("db-sync image is required")
 	case spec.NodeToNode.Host == "":
 		return fmt.Errorf("node-to-node host is required")
 	case spec.NodeToNode.Port < 1 || spec.NodeToNode.Port > 65535:
@@ -252,6 +264,8 @@ func validateSpec(spec Spec) error {
 		return fmt.Errorf("database password Secret key is required")
 	case spec.Runtime.MetricsPort < 1 || spec.Runtime.MetricsPort > 65535:
 		return fmt.Errorf("metrics port must be between 1 and 65535")
+	case spec.Storage.LedgerBackend == "lsm" && spec.Insert.TxOut.Mode == "bootstrap":
+		return fmt.Errorf("tx_out bootstrap is not supported with lsm ledger_backend")
 	}
 
 	return nil
@@ -294,7 +308,7 @@ type insertConfig struct {
 	OffchainVoteData      string        `json:"offchain_vote_data"`
 	PoolStats             string        `json:"pool_stat"`
 	JSONType              string        `json:"json_type"`
-	RemoveJSONBFromSchema bool          `json:"remove_jsonb_from_schema"`
+	RemoveJSONBFromSchema string        `json:"remove_jsonb_from_schema"`
 }
 
 type txOutConfig struct {
@@ -449,8 +463,6 @@ func runtimeInvocation(spec Spec) Invocation {
 	args := []string{
 		"--config", spec.Paths.ConfigFile,
 		"--socket-path", spec.Paths.SocketPath,
-		"--state-dir", spec.Paths.StateDir,
-		"--schema-dir", spec.Paths.SchemaDir,
 		"--pg-pass-env", "PGPASSFILE",
 	}
 	if !spec.Runtime.Cache {
@@ -464,8 +476,7 @@ func runtimeInvocation(spec Spec) Invocation {
 	}
 
 	return Invocation{
-		Command: "cardano-db-sync",
-		Args:    args,
+		Args: args,
 	}
 }
 
@@ -474,11 +485,59 @@ func computeFingerprint(spec Spec) (Fingerprint, error) {
 	if err != nil {
 		return Fingerprint{}, fmt.Errorf("marshal fingerprint input: %w", err)
 	}
+	return hashFingerprint(input), nil
+}
+
+type databaseIdentity struct {
+	NetworkName          string                  `json:"networkName"`
+	RequiresNetworkMagic bool                    `json:"requiresNetworkMagic"`
+	NetworkArtifactHash  string                  `json:"networkArtifactHash,omitempty"`
+	Image                string                  `json:"image"`
+	Database             databaseIdentitySpec    `json:"database"`
+	Storage              databaseIdentityStorage `json:"storage"`
+	Insert               InsertOptions           `json:"insert"`
+}
+
+type databaseIdentitySpec struct {
+	Host string `json:"host"`
+	Port int32  `json:"port"`
+	Name string `json:"name"`
+	User string `json:"user"`
+}
+
+type databaseIdentityStorage struct {
+	LedgerBackend string `json:"ledgerBackend"`
+}
+
+func computeDatabaseIdentityFingerprint(spec Spec) (Fingerprint, error) {
+	input, err := json.Marshal(databaseIdentity{
+		NetworkName:          spec.NetworkName,
+		RequiresNetworkMagic: spec.RequiresNetworkMagic,
+		NetworkArtifactHash:  spec.NetworkArtifactHash,
+		Image:                spec.Image,
+		Database: databaseIdentitySpec{
+			Host: spec.Database.Host,
+			Port: spec.Database.Port,
+			Name: spec.Database.Name,
+			User: spec.Database.User,
+		},
+		Storage: databaseIdentityStorage{
+			LedgerBackend: spec.Storage.LedgerBackend,
+		},
+		Insert: spec.Insert,
+	})
+	if err != nil {
+		return Fingerprint{}, fmt.Errorf("marshal database identity input: %w", err)
+	}
+	return hashFingerprint(input), nil
+}
+
+func hashFingerprint(input []byte) Fingerprint {
 	sum := sha256.Sum256(input)
 	return Fingerprint{
 		Algorithm: "sha256",
 		Value:     hex.EncodeToString(sum[:]),
-	}, nil
+	}
 }
 
 // Environment returns non-secret libpq environment variables for the plan.

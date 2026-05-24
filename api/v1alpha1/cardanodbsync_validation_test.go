@@ -75,6 +75,85 @@ func TestCardanoDBSyncDatabaseValidation(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, found)
 		assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPostgresSSLModeDisable), sslMode)
+
+		_, found, err = unstructured.NestedFieldNoCopy(current.Object, "spec", "config")
+		require.NoError(t, err)
+		assert.False(t, found, "config should be optional for the default path")
+	})
+
+	t.Run("accepts storage class overrides without storage size", func(t *testing.T) {
+		object := validCardanoDBSyncValidationObject(namespace.Name, "storage-class-only")
+		require.NoError(t, unstructured.SetNestedField(object.Object, "fast-state", "spec", "stateStorage", "storageClassName"))
+		require.NoError(t, unstructured.SetNestedField(object.Object, "fast-follower", "spec", "followerNode", "storage", "storageClassName"))
+		require.NoError(t, apiClient.Create(ctx, object))
+
+		current := cardanoDBSyncValidationObject()
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(object), current))
+
+		stateStorageClass, found, err := unstructured.NestedString(current.Object, "spec", "stateStorage", "storageClassName")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "fast-state", stateStorageClass)
+
+		_, found, err = unstructured.NestedFieldNoCopy(current.Object, "spec", "stateStorage", "size")
+		require.NoError(t, err)
+		assert.False(t, found)
+
+		followerStorageClass, found, err := unstructured.NestedString(current.Object, "spec", "followerNode", "storage", "storageClassName")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "fast-follower", followerStorageClass)
+
+		_, found, err = unstructured.NestedFieldNoCopy(current.Object, "spec", "followerNode", "storage", "size")
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("does not default insert override fields", func(t *testing.T) {
+		object := validCardanoDBSyncValidationObject(namespace.Name, "insert-preset")
+		require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+			"preset": string(yacdv1alpha1.CardanoDBSyncInsertPresetDisableAll),
+			"txOut": map[string]any{
+				"forceTxIn": true,
+			},
+			"metadata": map[string]any{
+				"keys": []any{int64(42)},
+			},
+		}, "spec", "config", "insert"))
+		require.NoError(t, apiClient.Create(ctx, object))
+
+		current := cardanoDBSyncValidationObject()
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(object), current))
+
+		preset, found, err := unstructured.NestedString(current.Object, "spec", "config", "insert", "preset")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncInsertPresetDisableAll), preset)
+
+		for _, field := range []string{
+			"txCbor",
+			"ledger",
+			"governance",
+			"offchainPoolData",
+			"offchainVoteData",
+			"poolStats",
+			"jsonType",
+			"removeJsonbFromSchema",
+		} {
+			_, found, err := unstructured.NestedFieldNoCopy(current.Object, "spec", "config", "insert", field)
+			require.NoError(t, err)
+			assert.False(t, found, "expected insert.%s to remain unset", field)
+		}
+
+		for _, path := range [][]string{
+			{"txOut", "mode"},
+			{"txOut", "useAddressTable"},
+			{"metadata", "enabled"},
+		} {
+			_, found, err := unstructured.NestedFieldNoCopy(current.Object, "spec", "config", "insert", path[0], path[1])
+			require.NoError(t, err)
+			assert.False(t, found, "expected insert.%s.%s to remain unset", path[0], path[1])
+		}
 	})
 
 	testCases := []struct {
@@ -136,7 +215,6 @@ func validCardanoDBSyncValidationObject(namespace string, name string) *unstruct
 				},
 			},
 		},
-		"config": map[string]any{},
 	}
 	return object
 }

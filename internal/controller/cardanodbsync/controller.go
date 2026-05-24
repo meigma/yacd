@@ -4,11 +4,14 @@ package cardanodbsync
 import (
 	"context"
 	"strings"
+	"time"
 
+	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
@@ -30,6 +33,8 @@ const (
 	networkArtifactSchemaVersionAnno   = "yacd.meigma.io/artifact-schema-version"
 	networkArtifactDataHashAnno        = "yacd.meigma.io/artifact-data-hash"
 	defaultExternalDatabasePasswordKey = "password"
+
+	dbSyncWorkloadReadinessRequeueAfter = 15 * time.Second
 )
 
 // CardanoDBSyncReconciler reconciles CardanoDBSync resources.
@@ -53,10 +58,10 @@ type CardanoDBSyncReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 
 // Reconcile validates CardanoDBSync dependencies, applies the external-Postgres
-// workload resources, and publishes conservative status until runtime readiness
-// checks are added.
+// workload resources, and publishes workload-level runtime status.
 func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx, "cardanodbsync", req.String())
 
@@ -146,6 +151,12 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork artifact ConfigMap metadata does not match status",
 		)
 	}
+	if err := validateNetworkArtifactsConfigMapData(configMap, network.Status.Artifacts.DataHash); err != nil {
+		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
+			conditionReasonNetworkArtifactsMismatch,
+			"Referenced CardanoNetwork artifact ConfigMap is invalid: "+err.Error(),
+		)
+	}
 	if network.Status.Endpoints == nil ||
 		network.Status.Endpoints.NodeToNode == nil ||
 		network.Status.Endpoints.NodeToNode.ServiceName == "" ||
@@ -157,8 +168,22 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		)
 	}
 
+	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, externalDatabaseSecret)
+}
+
+func (r *CardanoDBSyncReconciler) reconcileWorkloads(
+	ctx context.Context,
+	log logr.Logger,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	configMap *corev1.ConfigMap,
+	externalDatabaseSecret *corev1.Secret,
+) (ctrl.Result, error) {
 	resources, err := (dbSyncWorkloadBuilder{scheme: r.Scheme}).Build(dbSync, network, configMap, externalDatabaseSecret)
 	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	applyResults, err := r.applyDBSyncWorkloadResources(ctx, resources)
@@ -185,7 +210,15 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		"metricsServiceOperation", applyResults.MetricsService,
 		"planFingerprint", resources.Plan.Fingerprint.Value)
 
-	return ctrl.Result{}, r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService)
+	ready, err := r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService, dbSync.Spec.Database.External, resources.Plan.DatabaseIdentityFingerprint.Value)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
+		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the CardanoDBSync controller with the manager.

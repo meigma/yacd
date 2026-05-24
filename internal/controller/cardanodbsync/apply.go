@@ -96,6 +96,60 @@ func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
 	return results, err
 }
 
+func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	desiredFingerprint string,
+) error {
+	if desiredFingerprint == "" {
+		return unsupportedSpec("db-sync database identity fingerprint is required")
+	}
+
+	acceptedFingerprint := ""
+	if dbSync.Status.Database != nil {
+		acceptedFingerprint = dbSync.Status.Database.AcceptedIdentityFingerprint
+	}
+	if acceptedFingerprint == "" {
+		var err error
+		acceptedFingerprint, err = r.acceptedDBSyncDatabaseIdentityFromPVC(ctx, dbSync)
+		if err != nil {
+			return err
+		}
+	}
+	if acceptedFingerprint == "" || acceptedFingerprint == desiredFingerprint {
+		if acceptedFingerprint != "" &&
+			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "") {
+			dbSync.Status.Database = databaseStatusForAcceptedIdentity(acceptedFingerprint)
+		}
+		return nil
+	}
+	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "" {
+		dbSync.Status.Database = databaseStatusForAcceptedIdentity(acceptedFingerprint)
+	}
+
+	return unsupportedDatabaseIdentityChange(
+		"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database",
+	)
+}
+
+func (r *CardanoDBSyncReconciler) acceptedDBSyncDatabaseIdentityFromPVC(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (string, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, pvc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !controlledBy(pvc, dbSync) {
+		return "", nil
+	}
+
+	return pvc.Annotations[dbSyncDatabaseIdentityAnno], nil
+}
+
 func (r *CardanoDBSyncReconciler) handleDBSyncWorkloadApplyError(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -441,6 +495,7 @@ func mergeDBSyncOwnedAnnotations(current map[string]string, desired map[string]s
 	maps.Copy(merged, current)
 	for _, key := range []string{
 		dbSyncPlanFingerprintAnno,
+		dbSyncDatabaseIdentityAnno,
 		dbSyncSecretVersionAnno,
 		dbSyncArtifactDataHashAnno,
 		requestedStorageClassAnno,
@@ -479,6 +534,13 @@ func unsupportedWorkloadChange(format string, args ...any) unsupportedApplyError
 	}
 }
 
+func unsupportedDatabaseIdentityChange(format string, args ...any) unsupportedApplyError {
+	return unsupportedApplyError{
+		reason:  conditionReasonUnsupportedDatabaseIdentityChange,
+		message: fmt.Sprintf(format, args...),
+	}
+}
+
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
 	desiredController := metav1.GetControllerOf(desired)
 	if desiredController == nil {
@@ -508,6 +570,15 @@ func validateControllerOwner(current metav1.Object, desired metav1.Object) error
 	}
 
 	return nil
+}
+
+func controlledBy(current metav1.Object, owner metav1.Object) bool {
+	controller := metav1.GetControllerOf(current)
+	return controller != nil &&
+		controller.APIVersion == yacdv1alpha1.GroupVersion.String() &&
+		controller.Kind == "CardanoDBSync" &&
+		controller.Name == owner.GetName() &&
+		controller.UID == owner.GetUID()
 }
 
 func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {

@@ -107,8 +107,8 @@ type CardanoDBSyncSpec struct {
 	// config configures upstream db-sync behavior using Kubernetes-style field
 	// names. The controller translates this object into the upstream db-sync
 	// configuration file.
-	// +required
-	Config CardanoDBSyncConfigSpec `json:"config"`
+	// +optional
+	Config CardanoDBSyncConfigSpec `json:"config,omitempty"`
 }
 
 // CardanoDBSyncFollowerNodeSpec configures the follower node owned by db-sync.
@@ -130,8 +130,8 @@ type CardanoDBSyncFollowerNodeSpec struct {
 // CardanoDBSyncStorageSpec configures persistent storage for db-sync resources.
 type CardanoDBSyncStorageSpec struct {
 	// size is the requested persistent volume size.
-	// +required
-	Size resource.Quantity `json:"size"`
+	// +optional
+	Size *resource.Quantity `json:"size,omitempty"`
 
 	// storageClassName optionally selects the Kubernetes StorageClass used for
 	// the persistent volume claim.
@@ -351,24 +351,22 @@ type CardanoDBSyncSnapshotSpec struct {
 // CardanoDBSyncInsertSpec configures upstream db-sync insert_options.
 type CardanoDBSyncInsertSpec struct {
 	// preset selects an upstream insert profile. Explicit fields in this object
-	// are interpreted as overrides by the future controller.
+	// are interpreted as overrides by the controller.
 	// +kubebuilder:default=full
 	// +required
 	Preset CardanoDBSyncInsertPreset `json:"preset"`
 
 	// txCbor controls transaction CBOR collection.
-	// +kubebuilder:default=false
-	// +required
-	TxCBOR bool `json:"txCbor"`
+	// +optional
+	TxCBOR *bool `json:"txCbor,omitempty"`
 
 	// txOut configures transaction output storage.
 	// +optional
 	TxOut *CardanoDBSyncTxOutSpec `json:"txOut,omitempty"`
 
 	// ledger controls ledger state maintenance and use.
-	// +kubebuilder:default=enable
-	// +required
-	Ledger CardanoDBSyncLedgerMode `json:"ledger"`
+	// +optional
+	Ledger *CardanoDBSyncLedgerMode `json:"ledger,omitempty"`
 
 	// shelley configures Shelley-era table inserts.
 	// +optional
@@ -387,61 +385,51 @@ type CardanoDBSyncInsertSpec struct {
 	Plutus *CardanoDBSyncPlutusInsertSpec `json:"plutus,omitempty"`
 
 	// governance controls governance-related data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Governance bool `json:"governance"`
+	// +optional
+	Governance *bool `json:"governance,omitempty"`
 
 	// offchainPoolData controls stake pool offchain metadata fetching.
-	// +kubebuilder:default=false
-	// +required
-	OffchainPoolData bool `json:"offchainPoolData"`
+	// +optional
+	OffchainPoolData *bool `json:"offchainPoolData,omitempty"`
 
 	// offchainVoteData controls governance offchain metadata fetching.
-	// +kubebuilder:default=false
-	// +required
-	OffchainVoteData bool `json:"offchainVoteData"`
+	// +optional
+	OffchainVoteData *bool `json:"offchainVoteData,omitempty"`
 
 	// poolStats controls pool stats inserts.
-	// +kubebuilder:default=false
-	// +required
-	PoolStats bool `json:"poolStats"`
+	// +optional
+	PoolStats *bool `json:"poolStats,omitempty"`
 
 	// jsonType controls the upstream json_type insert option.
-	// +kubebuilder:default=text
-	// +required
-	JSONType CardanoDBSyncJSONType `json:"jsonType"`
+	// +optional
+	JSONType *CardanoDBSyncJSONType `json:"jsonType,omitempty"`
 
 	// removeJsonbFromSchema controls whether db-sync removes jsonb data types
 	// from affected schema columns.
-	// +kubebuilder:default=false
-	// +required
-	RemoveJSONBFromSchema bool `json:"removeJsonbFromSchema"`
+	// +optional
+	RemoveJSONBFromSchema *bool `json:"removeJsonbFromSchema,omitempty"`
 }
 
 // CardanoDBSyncTxOutSpec configures upstream tx_out insert_options.
 type CardanoDBSyncTxOutSpec struct {
 	// mode selects the upstream tx_out value.
-	// +kubebuilder:default=enable
-	// +required
-	Mode CardanoDBSyncTxOutMode `json:"mode"`
+	// +optional
+	Mode *CardanoDBSyncTxOutMode `json:"mode,omitempty"`
 
 	// forceTxIn keeps tx_in populated for consumed, prune, or bootstrap modes.
-	// +kubebuilder:default=false
-	// +required
-	ForceTxIn bool `json:"forceTxIn"`
+	// +optional
+	ForceTxIn *bool `json:"forceTxIn,omitempty"`
 
 	// useAddressTable enables the normalized address table schema variant.
-	// +kubebuilder:default=false
-	// +required
-	UseAddressTable bool `json:"useAddressTable"`
+	// +optional
+	UseAddressTable *bool `json:"useAddressTable,omitempty"`
 }
 
 // CardanoDBSyncShelleyInsertSpec configures Shelley-era inserts.
 type CardanoDBSyncShelleyInsertSpec struct {
 	// enabled controls Shelley-era data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// stakeAddresses optionally limits Shelley data to specific stake
 	// addresses.
@@ -452,9 +440,8 @@ type CardanoDBSyncShelleyInsertSpec struct {
 // CardanoDBSyncMultiAssetInsertSpec configures multi-asset inserts.
 type CardanoDBSyncMultiAssetInsertSpec struct {
 	// enabled controls multi-asset data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// policies optionally limits multi-asset data to specific policy hashes.
 	// +optional
@@ -464,9 +451,8 @@ type CardanoDBSyncMultiAssetInsertSpec struct {
 // CardanoDBSyncMetadataInsertSpec configures metadata inserts.
 type CardanoDBSyncMetadataInsertSpec struct {
 	// enabled controls transaction metadata inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// keys optionally limits metadata inserts to specific numeric labels.
 	// +optional
@@ -476,9 +462,8 @@ type CardanoDBSyncMetadataInsertSpec struct {
 // CardanoDBSyncPlutusInsertSpec configures Plutus inserts.
 type CardanoDBSyncPlutusInsertSpec struct {
 	// enabled controls Plutus and script data inserts.
-	// +kubebuilder:default=true
-	// +required
-	Enabled bool `json:"enabled"`
+	// +optional
+	Enabled *bool `json:"enabled,omitempty"`
 
 	// scriptHashes optionally limits Plutus data to specific script hashes.
 	// +optional
@@ -536,6 +521,12 @@ type CardanoDBSyncEndpointsStatus struct {
 
 // CardanoDBSyncDatabaseStatus reports database-specific runtime details.
 type CardanoDBSyncDatabaseStatus struct {
+	// acceptedIdentityFingerprint is the database-affecting plan identity that
+	// this resource accepted. Changing it requires deleting and recreating the
+	// CardanoDBSync with a fresh or compatible external database.
+	// +optional
+	AcceptedIdentityFingerprint string `json:"acceptedIdentityFingerprint,omitempty"`
+
 	// authSecretName is the same-namespace Secret containing generated
 	// database credentials when the user did not provide authSecretRef.
 	// +optional

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"sigs.k8s.io/yaml"
 )
 
 func TestBuildPlanDefaultsAndRendersRuntimeFiles(t *testing.T) {
@@ -17,7 +18,6 @@ func TestBuildPlanDefaultsAndRendersRuntimeFiles(t *testing.T) {
 	assert.Equal(t, defaultNodeConfig, plan.Spec.Paths.NodeConfig)
 	assert.Equal(t, defaultSocketPath, plan.Spec.Paths.SocketPath)
 	assert.Equal(t, defaultStateDir, plan.Spec.Paths.StateDir)
-	assert.Equal(t, defaultSchemaDir, plan.Spec.Paths.SchemaDir)
 	assert.Equal(t, defaultPGPassFile, plan.Spec.Paths.PGPassFile)
 	assert.Equal(t, defaultMetricsPort, plan.Spec.Runtime.MetricsPort)
 	assert.Equal(t, defaultLedgerBackend, plan.Spec.Storage.LedgerBackend)
@@ -32,16 +32,30 @@ func TestBuildPlanDefaultsAndRendersRuntimeFiles(t *testing.T) {
 	assert.Contains(t, plan.ConfigYAML, "near_tip_epoch: 580")
 	assert.Contains(t, plan.ConfigYAML, "tx_out:")
 	assert.Contains(t, plan.ConfigYAML, "value: enable")
+	assert.Contains(t, plan.ConfigYAML, "pool_stat: enable")
+	assert.Contains(t, plan.ConfigYAML, "remove_jsonb_from_schema: disable")
 	assert.Contains(t, plan.TopologyJSON, `"address": "devnet-node.default.svc.cluster.local"`)
 	assert.Contains(t, plan.TopologyJSON, `"port": 3001`)
-	assert.Equal(t, "cardano-db-sync", plan.Run.Command)
+	assert.Empty(t, plan.Run.Command)
 	assert.Equal(t, []string{
 		"--config", "/config/db-sync-config.yaml",
 		"--socket-path", "/ipc/node.socket",
-		"--state-dir", "/state/db-sync-ledger",
-		"--schema-dir", "/opt/cardano-db-sync/schema",
 		"--pg-pass-env", "PGPASSFILE",
 	}, plan.Run.Args)
+}
+
+func TestBuildPlanRendersRemoveJSONBFromSchemaAsStringEnum(t *testing.T) {
+	spec := minimalSpec()
+	spec.Insert.RemoveJSONBFromSchema = insertOptionEnable
+
+	plan, err := BuildPlan(spec)
+
+	require.NoError(t, err)
+	var config map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(plan.ConfigYAML), &config))
+	insertOptions, ok := config["insert_options"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, insertOptionEnable, insertOptions["remove_jsonb_from_schema"])
 }
 
 func TestBuildPlanRendersIPFSGateways(t *testing.T) {
@@ -83,8 +97,44 @@ func TestBuildPlanFingerprintIsStableAndInputSensitive(t *testing.T) {
 
 	assert.Equal(t, "sha256", base.Fingerprint.Algorithm)
 	assert.Len(t, base.Fingerprint.Value, 64)
+	assert.Equal(t, "sha256", base.DatabaseIdentityFingerprint.Algorithm)
+	assert.Len(t, base.DatabaseIdentityFingerprint.Value, 64)
 	assert.Equal(t, base.Fingerprint, again.Fingerprint)
+	assert.Equal(t, base.DatabaseIdentityFingerprint, again.DatabaseIdentityFingerprint)
 	assert.NotEqual(t, base.Fingerprint, changed.Fingerprint)
+	assert.NotEqual(t, base.DatabaseIdentityFingerprint, changed.DatabaseIdentityFingerprint)
+}
+
+func TestBuildPlanDatabaseIdentitySeparatesSafeRuntimeChanges(t *testing.T) {
+	base, err := BuildPlan(minimalSpec())
+	require.NoError(t, err)
+
+	runtimeChangedSpec := minimalSpec()
+	runtimeChangedSpec.Runtime.ForceIndexes = true
+	runtimeChanged, err := BuildPlan(runtimeChangedSpec)
+	require.NoError(t, err)
+
+	insertChangedSpec := minimalSpec()
+	insertChangedSpec.Insert = defaultInsertOptions()
+	insertChangedSpec.Insert.TxOut.Mode = "consumed"
+	insertChanged, err := BuildPlan(insertChangedSpec)
+	require.NoError(t, err)
+
+	passwordRefChangedSpec := minimalSpec()
+	passwordRefChangedSpec.Database.PasswordSecretName = "rotated-secret"
+	passwordRefChanged, err := BuildPlan(passwordRefChangedSpec)
+	require.NoError(t, err)
+
+	imageChangedSpec := minimalSpec()
+	imageChangedSpec.Image = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
+	imageChanged, err := BuildPlan(imageChangedSpec)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, base.Fingerprint, runtimeChanged.Fingerprint)
+	assert.Equal(t, base.DatabaseIdentityFingerprint, runtimeChanged.DatabaseIdentityFingerprint)
+	assert.NotEqual(t, base.DatabaseIdentityFingerprint, insertChanged.DatabaseIdentityFingerprint)
+	assert.Equal(t, base.DatabaseIdentityFingerprint, passwordRefChanged.DatabaseIdentityFingerprint)
+	assert.NotEqual(t, base.DatabaseIdentityFingerprint, imageChanged.DatabaseIdentityFingerprint)
 }
 
 func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
@@ -108,6 +158,13 @@ func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
 			wantErr: "node-to-node host is required",
 		},
 		{
+			name: "missing db-sync image",
+			mutate: func(spec *Spec) {
+				spec.Image = ""
+			},
+			wantErr: "db-sync image is required",
+		},
+		{
 			name: "invalid database port",
 			mutate: func(spec *Spec) {
 				spec.Database.Port = 70000
@@ -120,6 +177,15 @@ func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
 				spec.Database.PasswordSecretName = ""
 			},
 			wantErr: "database password Secret name is required",
+		},
+		{
+			name: "bootstrap tx out with lsm",
+			mutate: func(spec *Spec) {
+				spec.Storage.LedgerBackend = "lsm"
+				spec.Insert = defaultInsertOptions()
+				spec.Insert.TxOut.Mode = "bootstrap"
+			},
+			wantErr: "tx_out bootstrap is not supported with lsm ledger_backend",
 		},
 	}
 
@@ -150,7 +216,7 @@ func TestPlanEnvironmentExcludesPassword(t *testing.T) {
 	assert.Equal(t, "cexplorer", got["PGDATABASE"])
 	assert.Equal(t, "postgres", got["PGUSER"])
 	assert.Equal(t, "disable", got["PGSSLMODE"])
-	assert.Equal(t, "/secrets/postgres/.pgpass", got["PGPASSFILE"])
+	assert.Equal(t, "/configuration/pgpass", got["PGPASSFILE"])
 	assert.NotContains(t, strings.Join(mapKeys(got), ","), "PGPASSWORD")
 }
 
@@ -158,6 +224,8 @@ func minimalSpec() Spec {
 	return Spec{
 		NetworkName:          "devnet",
 		RequiresNetworkMagic: true,
+		NetworkArtifactHash:  "sha256:network-artifacts",
+		Image:                "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0",
 		NodeToNode: NodeToNode{
 			Host: "devnet-node.default.svc.cluster.local",
 			Port: 3001,

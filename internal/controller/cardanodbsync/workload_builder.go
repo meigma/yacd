@@ -41,9 +41,9 @@ const (
 	dbSyncPGPassVolumeName            = "dbsync-pgpass"
 	dbSyncConfigMountDir              = "/config"
 	networkArtifactsMountDir          = "/network-artifacts"
-	dbSyncStateMountDir               = "/state"
+	dbSyncStateMountDir               = "/var/lib/cexplorer"
 	dbSyncTmpMountDir                 = "/tmp"
-	dbSyncPGPassMountDir              = "/secrets/postgres"
+	dbSyncPGPassMountDir              = "/configuration"
 	dbSyncNodeDatabaseDir             = "/state/node-db"
 	dbSyncNodeSocketDir               = "/ipc"
 	dbSyncNodeSocketPath              = "/ipc/node.socket"
@@ -52,8 +52,9 @@ const (
 
 	dbSyncConfigFileName       = "db-sync-config.yaml"
 	followerTopologyFileName   = "follower-topology.json"
-	dbSyncPGPassFileName       = ".pgpass"
+	dbSyncPGPassFileName       = "pgpass"
 	dbSyncPlanFingerprintAnno  = "yacd.meigma.io/dbsync-plan-fingerprint"
+	dbSyncDatabaseIdentityAnno = "yacd.meigma.io/dbsync-database-identity"
 	dbSyncSecretVersionAnno    = "yacd.meigma.io/external-database-secret-resource-version"
 	dbSyncArtifactDataHashAnno = "yacd.meigma.io/network-artifact-data-hash"
 
@@ -126,7 +127,7 @@ func (b dbSyncWorkloadBuilder) Build(
 	if err != nil {
 		return nil, err
 	}
-	followerPersistentVolumeClaim, err := b.followerPersistentVolumeClaim(dbSync)
+	followerPersistentVolumeClaim, err := b.followerPersistentVolumeClaim(dbSync, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +177,8 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 	return dbsync.Spec{
 		NetworkName:          network.Name,
 		RequiresNetworkMagic: true,
+		NetworkArtifactHash:  network.Status.Artifacts.DataHash,
+		Image:                strings.TrimSpace(dbSync.Spec.Image),
 		NodeToNode: dbsync.NodeToNode{
 			Host: fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace),
 			Port: network.Status.Endpoints.NodeToNode.Port,
@@ -198,8 +201,7 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 			TopologyFile: followerTopologyFilePath(),
 			NodeConfig:   networkArtifactFilePath("configuration.yaml"),
 			SocketPath:   dbSyncNodeSocketPath,
-			StateDir:     "/state/db-sync-ledger",
-			SchemaDir:    "/opt/cardano-db-sync/schema",
+			StateDir:     dbSyncStateMountDir,
 			PGPassFile:   dbSyncPGPassFilePath(),
 		},
 	}, nil
@@ -235,9 +237,7 @@ func storageSettings(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.Storage {
 	if dbSync.Spec.Config.Snapshot != nil {
 		settings.NearTipEpoch = dbSync.Spec.Config.Snapshot.NearTipEpoch
 	}
-	if dbSync.Spec.StateStorage != nil {
-		settings.StateStorageSize = dbSync.Spec.StateStorage.Size.String()
-	}
+	settings.StateStorageSize = storageSizeFrom(dbSync.Spec.StateStorage, "")
 	return settings
 }
 
@@ -248,39 +248,53 @@ func insertOptions(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.InsertOptions {
 	}
 
 	options := insertOptionsForPreset(insert.Preset)
-	if insert.TxCBOR {
-		options.TxCBOR = "enable"
+	if insert.TxCBOR != nil {
+		options.TxCBOR = enableDisable(*insert.TxCBOR)
 	}
 	if insert.TxOut != nil {
-		options.TxOut = dbsync.TxOutOption{
-			Mode:            string(insert.TxOut.Mode),
-			ForceTxIn:       insert.TxOut.ForceTxIn,
-			UseAddressTable: insert.TxOut.UseAddressTable,
+		if insert.TxOut.Mode != nil {
+			options.TxOut.Mode = string(*insert.TxOut.Mode)
+		}
+		if insert.TxOut.ForceTxIn != nil {
+			options.TxOut.ForceTxIn = *insert.TxOut.ForceTxIn
+		}
+		if insert.TxOut.UseAddressTable != nil {
+			options.TxOut.UseAddressTable = *insert.TxOut.UseAddressTable
 		}
 	}
-	if insert.Ledger != "" {
-		options.Ledger = string(insert.Ledger)
+	if insert.Ledger != nil {
+		options.Ledger = string(*insert.Ledger)
 	}
 	if insert.Shelley != nil {
-		options.Shelley = featureSelection(insert.Shelley.Enabled, insert.Shelley.StakeAddresses, nil, nil, nil)
+		options.Shelley = featureSelection(options.Shelley, insert.Shelley.Enabled, insert.Shelley.StakeAddresses, nil, nil, nil)
 	}
 	if insert.MultiAsset != nil {
-		options.MultiAsset = featureSelection(insert.MultiAsset.Enabled, nil, insert.MultiAsset.Policies, nil, nil)
+		options.MultiAsset = featureSelection(options.MultiAsset, insert.MultiAsset.Enabled, nil, insert.MultiAsset.Policies, nil, nil)
 	}
 	if insert.Metadata != nil {
-		options.Metadata = featureSelection(insert.Metadata.Enabled, nil, nil, insert.Metadata.Keys, nil)
+		options.Metadata = featureSelection(options.Metadata, insert.Metadata.Enabled, nil, nil, insert.Metadata.Keys, nil)
 	}
 	if insert.Plutus != nil {
-		options.Plutus = featureSelection(insert.Plutus.Enabled, nil, nil, nil, insert.Plutus.ScriptHashes)
+		options.Plutus = featureSelection(options.Plutus, insert.Plutus.Enabled, nil, nil, nil, insert.Plutus.ScriptHashes)
 	}
-	options.Governance = enableDisable(insert.Governance)
-	options.OffchainPoolData = enableDisable(insert.OffchainPoolData)
-	options.OffchainVoteData = enableDisable(insert.OffchainVoteData)
-	options.PoolStats = enableDisable(insert.PoolStats)
-	if insert.JSONType != "" {
-		options.JSONType = string(insert.JSONType)
+	if insert.Governance != nil {
+		options.Governance = enableDisable(*insert.Governance)
 	}
-	options.RemoveJSONBFromSchema = insert.RemoveJSONBFromSchema
+	if insert.OffchainPoolData != nil {
+		options.OffchainPoolData = enableDisable(*insert.OffchainPoolData)
+	}
+	if insert.OffchainVoteData != nil {
+		options.OffchainVoteData = enableDisable(*insert.OffchainVoteData)
+	}
+	if insert.PoolStats != nil {
+		options.PoolStats = enableDisable(*insert.PoolStats)
+	}
+	if insert.JSONType != nil {
+		options.JSONType = string(*insert.JSONType)
+	}
+	if insert.RemoveJSONBFromSchema != nil {
+		options.RemoveJSONBFromSchema = enableDisable(*insert.RemoveJSONBFromSchema)
+	}
 
 	return options
 }
@@ -344,20 +358,24 @@ func insertOptionsForPreset(preset yacdv1alpha1.CardanoDBSyncInsertPreset) dbsyn
 			Governance:       "enable",
 			OffchainPoolData: "disable",
 			OffchainVoteData: "disable",
-			PoolStats:        "disable",
+			PoolStats:        "enable",
 			JSONType:         "text",
 		}
 	}
 }
 
-func featureSelection(enabled bool, stakeAddresses []string, policies []string, keys []int64, scriptHashes []string) dbsync.FeatureSelection {
-	return dbsync.FeatureSelection{
-		Enabled:        enabled,
+func featureSelection(base dbsync.FeatureSelection, enabled *bool, stakeAddresses []string, policies []string, keys []int64, scriptHashes []string) dbsync.FeatureSelection {
+	selection := dbsync.FeatureSelection{
+		Enabled:        base.Enabled,
 		StakeAddresses: slicesClone(stakeAddresses),
 		Policies:       slicesClone(policies),
 		Keys:           slicesClone(keys),
 		ScriptHashes:   slicesClone(scriptHashes),
 	}
+	if enabled != nil {
+		selection.Enabled = *enabled
+	}
+	return selection
 }
 
 func slicesClone[T any](values []T) []T {
@@ -384,6 +402,7 @@ func (b dbSyncWorkloadBuilder) configMap(dbSync *yacdv1alpha1.CardanoDBSync, net
 			Labels:    dbSyncWorkloadLabels(dbSync),
 			Annotations: map[string]string{
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
+				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 				dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
 			},
 		},
@@ -412,15 +431,19 @@ func (b dbSyncWorkloadBuilder) persistentVolumeClaim(dbSync *yacdv1alpha1.Cardan
 	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
 		return nil, fmt.Errorf("set db-sync state PVC owner reference: %w", err)
 	}
+	if pvc.Annotations == nil {
+		pvc.Annotations = map[string]string{}
+	}
+	pvc.Annotations[dbSyncDatabaseIdentityAnno] = plan.DatabaseIdentityFingerprint.Value
 
 	return pvc, nil
 }
 
-func (b dbSyncWorkloadBuilder) followerPersistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync) (*corev1.PersistentVolumeClaim, error) {
+func (b dbSyncWorkloadBuilder) followerPersistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync, plan dbsync.Plan) (*corev1.PersistentVolumeClaim, error) {
 	size := defaultFollowerNodeStorageSize
 	var storageClassName *string
 	if dbSync.Spec.FollowerNode != nil && dbSync.Spec.FollowerNode.Storage != nil {
-		size = dbSync.Spec.FollowerNode.Storage.Size.String()
+		size = storageSizeFrom(dbSync.Spec.FollowerNode.Storage, defaultFollowerNodeStorageSize)
 		storageClassName = dbSync.Spec.FollowerNode.Storage.StorageClassName
 	}
 	pvc, err := b.storagePersistentVolumeClaim(
@@ -435,6 +458,10 @@ func (b dbSyncWorkloadBuilder) followerPersistentVolumeClaim(dbSync *yacdv1alpha
 	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
 		return nil, fmt.Errorf("set follower node state PVC owner reference: %w", err)
 	}
+	if pvc.Annotations == nil {
+		pvc.Annotations = map[string]string{}
+	}
+	pvc.Annotations[dbSyncDatabaseIdentityAnno] = plan.DatabaseIdentityFingerprint.Value
 
 	return pvc, nil
 }
@@ -482,6 +509,14 @@ func storageClassNameFrom(storage *yacdv1alpha1.CardanoDBSyncStorageSpec) *strin
 	return storage.StorageClassName
 }
 
+func storageSizeFrom(storage *yacdv1alpha1.CardanoDBSyncStorageSpec, fallback string) string {
+	if storage == nil || storage.Size == nil {
+		return fallback
+	}
+
+	return storage.Size.String()
+}
+
 func (b dbSyncWorkloadBuilder) pgPassSecret(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	externalDatabaseSecret *corev1.Secret,
@@ -497,8 +532,9 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 			Namespace: dbSync.Namespace,
 			Labels:    dbSyncWorkloadLabels(dbSync),
 			Annotations: map[string]string{
-				dbSyncPlanFingerprintAnno: plan.Fingerprint.Value,
-				dbSyncSecretVersionAnno:   externalDatabaseSecret.ResourceVersion,
+				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
+				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
+				dbSyncSecretVersionAnno:    externalDatabaseSecret.ResourceVersion,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -519,22 +555,26 @@ func pgPassFile(plan dbsync.Plan, externalDatabaseSecret *corev1.Secret) (string
 		return "", unsupportedSpec("external database Secret does not contain key %q", plan.Spec.Database.PasswordSecretKey)
 	}
 	password := string(passwordBytes)
-	if strings.ContainsAny(password, "\r\n") {
-		return "", unsupportedSpec("external database password cannot contain newlines when rendered as pgpass")
+
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "host", value: plan.Spec.Database.Host},
+		{name: "port", value: strconv.Itoa(int(plan.Spec.Database.Port))},
+		{name: "database", value: plan.Spec.Database.Name},
+		{name: "user", value: plan.Spec.Database.User},
+		{name: "password", value: password},
+	}
+	rendered := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if strings.ContainsAny(field.value, "\r\n") {
+			return "", unsupportedSpec("external database %s cannot contain newlines when rendered as pgpass", field.name)
+		}
+		rendered = append(rendered, escapePGPassField(field.value))
 	}
 
-	fields := []string{
-		plan.Spec.Database.Host,
-		strconv.Itoa(int(plan.Spec.Database.Port)),
-		plan.Spec.Database.Name,
-		plan.Spec.Database.User,
-		password,
-	}
-	for index, field := range fields {
-		fields[index] = escapePGPassField(field)
-	}
-
-	return strings.Join(fields, ":") + "\n", nil
+	return strings.Join(rendered, ":") + "\n", nil
 }
 
 func escapePGPassField(value string) string {
@@ -569,6 +609,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 					Labels: selectorLabels,
 					Annotations: map[string]string{
 						dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
+						dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 						dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
 						dbSyncSecretVersionAnno:    externalDatabaseSecret.ResourceVersion,
 					},
@@ -697,7 +738,6 @@ func (b dbSyncWorkloadBuilder) dbSyncContainer(dbSync *yacdv1alpha1.CardanoDBSyn
 		Name:            dbSyncContainerName,
 		Image:           strings.TrimSpace(dbSync.Spec.Image),
 		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{plan.Run.Command},
 		Args:            plan.Run.Args,
 		WorkingDir:      networkArtifactsMountDir,
 		Env:             env,
@@ -720,6 +760,9 @@ func (b dbSyncWorkloadBuilder) dbSyncContainer(dbSync *yacdv1alpha1.CardanoDBSyn
 	}
 	if dbSync.Spec.Resources != nil {
 		container.Resources = *dbSync.Spec.Resources.DeepCopy()
+	}
+	if plan.Run.Command != "" {
+		container.Command = []string{plan.Run.Command}
 	}
 	return container
 }
