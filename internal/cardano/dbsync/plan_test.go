@@ -18,6 +18,7 @@ func TestBuildPlanDefaultsAndRendersRuntimeFiles(t *testing.T) {
 	assert.Equal(t, defaultSocketPath, plan.Spec.Paths.SocketPath)
 	assert.Equal(t, defaultStateDir, plan.Spec.Paths.StateDir)
 	assert.Equal(t, defaultSchemaDir, plan.Spec.Paths.SchemaDir)
+	assert.Equal(t, defaultPGPassFile, plan.Spec.Paths.PGPassFile)
 	assert.Equal(t, defaultMetricsPort, plan.Spec.Runtime.MetricsPort)
 	assert.Equal(t, defaultLedgerBackend, plan.Spec.Storage.LedgerBackend)
 	assert.Equal(t, defaultNearTipEpoch, plan.Spec.Storage.NearTipEpoch)
@@ -39,7 +40,21 @@ func TestBuildPlanDefaultsAndRendersRuntimeFiles(t *testing.T) {
 		"--socket-path", "/ipc/node.socket",
 		"--state-dir", "/state/db-sync-ledger",
 		"--schema-dir", "/opt/cardano-db-sync/schema",
+		"--pg-pass-env", "PGPASSFILE",
 	}, plan.Run.Args)
+}
+
+func TestBuildPlanRendersIPFSGateways(t *testing.T) {
+	spec := minimalSpec()
+	spec.IPFSGateways = []string{" https://ipfs.example.test ", "", "https://backup-ipfs.example.test"}
+
+	plan, err := BuildPlan(spec)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://ipfs.example.test", "https://backup-ipfs.example.test"}, plan.Spec.IPFSGateways)
+	assert.Contains(t, plan.ConfigYAML, "ipfs_gateway:")
+	assert.Contains(t, plan.ConfigYAML, "- https://ipfs.example.test")
+	assert.Contains(t, plan.ConfigYAML, "- https://backup-ipfs.example.test")
 }
 
 func TestBuildPlanUsesRuntimeFlags(t *testing.T) {
@@ -135,6 +150,7 @@ func TestPlanEnvironmentExcludesPassword(t *testing.T) {
 	assert.Equal(t, "cexplorer", got["PGDATABASE"])
 	assert.Equal(t, "postgres", got["PGUSER"])
 	assert.Equal(t, "disable", got["PGSSLMODE"])
+	assert.Equal(t, "/secrets/postgres/.pgpass", got["PGPASSFILE"])
 	assert.NotContains(t, strings.Join(mapKeys(got), ","), "PGPASSWORD")
 }
 

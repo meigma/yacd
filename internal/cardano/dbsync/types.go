@@ -9,6 +9,7 @@ type Spec struct {
 	Runtime              Runtime
 	Storage              Storage
 	Insert               InsertOptions
+	IPFSGateways         []string
 	Paths                Paths
 }
 
@@ -87,6 +88,7 @@ type Paths struct {
 	SocketPath   string
 	StateDir     string
 	SchemaDir    string
+	PGPassFile   string
 }
 
 // Plan is the deterministic db-sync runtime plan consumed by Kubernetes

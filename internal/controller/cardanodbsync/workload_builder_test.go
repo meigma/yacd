@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -28,7 +29,9 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resources.Plan)
 	assert.Equal(t, "dbsync-dbsync-config", resources.ConfigMap.Name)
+	assert.Equal(t, "dbsync-dbsync-pgpass", resources.PGPassSecret.Name)
 	assert.Equal(t, "dbsync-dbsync-state", resources.PersistentVolumeClaim.Name)
+	assert.Equal(t, "dbsync-follower-state", resources.FollowerPersistentVolumeClaim.Name)
 	assert.Equal(t, "dbsync-dbsync", resources.Deployment.Name)
 	assert.Equal(t, "dbsync-dbsync-metrics", resources.MetricsService.Name)
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
@@ -38,6 +41,9 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 
 	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Equal(t, "10Gi", storage.String())
+	followerStorage := resources.FollowerPersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Equal(t, "10Gi", followerStorage.String())
+	assert.Equal(t, "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
 
 	deployment := resources.Deployment
 	assert.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
@@ -53,11 +59,15 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, testNetworkArtifactDataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, "7", deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 
-	passwordEnv := requireEnvVar(t, dbSyncContainer, "PGPASSWORD")
-	require.NotNil(t, passwordEnv.ValueFrom)
-	require.NotNil(t, passwordEnv.ValueFrom.SecretKeyRef)
-	assert.Equal(t, "dbsync-postgres", passwordEnv.ValueFrom.SecretKeyRef.Name)
-	assert.Equal(t, "password", passwordEnv.ValueFrom.SecretKeyRef.Key)
+	assert.Equal(t, "/secrets/postgres/.pgpass", requireEnvVar(t, dbSyncContainer, "PGPASSFILE").Value)
+	assert.Empty(t, envVarValue(dbSyncContainer, "PGPASSWORD"))
+	assert.Contains(t, dbSyncContainer.Args, "--pg-pass-env")
+	assert.Contains(t, dbSyncContainer.Args, "PGPASSFILE")
+	assert.Equal(t, dbSyncPGPassSecretName(dbSync), requireVolume(t, deployment, dbSyncPGPassVolumeName).Secret.SecretName)
+	assert.Equal(t, int32(0o600), *requireVolume(t, deployment, dbSyncPGPassVolumeName).Secret.DefaultMode)
+	assert.Equal(t, dbSyncFollowerPVCName(dbSync), requireVolume(t, deployment, followerNodeStateVolumeName).PersistentVolumeClaim.ClaimName)
+	assert.Equal(t, dbSyncNodeDatabaseDir, requireVolumeMount(t, follower, followerNodeStateVolumeName).MountPath)
+	assert.Equal(t, dbSyncPGPassMountDir, requireVolumeMount(t, dbSyncContainer, dbSyncPGPassVolumeName).MountPath)
 	assert.Equal(t, int32(8080), resources.MetricsService.Spec.Ports[0].Port)
 	assert.Equal(t, dbSyncWorkloadSelectorLabels(dbSync), resources.MetricsService.Spec.Selector)
 }
@@ -87,6 +97,58 @@ func TestDBSyncWorkloadBuilderFingerprintChangesWithRuntimeConfig(t *testing.T) 
 	assert.Contains(t, requireContainer(t, changed.Deployment, dbSyncContainerName).Args, "--force-indexes")
 }
 
+func TestDBSyncWorkloadBuilderUsesFollowerStorageAndIPFSGateways(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	storageClassName := "fast"
+	dbSync.Spec.FollowerNode = &yacdv1alpha1.CardanoDBSyncFollowerNodeSpec{
+		Storage: &yacdv1alpha1.CardanoDBSyncStorageSpec{
+			Size:             resource.MustParse("25Gi"),
+			StorageClassName: &storageClassName,
+		},
+	}
+	dbSync.Spec.Config.IPFSGateways = []string{"https://ipfs.example.test"}
+	network := readyCardanoNetwork("ready-network")
+
+	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+
+	require.NoError(t, err)
+	storage := resources.FollowerPersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Equal(t, "25Gi", storage.String())
+	require.NotNil(t, resources.FollowerPersistentVolumeClaim.Spec.StorageClassName)
+	assert.Equal(t, storageClassName, *resources.FollowerPersistentVolumeClaim.Spec.StorageClassName)
+	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "ipfs_gateway:")
+	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "- https://ipfs.example.test")
+}
+
+func TestDBSyncWorkloadBuilderEscapesPGPassFields(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.External.Host = "postgres:rw.default.svc.cluster.local"
+	dbSync.Spec.Database.External.User = `post\gres`
+	network := readyCardanoNetwork("ready-network")
+	secret := externalDatabaseSecretFor(dbSync)
+	secret.Data["password"] = []byte(`sec:ret\value`)
+
+	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), secret)
+
+	require.NoError(t, err)
+	assert.Equal(t, `postgres\:rw.default.svc.cluster.local:5432:cexplorer:post\\gres:sec\:ret\\value`+"\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
+}
+
+func TestDBSyncWorkloadBuilderRejectsNewlinePGPassPassword(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	secret := externalDatabaseSecretFor(dbSync)
+	secret.Data["password"] = []byte("line-one\nline-two")
+
+	_, err := builder.Build(dbSync, network, artifactConfigMapFor(network), secret)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "password cannot contain newlines")
+}
+
 func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 	builder := newDBSyncWorkloadBuilder(t)
 	dbSync := localCardanoDBSync("db.sync."+strings.Repeat("x", 80), "ready-network")
@@ -97,7 +159,9 @@ func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 	require.NoError(t, err)
 	for _, name := range []string{
 		resources.ConfigMap.Name,
+		resources.PGPassSecret.Name,
 		resources.PersistentVolumeClaim.Name,
+		resources.FollowerPersistentVolumeClaim.Name,
 		resources.Deployment.Name,
 		resources.MetricsService.Name,
 	} {
@@ -142,4 +206,37 @@ func requireEnvVar(t *testing.T, container corev1.Container, name string) corev1
 	}
 	require.Failf(t, "missing env var", "expected env var %s", name)
 	return corev1.EnvVar{}
+}
+
+func envVarValue(container corev1.Container, name string) string {
+	for _, env := range container.Env {
+		if env.Name == name {
+			return env.Value
+		}
+	}
+	return ""
+}
+
+func requireVolume(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Volume {
+	t.Helper()
+
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == name {
+			return volume
+		}
+	}
+	require.Failf(t, "missing volume", "expected volume %s", name)
+	return corev1.Volume{}
+}
+
+func requireVolumeMount(t *testing.T, container corev1.Container, name string) corev1.VolumeMount {
+	t.Helper()
+
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == name {
+			return mount
+		}
+	}
+	require.Failf(t, "missing volume mount", "expected volume mount %s", name)
+	return corev1.VolumeMount{}
 }

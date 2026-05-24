@@ -47,15 +47,19 @@ func (e unsupportedApplyError) Error() string {
 }
 
 type dbSyncWorkloadApplyResults struct {
-	ConfigMap             controllerutil.OperationResult
-	PersistentVolumeClaim controllerutil.OperationResult
-	Deployment            controllerutil.OperationResult
-	MetricsService        controllerutil.OperationResult
+	ConfigMap                     controllerutil.OperationResult
+	PGPassSecret                  controllerutil.OperationResult
+	PersistentVolumeClaim         controllerutil.OperationResult
+	FollowerPersistentVolumeClaim controllerutil.OperationResult
+	Deployment                    controllerutil.OperationResult
+	MetricsService                controllerutil.OperationResult
 }
 
 func (r dbSyncWorkloadApplyResults) unchanged() bool {
 	return r.ConfigMap == controllerutil.OperationResultNone &&
+		r.PGPassSecret == controllerutil.OperationResultNone &&
 		r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
+		r.FollowerPersistentVolumeClaim == controllerutil.OperationResultNone &&
 		r.Deployment == controllerutil.OperationResultNone &&
 		r.MetricsService == controllerutil.OperationResultNone
 }
@@ -71,7 +75,15 @@ func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
 	if err != nil {
 		return results, err
 	}
+	results.PGPassSecret, err = r.applyDBSyncPGPassSecret(ctx, resources.PGPassSecret)
+	if err != nil {
+		return results, err
+	}
 	results.PersistentVolumeClaim, err = r.applyDBSyncPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
+	if err != nil {
+		return results, err
+	}
+	results.FollowerPersistentVolumeClaim, err = r.applyDBSyncPersistentVolumeClaim(ctx, resources.FollowerPersistentVolumeClaim)
 	if err != nil {
 		return results, err
 	}
@@ -139,6 +151,45 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	current.OwnerReferences = desired.OwnerReferences
 	current.Data = maps.Clone(desired.Data)
 	current.BinaryData = maps.Clone(desired.BinaryData)
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
+	ctx context.Context,
+	desired *corev1.Secret,
+) (controllerutil.OperationResult, error) {
+	current := &corev1.Secret{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Type = corev1.SecretTypeOpaque
+	current.Data = maps.Clone(desired.Data)
+	current.StringData = nil
 
 	if equality.Semantic.DeepEqual(before, current) {
 		return controllerutil.OperationResultNone, nil
@@ -319,6 +370,40 @@ func (r *CardanoDBSyncReconciler) applyDBSyncMetricsService(
 	}
 
 	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoDBSyncReconciler) suspendDBSyncDeploymentIfOwned(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) error {
+	desired := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dbSyncWorkloadName(dbSync),
+			Namespace: dbSync.Namespace,
+		},
+	}
+	if err := controllerutil.SetControllerReference(dbSync, desired, r.Scheme); err != nil {
+		return fmt.Errorf("set desired db-sync Deployment owner reference: %w", err)
+	}
+
+	current := &appsv1.Deployment{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if validateControllerOwner(current, desired) != nil {
+		return nil
+	}
+	if current.Spec.Replicas != nil && *current.Spec.Replicas == 0 {
+		return nil
+	}
+
+	before := current.DeepCopy()
+	current.Spec.Replicas = new(int32)
+	return r.Patch(ctx, current, client.MergeFrom(before))
 }
 
 func (r *CardanoDBSyncReconciler) defaultObject(object client.Object) error {

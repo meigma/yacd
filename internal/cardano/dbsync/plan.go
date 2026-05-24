@@ -27,6 +27,7 @@ const (
 	defaultSocketPath   = "/ipc/node.socket"
 	defaultStateDir     = "/state/db-sync-ledger"
 	defaultSchemaDir    = "/opt/cardano-db-sync/schema"
+	defaultPGPassFile   = "/secrets/postgres/.pgpass"
 
 	defaultLedgerBackend = "lsm"
 	defaultTxCBOR        = "disable"
@@ -87,6 +88,7 @@ func normalizeSpec(spec Spec) (Spec, error) {
 	spec.Insert.OffchainVoteData = strings.TrimSpace(spec.Insert.OffchainVoteData)
 	spec.Insert.PoolStats = strings.TrimSpace(spec.Insert.PoolStats)
 	spec.Insert.JSONType = strings.TrimSpace(spec.Insert.JSONType)
+	spec.IPFSGateways = trimStrings(spec.IPFSGateways)
 	if insertOptionsZero(spec.Insert) {
 		spec.Insert = defaultInsertOptions()
 	}
@@ -149,12 +151,32 @@ func normalizeSpec(spec Spec) (Spec, error) {
 	spec.Paths.SocketPath = defaultPath(spec.Paths.SocketPath, defaultSocketPath)
 	spec.Paths.StateDir = defaultPath(spec.Paths.StateDir, defaultStateDir)
 	spec.Paths.SchemaDir = defaultPath(spec.Paths.SchemaDir, defaultSchemaDir)
+	spec.Paths.PGPassFile = defaultPath(spec.Paths.PGPassFile, defaultPGPassFile)
 
 	if err := validateSpec(spec); err != nil {
 		return Spec{}, err
 	}
 
 	return spec, nil
+}
+
+func trimStrings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	trimmed := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		trimmed = append(trimmed, value)
+	}
+	if len(trimmed) == 0 {
+		return nil
+	}
+
+	return trimmed
 }
 
 func insertOptionsZero(options InsertOptions) bool {
@@ -246,6 +268,7 @@ type dbSyncConfig struct {
 	LedgerBackend        string         `json:"ledger_backend"`
 	SnapshotInterval     snapshotConfig `json:"snapshot_interval"`
 	InsertOptions        insertConfig   `json:"insert_options"`
+	IPFSGateway          []string       `json:"ipfs_gateway,omitempty"`
 	Rotation             rotationConfig `json:"rotation"`
 	SetupBackends        []string       `json:"setupBackends"`
 	DefaultBackends      []string       `json:"defaultBackends"`
@@ -344,6 +367,7 @@ func renderConfig(spec Spec) (string, error) {
 			JSONType:              spec.Insert.JSONType,
 			RemoveJSONBFromSchema: spec.Insert.RemoveJSONBFromSchema,
 		},
+		IPFSGateway: spec.IPFSGateways,
 		Rotation: rotationConfig{
 			LogLimitBytes: 5000000,
 			KeepFilesNum:  10,
@@ -427,6 +451,7 @@ func runtimeInvocation(spec Spec) Invocation {
 		"--socket-path", spec.Paths.SocketPath,
 		"--state-dir", spec.Paths.StateDir,
 		"--schema-dir", spec.Paths.SchemaDir,
+		"--pg-pass-env", "PGPASSFILE",
 	}
 	if !spec.Runtime.Cache {
 		args = append(args, "--disable-cache")
@@ -464,6 +489,7 @@ func (p Plan) Environment() []EnvVar {
 		{Name: "PGDATABASE", Value: p.Spec.Database.Name},
 		{Name: "PGUSER", Value: p.Spec.Database.User},
 		{Name: "PGSSLMODE", Value: p.Spec.Database.SSLMode},
+		{Name: "PGPASSFILE", Value: p.Spec.Paths.PGPassFile},
 	}
 }
 

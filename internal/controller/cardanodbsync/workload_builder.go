@@ -26,27 +26,33 @@ const (
 	dbSyncMetricsPortName     = "metrics"
 	followerNodePortName      = "node-to-node"
 
-	dbSyncConfigMapSuffix = "dbsync-config"
-	dbSyncStatePVCSuffix  = "dbsync-state"
-	dbSyncMetricsSuffix   = "dbsync-metrics"
+	dbSyncConfigMapSuffix    = "dbsync-config"
+	dbSyncStatePVCSuffix     = "dbsync-state"
+	dbSyncFollowerPVCSuffix  = "follower-state"
+	dbSyncPGPassSecretSuffix = "dbsync-pgpass"
+	dbSyncMetricsSuffix      = "dbsync-metrics"
 
-	dbSyncConfigMapVolumeName        = "dbsync-config"
-	networkArtifactsVolumeName       = "network-artifacts"
-	dbSyncStateVolumeName            = "dbsync-state"
-	nodeIPCVolumeName                = "node-ipc"
-	dbSyncTmpVolumeName              = "dbsync-tmp"
-	dbSyncConfigMountDir             = "/config"
-	networkArtifactsMountDir         = "/network-artifacts"
-	dbSyncStateMountDir              = "/state"
-	dbSyncTmpMountDir                = "/tmp"
-	dbSyncNodeDatabaseDir            = "/state/node-db"
-	dbSyncNodeSocketDir              = "/ipc"
-	dbSyncNodeSocketPath             = "/ipc/node.socket"
-	dbSyncNodeHostAddress            = "0.0.0.0"
-	dbSyncNodePort             int32 = 3001
+	dbSyncConfigMapVolumeName         = "dbsync-config"
+	networkArtifactsVolumeName        = "network-artifacts"
+	dbSyncStateVolumeName             = "dbsync-state"
+	followerNodeStateVolumeName       = "follower-state"
+	nodeIPCVolumeName                 = "node-ipc"
+	dbSyncTmpVolumeName               = "dbsync-tmp"
+	dbSyncPGPassVolumeName            = "dbsync-pgpass"
+	dbSyncConfigMountDir              = "/config"
+	networkArtifactsMountDir          = "/network-artifacts"
+	dbSyncStateMountDir               = "/state"
+	dbSyncTmpMountDir                 = "/tmp"
+	dbSyncPGPassMountDir              = "/secrets/postgres"
+	dbSyncNodeDatabaseDir             = "/state/node-db"
+	dbSyncNodeSocketDir               = "/ipc"
+	dbSyncNodeSocketPath              = "/ipc/node.socket"
+	dbSyncNodeHostAddress             = "0.0.0.0"
+	dbSyncNodePort              int32 = 3001
 
 	dbSyncConfigFileName       = "db-sync-config.yaml"
 	followerTopologyFileName   = "follower-topology.json"
+	dbSyncPGPassFileName       = ".pgpass"
 	dbSyncPlanFingerprintAnno  = "yacd.meigma.io/dbsync-plan-fingerprint"
 	dbSyncSecretVersionAnno    = "yacd.meigma.io/external-database-secret-resource-version"
 	dbSyncArtifactDataHashAnno = "yacd.meigma.io/network-artifact-data-hash"
@@ -62,16 +68,19 @@ const (
 
 	defaultFollowerNodeImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
 	defaultFollowerNodeImageRevision   = "yacd.3"
+	defaultFollowerNodeStorageSize     = "10Gi"
 	maxLabelValueLength                = 63
 	safeNameHashLength                 = 10
 )
 
 type dbSyncWorkloadResources struct {
-	ConfigMap             *corev1.ConfigMap
-	PersistentVolumeClaim *corev1.PersistentVolumeClaim
-	Deployment            *appsv1.Deployment
-	MetricsService        *corev1.Service
-	Plan                  dbsync.Plan
+	ConfigMap                     *corev1.ConfigMap
+	PGPassSecret                  *corev1.Secret
+	PersistentVolumeClaim         *corev1.PersistentVolumeClaim
+	FollowerPersistentVolumeClaim *corev1.PersistentVolumeClaim
+	Deployment                    *appsv1.Deployment
+	MetricsService                *corev1.Service
+	Plan                          dbsync.Plan
 }
 
 type dbSyncWorkloadBuilder struct {
@@ -117,6 +126,14 @@ func (b dbSyncWorkloadBuilder) Build(
 	if err != nil {
 		return nil, err
 	}
+	followerPersistentVolumeClaim, err := b.followerPersistentVolumeClaim(dbSync)
+	if err != nil {
+		return nil, err
+	}
+	pgPassSecret, err := b.pgPassSecret(dbSync, externalDatabaseSecret, plan)
+	if err != nil {
+		return nil, err
+	}
 	deployment, err := b.deployment(dbSync, network, networkArtifacts, externalDatabaseSecret, plan)
 	if err != nil {
 		return nil, err
@@ -127,11 +144,13 @@ func (b dbSyncWorkloadBuilder) Build(
 	}
 
 	return &dbSyncWorkloadResources{
-		ConfigMap:             configMap,
-		PersistentVolumeClaim: persistentVolumeClaim,
-		Deployment:            deployment,
-		MetricsService:        service,
-		Plan:                  plan,
+		ConfigMap:                     configMap,
+		PGPassSecret:                  pgPassSecret,
+		PersistentVolumeClaim:         persistentVolumeClaim,
+		FollowerPersistentVolumeClaim: followerPersistentVolumeClaim,
+		Deployment:                    deployment,
+		MetricsService:                service,
+		Plan:                          plan,
 	}, nil
 }
 
@@ -170,9 +189,10 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 			PasswordSecretKey:  externalDatabasePasswordKey(external),
 			SSLMode:            string(external.SSLMode),
 		},
-		Runtime: runtimeSettings(dbSync),
-		Storage: storageSettings(dbSync),
-		Insert:  insertOptions(dbSync),
+		Runtime:      runtimeSettings(dbSync),
+		Storage:      storageSettings(dbSync),
+		Insert:       insertOptions(dbSync),
+		IPFSGateways: slicesClone(dbSync.Spec.Config.IPFSGateways),
 		Paths: dbsync.Paths{
 			ConfigFile:   dbSyncConfigFilePath(),
 			TopologyFile: followerTopologyFilePath(),
@@ -180,6 +200,7 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 			SocketPath:   dbSyncNodeSocketPath,
 			StateDir:     "/state/db-sync-ledger",
 			SchemaDir:    "/opt/cardano-db-sync/schema",
+			PGPassFile:   dbSyncPGPassFilePath(),
 		},
 	}, nil
 }
@@ -379,9 +400,58 @@ func (b dbSyncWorkloadBuilder) configMap(dbSync *yacdv1alpha1.CardanoDBSync, net
 }
 
 func (b dbSyncWorkloadBuilder) persistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync, plan dbsync.Plan) (*corev1.PersistentVolumeClaim, error) {
+	pvc, err := b.storagePersistentVolumeClaim(
+		dbSync,
+		dbSyncStatePVCName(dbSync),
+		plan.Spec.Storage.StateStorageSize,
+		storageClassNameFrom(dbSync.Spec.StateStorage),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
+		return nil, fmt.Errorf("set db-sync state PVC owner reference: %w", err)
+	}
+
+	return pvc, nil
+}
+
+func (b dbSyncWorkloadBuilder) followerPersistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync) (*corev1.PersistentVolumeClaim, error) {
+	size := defaultFollowerNodeStorageSize
+	var storageClassName *string
+	if dbSync.Spec.FollowerNode != nil && dbSync.Spec.FollowerNode.Storage != nil {
+		size = dbSync.Spec.FollowerNode.Storage.Size.String()
+		storageClassName = dbSync.Spec.FollowerNode.Storage.StorageClassName
+	}
+	pvc, err := b.storagePersistentVolumeClaim(
+		dbSync,
+		dbSyncFollowerPVCName(dbSync),
+		size,
+		storageClassName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
+		return nil, fmt.Errorf("set follower node state PVC owner reference: %w", err)
+	}
+
+	return pvc, nil
+}
+
+func (b dbSyncWorkloadBuilder) storagePersistentVolumeClaim(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	name string,
+	size string,
+	storageClassName *string,
+) (*corev1.PersistentVolumeClaim, error) {
+	quantity, err := resource.ParseQuantity(size)
+	if err != nil {
+		return nil, unsupportedSpec("parse PVC storage size %q: %v", size, err)
+	}
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      dbSyncStatePVCName(dbSync),
+			Name:      name,
 			Namespace: dbSync.Namespace,
 			Labels:    dbSyncWorkloadLabels(dbSync),
 		},
@@ -389,22 +459,88 @@ func (b dbSyncWorkloadBuilder) persistentVolumeClaim(dbSync *yacdv1alpha1.Cardan
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(plan.Spec.Storage.StateStorageSize),
+					corev1.ResourceStorage: quantity,
 				},
 			},
 		},
 	}
-	if dbSync.Spec.StateStorage != nil && dbSync.Spec.StateStorage.StorageClassName != nil {
-		pvc.Spec.StorageClassName = dbSync.Spec.StateStorage.StorageClassName
+	if storageClassName != nil {
+		pvc.Spec.StorageClassName = storageClassName
 		pvc.Annotations = map[string]string{
-			requestedStorageClassAnno: *dbSync.Spec.StateStorage.StorageClassName,
+			requestedStorageClassAnno: *storageClassName,
 		}
-	}
-	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
-		return nil, fmt.Errorf("set db-sync state PVC owner reference: %w", err)
 	}
 
 	return pvc, nil
+}
+
+func storageClassNameFrom(storage *yacdv1alpha1.CardanoDBSyncStorageSpec) *string {
+	if storage == nil {
+		return nil
+	}
+
+	return storage.StorageClassName
+}
+
+func (b dbSyncWorkloadBuilder) pgPassSecret(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	externalDatabaseSecret *corev1.Secret,
+	plan dbsync.Plan,
+) (*corev1.Secret, error) {
+	pgPass, err := pgPassFile(plan, externalDatabaseSecret)
+	if err != nil {
+		return nil, err
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dbSyncPGPassSecretName(dbSync),
+			Namespace: dbSync.Namespace,
+			Labels:    dbSyncWorkloadLabels(dbSync),
+			Annotations: map[string]string{
+				dbSyncPlanFingerprintAnno: plan.Fingerprint.Value,
+				dbSyncSecretVersionAnno:   externalDatabaseSecret.ResourceVersion,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			dbSyncPGPassFileName: []byte(pgPass),
+		},
+	}
+	if err := controllerutil.SetControllerReference(dbSync, secret, b.scheme); err != nil {
+		return nil, fmt.Errorf("set db-sync pgpass Secret owner reference: %w", err)
+	}
+
+	return secret, nil
+}
+
+func pgPassFile(plan dbsync.Plan, externalDatabaseSecret *corev1.Secret) (string, error) {
+	passwordBytes := externalDatabaseSecret.Data[plan.Spec.Database.PasswordSecretKey]
+	if len(passwordBytes) == 0 {
+		return "", unsupportedSpec("external database Secret does not contain key %q", plan.Spec.Database.PasswordSecretKey)
+	}
+	password := string(passwordBytes)
+	if strings.ContainsAny(password, "\r\n") {
+		return "", unsupportedSpec("external database password cannot contain newlines when rendered as pgpass")
+	}
+
+	fields := []string{
+		plan.Spec.Database.Host,
+		strconv.Itoa(int(plan.Spec.Database.Port)),
+		plan.Spec.Database.Name,
+		plan.Spec.Database.User,
+		password,
+	}
+	for index, field := range fields {
+		fields[index] = escapePGPassField(field)
+	}
+
+	return strings.Join(fields, ":") + "\n", nil
+}
+
+func escapePGPassField(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, ":", `\:`)
+	return value
 }
 
 func (b dbSyncWorkloadBuilder) deployment(
@@ -475,9 +611,26 @@ func (b dbSyncWorkloadBuilder) deployment(
 							},
 						},
 						{
+							Name: followerNodeStateVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+									ClaimName: dbSyncFollowerPVCName(dbSync),
+								},
+							},
+						},
+						{
 							Name: nodeIPCVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: dbSyncPGPassVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								Secret: &corev1.SecretVolumeSource{
+									SecretName:  dbSyncPGPassSecretName(dbSync),
+									DefaultMode: new(int32(0o600)),
+								},
 							},
 						},
 						{
@@ -521,7 +674,7 @@ func (b dbSyncWorkloadBuilder) followerNodeContainer(dbSync *yacdv1alpha1.Cardan
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: networkArtifactsVolumeName, MountPath: networkArtifactsMountDir, ReadOnly: true},
 			{Name: dbSyncConfigMapVolumeName, MountPath: dbSyncConfigMountDir, ReadOnly: true},
-			{Name: dbSyncStateVolumeName, MountPath: dbSyncStateMountDir},
+			{Name: followerNodeStateVolumeName, MountPath: dbSyncNodeDatabaseDir},
 			{Name: nodeIPCVolumeName, MountPath: dbSyncNodeSocketDir},
 		},
 		SecurityContext:          restrictedSecurityContext(true),
@@ -535,19 +688,10 @@ func (b dbSyncWorkloadBuilder) followerNodeContainer(dbSync *yacdv1alpha1.Cardan
 }
 
 func (b dbSyncWorkloadBuilder) dbSyncContainer(dbSync *yacdv1alpha1.CardanoDBSync, plan dbsync.Plan) corev1.Container {
-	env := make([]corev1.EnvVar, 0, len(plan.Environment())+1)
+	env := make([]corev1.EnvVar, 0, len(plan.Environment()))
 	for _, planEnv := range plan.Environment() {
 		env = append(env, corev1.EnvVar{Name: planEnv.Name, Value: planEnv.Value})
 	}
-	env = append(env, corev1.EnvVar{
-		Name: "PGPASSWORD",
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: plan.Spec.Database.PasswordSecretName},
-				Key:                  plan.Spec.Database.PasswordSecretKey,
-			},
-		},
-	})
 
 	container := corev1.Container{
 		Name:            dbSyncContainerName,
@@ -567,6 +711,7 @@ func (b dbSyncWorkloadBuilder) dbSyncContainer(dbSync *yacdv1alpha1.CardanoDBSyn
 			{Name: dbSyncConfigMapVolumeName, MountPath: dbSyncConfigMountDir, ReadOnly: true},
 			{Name: dbSyncStateVolumeName, MountPath: dbSyncStateMountDir},
 			{Name: nodeIPCVolumeName, MountPath: dbSyncNodeSocketDir},
+			{Name: dbSyncPGPassVolumeName, MountPath: dbSyncPGPassMountDir, ReadOnly: true},
 			{Name: dbSyncTmpVolumeName, MountPath: dbSyncTmpMountDir},
 		},
 		SecurityContext:          restrictedSecurityContext(false),
@@ -636,6 +781,10 @@ func networkArtifactFilePath(name string) string {
 	return networkArtifactsMountDir + "/" + name
 }
 
+func dbSyncPGPassFilePath() string {
+	return dbSyncPGPassMountDir + "/" + dbSyncPGPassFileName
+}
+
 func dbSyncWorkloadName(dbSync *yacdv1alpha1.CardanoDBSync) string {
 	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncNameSuffix)
 }
@@ -646,6 +795,14 @@ func dbSyncConfigMapName(dbSync *yacdv1alpha1.CardanoDBSync) string {
 
 func dbSyncStatePVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
 	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncStatePVCSuffix)
+}
+
+func dbSyncFollowerPVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
+	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncFollowerPVCSuffix)
+}
+
+func dbSyncPGPassSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
+	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncPGPassSecretSuffix)
 }
 
 func dbSyncMetricsServiceName(dbSync *yacdv1alpha1.CardanoDBSync) string {

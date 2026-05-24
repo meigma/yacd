@@ -51,6 +51,10 @@ func (r *CardanoDBSyncReconciler) patchDependencyUnavailableStatus(
 	reason string,
 	message string,
 ) error {
+	if err := r.suspendDBSyncDeploymentIfOwned(ctx, dbSync); err != nil {
+		return err
+	}
+
 	return r.patchStatusConditions(ctx, dbSync,
 		degradedCondition(metav1.ConditionTrue, reason, message),
 		progressingCondition(metav1.ConditionFalse, reason, message),
@@ -68,6 +72,10 @@ func (r *CardanoDBSyncReconciler) patchDependencyWaitingStatus(
 	reason string,
 	message string,
 ) error {
+	if err := r.suspendDBSyncDeploymentIfOwned(ctx, dbSync); err != nil {
+		return err
+	}
+
 	return r.patchStatusConditions(ctx, dbSync,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "CardanoDBSync dependencies are still converging"),
 		progressingCondition(metav1.ConditionTrue, reason, message),
@@ -110,6 +118,10 @@ func (r *CardanoDBSyncReconciler) patchWorkloadApplyBlockedStatus(
 	reason string,
 	message string,
 ) error {
+	if err := r.suspendDBSyncDeploymentIfOwned(ctx, dbSync); err != nil {
+		return err
+	}
+
 	return r.patchStatusConditions(ctx, dbSync,
 		degradedCondition(metav1.ConditionTrue, reason, message),
 		progressingCondition(metav1.ConditionFalse, reason, message),

@@ -154,6 +154,20 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 			current.Data[dbSyncConfigFileName] != ""
 	}, 10*time.Second, 100*time.Millisecond)
 
+	ownedPGPassSecret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncPGPassSecretName(dbSync)}, ownedPGPassSecret))
+	ownedPGPassSecret.Data[dbSyncPGPassFileName] = []byte(driftedDBSyncConfig)
+	require.NoError(t, apiClient.Update(ctx, ownedPGPassSecret))
+
+	require.Eventually(t, func() bool {
+		current := &corev1.Secret{}
+		if err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncPGPassSecretName(dbSync)}, current); err != nil {
+			return false
+		}
+		return string(current.Data[dbSyncPGPassFileName]) != driftedDBSyncConfig &&
+			string(current.Data[dbSyncPGPassFileName]) != ""
+	}, 10*time.Second, 100*time.Millisecond)
+
 	secretWatchedDBSync := localCardanoDBSync("dbsync-secret-watch", "watched-network")
 	secretWatchedDBSync.Namespace = namespace.Name
 	invalidSecret := externalDatabaseSecretFor(secretWatchedDBSync)

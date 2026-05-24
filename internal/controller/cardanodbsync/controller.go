@@ -3,6 +3,7 @@ package cardanodbsync
 
 import (
 	"context"
+	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -51,7 +52,7 @@ type CardanoDBSyncReconciler struct {
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
 
 // Reconcile validates CardanoDBSync dependencies, applies the external-Postgres
 // workload resources, and publishes conservative status until runtime readiness
@@ -172,8 +173,12 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	resultLog.Info("Applied CardanoDBSync workloads",
 		"configMap", client.ObjectKeyFromObject(resources.ConfigMap),
 		"configMapOperation", applyResults.ConfigMap,
+		"pgPassSecret", client.ObjectKeyFromObject(resources.PGPassSecret),
+		"pgPassSecretOperation", applyResults.PGPassSecret,
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
 		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
+		"followerPersistentVolumeClaim", client.ObjectKeyFromObject(resources.FollowerPersistentVolumeClaim),
+		"followerPersistentVolumeClaimOperation", applyResults.FollowerPersistentVolumeClaim,
 		"deployment", client.ObjectKeyFromObject(resources.Deployment),
 		"deploymentOperation", applyResults.Deployment,
 		"metricsService", client.ObjectKeyFromObject(resources.MetricsService),
@@ -215,6 +220,7 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Service{}).
+		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
 }
@@ -269,6 +275,12 @@ func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 		return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
 			conditionReasonExternalDatabaseSecretInvalid,
 			"External Postgres password Secret does not contain the configured key",
+		)
+	}
+	if strings.ContainsAny(string(secret.Data[passwordKey]), "\r\n") {
+		return nil, false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonExternalDatabaseSecretInvalid,
+			"External Postgres password Secret value cannot contain newlines",
 		)
 	}
 

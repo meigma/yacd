@@ -97,6 +97,21 @@ func TestCardanoDBSyncReconcilerReconcileReportsExternalDatabaseSecretMissingKey
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretInvalid)
 }
 
+func TestCardanoDBSyncReconcilerReconcileReportsExternalDatabaseSecretNewlinePassword(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "devnet")
+	secret := externalDatabaseSecretFor(dbSync)
+	secret.Data["password"] = []byte("line-one\nline-two")
+	reconciler := newTestReconciler(t, dbSync, secret)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretInvalid)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretInvalid)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretInvalid)
+}
+
 func TestCardanoDBSyncReconcilerReconcileReportsMissingNetwork(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "missing")
@@ -237,7 +252,9 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExternalDatabaseWorkloads(t *tes
 	assert.Equal(t, "http://dbsync-dbsync-metrics.default.svc.cluster.local:8080/metrics", current.Status.Endpoints.Metrics.URL)
 
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncPGPassSecretName(dbSync)}, &corev1.Secret{}))
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, &corev1.PersistentVolumeClaim{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{}))
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncMetricsServiceName(dbSync)}, &corev1.Service{}))
 }
@@ -285,6 +302,48 @@ func TestCardanoDBSyncReconcilerReconcileReportsResourceConflict(t *testing.T) {
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonResourceConflict)
 }
 
+func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenSecretBecomesInvalid(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	secret := externalDatabaseSecretFor(dbSync)
+	reconciler := newTestReconciler(t, dbSync, secret, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
+
+	secret.Data = map[string][]byte{"other": []byte("secret")}
+	require.NoError(t, reconciler.Update(ctx, secret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretInvalid)
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
+}
+
+func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenArtifactsMismatch(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	configMap := artifactConfigMapFor(network)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
+
+	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, reconciler.Update(ctx, configMap))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonNetworkArtifactsMismatch)
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
+}
+
 func assertDependencyWaiting(
 	t *testing.T,
 	ctx context.Context,
@@ -317,6 +376,21 @@ func assertCondition(
 	assert.Equal(t, reason, condition.Reason)
 	assert.Equal(t, current.Generation, condition.ObservedGeneration)
 	assert.Equal(t, current.Generation, current.Status.ObservedGeneration)
+}
+
+func assertDeploymentReplicas(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	want int32,
+) {
+	t.Helper()
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, deployment))
+	require.NotNil(t, deployment.Spec.Replicas)
+	assert.Equal(t, want, *deployment.Spec.Replicas)
 }
 
 func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoDBSyncReconciler {
