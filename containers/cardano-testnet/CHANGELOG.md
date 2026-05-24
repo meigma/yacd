@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.0.1-yacd.2](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.1...cardano-testnet/v11.0.1-yacd.2) (2026-05-24)
+
+
+### Build
+
+* **cardano-testnet:** add artifact publisher ([#18](https://github.com/meigma/yacd/issues/18)) ([ad3fb1e](https://github.com/meigma/yacd/commit/ad3fb1e6a23f792ac10729444d1f6e187619fd83))
+
 ## [11.0.1-yacd.1](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.0...cardano-testnet/v11.0.1-yacd.1) (2026-05-21)
 
 
