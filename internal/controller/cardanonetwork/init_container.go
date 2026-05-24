@@ -3,15 +3,17 @@ package cardanonetwork
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
 	corev1 "k8s.io/api/core/v1"
 )
 
 const (
 	cardanoTestnetImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
-	cardanoTestnetImageRevision   = "yacd.1"
+	cardanoTestnetImageRevision   = "yacd.3"
 
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	faucetSourceAddressInitContainerName = "faucet-source-addresses"
@@ -31,7 +33,13 @@ const (
 
 // cardanoTestnetInitContainer converts a localnet plan into the init
 // container fragment that generates the cardano-testnet environment.
-func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) (corev1.Container, error) {
+func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) (corev1.Container, error) {
+	if network == nil {
+		return corev1.Container{}, fmt.Errorf("cardanonetwork is required")
+	}
+	if network.Spec.Local == nil {
+		return corev1.Container{}, fmt.Errorf("local spec is required")
+	}
 	if err := validateLocalnetInitContainerPlan(plan); err != nil {
 		return corev1.Container{}, err
 	}
@@ -56,12 +64,21 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(plan localnet.Plan) 
 			{Name: localnetConfigFileEnvName, Value: plan.Layout.ConfigFile},
 			{Name: localnetManifestFileEnvName, Value: plan.Layout.ManifestFile},
 			{Name: localnetManifestEnvName, Value: string(manifest)},
+			{Name: artifactConfigMapNameEnv, Value: networkArtifactsConfigMapName(network)},
+			{Name: artifactNetworkNameEnv, Value: network.Name},
+			{Name: artifactNetworkNamespaceEnv, Value: network.Namespace},
+			{Name: artifactNetworkModeEnv, Value: string(network.Spec.Mode)},
+			{Name: artifactNetworkEraEnv, Value: string(network.Spec.Local.Era)},
+			{Name: artifactNodeToNodeHostEnv, Value: nodeToNodeHost(network)},
+			{Name: artifactNodeToNodePortEnv, Value: strconv.Itoa(int(network.Spec.Node.Port))},
+			{Name: artifactNodeToNodeURLEnv, Value: nodeToNodeURL(network)},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      localnetStateVolumeName,
 				MountPath: plan.Layout.StateDir,
 			},
+			artifactPublisherVolumeMount(),
 		},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: new(false),

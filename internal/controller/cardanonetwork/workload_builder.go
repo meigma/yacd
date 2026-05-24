@@ -13,6 +13,7 @@ import (
 	"github.com/meigma/yacd/internal/cardano/localnet"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -116,13 +117,17 @@ var supportedOgmiosNodeVersions = map[string][]string{
 // primaryWorkloadResources are the Kubernetes resources that run the initial
 // singleton primary Cardano node.
 type primaryWorkloadResources struct {
-	PersistentVolumeClaim *corev1.PersistentVolumeClaim
-	Deployment            *appsv1.Deployment
-	Service               *corev1.Service
-	OgmiosService         *corev1.Service
-	KupoService           *corev1.Service
-	FaucetService         *corev1.Service
-	FaucetAuthSecret      *corev1.Secret
+	NetworkArtifactsConfigMap       *corev1.ConfigMap
+	ArtifactPublisherServiceAccount *corev1.ServiceAccount
+	ArtifactPublisherRole           *rbacv1.Role
+	ArtifactPublisherRoleBinding    *rbacv1.RoleBinding
+	PersistentVolumeClaim           *corev1.PersistentVolumeClaim
+	Deployment                      *appsv1.Deployment
+	Service                         *corev1.Service
+	OgmiosService                   *corev1.Service
+	KupoService                     *corev1.Service
+	FaucetService                   *corev1.Service
+	FaucetAuthSecret                *corev1.Secret
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork into the desired primary
@@ -189,7 +194,24 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, unsupportedSpec("build localnet plan: %v", err)
 	}
 
-	initContainer, err := b.cardanoTestnetInitContainer(plan)
+	networkArtifactsConfigMap, err := b.networkArtifactsConfigMap(network, plan.Fingerprint.Value)
+	if err != nil {
+		return nil, err
+	}
+	artifactPublisherServiceAccount, err := b.artifactPublisherServiceAccount(network)
+	if err != nil {
+		return nil, err
+	}
+	artifactPublisherRole, err := b.artifactPublisherRole(network)
+	if err != nil {
+		return nil, err
+	}
+	artifactPublisherRoleBinding, err := b.artifactPublisherRoleBinding(network)
+	if err != nil {
+		return nil, err
+	}
+
+	initContainer, err := b.cardanoTestnetInitContainer(network, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -262,13 +284,17 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	}
 
 	return &primaryWorkloadResources{
-		PersistentVolumeClaim: persistentVolumeClaim,
-		Deployment:            deployment,
-		Service:               service,
-		OgmiosService:         ogmiosService,
-		KupoService:           kupoService,
-		FaucetService:         faucetService,
-		FaucetAuthSecret:      faucetAuthSecret,
+		NetworkArtifactsConfigMap:       networkArtifactsConfigMap,
+		ArtifactPublisherServiceAccount: artifactPublisherServiceAccount,
+		ArtifactPublisherRole:           artifactPublisherRole,
+		ArtifactPublisherRoleBinding:    artifactPublisherRoleBinding,
+		PersistentVolumeClaim:           persistentVolumeClaim,
+		Deployment:                      deployment,
+		Service:                         service,
+		OgmiosService:                   ogmiosService,
+		KupoService:                     kupoService,
+		FaucetService:                   faucetService,
+		FaucetAuthSecret:                faucetAuthSecret,
 	}, nil
 }
 
@@ -713,9 +739,10 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
-					InitContainers: initContainers,
-					Containers:     containers,
-					Volumes:        volumes,
+					ServiceAccountName: artifactPublisherServiceAccountName(network),
+					InitContainers:     initContainers,
+					Containers:         containers,
+					Volumes:            append(volumes, artifactPublisherProjectedVolume()),
 				},
 			},
 		},

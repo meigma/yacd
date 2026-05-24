@@ -415,12 +415,19 @@ type CardanoNetworkStatus struct {
 	// +optional
 	Faucet *FaucetStatus `json:"faucet,omitempty"`
 
+	// artifacts publishes references to generated non-secret network
+	// artifacts once the controller has verified that the artifact bundle
+	// matches the accepted localnet.
+	// +optional
+	Artifacts *CardanoNetworkArtifactsStatus `json:"artifacts,omitempty"`
+
 	// conditions represent the current state of the CardanoNetwork resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
 	// Expected condition types include:
 	// - "Ready": the network is usable through its published endpoints
 	// - "NodeReady": the primary node container is running
+	// - "ArtifactsReady": the non-secret network artifact bundle is published
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
 	// - "FaucetReady": the faucet is enabled and available through its Service
@@ -457,6 +464,24 @@ type CardanoNetworkIdentityStatus struct {
 	// era is the newest resolved ledger era known to the controller.
 	// +optional
 	Era *CardanoEra `json:"era,omitempty"`
+}
+
+// CardanoNetworkArtifactsStatus reports the verified network artifact bundle
+// that supporting controllers can consume.
+type CardanoNetworkArtifactsStatus struct {
+	// networkConfigMapName is the same-namespace ConfigMap containing
+	// non-secret generated network files and connection metadata.
+	// +optional
+	NetworkConfigMapName string `json:"networkConfigMapName,omitempty"`
+
+	// schemaVersion identifies the artifact bundle schema verified by the
+	// controller.
+	// +optional
+	SchemaVersion string `json:"schemaVersion,omitempty"`
+
+	// dataHash is the publisher-computed hash over ConfigMap data.
+	// +optional
+	DataHash string `json:"dataHash,omitempty"`
 }
 
 // CardanoNetworkEndpointsStatus reports discovered Service endpoints.

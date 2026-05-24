@@ -14,12 +14,13 @@ import (
 // Kubernetes container fragment for the cardano-testnet create-env init step.
 func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	plan := testLocalnetPlan(t)
+	network := localCardanoNetwork("devnet")
 
-	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(network, plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, "cardano-testnet-create-env", container.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.1", container.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3", container.Image)
 	assert.Equal(t, corev1.PullIfNotPresent, container.ImagePullPolicy)
 	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, container.TerminationMessagePath)
@@ -32,6 +33,11 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 			Name:      "localnet-state",
 			MountPath: "/state",
 		},
+		{
+			Name:      artifactPublisherTokenVolumeName,
+			MountPath: artifactPublisherServiceAccountMountDir,
+			ReadOnly:  true,
+		},
 	}, container.VolumeMounts)
 
 	env := envMap(container)
@@ -39,6 +45,14 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	assert.Equal(t, "/state/env/configuration.yaml", env["YACD_LOCALNET_CONFIG_FILE"])
 	assert.Equal(t, "/state/env/yacd-localnet-plan.json", env["YACD_LOCALNET_PLAN_MANIFEST_FILE"])
 	assert.NotEmpty(t, env["YACD_LOCALNET_PLAN_MANIFEST"])
+	assert.Equal(t, "devnet-network-artifacts", env["YACD_ARTIFACT_CONFIGMAP_NAME"])
+	assert.Equal(t, "devnet", env["YACD_CARDANO_NETWORK_NAME"])
+	assert.Equal(t, "default", env["YACD_CARDANO_NETWORK_NAMESPACE"])
+	assert.Equal(t, "local", env["YACD_CARDANO_NETWORK_MODE"])
+	assert.Equal(t, "conway", env["YACD_CARDANO_NETWORK_ERA"])
+	assert.Equal(t, "devnet-node.default.svc.cluster.local", env["YACD_CARDANO_NODE_TO_NODE_HOST"])
+	assert.Equal(t, "3001", env["YACD_CARDANO_NODE_TO_NODE_PORT"])
+	assert.Equal(t, "tcp://devnet-node.default.svc.cluster.local:3001", env["YACD_CARDANO_NODE_TO_NODE_URL"])
 
 	assertRestrictedContainerSecurityContext(t, container.SecurityContext)
 }
@@ -48,7 +62,7 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 func TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips(t *testing.T) {
 	plan := testLocalnetPlan(t)
 
-	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(localCardanoNetwork("devnet"), plan)
 	require.NoError(t, err)
 
 	raw := envMap(container)["YACD_LOCALNET_PLAN_MANIFEST"]
@@ -68,7 +82,7 @@ func TestLocalnetCreateEnvInitContainerPreservesPlanArgs(t *testing.T) {
 	plan, err := localnet.BuildPlan(spec)
 	require.NoError(t, err)
 
-	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
+	container, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(localCardanoNetwork("devnet"), plan)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
@@ -132,7 +146,7 @@ func TestLocalnetCreateEnvInitContainerRejectsIncompletePlan(t *testing.T) {
 			plan := testLocalnetPlan(t)
 			tt.mutate(&plan)
 
-			_, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(plan)
+			_, err := newTestPrimaryWorkloadBuilder(t).cardanoTestnetInitContainer(localCardanoNetwork("devnet"), plan)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
 		})

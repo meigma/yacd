@@ -13,6 +13,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,11 +151,181 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	current.Spec.Strategy = desired.Spec.Strategy
 	current.Spec.Template.Labels = mergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
 	current.Spec.Template.Annotations = mergeOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
+	current.Spec.Template.Spec.ServiceAccountName = desired.Spec.Template.Spec.ServiceAccountName
 	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
 	current.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
 	current.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
 	current.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
 	current.Spec.Template.Spec.Volumes = desired.Spec.Template.Spec.Volumes
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
+	ctx context.Context,
+	desired *corev1.ConfigMap,
+) (controllerutil.OperationResult, *corev1.ConfigMap, error) {
+	desired = desired.DeepCopy()
+	current := &corev1.ConfigMap{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, nil, err
+		}
+
+		return controllerutil.OperationResultCreated, desired, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, nil, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, nil, err
+	}
+
+	if !current.DeletionTimestamp.IsZero() {
+		return controllerutil.OperationResultUpdated, current, nil
+	}
+
+	if artifactConfigMapNeedsRecovery(current, desired.Annotations[localnetFingerprintAnno]) {
+		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+			return controllerutil.OperationResultNone, nil, err
+		}
+
+		return controllerutil.OperationResultUpdated, current, nil
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, current, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, nil, err
+	}
+
+	return controllerutil.OperationResultUpdated, current, nil
+}
+
+func (r *CardanoNetworkReconciler) applyArtifactPublisherServiceAccount(
+	ctx context.Context,
+	desired *corev1.ServiceAccount,
+) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	current := &corev1.ServiceAccount{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoNetworkReconciler) applyArtifactPublisherRole(
+	ctx context.Context,
+	desired *rbacv1.Role,
+) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	current := &rbacv1.Role{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Rules = desired.Rules
+
+	if equality.Semantic.DeepEqual(before, current) {
+		return controllerutil.OperationResultNone, nil
+	}
+	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	return controllerutil.OperationResultUpdated, nil
+}
+
+func (r *CardanoNetworkReconciler) applyArtifactPublisherRoleBinding(
+	ctx context.Context,
+	desired *rbacv1.RoleBinding,
+) (controllerutil.OperationResult, error) {
+	desired = desired.DeepCopy()
+	current := &rbacv1.RoleBinding{}
+	err := r.Get(ctx, clientObjectKey(desired), current)
+	if apierrors.IsNotFound(err) {
+		if err := r.Create(ctx, desired); err != nil {
+			return controllerutil.OperationResultNone, err
+		}
+
+		return controllerutil.OperationResultCreated, nil
+	}
+	if err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+
+	if err := validateControllerOwner(current, desired); err != nil {
+		return controllerutil.OperationResultNone, err
+	}
+	if !equality.Semantic.DeepEqual(current.RoleRef, desired.RoleRef) {
+		return controllerutil.OperationResultNone, unsupportedWorkloadChange(
+			"RoleBinding %s roleRef drifted from desired value",
+			clientObjectKey(desired),
+		)
+	}
+
+	before := current.DeepCopy()
+	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Subjects = desired.Subjects
 
 	if equality.Semantic.DeepEqual(before, current) {
 		return controllerutil.OperationResultNone, nil
@@ -555,7 +726,7 @@ func mergeStringMap(current map[string]string, desired map[string]string) map[st
 func mergeOwnedAnnotations(current map[string]string, desired map[string]string) map[string]string {
 	merged := map[string]string{}
 	maps.Copy(merged, current)
-	for _, key := range []string{localnetFingerprintAnno, requestedStorageClassAnno} {
+	for _, key := range []string{localnetFingerprintAnno, requestedStorageClassAnno, networkArtifactsConfigMapUIDAnno} {
 		if value, ok := desired[key]; ok {
 			merged[key] = value
 			continue
