@@ -295,6 +295,8 @@ jobs:
 
           docker run --rm "${{ steps.manifest.outputs.tag }}" version >/tmp/cardano-testnet-version.txt
           grep -Fq "cardano-node" /tmp/cardano-testnet-version.txt
+          docker run --rm --entrypoint /bin/sh "${{ steps.manifest.outputs.tag }}" \
+            -c 'test -x /opt/yacd/bin/yacd-cardano-testnet-publisher'
 
           state_dir="$(mktemp -d)"
           chmod 0777 "$state_dir"

@@ -14,6 +14,8 @@ fileGroups:
     - 'api/**/*.go'
     - 'cli/**/*.go'
     - 'cmd/**/*.go'
+    - 'containers/cardano-testnet/**/*.go'
+    - 'containers/cardano-testnet/go.mod'
     - 'internal/**/*.go'
     - 'services/**/*.go'
     - 'test/**/*.go'
@@ -59,6 +61,8 @@ tasks:
       - '@group(toolchainConfig)'
       - '.golangci.yml'
       - '.dev/scripts/check.sh'
+      - 'containers/cardano-testnet/Dockerfile'
+      - 'containers/cardano-testnet/yacd-cardano-testnet-init'
     options:
       cache: false
 
@@ -66,6 +70,7 @@ tasks:
     script: |
       set -euo pipefail
       KUBEBUILDER_ASSETS="$(setup-envtest use 1.35.x -p path)" go test ./...
+      (cd containers/cardano-testnet && go test ./...)
     inputs:
       - '@group(goSources)'
       - '@group(generatorSources)'
