@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/client"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,6 +15,11 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
+
+// defaultRequestTimeout is the per-request deadline applied to
+// Kubernetes API calls when [Config.Timeout] is zero. It mirrors the
+// 30-second http.Client.Timeout used by the legacy publisher.
+const defaultRequestTimeout = 30 * time.Second
 
 // Config controls adapter construction.
 type Config struct {
@@ -27,6 +33,9 @@ type Config struct {
 	// CAPath is the filesystem path to the PEM-encoded CA bundle used
 	// for TLS verification of the API server.
 	CAPath string
+	// Timeout bounds each Kubernetes API call. Zero selects a
+	// 30-second default.
+	Timeout time.Duration
 }
 
 // Client implements [client.Client] against a Kubernetes API server
@@ -49,9 +58,14 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("k8s: TokenPath is required")
 	}
 
+	timeout := cfg.Timeout
+	if timeout == 0 {
+		timeout = defaultRequestTimeout
+	}
 	restConfig := &rest.Config{
 		Host:            host,
 		BearerTokenFile: cfg.TokenPath,
+		Timeout:         timeout,
 		TLSClientConfig: rest.TLSClientConfig{
 			CAFile: cfg.CAPath,
 		},
