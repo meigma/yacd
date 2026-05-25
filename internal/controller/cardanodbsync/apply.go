@@ -9,12 +9,14 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
+	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
+	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -22,7 +24,6 @@ import (
 
 const (
 	dbSyncResourceConflictRequeueAfter = time.Minute
-	requestedStorageClassAnno          = "yacd.meigma.io/requested-storage-class"
 )
 
 type unsupportedSpecError struct {
@@ -37,14 +38,7 @@ func unsupportedSpec(format string, args ...any) unsupportedSpecError {
 	return unsupportedSpecError{message: fmt.Sprintf(format, args...)}
 }
 
-type unsupportedApplyError struct {
-	reason  string
-	message string
-}
-
-func (e unsupportedApplyError) Error() string {
-	return e.message
-}
+type unsupportedApplyError = ctrlapply.UnsupportedError
 
 type dbSyncWorkloadApplyResults struct {
 	ConfigMap                     controllerutil.OperationResult
@@ -273,10 +267,10 @@ func (r *CardanoDBSyncReconciler) handleDBSyncWorkloadApplyError(
 		return ctrl.Result{}, err
 	}
 
-	if statusErr := r.patchWorkloadApplyBlockedStatus(ctx, dbSync, unsupported.reason, unsupported.message); statusErr != nil {
+	if statusErr := r.patchWorkloadApplyBlockedStatus(ctx, dbSync, unsupported.Reason, unsupported.Message); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if unsupported.reason == conditionReasonResourceConflict {
+	if unsupported.Reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: dbSyncResourceConflictRequeueAfter}, nil
 	}
 
@@ -288,7 +282,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	desired *corev1.ConfigMap,
 ) (controllerutil.OperationResult, error) {
 	current := &corev1.ConfigMap{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
 			return controllerutil.OperationResultNone, err
@@ -305,7 +299,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Data = maps.Clone(desired.Data)
@@ -326,7 +320,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	desired *corev1.Secret,
 ) (controllerutil.OperationResult, error) {
 	current := &corev1.Secret{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
 			return controllerutil.OperationResultNone, err
@@ -343,7 +337,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Type = corev1.SecretTypeOpaque
@@ -365,7 +359,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 	desired *corev1.PersistentVolumeClaim,
 ) (controllerutil.OperationResult, error) {
 	current := &corev1.PersistentVolumeClaim{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
 			return controllerutil.OperationResultNone, err
@@ -383,18 +377,18 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 	if err := validateRequestedStorageClass(current, desired); err != nil {
 		return controllerutil.OperationResultNone, err
 	}
-	if !storageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
+	if !ctrlstorage.StorageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
 		return controllerutil.OperationResultNone, unsupportedStorageChange(
 			"PVC %s storageClassName cannot be changed from %s to %s",
-			clientObjectKey(desired),
-			stringPtrValue(current.Spec.StorageClassName),
-			stringPtrValue(desired.Spec.StorageClassName),
+			ctrlmetadata.ObjectKey(desired),
+			ctrlstorage.StringPtrValue(current.Spec.StorageClassName),
+			ctrlstorage.StringPtrValue(desired.Spec.StorageClassName),
 		)
 	}
 	if !reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) {
 		return controllerutil.OperationResultNone, unsupportedStorageChange(
 			"PVC %s accessModes drifted from desired value",
-			clientObjectKey(desired),
+			ctrlmetadata.ObjectKey(desired),
 		)
 	}
 
@@ -403,14 +397,14 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 	if currentStorage.Cmp(desiredStorage) > 0 {
 		return controllerutil.OperationResultNone, unsupportedStorageChange(
 			"PVC %s storage cannot be decreased from %s to %s",
-			clientObjectKey(desired),
+			ctrlmetadata.ObjectKey(desired),
 			currentStorage.String(),
 			desiredStorage.String(),
 		)
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	if current.Spec.Resources.Requests == nil {
@@ -440,7 +434,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncDeployment(
 	}
 
 	current := &appsv1.Deployment{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired); err != nil {
 			return controllerutil.OperationResultNone, err
@@ -458,18 +452,18 @@ func (r *CardanoDBSyncReconciler) applyDBSyncDeployment(
 	if !equality.Semantic.DeepEqual(current.Spec.Selector, desired.Spec.Selector) {
 		return controllerutil.OperationResultNone, unsupportedWorkloadChange(
 			"Deployment %s selector drifted from desired value",
-			clientObjectKey(desired),
+			ctrlmetadata.ObjectKey(desired),
 		)
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Paused = desired.Spec.Paused
 	current.Spec.Replicas = desired.Spec.Replicas
 	current.Spec.Strategy = desired.Spec.Strategy
-	current.Spec.Template.Labels = mergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
+	current.Spec.Template.Labels = ctrlmetadata.MergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
 	current.Spec.Template.Annotations = mergeDBSyncOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
 	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
 	current.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
@@ -496,7 +490,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncMetricsService(
 	}
 
 	current := &corev1.Service{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired); err != nil {
 			return controllerutil.OperationResultNone, err
@@ -513,8 +507,8 @@ func (r *CardanoDBSyncReconciler) applyDBSyncMetricsService(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = mergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Type = desired.Spec.Type
 	current.Spec.Selector = maps.Clone(desired.Spec.Selector)
@@ -546,7 +540,7 @@ func (r *CardanoDBSyncReconciler) suspendDBSyncDeploymentIfOwned(
 	}
 
 	current := &appsv1.Deployment{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
@@ -574,158 +568,59 @@ func (r *CardanoDBSyncReconciler) defaultObject(object client.Object) error {
 	return nil
 }
 
-func clientObjectKey(object interface {
-	GetName() string
-	GetNamespace() string
-}) types.NamespacedName {
-	return types.NamespacedName{
-		Namespace: object.GetNamespace(),
-		Name:      object.GetName(),
-	}
-}
-
-func mergeStringMap(current map[string]string, desired map[string]string) map[string]string {
-	merged := map[string]string{}
-	maps.Copy(merged, current)
-	maps.Copy(merged, desired)
-	if len(merged) == 0 {
-		return nil
-	}
-
-	return merged
-}
-
 func mergeDBSyncOwnedAnnotations(current map[string]string, desired map[string]string) map[string]string {
-	merged := map[string]string{}
-	maps.Copy(merged, current)
-	for _, key := range []string{
+	return ctrlmetadata.MergeOwnedAnnotations(
+		current,
+		desired,
 		dbSyncPlanFingerprintAnno,
 		dbSyncDatabaseIdentityAnno,
 		dbSyncSecretVersionAnno,
 		dbSyncArtifactDataHashAnno,
 		managedPostgresIdentityAnno,
 		managedPostgresPasswordFingerprintAnno,
-		requestedStorageClassAnno,
-	} {
-		if value, ok := desired[key]; ok {
-			merged[key] = value
-			continue
-		}
-		delete(merged, key)
-	}
-	if len(merged) == 0 {
-		return nil
-	}
-
-	return merged
+		ctrlstorage.RequestedStorageClassAnnotation,
+	)
 }
 
 func resourceConflict(format string, args ...any) unsupportedApplyError {
-	return unsupportedApplyError{
-		reason:  conditionReasonResourceConflict,
-		message: fmt.Sprintf(format, args...),
-	}
+	return ctrlapply.Unsupported(conditionReasonResourceConflict, format, args...)
 }
 
 func unsupportedStorageChange(format string, args ...any) unsupportedApplyError {
-	return unsupportedApplyError{
-		reason:  conditionReasonUnsupportedStorageChange,
-		message: fmt.Sprintf(format, args...),
-	}
+	return ctrlapply.Unsupported(conditionReasonUnsupportedStorageChange, format, args...)
 }
 
 func unsupportedWorkloadChange(format string, args ...any) unsupportedApplyError {
-	return unsupportedApplyError{
-		reason:  conditionReasonUnsupportedWorkloadChange,
-		message: fmt.Sprintf(format, args...),
-	}
+	return ctrlapply.Unsupported(conditionReasonUnsupportedWorkloadChange, format, args...)
 }
 
 func unsupportedDatabaseIdentityChange(format string, args ...any) unsupportedApplyError {
-	return unsupportedApplyError{
-		reason:  conditionReasonUnsupportedDatabaseIdentityChange,
-		message: fmt.Sprintf(format, args...),
-	}
+	return ctrlapply.Unsupported(conditionReasonUnsupportedDatabaseIdentityChange, format, args...)
 }
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
-	desiredController := metav1.GetControllerOf(desired)
-	if desiredController == nil {
-		return resourceConflict(
-			"resource %s has no desired controller owner",
-			clientObjectKey(desired),
-		)
-	}
-
-	currentController := metav1.GetControllerOf(current)
-	if currentController == nil {
-		return resourceConflict(
-			"resource %s already exists without a controller owner",
-			clientObjectKey(desired),
-		)
-	}
-	if currentController.APIVersion != desiredController.APIVersion ||
-		currentController.Kind != desiredController.Kind ||
-		currentController.Name != desiredController.Name ||
-		currentController.UID != desiredController.UID {
-		return resourceConflict(
-			"resource %s is already controlled by %s/%s",
-			clientObjectKey(desired),
-			currentController.Kind,
-			currentController.Name,
-		)
+	if err := ctrlmetadata.ValidateControllerOwner(current, desired); err != nil {
+		return resourceConflict("%s", err.Error())
 	}
 
 	return nil
 }
 
 func controlledBy(current metav1.Object, owner metav1.Object) bool {
-	controller := metav1.GetControllerOf(current)
-	return controller != nil &&
-		controller.APIVersion == yacdv1alpha1.GroupVersion.String() &&
-		controller.Kind == "CardanoDBSync" &&
-		controller.Name == owner.GetName() &&
-		controller.UID == owner.GetUID()
+	return ctrlmetadata.ControlledBy(current, owner, yacdv1alpha1.GroupVersion.String(), "CardanoDBSync")
 }
 
 func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	currentStorageClass, currentHasStorageClassRequest := current.Annotations[requestedStorageClassAnno]
-	desiredStorageClass, desiredHasStorageClassRequest := desired.Annotations[requestedStorageClassAnno]
+	currentStorageClass, currentHasStorageClassRequest := ctrlstorage.RequestedStorageClass(current.Annotations)
+	desiredStorageClass, desiredHasStorageClassRequest := ctrlstorage.RequestedStorageClass(desired.Annotations)
 	if currentHasStorageClassRequest == desiredHasStorageClassRequest && currentStorageClass == desiredStorageClass {
 		return nil
 	}
 
 	return unsupportedStorageChange(
 		"PVC %s requested storageClassName cannot be changed from %s to %s",
-		clientObjectKey(desired),
-		annotationValue(currentStorageClass, currentHasStorageClassRequest),
-		annotationValue(desiredStorageClass, desiredHasStorageClassRequest),
+		ctrlmetadata.ObjectKey(desired),
+		ctrlstorage.AnnotationValue(currentStorageClass, currentHasStorageClassRequest),
+		ctrlstorage.AnnotationValue(desiredStorageClass, desiredHasStorageClassRequest),
 	)
-}
-
-func storageClassCompatible(current *string, desired *string) bool {
-	if desired == nil {
-		return true
-	}
-	if current == nil {
-		return false
-	}
-
-	return *current == *desired
-}
-
-func annotationValue(value string, ok bool) string {
-	if !ok {
-		return "<default>"
-	}
-
-	return value
-}
-
-func stringPtrValue(value *string) string {
-	if value == nil {
-		return "<default>"
-	}
-
-	return *value
 }

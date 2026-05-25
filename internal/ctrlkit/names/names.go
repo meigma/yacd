@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	maxLabelValueLength = 63
-	shortHashLength     = 10
+	// MaxLabelValueLength is the Kubernetes DNS label and label-value length limit.
+	MaxLabelValueLength = 63
+	// ShortHashLength is the number of hex characters used in derived names.
+	ShortHashLength = 10
 )
 
 // DNSLabelWithSuffix returns a DNS-label-safe name with suffix appended. A
@@ -27,12 +29,12 @@ func DNSLabelWithSuffix(value string, suffix string) string {
 		candidateSuffix = fmt.Sprintf("-%s-%s", ShortHash(value), suffix)
 	}
 	candidate := base + candidateSuffix
-	if len(candidate) <= maxLabelValueLength {
+	if len(candidate) <= MaxLabelValueLength {
 		return candidate
 	}
 
 	hashSuffix := fmt.Sprintf("-%s-%s", ShortHash(value), suffix)
-	prefixLength := maxLabelValueLength - len(hashSuffix)
+	prefixLength := MaxLabelValueLength - len(hashSuffix)
 	prefix := strings.Trim(base[:prefixLength], "-")
 	if prefix == "" {
 		prefix = "x"
@@ -48,12 +50,12 @@ func LabelValue(value string) string {
 	if base == "" {
 		base = ShortHash(value)
 	}
-	if len(base) <= maxLabelValueLength {
+	if len(base) <= MaxLabelValueLength {
 		return base
 	}
 
 	hashSuffix := "-" + ShortHash(value)
-	prefixLength := maxLabelValueLength - len(hashSuffix)
+	prefixLength := MaxLabelValueLength - len(hashSuffix)
 	prefix := strings.TrimRight(base[:prefixLength], "-_.")
 	if prefix == "" {
 		prefix = "x"
@@ -65,7 +67,7 @@ func LabelValue(value string) string {
 // ShortHash returns the stable short hash used by controller-derived names.
 func ShortHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:shortHashLength]
+	return hex.EncodeToString(sum[:])[:ShortHashLength]
 }
 
 func sanitizeDNSLabel(value string) string {

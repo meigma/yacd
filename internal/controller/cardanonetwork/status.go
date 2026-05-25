@@ -5,11 +5,12 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
+	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -150,10 +151,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		clearFaucetStatus(network)
 		clearArtifactsStatus(network)
 	}
-	for _, condition := range conditions {
-		condition.ObservedGeneration = network.Generation
-		apimeta.SetStatusCondition(&network.Status.Conditions, condition)
-	}
+	ctrlconditions.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
 
 	if equality.Semantic.DeepEqual(original.Status, network.Status) {
 		return nil
@@ -571,7 +569,7 @@ func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 	}
 
 	for i := range pods.Items {
-		if podContainerReady(&pods.Items[i], containerName) {
+		if ctrlreadiness.PodContainerReady(&pods.Items[i], containerName) {
 			return true, nil
 		}
 	}
@@ -591,83 +589,59 @@ func (r *CardanoNetworkReconciler) liveReader() client.Reader {
 	return r.Client
 }
 
-func podContainerReady(pod *corev1.Pod, containerName string) bool {
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name == containerName && status.Ready && status.State.Running != nil {
-			return true
-		}
-	}
-
-	return false
-}
-
 func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, artifactsReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
 	if nodeReady.Status == metav1.ConditionTrue &&
 		ogmiosReady.Status == metav1.ConditionTrue &&
 		(!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) &&
 		(!faucetEnabled || faucetReady.Status == metav1.ConditionTrue) &&
 		artifactsReady.Status == metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 	}
 	if nodeReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, nodeReady.Reason, nodeReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, nodeReady.Reason, nodeReady.Message)
 	}
 	if ogmiosReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
 	}
 	if kupoEnabled && kupoReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
 	}
 	if faucetEnabled && faucetReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
 	}
 	if artifactsReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, artifactsReady.Reason, artifactsReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, artifactsReady.Reason, artifactsReady.Message)
 	}
 
-	return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
+	return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeDegraded, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeDegraded, status, reason, message)
 }
 
 func nodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeNodeReady, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeNodeReady, status, reason, message)
 }
 
 func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeOgmiosReady, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeOgmiosReady, status, reason, message)
 }
 
 func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeKupoReady, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeKupoReady, status, reason, message)
 }
 
 func faucetReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeFaucetReady, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeFaucetReady, status, reason, message)
 }
 
 func artifactsReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeArtifactsReady, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeArtifactsReady, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeProgressing, status, reason, message)
-}
-
-func condition(conditionType string, status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return metav1.Condition{
-		Type:               conditionType,
-		Status:             status,
-		Reason:             reason,
-		Message:            message,
-		LastTransitionTime: metav1.Now(),
-	}
+	return ctrlconditions.Condition(conditionTypeProgressing, status, reason, message)
 }
 
 func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {

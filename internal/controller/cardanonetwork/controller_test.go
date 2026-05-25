@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
+	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,7 +29,7 @@ import (
 
 const wrongManagedByLabelValue = "wrong"
 
-var testNetworkArtifactsDataHash = computeNetworkArtifactDataHash(testNetworkArtifactsData())
+var testNetworkArtifactsDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 // TestCardanoNetworkReconcilerReconcileHandlesMissingObject verifies deleted
 // resources are ignored without requeueing.
@@ -190,7 +192,7 @@ func TestCardanoNetworkReconcilerReconcilePublishesVerifiedNetworkArtifacts(t *t
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Artifacts)
 	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
-	assert.Equal(t, networkArtifactSchemaVersion, current.Status.Artifacts.SchemaVersion)
+	assert.Equal(t, ctrlartifacts.CardanoNetworkSchemaVersion, current.Status.Artifacts.SchemaVersion)
 	assert.Equal(t, testNetworkArtifactsDataHash, current.Status.Artifacts.DataHash)
 }
 
@@ -274,9 +276,9 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "devnet-network-artifacts",
 			Annotations: map[string]string{
-				networkArtifactSchemaVersionAnno: networkArtifactSchemaVersion,
-				localnetFingerprintAnno:          "fingerprint",
-				networkArtifactDataHashAnno:      "sha256:test",
+				ctrlartifacts.SchemaVersionAnnotation: ctrlartifacts.CardanoNetworkSchemaVersion,
+				localnetFingerprintAnno:               "fingerprint",
+				ctrlartifacts.DataHashAnnotation:      "sha256:test",
 			},
 		},
 		Data: testNetworkArtifactsData(),
@@ -286,7 +288,7 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 	assert.False(t, result.ready)
 	assert.Equal(t, "artifact ConfigMap data hash is not published", result.reason)
 
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.True(t, result.ready)
 	assert.Equal(t, testNetworkArtifactsDataHash, result.status.DataHash)
@@ -298,21 +300,21 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data["dijkstra-genesis.json"] = "test dijkstra-genesis.json"
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.True(t, result.ready)
-	assert.Equal(t, configMap.Annotations[networkArtifactDataHashAnno], result.status.DataHash)
+	assert.Equal(t, configMap.Annotations[ctrlartifacts.DataHashAnnotation], result.status.DataHash)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data["pool-keys/secret.skey"] = "do not publish"
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.False(t, result.ready)
 	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.reason)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.BinaryData = map[string][]byte{"secret": []byte("do not publish")}
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.False(t, result.ready)
 	assert.Equal(t, "artifact ConfigMap contains binary data", result.reason)
@@ -1298,7 +1300,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T)
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlstorage.RequestedStorageClassAnnotation])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1325,7 +1327,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassRemoval(t *testing.
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlstorage.RequestedStorageClassAnnotation])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1348,7 +1350,7 @@ func TestCardanoNetworkReconcilerReconcileToleratesDefaultedStorageClass(t *test
 	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, defaultStorageClassName, *pvc.Spec.StorageClassName)
-	assert.NotContains(t, pvc.Annotations, requestedStorageClassAnno)
+	assert.NotContains(t, pvc.Annotations, ctrlstorage.RequestedStorageClassAnnotation)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -2069,8 +2071,8 @@ func publishNetworkArtifacts(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[networkArtifactSchemaVersionAnno] = networkArtifactSchemaVersion
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = ctrlartifacts.CardanoNetworkSchemaVersion
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
 	}

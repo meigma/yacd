@@ -53,7 +53,7 @@ func TestDNSLabelWithSuffixTruncatesWithHash(t *testing.T) {
 
 	got := DNSLabelWithSuffix(value, "network-artifacts")
 
-	require.LessOrEqual(t, len(got), maxLabelValueLength)
+	require.LessOrEqual(t, len(got), MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(got, "-"+ShortHash(value)+"-network-artifacts"))
 }
 
@@ -92,11 +92,11 @@ func TestLabelValueTruncatesWithHash(t *testing.T) {
 
 	got := LabelValue(value)
 
-	require.LessOrEqual(t, len(got), maxLabelValueLength)
+	require.LessOrEqual(t, len(got), MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(got, "-"+ShortHash(value)))
 }
 
 func TestShortHashIsStable(t *testing.T) {
 	assert.Equal(t, "955af62a37", ShortHash("Network One"))
-	assert.Len(t, ShortHash("Network One"), shortHashLength)
+	assert.Len(t, ShortHash("Network One"), ShortHashLength)
 }

@@ -6,6 +6,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
+	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -267,10 +269,7 @@ func (r *CardanoDBSyncReconciler) patchStatus(
 	if mutate != nil {
 		mutate(&dbSync.Status)
 	}
-	for _, condition := range conditions {
-		condition.ObservedGeneration = dbSync.Generation
-		apimeta.SetStatusCondition(&dbSync.Status.Conditions, condition)
-	}
+	ctrlconditions.SetObserved(&dbSync.Status.Conditions, dbSync.Generation, conditions...)
 
 	if equality.Semantic.DeepEqual(original.Status, dbSync.Status) {
 		return nil
@@ -291,21 +290,21 @@ func (r *CardanoDBSyncReconciler) workloadContainerReadyCondition(
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
-			return condition(conditionType, metav1.ConditionFalse, conditionReasonWorkloadMissing, "CardanoDBSync Deployment is missing"), nil
+			return ctrlconditions.Condition(conditionType, metav1.ConditionFalse, conditionReasonWorkloadMissing, "CardanoDBSync Deployment is missing"), nil
 		}
 		return metav1.Condition{}, err
 	}
 
 	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return condition(
+		return ctrlconditions.Condition(
 			conditionType,
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"CardanoDBSync Deployment has not observed the latest generation",
 		), nil
 	}
-	if !deploymentAvailable(deployment) {
-		return condition(
+	if !ctrlreadiness.DeploymentAvailable(deployment) {
+		return ctrlconditions.Condition(
 			conditionType,
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
@@ -318,10 +317,10 @@ func (r *CardanoDBSyncReconciler) workloadContainerReadyCondition(
 		return metav1.Condition{}, err
 	}
 	if !containerReady {
-		return condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, notReadyMessage), nil
+		return ctrlconditions.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, notReadyMessage), nil
 	}
 
-	return condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage), nil
+	return ctrlconditions.Condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage), nil
 }
 
 func (r *CardanoDBSyncReconciler) currentDBSyncMetricsEndpoint(
@@ -349,21 +348,21 @@ func (r *CardanoDBSyncReconciler) managedPostgresReadyCondition(
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresDeploymentName(dbSync)}, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
-			return condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonWorkloadMissing, "Managed Postgres Deployment is missing"), nil
+			return ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonWorkloadMissing, "Managed Postgres Deployment is missing"), nil
 		}
 		return metav1.Condition{}, err
 	}
 
 	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return condition(
+		return ctrlconditions.Condition(
 			conditionTypePostgresReady,
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"Managed Postgres Deployment has not observed the latest generation",
 		), nil
 	}
-	if !deploymentAvailable(deployment) {
-		return condition(
+	if !ctrlreadiness.DeploymentAvailable(deployment) {
+		return ctrlconditions.Condition(
 			conditionTypePostgresReady,
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
@@ -376,33 +375,10 @@ func (r *CardanoDBSyncReconciler) managedPostgresReadyCondition(
 		return metav1.Condition{}, err
 	}
 	if !containerReady {
-		return condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing, "Managed Postgres container is not ready"), nil
+		return ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing, "Managed Postgres container is not ready"), nil
 	}
 
-	return condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Managed Postgres container is ready"), nil
-}
-
-func deploymentAvailable(deployment *appsv1.Deployment) bool {
-	desiredReplicas := int32(1)
-	if deployment.Spec.Replicas != nil {
-		desiredReplicas = *deployment.Spec.Replicas
-	}
-	if desiredReplicas < 1 {
-		return false
-	}
-	if deployment.Status.UpdatedReplicas < desiredReplicas ||
-		deployment.Status.ReadyReplicas < desiredReplicas ||
-		deployment.Status.AvailableReplicas < desiredReplicas {
-		return false
-	}
-
-	for _, condition := range deployment.Status.Conditions {
-		if condition.Type == appsv1.DeploymentAvailable && condition.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-
-	return false
+	return ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Managed Postgres container is ready"), nil
 }
 
 func (r *CardanoDBSyncReconciler) workloadPodContainerReady(
@@ -430,7 +406,7 @@ func (r *CardanoDBSyncReconciler) podContainerReady(
 	}
 
 	for i := range pods.Items {
-		if podContainerReady(&pods.Items[i], containerName) {
+		if ctrlreadiness.PodContainerReady(&pods.Items[i], containerName) {
 			return true, nil
 		}
 	}
@@ -440,20 +416,6 @@ func (r *CardanoDBSyncReconciler) podContainerReady(
 
 func (r *CardanoDBSyncReconciler) statusReader() client.Reader {
 	return r.liveReader()
-}
-
-func podContainerReady(pod *corev1.Pod, containerName string) bool {
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
-		return false
-	}
-
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.Name == containerName && status.Ready && status.State.Running != nil {
-			return true
-		}
-	}
-
-	return false
 }
 
 func serviceEndpointFor(service *corev1.Service, scheme string, path string) *yacdv1alpha1.ServiceEndpointStatus {
@@ -501,13 +463,13 @@ func workloadsReadyCondition(followerNodeReady metav1.Condition, dbSyncReady met
 		dbSyncReady.Status == metav1.ConditionTrue &&
 		postgresReady.Status == metav1.ConditionTrue &&
 		synced.Status == metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, "CardanoDBSync is ready")
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, "CardanoDBSync is ready")
 	}
 	if followerNodeReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, followerNodeReady.Reason, followerNodeReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, followerNodeReady.Reason, followerNodeReady.Message)
 	}
 	if postgresReady.Status != metav1.ConditionTrue {
-		return condition(
+		return ctrlconditions.Condition(
 			conditionTypeReady,
 			metav1.ConditionFalse,
 			postgresReady.Reason,
@@ -515,10 +477,10 @@ func workloadsReadyCondition(followerNodeReady metav1.Condition, dbSyncReady met
 		)
 	}
 	if dbSyncReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, dbSyncReady.Reason, dbSyncReady.Message)
+		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, dbSyncReady.Reason, dbSyncReady.Message)
 	}
 	if synced.Status != metav1.ConditionTrue {
-		return condition(
+		return ctrlconditions.Condition(
 			conditionTypeReady,
 			metav1.ConditionFalse,
 			synced.Reason,
@@ -526,7 +488,7 @@ func workloadsReadyCondition(followerNodeReady metav1.Condition, dbSyncReady met
 		)
 	}
 
-	return condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, "CardanoDBSync is ready")
+	return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, "CardanoDBSync is ready")
 }
 
 func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
@@ -547,38 +509,29 @@ func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeDegraded, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeDegraded, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return condition(conditionTypeProgressing, status, reason, message)
+	return ctrlconditions.Condition(conditionTypeProgressing, status, reason, message)
 }
 
 func readyCondition(reason string, message string) metav1.Condition {
-	return condition(conditionTypeReady, metav1.ConditionFalse, reason, message)
+	return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, reason, message)
 }
 
 func followerNodeReadyCondition(reason string, message string) metav1.Condition {
-	return condition(conditionTypeFollowerNodeReady, metav1.ConditionFalse, reason, message)
+	return ctrlconditions.Condition(conditionTypeFollowerNodeReady, metav1.ConditionFalse, reason, message)
 }
 
 func postgresReadyCondition(reason string, message string) metav1.Condition {
-	return condition(conditionTypePostgresReady, metav1.ConditionFalse, reason, message)
+	return ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionFalse, reason, message)
 }
 
 func dbSyncReadyCondition(reason string, message string) metav1.Condition {
-	return condition(conditionTypeDBSyncReady, metav1.ConditionFalse, reason, message)
+	return ctrlconditions.Condition(conditionTypeDBSyncReady, metav1.ConditionFalse, reason, message)
 }
 
 func syncedCondition(reason string, message string) metav1.Condition {
-	return condition(conditionTypeSynced, metav1.ConditionFalse, reason, message)
-}
-
-func condition(conditionType string, status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return metav1.Condition{
-		Type:    conditionType,
-		Status:  status,
-		Reason:  reason,
-		Message: message,
-	}
+	return ctrlconditions.Condition(conditionTypeSynced, metav1.ConditionFalse, reason, message)
 }

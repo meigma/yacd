@@ -1,8 +1,6 @@
 package cardanonetwork
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"path"
 	"slices"
@@ -11,6 +9,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
+	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -78,12 +78,9 @@ const (
 	faucetHealthPath         = "/healthz"
 	faucetReadinessPath      = "/readyz"
 
-	nodeIPCVolumeName         = "node-ipc"
-	defaultNodeStorageSize    = "10Gi"
-	localnetFingerprintAnno   = "yacd.meigma.io/localnet-fingerprint"
-	requestedStorageClassAnno = "yacd.meigma.io/requested-storage-class"
-	maxLabelValueLength       = 63
-	safeNameHashLength        = 10
+	nodeIPCVolumeName       = "node-ipc"
+	defaultNodeStorageSize  = "10Gi"
+	localnetFingerprintAnno = "yacd.meigma.io/localnet-fingerprint"
 
 	labelAppName         = "app.kubernetes.io/name"
 	labelAppInstance     = "app.kubernetes.io/instance"
@@ -1217,7 +1214,7 @@ func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan
 		localnetFingerprintAnno: plan.Fingerprint.Value,
 	}
 	if network.Spec.Node.Storage != nil && network.Spec.Node.Storage.StorageClassName != nil {
-		annotations[requestedStorageClassAnno] = *network.Spec.Node.Storage.StorageClassName
+		annotations[ctrlstorage.RequestedStorageClassAnnotation] = *network.Spec.Node.Storage.StorageClassName
 	}
 
 	return annotations
@@ -1243,31 +1240,31 @@ func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.
 }
 
 func primaryWorkloadName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
+	return ctrlnames.DNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
 }
 
 func primaryNodeStatePVCName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "node-state")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "node-state")
 }
 
 func primaryOgmiosServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "ogmios")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "ogmios")
 }
 
 func primaryKupoServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "kupo")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "kupo")
 }
 
 func primaryFaucetServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "faucet")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet")
 }
 
 func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "faucet-auth")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet-auth")
 }
 
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	instance := safeLabelValue(network.Name)
+	instance := ctrlnames.LabelValue(network.Name)
 
 	return map[string]string{
 		labelAppName:        labelPrimaryNodeName,
@@ -1283,90 +1280,4 @@ func primaryWorkloadLabels(network *yacdv1alpha1.CardanoNetwork) map[string]stri
 	labels[labelAppManagedBy] = "yacd"
 
 	return labels
-}
-
-func safeDNSLabelWithSuffix(value string, suffix string) string {
-	base := sanitizeDNSLabel(value)
-	needsHash := base != value
-	if base == "" {
-		base = "x"
-		needsHash = true
-	}
-
-	candidateSuffix := "-" + suffix
-	if needsHash {
-		candidateSuffix = fmt.Sprintf("-%s-%s", shortNameHash(value), suffix)
-	}
-	candidate := base + candidateSuffix
-	if len(candidate) <= maxLabelValueLength {
-		return candidate
-	}
-
-	hash := shortNameHash(value)
-	hashSuffix := fmt.Sprintf("-%s-%s", hash, suffix)
-	prefixLength := maxLabelValueLength - len(hashSuffix)
-	prefix := strings.Trim(base[:prefixLength], "-")
-	if prefix == "" {
-		prefix = "x"
-	}
-
-	return prefix + hashSuffix
-}
-
-func safeLabelValue(value string) string {
-	base := sanitizeLabelValue(value)
-	if base == "" {
-		base = shortNameHash(value)
-	}
-	if len(base) <= maxLabelValueLength {
-		return base
-	}
-
-	hash := shortNameHash(value)
-	hashSuffix := "-" + hash
-	prefixLength := maxLabelValueLength - len(hashSuffix)
-	prefix := strings.TrimRight(base[:prefixLength], "-_.")
-	if prefix == "" {
-		prefix = "x"
-	}
-
-	return prefix + hashSuffix
-}
-
-func sanitizeDNSLabel(value string) string {
-	var builder strings.Builder
-	builder.Grow(len(value))
-	for _, char := range strings.ToLower(value) {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
-			builder.WriteRune(char)
-			continue
-		}
-		builder.WriteByte('-')
-	}
-
-	return strings.Trim(builder.String(), "-")
-}
-
-func sanitizeLabelValue(value string) string {
-	var builder strings.Builder
-	builder.Grow(len(value))
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-' ||
-			char == '_' ||
-			char == '.' {
-			builder.WriteRune(char)
-			continue
-		}
-		builder.WriteByte('-')
-	}
-
-	return strings.Trim(builder.String(), "-_.")
-}
-
-func shortNameHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:safeNameHashLength]
 }

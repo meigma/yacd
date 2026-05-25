@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
+	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,9 +24,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const testNetworkArtifactSchemaVersion = "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
+const testNetworkArtifactSchemaVersion = ctrlartifacts.CardanoNetworkSchemaVersion
 
-var testNetworkArtifactDataHash = computeNetworkArtifactDataHash(testNetworkArtifactsData())
+var testNetworkArtifactDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 const driftedDBSyncConfig = "drifted"
 
@@ -413,7 +415,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForMatchingArtifactConfigMapMetada
 	dbSync := localCardanoDBSync("dbsync", "mismatched-configmap")
 	network := readyCardanoNetwork("mismatched-configmap")
 	configMap := artifactConfigMapFor(network)
-	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = "sha256:" + strings.Repeat("b", 64)
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -428,8 +430,8 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForValidArtifactConfigMapData(t *t
 	network := readyCardanoNetwork("invalid-configmap-data")
 	configMap := artifactConfigMapFor(network)
 	delete(configMap.Data, "configuration.yaml")
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
-	network.Status.Artifacts.DataHash = configMap.Annotations[networkArtifactDataHashAnno]
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	network.Status.Artifacts.DataHash = configMap.Annotations[ctrlartifacts.DataHashAnnotation]
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -597,7 +599,7 @@ func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailabl
 			DBSlotHeight:  ptr.To[int64](4100),
 			Epoch:         ptr.To[int64](3),
 		},
-		PostgresReady: condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
+		PostgresReady: ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
 		Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
 	}}
 
@@ -1059,7 +1061,7 @@ func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenArtifactsMismatch(t
 	require.NoError(t, err)
 	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
 
-	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = "sha256:" + strings.Repeat("b", 64)
 	require.NoError(t, reconciler.Update(ctx, configMap))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1447,8 +1449,8 @@ func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMa
 			Name:      network.Status.Artifacts.NetworkConfigMapName,
 			Namespace: network.Namespace,
 			Annotations: map[string]string{
-				networkArtifactSchemaVersionAnno: network.Status.Artifacts.SchemaVersion,
-				networkArtifactDataHashAnno:      network.Status.Artifacts.DataHash,
+				ctrlartifacts.SchemaVersionAnnotation: network.Status.Artifacts.SchemaVersion,
+				ctrlartifacts.DataHashAnnotation:      network.Status.Artifacts.DataHash,
 			},
 		},
 		Data: testNetworkArtifactsData(),

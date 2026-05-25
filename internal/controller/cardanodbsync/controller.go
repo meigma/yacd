@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,8 +32,6 @@ const (
 	cardanoDBSyncExternalDatabaseSecretNameField = "spec.database.external.passwordSecretRef.name"
 	cardanoDBSyncManagedDatabaseSecretNameField  = "spec.database.managed.authSecretRef.name"
 
-	networkArtifactSchemaVersionAnno   = "yacd.meigma.io/artifact-schema-version"
-	networkArtifactDataHashAnno        = "yacd.meigma.io/artifact-data-hash"
 	defaultExternalDatabasePasswordKey = "password"
 
 	dbSyncWorkloadReadinessRequeueAfter = 15 * time.Second
@@ -148,14 +147,14 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork artifact ConfigMap is deleting",
 		)
 	}
-	if configMap.Annotations[networkArtifactSchemaVersionAnno] != network.Status.Artifacts.SchemaVersion ||
-		configMap.Annotations[networkArtifactDataHashAnno] != network.Status.Artifacts.DataHash {
+	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != network.Status.Artifacts.SchemaVersion ||
+		configMap.Annotations[ctrlartifacts.DataHashAnnotation] != network.Status.Artifacts.DataHash {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsMismatch,
 			"Referenced CardanoNetwork artifact ConfigMap metadata does not match status",
 		)
 	}
-	if err := validateNetworkArtifactsConfigMapData(configMap, network.Status.Artifacts.DataHash); err != nil {
+	if err := ctrlartifacts.ValidateConfigMapData(configMap, ctrlartifacts.CardanoNetworkContract(), network.Status.Artifacts.DataHash); err != nil {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsMismatch,
 			"Referenced CardanoNetwork artifact ConfigMap is invalid: "+err.Error(),

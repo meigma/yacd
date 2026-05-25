@@ -7,6 +7,7 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -96,7 +97,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
-			condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -305,18 +306,18 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		return ctrl.Result{}, revokeErr
 	}
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
-		degradedCondition(metav1.ConditionTrue, unsupported.reason, unsupported.message),
-		progressingCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		condition(conditionTypeReady, metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		nodeReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		kupoReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		faucetReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		artifactsReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		degradedCondition(metav1.ConditionTrue, unsupported.Reason, unsupported.Message),
+		progressingCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		nodeReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		kupoReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		faucetReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		artifactsReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if unsupported.reason == conditionReasonResourceConflict {
+	if unsupported.Reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, nil
 	}
 

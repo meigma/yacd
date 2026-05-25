@@ -7,6 +7,7 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -93,8 +94,8 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 			Name:      artifactConfigMapName,
 			Namespace: namespace.Name,
 			Annotations: map[string]string{
-				networkArtifactSchemaVersionAnno: testNetworkArtifactSchemaVersion,
-				networkArtifactDataHashAnno:      testNetworkArtifactDataHash,
+				ctrlartifacts.SchemaVersionAnnotation: testNetworkArtifactSchemaVersion,
+				ctrlartifacts.DataHashAnnotation:      testNetworkArtifactDataHash,
 			},
 		},
 		Data: testNetworkArtifactsData(),
