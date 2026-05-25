@@ -377,7 +377,6 @@ type managedPostgresIdentityInput struct {
 
 type managedPostgresAuthIdentityInput struct {
 	Name    string `json:"name"`
-	UID     string `json:"uid,omitempty"`
 	Version string `json:"version"`
 }
 
@@ -398,7 +397,6 @@ func managedPostgresIdentityFingerprint(dbSync *yacdv1alpha1.CardanoDBSync, auth
 		AuthProvided: managed.AuthSecretRef != nil,
 		AuthSecret: managedPostgresAuthIdentityInput{
 			Name:    authSecret.Name,
-			UID:     string(authSecret.UID),
 			Version: credentialVersion,
 		},
 	})
@@ -425,14 +423,13 @@ func managedPostgresCredentialVersion(dbSync *yacdv1alpha1.CardanoDBSync, authSe
 
 		return fingerprint, nil
 	}
-	if authSecret.ResourceVersion != "" {
-		return authSecret.ResourceVersion, nil
-	}
-	if authSecret.UID != "" {
-		return string(authSecret.UID), nil
+
+	password := authSecret.Data[managedPostgresPasswordKey]
+	if len(password) == 0 {
+		return "", unsupportedSpec("managed Postgres auth Secret does not contain key password")
 	}
 
-	return "unversioned", nil
+	return managedPostgresPasswordFingerprint(password), nil
 }
 
 func managedPostgresPasswordFingerprint(password []byte) string {

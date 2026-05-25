@@ -212,6 +212,19 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	current := &corev1.Secret{}
 	err := r.Get(ctx, clientObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
+		acceptedIdentity, err := r.acceptedManagedPostgresIdentity(ctx, dbSync)
+		if err != nil {
+			return nil, err
+		}
+		if acceptedIdentity != "" {
+			return nil, unsupportedApplyError{
+				reason: conditionReasonManagedDatabaseSecretMissing,
+				message: fmt.Sprintf(
+					"Managed Postgres generated auth Secret %s is missing after database initialization; restore the original Secret or recreate the CardanoDBSync with a fresh database",
+					clientObjectKey(desired),
+				),
+			}
+		}
 		password, err := generateManagedPostgresPassword()
 		if err != nil {
 			return nil, err
