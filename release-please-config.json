@@ -34,6 +34,7 @@
       "initial-version": "11.0.1-yacd.0",
       "changelog-path": "CHANGELOG.md",
       "changelog-sections": [
+        { "type": "feat", "section": "Features" },
         { "type": "build", "section": "Build" },
         { "type": "fix", "section": "Bug Fixes" },
         { "type": "perf", "section": "Performance" },
