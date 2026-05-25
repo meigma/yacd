@@ -44,12 +44,14 @@
   image, database name, user, port/password key, auth Secret name, and password
   material are captured in the managed Postgres identity stored on the owned
   PVC/template. Drift is rejected before owned Postgres children are mutated.
-- `CardanoDBSync` runtime status is intentionally conservative: the controller
-  reports Deployment availability and follower/db-sync container readiness, but
-  `DBSyncReady`, `Synced`, and aggregate `Ready` stay false with
-  `RuntimeProbesPending` until sync-lag probes are added. Managed mode sets
-  `PostgresReady=True` only from live managed Postgres Deployment/container
-  readiness; external mode still reports `ExternalDatabaseNotProbed`.
+- `CardanoDBSync` runtime status now includes bounded progress probes. The
+  controller probes Postgres connectivity/latest `block` progress as soon as DB
+  runtime inputs resolve, compares that progress with the referenced
+  `CardanoNetwork.status.endpoints.ogmios.url` node tip once workloads are
+  healthy, populates `status.sync`, sets `PostgresReady` from live DB
+  connectivity, sets `Synced=True` only within the package-local lag threshold,
+  and sets aggregate `Ready=True` only when follower node, db-sync container,
+  Postgres, and sync status are all ready.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
@@ -99,9 +101,14 @@
   full `11.0.1-yacd.1`, while the release workflow strips the `-yacd.N` suffix
   to download upstream Cardano artifacts.
 - The current published artifact-capable tools image is
-  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3`. Future packaging-only
+  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4`. Future packaging-only
   fixes should bump `yacd.N`; future upstream Cardano bumps should move the
   base version and reset the YACD packaging revision.
+- The active `cardano-testnet` publisher enriches `configuration.yaml` with
+  genesis hashes in `containers/cardano-testnet/publisher/internal/artifacts`.
+  It shells out to the image-owned `cardano-cli` as a narrow adapter because
+  that CLI is the canonical Cardano release tool already shipped in the tools
+  image; keep the Cobra command layer thin.
 - The `cardano-testnet` init-container fragment belongs in
   `internal/controller/cardanonetwork`, not `internal/cardano/localnet`. It
   calls the image-owned `/opt/yacd/bin/yacd-cardano-testnet-init` wrapper,
