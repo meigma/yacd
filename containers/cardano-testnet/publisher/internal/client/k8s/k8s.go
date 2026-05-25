@@ -89,11 +89,23 @@ type configMapPatchMetadata struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// marshalMergePatch turns a [client.ConfigMapPatch] into the JSON
-// merge-patch bytes the API server expects. PruneData entries are
-// serialized as null; SetData entries are serialized as their string
-// values.
+// marshalMergePatch returns the compact JSON merge-patch bytes the
+// API server expects for p.
 func marshalMergePatch(p client.ConfigMapPatch) ([]byte, error) {
+	return json.Marshal(buildBody(p))
+}
+
+// MarshalMergePatchIndented returns the indented JSON merge-patch
+// bytes that [Client.PatchConfigMap] would send for patch. Intended
+// for dry-run rendering and human inspection.
+func MarshalMergePatchIndented(patch client.ConfigMapPatch) ([]byte, error) {
+	return json.MarshalIndent(buildBody(patch), "", "  ")
+}
+
+// buildBody assembles the merge-patch body shape from a port-level
+// patch. PruneData entries become nil pointers (serialized as null);
+// SetData entries become pointers to copied string values.
+func buildBody(p client.ConfigMapPatch) configMapPatchBody {
 	var data map[string]*string
 	if len(p.SetData) > 0 || len(p.PruneData) > 0 {
 		data = make(map[string]*string, len(p.SetData)+len(p.PruneData))
@@ -105,10 +117,8 @@ func marshalMergePatch(p client.ConfigMapPatch) ([]byte, error) {
 			data[key] = nil
 		}
 	}
-
-	body := configMapPatchBody{
+	return configMapPatchBody{
 		Metadata: configMapPatchMetadata{Annotations: p.Annotations},
 		Data:     data,
 	}
-	return json.Marshal(body)
 }

@@ -84,6 +84,9 @@ type Config struct {
 	// primary node's node-to-node Service. When empty in input and both
 	// host and port are set, it is synthesized as "tcp://<host>:<port>".
 	CardanoNodeToNodeURL string
+	// DryRun reports whether the publisher should render the merge
+	// patch instead of applying it to the API server.
+	DryRun bool
 }
 
 // Load reads, derives, and validates the publisher configuration from
@@ -116,6 +119,7 @@ func Load(vp *viper.Viper) (Config, error) {
 		CardanoNodeToNodeHost:      strings.TrimSpace(vp.GetString("cardano-node-to-node-host")),
 		CardanoNodeToNodePort:      vp.GetInt("cardano-node-to-node-port"),
 		CardanoNodeToNodeURL:       strings.TrimSpace(vp.GetString("cardano-node-to-node-url")),
+		DryRun:                     vp.GetBool("dry-run"),
 	}
 
 	if cfg.ArtifactTokenPath == "" {

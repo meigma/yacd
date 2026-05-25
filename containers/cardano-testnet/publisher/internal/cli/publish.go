@@ -53,6 +53,7 @@ func newPublishCommand(commandContext *commandContext) *cobra.Command {
 	flags.String("cardano-node-to-node-host", "", "Primary node-to-node Service hostname")
 	flags.Int("cardano-node-to-node-port", 0, "Primary node-to-node Service port")
 	flags.String("cardano-node-to-node-url", "", "Pre-built primary node-to-node URL (defaults to tcp://<host>:<port>)")
+	flags.Bool("dry-run", false, "Print the merge-patch JSON to stdout and skip the Kubernetes API call")
 
 	_ = commandContext
 	return cmd
@@ -90,6 +91,17 @@ func runPublish(ctx context.Context, cfg config.Config, out io.Writer) error {
 		return err
 	}
 
+	clientPatch := toClientPatch(patch)
+
+	if cfg.DryRun {
+		body, err := k8s.MarshalMergePatchIndented(clientPatch)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, string(body))
+		return err
+	}
+
 	kubeClient, err := k8s.New(k8s.Config{
 		APIURL:    cfg.KubernetesAPIURL,
 		TokenPath: cfg.ArtifactTokenPath,
@@ -103,7 +115,7 @@ func runPublish(ctx context.Context, cfg config.Config, out io.Writer) error {
 		ctx,
 		cfg.ArtifactConfigMapNamespace,
 		cfg.ArtifactConfigMapName,
-		toClientPatch(patch),
+		clientPatch,
 	); err != nil {
 		return err
 	}
