@@ -9,8 +9,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+// setValues is a small alias for a Viper key/value bag used by tests
+// to build inputs to [Load] without touching real flags or env vars.
 type setValues map[string]any
 
+// newViper returns a fresh Viper instance pre-populated with the given
+// values via [viper.Viper.Set]. Set values take precedence over flag
+// and env-var resolution, which lets tests fix configuration directly.
 func newViper(values setValues) *viper.Viper {
 	vp := viper.New()
 	for key, value := range values {
@@ -19,6 +24,9 @@ func newViper(values setValues) *viper.Viper {
 	return vp
 }
 
+// validValues returns a setValues bag containing a minimal, valid
+// configuration that [Load] accepts without further mutation. Each test
+// case starts from this baseline and mutates only the fields under test.
 func validValues(t *testing.T) setValues {
 	t.Helper()
 	return setValues{
