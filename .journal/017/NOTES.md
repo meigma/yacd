@@ -11,3 +11,6 @@ Plan: prime this session on `journal/jmgilman`, create an isolated Worktrunk bra
 
 ## 2026-05-25 13:21 — Dev stack ready
 Created implementation worktree `/Users/josh/code/meigma/yacd/.wt/feat-ctrlkit-foundation` on branch `feat/ctrlkit-foundation`. Ran `direnv allow` and `moon run root:dev-up`; the Kind/Tilt dev stack reported `YACD dev stack is ready` with Tilt UI on `http://localhost:10350/`.
+
+## 2026-05-25 13:28 — ctrlkit foundation pushed
+Implemented only `internal/ctrlkit/**`: `names`, `metadata`, `conditions`, `readiness`, and `artifacts`, each with package docs and focused table-driven tests. Validation passed with `go test ./internal/ctrlkit/...`, `moon run root:test`, `moon run root:check`, and `git diff --check`. Committed `abb9747` (`feat(ctrlkit): add controller utility foundation`) and pushed `feat/ctrlkit-foundation` to origin.
