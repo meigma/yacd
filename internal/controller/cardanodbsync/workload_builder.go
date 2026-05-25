@@ -97,20 +97,38 @@ func (b dbSyncWorkloadBuilder) Build(
 	if dbSync == nil {
 		return nil, fmt.Errorf("cardanodbsync is required")
 	}
+	external := dbSync.Spec.Database.External
+	if external == nil {
+		return nil, unsupportedSpec("external database spec is required")
+	}
+
+	return b.BuildForDatabase(dbSync, network, networkArtifacts, externalDatabaseSecret, dbSyncDatabaseFromExternal(external))
+}
+
+func (b dbSyncWorkloadBuilder) BuildForDatabase(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	networkArtifacts *corev1.ConfigMap,
+	databaseSecret *corev1.Secret,
+	database dbsync.Database,
+) (*dbSyncWorkloadResources, error) {
+	if dbSync == nil {
+		return nil, fmt.Errorf("cardanodbsync is required")
+	}
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
 	if networkArtifacts == nil {
 		return nil, fmt.Errorf("network artifacts ConfigMap is required")
 	}
-	if externalDatabaseSecret == nil {
-		return nil, fmt.Errorf("external database Secret is required")
+	if databaseSecret == nil {
+		return nil, fmt.Errorf("database credential Secret is required")
 	}
 	if b.scheme == nil {
 		return nil, fmt.Errorf("scheme is required")
 	}
 
-	spec, err := b.planSpec(dbSync, network)
+	spec, err := b.planSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
 	}
@@ -131,11 +149,11 @@ func (b dbSyncWorkloadBuilder) Build(
 	if err != nil {
 		return nil, err
 	}
-	pgPassSecret, err := b.pgPassSecret(dbSync, externalDatabaseSecret, plan)
+	pgPassSecret, err := b.pgPassSecret(dbSync, databaseSecret, plan)
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := b.deployment(dbSync, network, networkArtifacts, externalDatabaseSecret, plan)
+	deployment, err := b.deployment(dbSync, network, networkArtifacts, databaseSecret, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -155,11 +173,7 @@ func (b dbSyncWorkloadBuilder) Build(
 	}, nil
 }
 
-func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork) (dbsync.Spec, error) {
-	external := dbSync.Spec.Database.External
-	if external == nil {
-		return dbsync.Spec{}, unsupportedSpec("external database spec is required")
-	}
+func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, database dbsync.Database) (dbsync.Spec, error) {
 	if network.Status.Endpoints == nil || network.Status.Endpoints.NodeToNode == nil {
 		return dbsync.Spec{}, unsupportedSpec("node-to-node endpoint is required")
 	}
@@ -183,15 +197,7 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 			Host: fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace),
 			Port: network.Status.Endpoints.NodeToNode.Port,
 		},
-		Database: dbsync.Database{
-			Host:               external.Host,
-			Port:               external.Port,
-			Name:               external.Database,
-			User:               external.User,
-			PasswordSecretName: external.PasswordSecretRef.Name,
-			PasswordSecretKey:  externalDatabasePasswordKey(external),
-			SSLMode:            string(external.SSLMode),
-		},
+		Database:     database,
 		Runtime:      runtimeSettings(dbSync),
 		Storage:      storageSettings(dbSync),
 		Insert:       insertOptions(dbSync),
@@ -205,6 +211,22 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 			PGPassFile:   dbSyncPGPassFilePath(),
 		},
 	}, nil
+}
+
+func dbSyncDatabaseFromExternal(external *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec) dbsync.Database {
+	if external == nil {
+		return dbsync.Database{}
+	}
+
+	return dbsync.Database{
+		Host:               external.Host,
+		Port:               external.Port,
+		Name:               external.Database,
+		User:               external.User,
+		PasswordSecretName: external.PasswordSecretRef.Name,
+		PasswordSecretKey:  externalDatabasePasswordKey(external),
+		SSLMode:            string(external.SSLMode),
+	}
 }
 
 func runtimeSettings(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.Runtime {
@@ -519,10 +541,10 @@ func storageSizeFrom(storage *yacdv1alpha1.CardanoDBSyncStorageSpec, fallback st
 
 func (b dbSyncWorkloadBuilder) pgPassSecret(
 	dbSync *yacdv1alpha1.CardanoDBSync,
-	externalDatabaseSecret *corev1.Secret,
+	databaseSecret *corev1.Secret,
 	plan dbsync.Plan,
 ) (*corev1.Secret, error) {
-	pgPass, err := pgPassFile(plan, externalDatabaseSecret)
+	pgPass, err := pgPassFile(plan, databaseSecret)
 	if err != nil {
 		return nil, err
 	}
@@ -534,7 +556,7 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 			Annotations: map[string]string{
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
-				dbSyncSecretVersionAnno:    externalDatabaseSecret.ResourceVersion,
+				dbSyncSecretVersionAnno:    databaseSecret.ResourceVersion,
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -549,10 +571,10 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 	return secret, nil
 }
 
-func pgPassFile(plan dbsync.Plan, externalDatabaseSecret *corev1.Secret) (string, error) {
-	passwordBytes := externalDatabaseSecret.Data[plan.Spec.Database.PasswordSecretKey]
+func pgPassFile(plan dbsync.Plan, databaseSecret *corev1.Secret) (string, error) {
+	passwordBytes := databaseSecret.Data[plan.Spec.Database.PasswordSecretKey]
 	if len(passwordBytes) == 0 {
-		return "", unsupportedSpec("external database Secret does not contain key %q", plan.Spec.Database.PasswordSecretKey)
+		return "", unsupportedSpec("database credential Secret does not contain key %q", plan.Spec.Database.PasswordSecretKey)
 	}
 	password := string(passwordBytes)
 
@@ -587,7 +609,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
 	networkArtifacts *corev1.ConfigMap,
-	externalDatabaseSecret *corev1.Secret,
+	databaseSecret *corev1.Secret,
 	plan dbsync.Plan,
 ) (*appsv1.Deployment, error) {
 	selectorLabels := dbSyncWorkloadSelectorLabels(dbSync)
@@ -611,7 +633,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 						dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 						dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 						dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
-						dbSyncSecretVersionAnno:    externalDatabaseSecret.ResourceVersion,
+						dbSyncSecretVersionAnno:    databaseSecret.ResourceVersion,
 					},
 				},
 				Spec: corev1.PodSpec{

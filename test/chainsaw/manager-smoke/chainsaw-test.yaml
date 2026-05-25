@@ -25,8 +25,12 @@ spec:
           kubectl describe deployment -n yacd-system yacd-controller-manager
           echo "== CardanoNetwork smoke resource =="
           kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o yaml
+          echo "== CardanoDBSync managed smoke resource =="
+          kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml
           echo "== CardanoNetwork smoke resources =="
           kubectl get all,pvc,secret,configmap,serviceaccount,role,rolebinding -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke -o wide
+          echo "== CardanoDBSync managed smoke resources =="
+          kubectl get all,pvc,secret,configmap -n yacd-smoke -l yacd.meigma.io/cardanodbsync=phase6-managed -o wide
           echo "== CardanoNetwork smoke events =="
           kubectl get events -n yacd-smoke --sort-by=.lastTimestamp
           echo "== CardanoNetwork smoke child descriptions =="
@@ -41,7 +45,10 @@ spec:
           kubectl describe role -n yacd-smoke phase4-smoke-artifact-publisher
           kubectl describe rolebinding -n yacd-smoke phase4-smoke-artifact-publisher
           kubectl describe deployment -n yacd-smoke phase4-smoke-node
+          kubectl describe deployment -n yacd-smoke phase6-managed-postgres
+          kubectl describe deployment -n yacd-smoke phase6-managed-dbsync
           kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node
+          kubectl describe pod -n yacd-smoke -l yacd.meigma.io/cardanodbsync=phase6-managed
           echo "== Ogmios curl logs =="
           kubectl logs -n yacd-smoke curl-ogmios || true
           echo "== Kupo curl logs =="
@@ -50,6 +57,8 @@ spec:
           kubectl logs -n yacd-smoke curl-faucet || true
           echo "== CardanoNetwork smoke pod logs =="
           kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
+          echo "== CardanoDBSync managed smoke pod logs =="
+          kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanodbsync=phase6-managed --all-containers --prefix --tail=-1
           exit 0
   steps:
     - name: deploy-controller
@@ -429,6 +438,64 @@ spec:
                   assert key in data
               assert connection["files"]["primaryTopology"] == "primary-topology.json"
               PY
+        - script:
+            timeout: 8m
+            workDir: ../../..
+            content: |
+              set -euo pipefail
+              export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
+              kubectl apply -f - <<'YAML'
+              apiVersion: yacd.meigma.io/v1alpha1
+              kind: CardanoDBSync
+              metadata:
+                name: phase6-managed
+                namespace: yacd-smoke
+              spec:
+                networkRef:
+                  name: phase4-smoke
+                database:
+                  managed: {}
+              YAML
+
+              for _ in $(seq 1 60); do
+                if kubectl get secret -n yacd-smoke phase6-managed-postgres-auth >/dev/null 2>&1 &&
+                  kubectl get pvc -n yacd-smoke phase6-managed-postgres-state >/dev/null 2>&1 &&
+                  kubectl get service -n yacd-smoke phase6-managed-postgres >/dev/null 2>&1 &&
+                  kubectl get deployment -n yacd-smoke phase6-managed-postgres >/dev/null 2>&1; then
+                  break
+                fi
+                sleep 2
+              done
+              kubectl get secret -n yacd-smoke phase6-managed-postgres-auth
+              kubectl get pvc -n yacd-smoke phase6-managed-postgres-state
+              kubectl get service -n yacd-smoke phase6-managed-postgres
+              kubectl get deployment -n yacd-smoke phase6-managed-postgres
+              kubectl wait -n yacd-smoke --for=condition=Available deployment/phase6-managed-postgres --timeout=5m
+
+              for _ in $(seq 1 60); do
+                postgres_ready="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="PostgresReady")].status}' 2>/dev/null || true)"
+                postgres_reason="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="PostgresReady")].reason}' 2>/dev/null || true)"
+                synced="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)"
+                synced_reason="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].reason}' 2>/dev/null || true)"
+                service_name="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.serviceName}' 2>/dev/null || true)"
+                port="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.port}' 2>/dev/null || true)"
+                url="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.url}' 2>/dev/null || true)"
+                auth_secret="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.database.authSecretName}' 2>/dev/null || true)"
+                if [ "${postgres_ready}" = "True" ] &&
+                  [ "${postgres_reason}" = "PostgresReady" ] &&
+                  [ "${synced}" = "False" ] &&
+                  [ "${synced_reason}" = "SyncNotProbed" ] &&
+                  [ "${service_name}" = "phase6-managed-postgres" ] &&
+                  [ "${port}" = "5432" ] &&
+                  [ "${url}" = "postgres://phase6-managed-postgres.yacd-smoke.svc.cluster.local:5432/cexplorer" ] &&
+                  [ "${auth_secret}" = "phase6-managed-postgres-auth" ]; then
+                  kubectl get deployment -n yacd-smoke phase6-managed-dbsync
+                  exit 0
+                fi
+                kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true
+                sleep 5
+              done
+              exit 1
         - script:
             timeout: 3m
             workDir: ../../..

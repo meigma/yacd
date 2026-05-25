@@ -207,6 +207,66 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 			ready.Status == metav1.ConditionFalse &&
 			ready.Reason == conditionReasonDeploymentProgressing
 	}, 10*time.Second, 100*time.Millisecond)
+
+	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
+}
+
+func assertManagedPostgresSecretAndChildWatches(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	namespace string,
+) {
+	t.Helper()
+
+	managedSecretWatchedDBSync := managedCardanoDBSync("dbsync-managed-secret-watch", "watched-network")
+	managedSecretWatchedDBSync.Namespace = namespace
+	managedSecretWatchedDBSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "managed-auth"}
+	managedAuthSecret := providedManagedPostgresAuthSecretFor(managedSecretWatchedDBSync)
+	managedAuthSecret.Data = map[string][]byte{"other": []byte("secret")}
+	require.NoError(t, apiClient.Create(ctx, managedAuthSecret))
+	require.NoError(t, apiClient.Create(ctx, managedSecretWatchedDBSync))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(managedSecretWatchedDBSync), current); err != nil {
+			return false
+		}
+		degraded := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeDegraded)
+		return degraded != nil &&
+			degraded.Status == metav1.ConditionTrue &&
+			degraded.Reason == conditionReasonManagedDatabaseSecretInvalid
+	}, 10*time.Second, 100*time.Millisecond)
+
+	currentManagedSecret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(managedAuthSecret), currentManagedSecret))
+	currentManagedSecret.Data = map[string][]byte{"password": []byte("secret")}
+	require.NoError(t, apiClient.Update(ctx, currentManagedSecret))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(managedSecretWatchedDBSync), current); err != nil {
+			return false
+		}
+		postgres := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypePostgresReady)
+		return current.Status.ObservedGeneration == current.Generation &&
+			postgres != nil &&
+			postgres.Status == metav1.ConditionFalse &&
+			postgres.Reason == conditionReasonDeploymentProgressing
+	}, 10*time.Second, 100*time.Millisecond)
+
+	managedPostgresService := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: managedPostgresServiceName(managedSecretWatchedDBSync)}, managedPostgresService))
+	managedPostgresService.Spec.Ports[0].Port = 15432
+	require.NoError(t, apiClient.Update(ctx, managedPostgresService))
+
+	require.Eventually(t, func() bool {
+		current := &corev1.Service{}
+		if err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace, Name: managedPostgresServiceName(managedSecretWatchedDBSync)}, current); err != nil {
+			return false
+		}
+		return len(current.Spec.Ports) == 1 && current.Spec.Ports[0].Port == managedPostgresPort
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func localCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {

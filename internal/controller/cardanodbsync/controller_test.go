@@ -10,7 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,23 +53,210 @@ func TestCardanoDBSyncReconcilerReconcileSkipsTerminatingObject(t *testing.T) {
 	assert.Empty(t, current.Status.Conditions)
 }
 
-func TestCardanoDBSyncReconcilerReconcileReportsUnsupportedManagedDatabase(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileAppliesManagedPostgresAndGatesDBSyncWorkload(t *testing.T) {
 	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "devnet")
-	dbSync.Spec.Database.External = nil
-	dbSync.Spec.Database.Managed = &yacdv1alpha1.CardanoDBSyncManagedDatabaseSpec{
-		Image:    "postgres:17.2-alpine",
-		Database: "cexplorer",
-		User:     "postgres",
-	}
-	reconciler := newTestReconciler(t, dbSync)
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionFalse, conditionReasonWorkloadMissing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonWorkloadMissing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonSyncNotProbed)
+
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	require.Len(t, authSecret.Data[managedPostgresPasswordKey], 43)
+	firstPassword := string(authSecret.Data[managedPostgresPasswordKey])
+	assert.NotEmpty(t, authSecret.Annotations[managedPostgresPasswordFingerprintAnno])
+	assert.True(t, controlledBy(authSecret, dbSync))
+	postgresPVC := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresPVCName(dbSync)}, postgresPVC))
+	assert.NotEmpty(t, postgresPVC.Annotations[managedPostgresIdentityAnno])
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresServiceName(dbSync)}, &corev1.Service{}))
+	postgresDeployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, defaultManagedPostgresImage, requireContainerSpec(t, postgresDeployment, managedPostgresContainerName).Image)
+	assert.NotEmpty(t, postgresDeployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Endpoints)
+	require.NotNil(t, current.Status.Endpoints.Postgres)
+	assert.Equal(t, managedPostgresServiceName(dbSync), current.Status.Endpoints.Postgres.ServiceName)
+	assert.Equal(t, int32(5432), current.Status.Endpoints.Postgres.Port)
+	assert.Equal(t, "postgres://dbsync-postgres.default.svc.cluster.local:5432/cexplorer", current.Status.Endpoints.Postgres.URL)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, managedPostgresAuthSecretName(dbSync), current.Status.Database.AuthSecretName)
+	assert.Empty(t, current.Status.Database.AcceptedIdentityFingerprint)
+
+	err = reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+	require.True(t, apierrors.IsNotFound(err), "expected missing db-sync Deployment, got %v", err)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	authSecret = &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	assert.Equal(t, firstPassword, string(authSecret.Data[managedPostgresPasswordKey]))
+
+	postgresDeployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	markManagedPostgresDeploymentAvailable(t, ctx, reconciler, postgresDeployment)
+	markManagedPostgresPodReady(t, ctx, reconciler, dbSync)
+
+	result, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
+	pgpass := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncPGPassSecretName(dbSync)}, pgpass))
+	assert.Equal(t, "dbsync-postgres.default.svc.cluster.local:5432:cexplorer:postgres:"+firstPassword+"\n", string(pgpass.Data[dbSyncPGPassFileName]))
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.NotEmpty(t, current.Status.Database.AcceptedIdentityFingerprint)
+	assert.Equal(t, managedPostgresAuthSecretName(dbSync), current.Status.Database.AuthSecretName)
+}
+
+func TestCardanoDBSyncReconcilerReconcileUsesProvidedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
+	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseMode)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseMode)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseMode)
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(authSecret), currentSecret))
+	assert.Empty(t, currentSecret.OwnerReferences)
+	assert.Equal(t, "provided-secret", string(currentSecret.Data[managedPostgresPasswordKey]))
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	if current.Status.Database != nil {
+		assert.Empty(t, current.Status.Database.AuthSecretName)
+	}
+	deployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	postgres := requireContainerSpec(t, deployment, managedPostgresContainerName)
+	assert.Equal(t, "provided-postgres-auth", requireEnvVar(t, postgres, "POSTGRES_PASSWORD").ValueFrom.SecretKeyRef.Name)
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsProvidedManagedPostgresAuthSecretChange(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
+	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	acceptedIdentity := deployment.Spec.Template.Annotations[managedPostgresIdentityAnno]
+	require.NotEmpty(t, acceptedIdentity)
+
+	replacementSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	replacementSecret.Name = "replacement-postgres-auth"
+	require.NoError(t, reconciler.Create(ctx, replacementSecret))
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	current.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: replacementSecret.Name}
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	deployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedIdentity, deployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	postgres := requireContainerSpec(t, deployment, managedPostgresContainerName)
+	assert.Equal(t, "provided-postgres-auth", requireEnvVar(t, postgres, "POSTGRES_PASSWORD").ValueFrom.SecretKeyRef.Name)
+}
+
+func TestCardanoDBSyncReconcilerReconcileAllowsProvidedManagedPostgresAuthSecretChurn(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
+	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	acceptedIdentity := deployment.Spec.Template.Annotations[managedPostgresIdentityAnno]
+	acceptedSecretVersion := deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
+	require.NotEmpty(t, acceptedIdentity)
+	require.NotEmpty(t, acceptedSecretVersion)
+
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(authSecret), currentSecret))
+	currentSecret.Labels = map[string]string{"external-controller": "touched"}
+	currentSecret.Annotations = map[string]string{"external-controller": "touched"}
+	currentSecret.Data["unrelated"] = []byte("changed")
+	require.NoError(t, reconciler.Update(ctx, currentSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	deployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedIdentity, deployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	assert.Equal(t, acceptedSecretVersion, deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsProvidedManagedPostgresPasswordMutation(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
+	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	acceptedIdentity := deployment.Spec.Template.Annotations[managedPostgresIdentityAnno]
+	acceptedSecretVersion := deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
+	require.NotEmpty(t, acceptedIdentity)
+	require.NotEmpty(t, acceptedSecretVersion)
+
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(authSecret), currentSecret))
+	currentSecret.Data[managedPostgresPasswordKey] = []byte("rotated-password")
+	require.NoError(t, reconciler.Update(ctx, currentSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	deployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedIdentity, deployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	assert.Equal(t, acceptedSecretVersion, deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsInvalidProvidedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
+	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
+	authSecret.Data = map[string][]byte{"other": []byte("secret")}
+	reconciler := newTestReconciler(t, dbSync, authSecret)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonManagedDatabaseSecretInvalid)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonManagedDatabaseSecretInvalid)
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(authSecret), currentSecret))
+	assert.Empty(t, currentSecret.OwnerReferences)
 }
 
 func TestCardanoDBSyncReconcilerReconcileReportsUnsupportedOnlyUTxOPresetWithLSM(t *testing.T) {
@@ -368,6 +557,217 @@ func TestCardanoDBSyncReconcilerReconcileRepairsOwnedConfigMapDrift(t *testing.T
 	assert.Contains(t, repaired.Data[dbSyncConfigFileName], "NetworkName: ready-network")
 }
 
+func TestCardanoDBSyncReconcilerReconcileRepairsManagedPostgresChildDrift(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	delete(authSecret.Labels, labelAppManagedBy)
+	require.NoError(t, reconciler.Update(ctx, authSecret))
+	service := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresServiceName(dbSync)}, service))
+	service.Spec.Ports[0].Port = 15432
+	require.NoError(t, reconciler.Update(ctx, service))
+	deployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	for i := range deployment.Spec.Template.Spec.Containers {
+		if deployment.Spec.Template.Spec.Containers[i].Name == managedPostgresContainerName {
+			deployment.Spec.Template.Spec.Containers[i].Image = "postgres:old"
+		}
+	}
+	require.NoError(t, reconciler.Update(ctx, deployment))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	assert.Equal(t, "yacd", authSecret.Labels[labelAppManagedBy])
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresServiceName(dbSync)}, service))
+	assert.Equal(t, managedPostgresPort, service.Spec.Ports[0].Port)
+	deployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, defaultManagedPostgresImage, requireContainerSpec(t, deployment, managedPostgresContainerName).Image)
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresPVCDrift(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	storageClass := "fast"
+	dbSync.Spec.Database.Managed.Storage = &yacdv1alpha1.CardanoDBSyncStorageSpec{
+		StorageClassName: &storageClass,
+	}
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	smaller := resource.MustParse("5Gi")
+	current.Spec.Database.Managed.Storage = &yacdv1alpha1.CardanoDBSyncStorageSpec{
+		Size:             &smaller,
+		StorageClassName: &storageClass,
+	}
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	slowStorageClass := "slow"
+	current.Spec.Database.Managed.Storage = &yacdv1alpha1.CardanoDBSyncStorageSpec{
+		StorageClassName: &slowStorageClass,
+	}
+	current.Generation = 3
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresIdentityMutationBeforeApply(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	postgresDeployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	acceptedImage := requireContainerSpec(t, postgresDeployment, managedPostgresContainerName).Image
+	acceptedIdentity := postgresDeployment.Spec.Template.Annotations[managedPostgresIdentityAnno]
+	require.NotEmpty(t, acceptedIdentity)
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	current.Spec.Database.Managed.Image = "postgres:17.3-alpine"
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	postgresDeployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedImage, requireContainerSpec(t, postgresDeployment, managedPostgresContainerName).Image)
+	assert.Equal(t, acceptedIdentity, postgresDeployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	err = reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+	require.True(t, apierrors.IsNotFound(err), "expected missing db-sync Deployment, got %v", err)
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsGeneratedManagedPostgresPasswordMutation(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	postgresDeployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	markManagedPostgresDeploymentAvailable(t, ctx, reconciler, postgresDeployment)
+	markManagedPostgresPodReady(t, ctx, reconciler, dbSync)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	pgpass := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncPGPassSecretName(dbSync)}, pgpass))
+	acceptedPGPass := string(pgpass.Data[dbSyncPGPassFileName])
+	postgresDeployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	acceptedPostgresVersion := postgresDeployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
+	dbSyncDeployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	acceptedDBSyncVersion := dbSyncDeployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	authSecret.Data[managedPostgresPasswordKey] = []byte("rotated-password")
+	require.NoError(t, reconciler.Update(ctx, authSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncPGPassSecretName(dbSync)}, pgpass))
+	assert.Equal(t, acceptedPGPass, string(pgpass.Data[dbSyncPGPassFileName]))
+	postgresDeployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedPostgresVersion, postgresDeployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	dbSyncDeployment = requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	assert.Equal(t, acceptedDBSyncVersion, dbSyncDeployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
+}
+
+func TestCardanoDBSyncReconcilerReconcileDoesNotRegenerateGeneratedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	postgresPVC := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresPVCName(dbSync)}, postgresPVC))
+	require.NotEmpty(t, postgresPVC.Annotations[managedPostgresIdentityAnno])
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	require.NoError(t, reconciler.Delete(ctx, authSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonManagedDatabaseSecretMissing)
+	err = reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, &corev1.Secret{})
+	require.True(t, apierrors.IsNotFound(err), "expected missing managed auth Secret, got %v", err)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, managedPostgresAuthSecretName(dbSync), current.Status.Database.AuthSecretName)
+}
+
+func TestCardanoDBSyncReconcilerReconcilePreservesRuntimeStatusWhenManagedPostgresRegresses(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	postgresDeployment := requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	markManagedPostgresDeploymentAvailable(t, ctx, reconciler, postgresDeployment)
+	markManagedPostgresPodReady(t, ctx, reconciler, dbSync)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	dbSyncDeployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, dbSyncDeployment)
+	markDBSyncPodContainersReady(t, ctx, reconciler, dbSync, followerNodeContainerName, dbSyncContainerName)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	acceptedIdentity := current.Status.Database.AcceptedIdentityFingerprint
+	require.NotEmpty(t, acceptedIdentity)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionTrue, conditionReasonFollowerNodeReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionTrue, conditionReasonDBSyncReady)
+
+	postgresDeployment = requireManagedPostgresDeployment(t, ctx, reconciler, dbSync)
+	markDeploymentUnavailable(t, ctx, reconciler, postgresDeployment)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionTrue, conditionReasonFollowerNodeReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionTrue, conditionReasonDBSyncReady)
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, acceptedIdentity, current.Status.Database.AcceptedIdentityFingerprint)
+}
+
 func TestCardanoDBSyncReconcilerReconcileRejectsDatabaseIdentityMutation(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
@@ -598,6 +998,19 @@ func requireDBSyncDeployment(
 	return deployment
 }
 
+func requireManagedPostgresDeployment(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) *appsv1.Deployment {
+	t.Helper()
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresDeploymentName(dbSync)}, deployment))
+	return deployment
+}
+
 func requireContainerSpec(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Container {
 	t.Helper()
 
@@ -628,6 +1041,30 @@ func markDBSyncDeploymentAvailable(
 		Status:             corev1.ConditionTrue,
 		Reason:             "MinimumReplicasAvailable",
 		Message:            "Deployment has minimum availability.",
+		LastUpdateTime:     metav1.Now(),
+		LastTransitionTime: metav1.Now(),
+	}}
+	require.NoError(t, reconciler.Status().Update(ctx, deployment))
+}
+
+func markDeploymentUnavailable(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	deployment *appsv1.Deployment,
+) {
+	t.Helper()
+
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 0
+	deployment.Status.AvailableReplicas = 0
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{{
+		Type:               appsv1.DeploymentAvailable,
+		Status:             corev1.ConditionFalse,
+		Reason:             "MinimumReplicasUnavailable",
+		Message:            "Deployment does not have minimum availability.",
 		LastUpdateTime:     metav1.Now(),
 		LastTransitionTime: metav1.Now(),
 	}}
@@ -671,6 +1108,52 @@ func markDBSyncPodContainersReady(
 	require.NoError(t, reconciler.Create(ctx, pod))
 	pod.Status.Phase = corev1.PodRunning
 	pod.Status.ContainerStatuses = containerStatuses
+	require.NoError(t, reconciler.Status().Update(ctx, pod))
+}
+
+func markManagedPostgresDeploymentAvailable(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	deployment *appsv1.Deployment,
+) {
+	t.Helper()
+
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, deployment)
+}
+
+func markManagedPostgresPodReady(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) {
+	t.Helper()
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      managedPostgresDeploymentName(dbSync) + "-pod",
+			Namespace: dbSync.Namespace,
+			Labels:    managedPostgresSelectorLabels(dbSync),
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name:  managedPostgresContainerName,
+				Image: defaultManagedPostgresImage,
+			}},
+		},
+	}
+	require.NoError(t, reconciler.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:  managedPostgresContainerName,
+		Ready: true,
+		State: corev1.ContainerState{
+			Running: &corev1.ContainerStateRunning{
+				StartedAt: metav1.Now(),
+			},
+		},
+	}}
 	require.NoError(t, reconciler.Status().Update(ctx, pod))
 }
 
@@ -743,6 +1226,17 @@ func localCardanoDBSync(name string, networkName string) *yacdv1alpha1.CardanoDB
 	}
 }
 
+func managedCardanoDBSync(name string, networkName string) *yacdv1alpha1.CardanoDBSync {
+	dbSync := localCardanoDBSync(name, networkName)
+	dbSync.Spec.Database.External = nil
+	dbSync.Spec.Database.Managed = &yacdv1alpha1.CardanoDBSyncManagedDatabaseSpec{
+		Image:    defaultManagedPostgresImage,
+		Database: defaultManagedPostgresDatabase,
+		User:     defaultManagedPostgresUser,
+	}
+	return dbSync
+}
+
 func externalDatabaseSecretFor(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secret {
 	secretName := dbSync.Spec.Database.External.PasswordSecretRef.Name
 	secretKey := externalDatabasePasswordKey(dbSync.Spec.Database.External)
@@ -754,6 +1248,18 @@ func externalDatabaseSecretFor(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secre
 		},
 		Data: map[string][]byte{
 			secretKey: []byte("secret"),
+		},
+	}
+}
+
+func providedManagedPostgresAuthSecretFor(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dbSync.Spec.Database.Managed.AuthSecretRef.Name,
+			Namespace: dbSync.Namespace,
+		},
+		Data: map[string][]byte{
+			managedPostgresPasswordKey: []byte("provided-secret"),
 		},
 	}
 }

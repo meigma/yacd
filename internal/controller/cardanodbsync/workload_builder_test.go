@@ -10,8 +10,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
@@ -76,6 +78,81 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, dbSyncStateMountDir, requireVolumeMount(t, dbSyncContainer, dbSyncStateVolumeName).MountPath)
 	assert.Equal(t, int32(8080), resources.MetricsService.Spec.Ports[0].Port)
 	assert.Equal(t, dbSyncWorkloadSelectorLabels(dbSync), resources.MetricsService.Spec.Selector)
+}
+
+func TestDBSyncWorkloadBuilderBuildsManagedPostgresResources(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	dbSync.UID = types.UID("dbsync-uid")
+	authSecret := &corev1.Secret{}
+	authSecret.Name = managedPostgresAuthSecretName(dbSync)
+	authSecret.Namespace = dbSync.Namespace
+	authSecret.ResourceVersion = "11"
+	authSecret.Data = map[string][]byte{
+		managedPostgresPasswordKey: []byte("managed-secret"),
+	}
+	authSecret.Annotations = map[string]string{
+		managedPostgresPasswordFingerprintAnno: managedPostgresPasswordFingerprint(authSecret.Data[managedPostgresPasswordKey]),
+	}
+
+	resources, err := builder.managedPostgresResources(dbSync, authSecret)
+
+	require.NoError(t, err)
+	assert.NotEmpty(t, resources.IdentityFingerprint)
+	assert.Equal(t, "dbsync-postgres-state", resources.PersistentVolumeClaim.Name)
+	assert.Equal(t, resources.IdentityFingerprint, resources.PersistentVolumeClaim.Annotations[managedPostgresIdentityAnno])
+	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Equal(t, "10Gi", storage.String())
+	assert.Equal(t, "dbsync-postgres", resources.Service.Name)
+	assert.Equal(t, corev1.ServiceTypeClusterIP, resources.Service.Spec.Type)
+	assert.Equal(t, managedPostgresSelectorLabels(dbSync), resources.Service.Spec.Selector)
+	assert.Equal(t, int32(5432), resources.Service.Spec.Ports[0].Port)
+	assert.Equal(t, intstr.FromString(managedPostgresPortName), resources.Service.Spec.Ports[0].TargetPort)
+
+	deployment := resources.Deployment
+	assert.Equal(t, "dbsync-postgres", deployment.Name)
+	assert.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
+	require.NotNil(t, deployment.Spec.Template.Spec.SecurityContext)
+	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsUser)
+	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsGroup)
+	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.FSGroup)
+	assert.Equal(t, resources.IdentityFingerprint, deployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	assert.Equal(t, authSecret.Annotations[managedPostgresPasswordFingerprintAnno], deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	postgres := requireContainer(t, deployment, managedPostgresContainerName)
+	assert.Equal(t, defaultManagedPostgresImage, postgres.Image)
+	assert.Equal(t, managedPostgresRunAsID, *postgres.SecurityContext.RunAsUser)
+	assert.Equal(t, managedPostgresRunAsID, *postgres.SecurityContext.RunAsGroup)
+	assert.Equal(t, "cexplorer", requireEnvVar(t, postgres, "POSTGRES_DB").Value)
+	assert.Equal(t, "postgres", requireEnvVar(t, postgres, "POSTGRES_USER").Value)
+	assert.Equal(t, managedPostgresAuthSecretName(dbSync), requireEnvVar(t, postgres, "POSTGRES_PASSWORD").ValueFrom.SecretKeyRef.Name)
+	assert.Equal(t, managedPostgresPasswordKey, requireEnvVar(t, postgres, "POSTGRES_PASSWORD").ValueFrom.SecretKeyRef.Key)
+	assert.Equal(t, managedPostgresDataDir, requireEnvVar(t, postgres, "PGDATA").Value)
+	require.NotNil(t, postgres.ReadinessProbe)
+	assert.Contains(t, postgres.ReadinessProbe.Exec.Command, "pg_isready")
+	require.NotNil(t, postgres.StartupProbe)
+	assert.Equal(t, managedPostgresPVCName(dbSync), requireVolume(t, deployment, managedPostgresDataVolume).PersistentVolumeClaim.ClaimName)
+	assert.Equal(t, managedPostgresDataMountDir, requireVolumeMount(t, postgres, managedPostgresDataVolume).MountPath)
+}
+
+func TestDBSyncWorkloadBuilderBuildsDBSyncWorkloadForManagedPostgres(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	authSecret := &corev1.Secret{}
+	authSecret.Name = managedPostgresAuthSecretName(dbSync)
+	authSecret.Namespace = dbSync.Namespace
+	authSecret.ResourceVersion = "12"
+	authSecret.Data = map[string][]byte{
+		managedPostgresPasswordKey: []byte("managed-secret"),
+	}
+
+	resources, err := builder.BuildForDatabase(dbSync, network, artifactConfigMapFor(network), authSecret, dbSyncDatabaseFromManaged(dbSync, authSecret.Name))
+
+	require.NoError(t, err)
+	assert.Equal(t, "dbsync-postgres.default.svc.cluster.local:5432:cexplorer:postgres:managed-secret\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
+	assert.Equal(t, "dbsync-postgres.default.svc.cluster.local", requireEnvVar(t, requireContainer(t, resources.Deployment, dbSyncContainerName), "PGHOST").Value)
+	assert.Equal(t, "disable", requireEnvVar(t, requireContainer(t, resources.Deployment, dbSyncContainerName), "PGSSLMODE").Value)
+	assert.Equal(t, "12", resources.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 }
 
 func TestDBSyncWorkloadBuilderFingerprintChangesWithRuntimeConfig(t *testing.T) {
@@ -332,6 +409,17 @@ func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: managedPostgresAuthSecretName(dbSync), Namespace: dbSync.Namespace},
+		Data: map[string][]byte{
+			managedPostgresPasswordKey: []byte("managed-secret"),
+		},
+	}
+	authSecret.Annotations = map[string]string{
+		managedPostgresPasswordFingerprintAnno: managedPostgresPasswordFingerprint(authSecret.Data[managedPostgresPasswordKey]),
+	}
+	managedResources, err := builder.managedPostgresResources(managedCardanoDBSync(dbSync.Name, "ready-network"), authSecret)
+	require.NoError(t, err)
 	for _, name := range []string{
 		resources.ConfigMap.Name,
 		resources.PGPassSecret.Name,
@@ -339,6 +427,10 @@ func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 		resources.FollowerPersistentVolumeClaim.Name,
 		resources.Deployment.Name,
 		resources.MetricsService.Name,
+		managedPostgresAuthSecretName(dbSync),
+		managedResources.PersistentVolumeClaim.Name,
+		managedResources.Service.Name,
+		managedResources.Deployment.Name,
 	} {
 		assert.LessOrEqual(t, len(name), 63)
 		assert.NotContains(t, name, ".")

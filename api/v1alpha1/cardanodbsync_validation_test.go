@@ -81,6 +81,35 @@ func TestCardanoDBSyncDatabaseValidation(t *testing.T) {
 		assert.False(t, found, "config should be optional for the default path")
 	})
 
+	t.Run("accepts managed database and defaults fields", func(t *testing.T) {
+		object := validCardanoDBSyncValidationObject(namespace.Name, "managed")
+		unstructured.RemoveNestedField(object.Object, "spec", "database", "external")
+		require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{}, "spec", "database", "managed"))
+		require.NoError(t, apiClient.Create(ctx, object))
+
+		current := cardanoDBSyncValidationObject()
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(object), current))
+
+		image, found, err := unstructured.NestedString(current.Object, "spec", "database", "managed", "image")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "postgres:17.2-alpine", image)
+
+		database, found, err := unstructured.NestedString(current.Object, "spec", "database", "managed", "database")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "cexplorer", database)
+
+		user, found, err := unstructured.NestedString(current.Object, "spec", "database", "managed", "user")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "postgres", user)
+
+		_, found, err = unstructured.NestedFieldNoCopy(current.Object, "spec", "database", "managed", "authSecretRef")
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
 	t.Run("accepts storage class overrides without storage size", func(t *testing.T) {
 		object := validCardanoDBSyncValidationObject(namespace.Name, "storage-class-only")
 		require.NoError(t, unstructured.SetNestedField(object.Object, "fast-state", "spec", "stateStorage", "storageClassName"))

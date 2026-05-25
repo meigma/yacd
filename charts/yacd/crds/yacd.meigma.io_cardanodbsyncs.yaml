@@ -319,8 +319,8 @@ spec:
                     type: object
                   managed:
                     description: |-
-                      managed configures future YACD-managed Postgres. The field is part of
-                      the v1alpha1 shape, but controller support is added in a later slice.
+                      managed configures YACD-managed Postgres for local development
+                      CardanoDBSync resources.
                     properties:
                       authSecretRef:
                         description: |-

@@ -22,7 +22,7 @@ type NodeToNode struct {
 	Port int32
 }
 
-// Database describes an externally supplied Postgres database.
+// Database describes the Postgres database endpoint used by db-sync.
 type Database struct {
 	Host               string
 	Port               int32

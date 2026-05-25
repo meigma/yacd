@@ -148,8 +148,8 @@ type CardanoDBSyncDatabaseSpec struct {
 	// +optional
 	External *CardanoDBSyncExternalDatabaseSpec `json:"external,omitempty"`
 
-	// managed configures future YACD-managed Postgres. The field is part of
-	// the v1alpha1 shape, but controller support is added in a later slice.
+	// managed configures YACD-managed Postgres for local development
+	// CardanoDBSync resources.
 	// +optional
 	Managed *CardanoDBSyncManagedDatabaseSpec `json:"managed,omitempty"`
 }
@@ -191,7 +191,7 @@ type CardanoDBSyncExternalDatabaseSpec struct {
 	SSLMode CardanoDBSyncPostgresSSLMode `json:"sslMode"`
 }
 
-// CardanoDBSyncManagedDatabaseSpec configures future YACD-managed Postgres.
+// CardanoDBSyncManagedDatabaseSpec configures YACD-managed Postgres.
 type CardanoDBSyncManagedDatabaseSpec struct {
 	// image is the Postgres image reference.
 	// +kubebuilder:default="postgres:17.2-alpine"

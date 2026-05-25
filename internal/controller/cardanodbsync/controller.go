@@ -29,6 +29,7 @@ const (
 
 	cardanoDBSyncNetworkRefNameField             = "spec.networkRef.name"
 	cardanoDBSyncExternalDatabaseSecretNameField = "spec.database.external.passwordSecretRef.name"
+	cardanoDBSyncManagedDatabaseSecretNameField  = "spec.database.managed.authSecretRef.name"
 
 	networkArtifactSchemaVersionAnno   = "yacd.meigma.io/artifact-schema-version"
 	networkArtifactDataHashAnno        = "yacd.meigma.io/artifact-data-hash"
@@ -60,7 +61,7 @@ type CardanoDBSyncReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 
-// Reconcile validates CardanoDBSync dependencies, applies the external-Postgres
+// Reconcile validates CardanoDBSync dependencies, applies database and db-sync
 // workload resources, and publishes workload-level runtime status.
 func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx, "cardanodbsync", req.String())
@@ -78,13 +79,12 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
-	externalDatabase, ok, err := r.externalDatabaseSpec(ctx, dbSync)
-	if err != nil || !ok {
-		return ctrl.Result{}, err
+	databaseRuntime, ok, err := r.resolveDatabase(ctx, dbSync)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
-	externalDatabaseSecret, ok, err := r.validateExternalDatabaseSecret(ctx, dbSync, externalDatabase)
-	if err != nil || !ok {
-		return ctrl.Result{}, err
+	if !ok {
+		return ctrl.Result{}, nil
 	}
 
 	network := &yacdv1alpha1.CardanoNetwork{}
@@ -168,7 +168,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		)
 	}
 
-	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, externalDatabaseSecret)
+	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime)
 }
 
 func (r *CardanoDBSyncReconciler) reconcileWorkloads(
@@ -177,15 +177,45 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
 	configMap *corev1.ConfigMap,
-	externalDatabaseSecret *corev1.Secret,
+	databaseRuntime databaseRuntime,
 ) (ctrl.Result, error) {
-	resources, err := (dbSyncWorkloadBuilder{scheme: r.Scheme}).Build(dbSync, network, configMap, externalDatabaseSecret)
+	builder := dbSyncWorkloadBuilder{scheme: r.Scheme}
+	var postgresResources *managedPostgresResources
+	if databaseRuntime.Mode == databaseModeManaged {
+		var err error
+		postgresResources, err = builder.managedPostgresResources(dbSync, databaseRuntime.workloadPasswordSecret())
+		if err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+		}
+		if err := r.validateAcceptedManagedPostgresIdentity(ctx, dbSync, postgresResources.IdentityFingerprint); err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+		}
+	}
+
+	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
+	if databaseRuntime.Mode == databaseModeManaged {
+		ready, err := r.reconcileManagedPostgresResources(ctx, log, dbSync, postgresResources)
+		if err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+		}
+		if ready.Status != metav1.ConditionTrue {
+			acceptedIdentity, err := r.currentAcceptedDBSyncDatabaseIdentity(ctx, dbSync)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.patchManagedPostgresAppliedStatus(ctx, dbSync, databaseRuntime, ready, acceptedIdentity); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+		}
+	}
+
 	applyResults, err := r.applyDBSyncWorkloadResources(ctx, resources)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
@@ -210,7 +240,7 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 		"metricsServiceOperation", applyResults.MetricsService,
 		"planFingerprint", resources.Plan.Fingerprint.Value)
 
-	ready, err := r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService, dbSync.Spec.Database.External, resources.Plan.DatabaseIdentityFingerprint.Value)
+	ready, err := r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService, databaseRuntime, resources.Plan.DatabaseIdentityFingerprint.Value)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -219,6 +249,32 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *CardanoDBSyncReconciler) reconcileManagedPostgresResources(
+	ctx context.Context,
+	log logr.Logger,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	resources *managedPostgresResources,
+) (metav1.Condition, error) {
+	applyResults, err := r.applyManagedPostgresResources(ctx, resources)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+
+	resultLog := log
+	if applyResults.unchanged() {
+		resultLog = log.V(1)
+	}
+	resultLog.Info("Applied managed Postgres resources",
+		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
+		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
+		"service", client.ObjectKeyFromObject(resources.Service),
+		"serviceOperation", applyResults.Service,
+		"deployment", client.ObjectKeyFromObject(resources.Deployment),
+		"deploymentOperation", applyResults.Deployment)
+
+	return r.managedPostgresReadyCondition(ctx, dbSync)
 }
 
 // SetupWithManager sets up the CardanoDBSync controller with the manager.
@@ -241,6 +297,15 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}); err != nil {
 		return err
 	}
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncManagedDatabaseSecretNameField, func(object client.Object) []string {
+		dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+		if !ok || dbSync.Spec.Database.Managed == nil || dbSync.Spec.Database.Managed.AuthSecretRef == nil || dbSync.Spec.Database.Managed.AuthSecretRef.Name == "" {
+			return nil
+		}
+		return []string{dbSync.Spec.Database.Managed.AuthSecretRef.Name}
+	}); err != nil {
+		return err
+	}
 
 	logf.Log.WithName("controllers").WithName(controllerName).
 		Info("Starting CardanoDBSync controller")
@@ -248,7 +313,7 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
-		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForExternalDatabaseSecret)).
+		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForDatabaseSecret)).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
@@ -256,21 +321,6 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
-}
-
-func (r *CardanoDBSyncReconciler) externalDatabaseSpec(
-	ctx context.Context,
-	dbSync *yacdv1alpha1.CardanoDBSync,
-) (*yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec, bool, error) {
-	if dbSync.Spec.Database.Managed != nil || dbSync.Spec.Database.External == nil {
-		err := r.patchDependencyUnavailableStatus(ctx, dbSync,
-			conditionReasonUnsupportedDatabaseMode,
-			"CardanoDBSync currently supports only spec.database.external",
-		)
-		return nil, false, err
-	}
-
-	return dbSync.Spec.Database.External, true, nil
 }
 
 func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
@@ -349,11 +399,13 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, 
 	return requests
 }
 
-func (r *CardanoDBSyncReconciler) cardanoDBSyncsForExternalDatabaseSecret(ctx context.Context, object client.Object) []reconcile.Request {
+func (r *CardanoDBSyncReconciler) cardanoDBSyncsForDatabaseSecret(ctx context.Context, object client.Object) []reconcile.Request {
 	secret, ok := object.(*corev1.Secret)
 	if !ok {
 		return nil
 	}
+
+	requestsByKey := map[client.ObjectKey]reconcile.Request{}
 
 	dbSyncs := &yacdv1alpha1.CardanoDBSyncList{}
 	if err := r.List(ctx, dbSyncs,
@@ -361,12 +413,29 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForExternalDatabaseSecret(ctx co
 		client.MatchingFields{cardanoDBSyncExternalDatabaseSecretNameField: secret.Name},
 	); err != nil {
 		logf.FromContext(ctx).Error(err, "Unable to list CardanoDBSync resources for external database Secret", "secret", client.ObjectKeyFromObject(secret))
-		return nil
+	} else {
+		for _, dbSync := range dbSyncs.Items {
+			key := client.ObjectKeyFromObject(&dbSync)
+			requestsByKey[key] = reconcile.Request{NamespacedName: key}
+		}
 	}
 
-	requests := make([]reconcile.Request, 0, len(dbSyncs.Items))
-	for _, dbSync := range dbSyncs.Items {
-		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&dbSync)})
+	dbSyncs = &yacdv1alpha1.CardanoDBSyncList{}
+	if err := r.List(ctx, dbSyncs,
+		client.InNamespace(secret.Namespace),
+		client.MatchingFields{cardanoDBSyncManagedDatabaseSecretNameField: secret.Name},
+	); err != nil {
+		logf.FromContext(ctx).Error(err, "Unable to list CardanoDBSync resources for managed database Secret", "secret", client.ObjectKeyFromObject(secret))
+	} else {
+		for _, dbSync := range dbSyncs.Items {
+			key := client.ObjectKeyFromObject(&dbSync)
+			requestsByKey[key] = reconcile.Request{NamespacedName: key}
+		}
+	}
+
+	requests := make([]reconcile.Request, 0, len(requestsByKey))
+	for _, request := range requestsByKey {
+		requests = append(requests, request)
 	}
 	return requests
 }
