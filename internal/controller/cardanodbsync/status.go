@@ -43,6 +43,11 @@ const (
 	conditionReasonExternalDatabaseNotProbed         = "ExternalDatabaseNotProbed"
 	conditionReasonSyncNotProbed                     = "SyncNotProbed"
 	conditionReasonRuntimeProbesPending              = "RuntimeProbesPending"
+	conditionReasonPostgresUnavailable               = "PostgresUnavailable"
+	conditionReasonPostgresSchemaPending             = "PostgresSchemaPending"
+	conditionReasonNodeTipUnavailable                = "NodeTipUnavailable"
+	conditionReasonSyncLagging                       = "SyncLagging"
+	conditionReasonSynced                            = "Synced"
 	conditionReasonUnsupportedSpec                   = "UnsupportedSpec"
 	conditionReasonUnsupportedStorageChange          = "UnsupportedStorageChange"
 	conditionReasonUnsupportedWorkloadChange         = "UnsupportedWorkloadChange"
@@ -103,27 +108,54 @@ func (r *CardanoDBSyncReconciler) patchDependencyWaitingStatus(
 func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
 	metricsService *corev1.Service,
 	databaseRuntime databaseRuntime,
 	acceptedIdentityFingerprint string,
-) (metav1.Condition, error) {
+) (metav1.Condition, bool, error) {
 	followerNodeReady, err := r.workloadContainerReadyCondition(ctx, dbSync, followerNodeContainerName, conditionTypeFollowerNodeReady, conditionReasonFollowerNodeReady, "Follower node container is ready", "Follower node container is not ready")
 	if err != nil {
-		return metav1.Condition{}, err
+		return metav1.Condition{}, false, err
 	}
 	dbSyncReady, err := r.workloadContainerReadyCondition(ctx, dbSync, dbSyncContainerName, conditionTypeDBSyncReady, conditionReasonDBSyncReady, "db-sync container is ready", "db-sync container is not ready")
 	if err != nil {
-		return metav1.Condition{}, err
+		return metav1.Condition{}, false, err
 	}
 
-	postgresReady := postgresReadyCondition(conditionReasonExternalDatabaseNotProbed, "External Postgres was accepted by reference but is not probed by this controller slice")
-	if databaseRuntime.Mode == databaseModeManaged {
-		postgresReady, err = r.managedPostgresReadyCondition(ctx, dbSync)
+	probed := false
+	syncStatus := (*yacdv1alpha1.CardanoDBSyncProgressStatus)(nil)
+	var postgresReady metav1.Condition
+	synced := syncedCondition(conditionReasonRuntimeProbesPending, "db-sync progress will be probed after workloads are ready")
+	if followerNodeReady.Status == metav1.ConditionTrue && dbSyncReady.Status == metav1.ConditionTrue {
+		probeResult, err := r.runtimeProber().Probe(ctx, dbSyncRuntimeProbeTarget{
+			Database:       databaseRuntime.Database,
+			PasswordSecret: databaseRuntime.PasswordSecret,
+			OgmiosURL:      ogmiosEndpointURL(network),
+		})
 		if err != nil {
-			return metav1.Condition{}, err
+			return metav1.Condition{}, false, err
+		}
+		probed = true
+		syncStatus = probeResult.Sync
+		postgresReady = probeResult.PostgresReady
+		synced = probeResult.Synced
+	} else {
+		probeResult, err := r.runtimeProber().ProbePostgres(ctx, dbSyncRuntimeProbeTarget{
+			Database:       databaseRuntime.Database,
+			PasswordSecret: databaseRuntime.PasswordSecret,
+			OgmiosURL:      ogmiosEndpointURL(network),
+		})
+		if err != nil {
+			return metav1.Condition{}, false, err
+		}
+		probed = true
+		syncStatus = probeResult.Sync
+		postgresReady = probeResult.PostgresReady
+		if probeResult.PostgresReady.Status != metav1.ConditionTrue ||
+			probeResult.Synced.Reason == conditionReasonPostgresSchemaPending {
+			synced = probeResult.Synced
 		}
 	}
-	synced := syncedCondition(conditionReasonSyncNotProbed, "db-sync chain progress is not probed by this controller slice")
 	ready := workloadsReadyCondition(followerNodeReady, dbSyncReady, postgresReady, synced)
 	progressing := progressingForReadyCondition(ready)
 
@@ -133,7 +165,7 @@ func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 			Metrics:  serviceEndpointFor(metricsService, "http", "/metrics"),
 		}
 		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
-		status.Sync = nil
+		status.Sync = syncStatus
 	},
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "CardanoDBSync workloads are applied"),
 		progressing,
@@ -143,7 +175,7 @@ func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 		dbSyncReady,
 		synced,
 	)
-	return ready, err
+	return ready, probed, err
 }
 
 func (r *CardanoDBSyncReconciler) patchManagedPostgresAppliedStatus(
@@ -474,23 +506,23 @@ func workloadsReadyCondition(followerNodeReady metav1.Condition, dbSyncReady met
 	if followerNodeReady.Status != metav1.ConditionTrue {
 		return condition(conditionTypeReady, metav1.ConditionFalse, followerNodeReady.Reason, followerNodeReady.Message)
 	}
-	if dbSyncReady.Status != metav1.ConditionTrue {
-		return condition(conditionTypeReady, metav1.ConditionFalse, dbSyncReady.Reason, dbSyncReady.Message)
-	}
 	if postgresReady.Status != metav1.ConditionTrue {
 		return condition(
 			conditionTypeReady,
 			metav1.ConditionFalse,
-			conditionReasonRuntimeProbesPending,
-			"CardanoDBSync workloads are running, but database connectivity and sync progress probes are not implemented",
+			postgresReady.Reason,
+			postgresReady.Message,
 		)
+	}
+	if dbSyncReady.Status != metav1.ConditionTrue {
+		return condition(conditionTypeReady, metav1.ConditionFalse, dbSyncReady.Reason, dbSyncReady.Message)
 	}
 	if synced.Status != metav1.ConditionTrue {
 		return condition(
 			conditionTypeReady,
 			metav1.ConditionFalse,
-			conditionReasonRuntimeProbesPending,
-			"CardanoDBSync workloads are running, but database connectivity and sync progress probes are not implemented",
+			synced.Reason,
+			synced.Message,
 		)
 	}
 
@@ -503,7 +535,11 @@ func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
 	}
 	if ready.Reason == conditionReasonDeploymentProgressing ||
 		ready.Reason == conditionReasonWorkloadMissing ||
-		ready.Reason == conditionReasonRuntimeProbesPending {
+		ready.Reason == conditionReasonRuntimeProbesPending ||
+		ready.Reason == conditionReasonPostgresUnavailable ||
+		ready.Reason == conditionReasonPostgresSchemaPending ||
+		ready.Reason == conditionReasonNodeTipUnavailable ||
+		ready.Reason == conditionReasonSyncLagging {
 		return progressingCondition(metav1.ConditionTrue, ready.Reason, ready.Message)
 	}
 

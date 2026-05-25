@@ -20,6 +20,7 @@ cmp stdout expected.json
 
 -- env/configuration.yaml --
 ConwayGenesisFile: conway-genesis.json
+ConwayGenesisHash: hash-conway-genesis
 -- env/byron-genesis.json --
 {"byron":true}
 -- env/shelley-genesis.json --
@@ -38,7 +39,7 @@ ConwayGenesisFile: conway-genesis.json
 {
   "metadata": {
     "annotations": {
-      "yacd.meigma.io/artifact-data-hash": "sha256:d665320d3b63415f66bf1eba177e7df3fc703ae7d1eb62922e87248b6344d3cf",
+      "yacd.meigma.io/artifact-data-hash": "sha256:f1cd9ad83153abe2670a230f8f6d1fc3475381ee74b38c38a503e13f4d4b8e78",
       "yacd.meigma.io/artifact-schema-version": "yacd.meigma.io/cardano-network-artifacts/v1alpha1",
       "yacd.meigma.io/localnet-fingerprint": "abc123"
     }
@@ -46,7 +47,7 @@ ConwayGenesisFile: conway-genesis.json
   "data": {
     "alonzo-genesis.json": "{\"alonzo\":true}\n",
     "byron-genesis.json": "{\"byron\":true}\n",
-    "configuration.yaml": "ConwayGenesisFile: conway-genesis.json\n",
+    "configuration.yaml": "ConwayGenesisFile: conway-genesis.json\nConwayGenesisHash: hash-conway-genesis\n",
     "connection.json": "{\n  \"schemaVersion\": \"yacd.meigma.io/cardano-network-artifacts/v1alpha1\",\n  \"network\": {\n    \"name\": \"demo\",\n    \"namespace\": \"dev\",\n    \"mode\": \"local\",\n    \"networkMagic\": 42,\n    \"era\": \"conway\",\n    \"localnetFingerprint\": \"abc123\"\n  },\n  \"primaryNodeToNode\": {\n    \"host\": \"demo-node.dev.svc.cluster.local\",\n    \"port\": 3001,\n    \"url\": \"tcp://demo-node.dev.svc.cluster.local:3001\"\n  },\n  \"files\": {\n    \"alonzoGenesis\": \"alonzo-genesis.json\",\n    \"byronGenesis\": \"byron-genesis.json\",\n    \"configuration\": \"configuration.yaml\",\n    \"connection\": \"connection.json\",\n    \"conwayGenesis\": \"conway-genesis.json\",\n    \"dijkstraGenesis\": \"dijkstra-genesis.json\",\n    \"localnetPlan\": \"yacd-localnet-plan.json\",\n    \"primaryTopology\": \"primary-topology.json\",\n    \"shelleyGenesis\": \"shelley-genesis.json\"\n  }\n}\n",
     "conway-genesis.json": "{\"conway\":true}\n",
     "dijkstra-genesis.json": "{\"dijkstra\":true}\n",

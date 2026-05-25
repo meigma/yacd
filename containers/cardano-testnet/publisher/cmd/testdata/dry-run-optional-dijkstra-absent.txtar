@@ -20,6 +20,7 @@ cmp stdout expected.json
 
 -- env/configuration.yaml --
 ConwayGenesisFile: conway-genesis.json
+ConwayGenesisHash: hash-conway-genesis
 -- env/byron-genesis.json --
 {"byron":true}
 -- env/shelley-genesis.json --
@@ -36,7 +37,7 @@ ConwayGenesisFile: conway-genesis.json
 {
   "metadata": {
     "annotations": {
-      "yacd.meigma.io/artifact-data-hash": "sha256:a0b69faae61d592bf1c2fe1419d51ebc554c6272b0ad93a09b7758b34abd638f",
+      "yacd.meigma.io/artifact-data-hash": "sha256:184d34afb2febe1535966b7e2f77147842b6a15ad67fe03bada84c5eac06a0e1",
       "yacd.meigma.io/artifact-schema-version": "yacd.meigma.io/cardano-network-artifacts/v1alpha1",
       "yacd.meigma.io/localnet-fingerprint": "abc123"
     }
@@ -44,7 +45,7 @@ ConwayGenesisFile: conway-genesis.json
   "data": {
     "alonzo-genesis.json": "{\"alonzo\":true}\n",
     "byron-genesis.json": "{\"byron\":true}\n",
-    "configuration.yaml": "ConwayGenesisFile: conway-genesis.json\n",
+    "configuration.yaml": "ConwayGenesisFile: conway-genesis.json\nConwayGenesisHash: hash-conway-genesis\n",
     "connection.json": "{\n  \"schemaVersion\": \"yacd.meigma.io/cardano-network-artifacts/v1alpha1\",\n  \"network\": {\n    \"name\": \"demo\",\n    \"namespace\": \"dev\",\n    \"mode\": \"local\",\n    \"networkMagic\": 42,\n    \"era\": \"conway\",\n    \"localnetFingerprint\": \"abc123\"\n  },\n  \"primaryNodeToNode\": {\n    \"host\": \"demo-node.dev.svc.cluster.local\",\n    \"port\": 3001,\n    \"url\": \"tcp://demo-node.dev.svc.cluster.local:3001\"\n  },\n  \"files\": {\n    \"alonzoGenesis\": \"alonzo-genesis.json\",\n    \"byronGenesis\": \"byron-genesis.json\",\n    \"configuration\": \"configuration.yaml\",\n    \"connection\": \"connection.json\",\n    \"conwayGenesis\": \"conway-genesis.json\",\n    \"localnetPlan\": \"yacd-localnet-plan.json\",\n    \"primaryTopology\": \"primary-topology.json\",\n    \"shelleyGenesis\": \"shelley-genesis.json\"\n  }\n}\n",
     "conway-genesis.json": "{\"conway\":true}\n",
     "dijkstra-genesis.json": null,

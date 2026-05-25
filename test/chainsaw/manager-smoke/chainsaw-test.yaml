@@ -55,6 +55,10 @@ spec:
           kubectl logs -n yacd-smoke curl-kupo || true
           echo "== Faucet curl logs =="
           kubectl logs -n yacd-smoke curl-faucet || true
+          echo "== db-sync psql logs =="
+          kubectl logs -n yacd-smoke dbsync-psql || true
+          echo "== db-sync psql pod =="
+          kubectl describe pod -n yacd-smoke dbsync-psql || true
           echo "== CardanoNetwork smoke pod logs =="
           kubectl logs -n yacd-smoke -l yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node --all-containers --prefix --tail=-1
           echo "== CardanoDBSync managed smoke pod logs =="
@@ -439,7 +443,7 @@ spec:
               assert connection["files"]["primaryTopology"] == "primary-topology.json"
               PY
         - script:
-            timeout: 8m
+            timeout: 15m
             workDir: ../../..
             content: |
               set -euo pipefail
@@ -454,7 +458,18 @@ spec:
                 networkRef:
                   name: phase4-smoke
                 database:
-                  managed: {}
+                  managed:
+                    parameters:
+                      maxParallelMaintenanceWorkers: 0
+                config:
+                  ledgerBackend: inmemory
+                  runtime:
+                    cache: false
+                    epochTable: false
+                    forceIndexes: false
+                    metricsPort: 8080
+                  insert:
+                    preset: disable_all
               YAML
 
               for _ in $(seq 1 60); do
@@ -472,29 +487,129 @@ spec:
               kubectl get deployment -n yacd-smoke phase6-managed-postgres
               kubectl wait -n yacd-smoke --for=condition=Available deployment/phase6-managed-postgres --timeout=5m
 
-              for _ in $(seq 1 60); do
+              for _ in $(seq 1 120); do
                 postgres_ready="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="PostgresReady")].status}' 2>/dev/null || true)"
                 postgres_reason="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="PostgresReady")].reason}' 2>/dev/null || true)"
                 synced="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)"
                 synced_reason="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].reason}' 2>/dev/null || true)"
+                dbsync_ready="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="DBSyncReady")].status}' 2>/dev/null || true)"
+                follower_ready="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="FollowerNodeReady")].status}' 2>/dev/null || true)"
                 service_name="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.serviceName}' 2>/dev/null || true)"
                 port="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.port}' 2>/dev/null || true)"
                 url="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.endpoints.postgres.url}' 2>/dev/null || true)"
                 auth_secret="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.database.authSecretName}' 2>/dev/null || true)"
+                db_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.dbBlockHeight}' 2>/dev/null || true)"
+                node_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.nodeBlockHeight}' 2>/dev/null || true)"
+                lag_blocks="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.lagBlocks}' 2>/dev/null || true)"
                 if [ "${postgres_ready}" = "True" ] &&
                   [ "${postgres_reason}" = "PostgresReady" ] &&
-                  [ "${synced}" = "False" ] &&
-                  [ "${synced_reason}" = "SyncNotProbed" ] &&
+                  [ "${dbsync_ready}" = "True" ] &&
+                  [ "${follower_ready}" = "True" ] &&
                   [ "${service_name}" = "phase6-managed-postgres" ] &&
                   [ "${port}" = "5432" ] &&
                   [ "${url}" = "postgres://phase6-managed-postgres.yacd-smoke.svc.cluster.local:5432/cexplorer" ] &&
-                  [ "${auth_secret}" = "phase6-managed-postgres-auth" ]; then
+                  [ "${auth_secret}" = "phase6-managed-postgres-auth" ] &&
+                  [ -n "${db_block}" ] &&
+                  [ -n "${node_block}" ] &&
+                  [ -n "${lag_blocks}" ]; then
+                  case "${synced}:${synced_reason}" in
+                    True:Synced|False:SyncLagging) ;;
+                    *) kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true; sleep 5; continue ;;
+                  esac
                   kubectl get deployment -n yacd-smoke phase6-managed-dbsync
-                  exit 0
+                  break
                 fi
                 kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true
                 sleep 5
               done
+              db_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.dbBlockHeight}' 2>/dev/null || true)"
+              node_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.nodeBlockHeight}' 2>/dev/null || true)"
+              lag_blocks="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.lagBlocks}' 2>/dev/null || true)"
+              postgres_ready="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="PostgresReady")].status}' 2>/dev/null || true)"
+              synced="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)"
+              synced_reason="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.conditions[?(@.type=="Synced")].reason}' 2>/dev/null || true)"
+              if [ -z "${db_block}" ] ||
+                [ -z "${node_block}" ] ||
+                [ -z "${lag_blocks}" ] ||
+                [ "${postgres_ready}" != "True" ]; then
+                kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true
+                exit 1
+              fi
+              case "${synced}:${synced_reason}" in
+                True:Synced|False:SyncLagging) ;;
+                *) kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true; exit 1 ;;
+              esac
+
+              kubectl delete pod -n yacd-smoke dbsync-psql --ignore-not-found --wait=true
+              kubectl apply -f - <<'YAML'
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: dbsync-psql
+                namespace: yacd-smoke
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  seccompProfile:
+                    type: RuntimeDefault
+                volumes:
+                  - name: tmp
+                    emptyDir: {}
+                containers:
+                  - name: psql
+                    image: postgres:17.2-alpine
+                    env:
+                      - name: PGPASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: phase6-managed-postgres-auth
+                            key: password
+                      - name: HOME
+                        value: /tmp
+                    volumeMounts:
+                      - name: tmp
+                        mountPath: /tmp
+                    command:
+                      - /bin/sh
+                      - -c
+                    args:
+                      - |
+                        for i in $(seq 1 30); do
+                          count="$(psql -h phase6-managed-postgres.yacd-smoke.svc.cluster.local -p 5432 -U postgres -d cexplorer -tAc 'select count(*) from block where block_no is not null' 2>/tmp/psql.err || true)"
+                          echo "block rows: ${count}"
+                          cat /tmp/psql.err || true
+                          case "${count}" in
+                            ''|*[!0-9]*) ;;
+                            *) if [ "${count}" -gt 0 ]; then exit 0; fi ;;
+                          esac
+                          sleep 2
+                        done
+                        exit 1
+                    securityContext:
+                      readOnlyRootFilesystem: true
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop:
+                          - ALL
+                      runAsNonRoot: true
+                      runAsUser: 999
+                      seccompProfile:
+                        type: RuntimeDefault
+              YAML
+              for _ in $(seq 1 120); do
+                phase="$(kubectl get pod -n yacd-smoke dbsync-psql -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+                if [ "${phase}" = "Succeeded" ]; then
+                  kubectl logs -n yacd-smoke dbsync-psql
+                  exit 0
+                fi
+                if [ "${phase}" = "Failed" ]; then
+                  kubectl logs -n yacd-smoke dbsync-psql || true
+                  exit 1
+                fi
+                sleep 2
+              done
+              kubectl logs -n yacd-smoke dbsync-psql || true
               exit 1
         - script:
             timeout: 3m

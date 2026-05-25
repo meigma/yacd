@@ -20,7 +20,7 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "cardano-testnet-create-env", container.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3", container.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", container.Image)
 	assert.Equal(t, corev1.PullIfNotPresent, container.ImagePullPolicy)
 	assert.Equal(t, []string{"/opt/yacd/bin/yacd-cardano-testnet-init"}, container.Command)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, container.TerminationMessagePath)

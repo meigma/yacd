@@ -32,27 +32,30 @@ const (
 	dbSyncPGPassSecretSuffix = "dbsync-pgpass"
 	dbSyncMetricsSuffix      = "dbsync-metrics"
 
-	dbSyncConfigMapVolumeName         = "dbsync-config"
-	networkArtifactsVolumeName        = "network-artifacts"
-	dbSyncStateVolumeName             = "dbsync-state"
-	followerNodeStateVolumeName       = "follower-state"
-	nodeIPCVolumeName                 = "node-ipc"
-	dbSyncTmpVolumeName               = "dbsync-tmp"
-	dbSyncPGPassVolumeName            = "dbsync-pgpass"
-	dbSyncConfigMountDir              = "/config"
-	networkArtifactsMountDir          = "/network-artifacts"
-	dbSyncStateMountDir               = "/var/lib/cexplorer"
-	dbSyncTmpMountDir                 = "/tmp"
-	dbSyncPGPassMountDir              = "/configuration"
-	dbSyncNodeDatabaseDir             = "/state/node-db"
-	dbSyncNodeSocketDir               = "/ipc"
-	dbSyncNodeSocketPath              = "/ipc/node.socket"
-	dbSyncNodeHostAddress             = "0.0.0.0"
-	dbSyncNodePort              int32 = 3001
+	dbSyncConfigMapVolumeName          = "dbsync-config"
+	networkArtifactsVolumeName         = "network-artifacts"
+	dbSyncStateVolumeName              = "dbsync-state"
+	followerNodeStateVolumeName        = "follower-state"
+	nodeIPCVolumeName                  = "node-ipc"
+	dbSyncTmpVolumeName                = "dbsync-tmp"
+	dbSyncPGPassVolumeName             = "dbsync-pgpass"
+	dbSyncPGPassSecretVolumeName       = "dbsync-pgpass-secret"
+	dbSyncConfigMountDir               = "/config"
+	networkArtifactsMountDir           = "/network-artifacts"
+	dbSyncStateMountDir                = "/var/lib/cexplorer"
+	dbSyncTmpMountDir                  = "/tmp"
+	dbSyncPGPassMountDir               = "/configuration"
+	dbSyncPGPassSecretMountDir         = "/pgpass-source"
+	dbSyncNodeDatabaseDir              = "/state/node-db"
+	dbSyncNodeSocketDir                = "/ipc"
+	dbSyncNodeSocketPath               = "/ipc/node.socket"
+	dbSyncNodeHostAddress              = "0.0.0.0"
+	dbSyncNodePort               int32 = 3001
 
 	dbSyncConfigFileName       = "db-sync-config.yaml"
 	followerTopologyFileName   = "follower-topology.json"
 	dbSyncPGPassFileName       = "pgpass"
+	dbSyncPGPassInitName       = "dbsync-pgpass-setup"
 	dbSyncPlanFingerprintAnno  = "yacd.meigma.io/dbsync-plan-fingerprint"
 	dbSyncDatabaseIdentityAnno = "yacd.meigma.io/dbsync-database-identity"
 	dbSyncSecretVersionAnno    = "yacd.meigma.io/external-database-secret-resource-version"
@@ -68,8 +71,9 @@ const (
 	labelDBSyncRole    = "dbsync"
 
 	defaultFollowerNodeImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
-	defaultFollowerNodeImageRevision   = "yacd.3"
+	defaultFollowerNodeImageRevision   = "yacd.4"
 	defaultFollowerNodeStorageSize     = "10Gi"
+	dbSyncRunAsID                      = int64(10001)
 	maxLabelValueLength                = 63
 	safeNameHashLength                 = 10
 )
@@ -639,10 +643,16 @@ func (b dbSyncWorkloadBuilder) deployment(
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken: new(false),
 					SecurityContext: &corev1.PodSecurityContext{
-						FSGroup: new(int64(10001)),
+						FSGroup:      new(dbSyncRunAsID),
+						RunAsGroup:   new(dbSyncRunAsID),
+						RunAsNonRoot: new(true),
+						RunAsUser:    new(dbSyncRunAsID),
 						SeccompProfile: &corev1.SeccompProfile{
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
+					},
+					InitContainers: []corev1.Container{
+						b.pgPassInitContainer(dbSync),
 					},
 					Containers: []corev1.Container{
 						b.followerNodeContainer(dbSync, network, plan),
@@ -688,12 +698,18 @@ func (b dbSyncWorkloadBuilder) deployment(
 							},
 						},
 						{
-							Name: dbSyncPGPassVolumeName,
+							Name: dbSyncPGPassSecretVolumeName,
 							VolumeSource: corev1.VolumeSource{
 								Secret: &corev1.SecretVolumeSource{
 									SecretName:  dbSyncPGPassSecretName(dbSync),
-									DefaultMode: new(int32(0o600)),
+									DefaultMode: new(int32(0o440)),
 								},
+							},
+						},
+						{
+							Name: dbSyncPGPassVolumeName,
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
 							},
 						},
 						{
@@ -712,6 +728,27 @@ func (b dbSyncWorkloadBuilder) deployment(
 	}
 
 	return deployment, nil
+}
+
+func (b dbSyncWorkloadBuilder) pgPassInitContainer(dbSync *yacdv1alpha1.CardanoDBSync) corev1.Container {
+	source := dbSyncPGPassSecretMountDir + "/" + dbSyncPGPassFileName
+	target := dbSyncPGPassFilePath()
+	script := fmt.Sprintf("cp %s %s\nchmod 0600 %s\n", source, target, target)
+
+	return corev1.Container{
+		Name:            dbSyncPGPassInitName,
+		Image:           strings.TrimSpace(dbSync.Spec.Image),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{"/bin/sh", "-eu", "-c"},
+		Args:            []string{script},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: dbSyncPGPassSecretVolumeName, MountPath: dbSyncPGPassSecretMountDir, ReadOnly: true},
+			{Name: dbSyncPGPassVolumeName, MountPath: dbSyncPGPassMountDir},
+		},
+		SecurityContext:          restrictedSecurityContext(true),
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
 }
 
 func (b dbSyncWorkloadBuilder) followerNodeContainer(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, plan dbsync.Plan) corev1.Container {
@@ -796,6 +833,9 @@ func restrictedSecurityContext(readOnlyRoot bool) *corev1.SecurityContext {
 			Drop: []corev1.Capability{"ALL"},
 		},
 		ReadOnlyRootFilesystem: &readOnlyRoot,
+		RunAsNonRoot:           new(true),
+		RunAsUser:              new(dbSyncRunAsID),
+		RunAsGroup:             new(dbSyncRunAsID),
 		SeccompProfile: &corev1.SeccompProfile{
 			Type: corev1.SeccompProfileTypeRuntimeDefault,
 		},
