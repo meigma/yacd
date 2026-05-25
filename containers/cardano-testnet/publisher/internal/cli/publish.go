@@ -1,8 +1,19 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path"
+	"strings"
+	"unicode/utf8"
 
+	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/builder"
+	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/client"
+	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/client/k8s"
 	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -10,19 +21,19 @@ import (
 // newPublishCommand builds the "publish" subcommand.
 //
 // The command declares the publisher's configuration flags and calls
-// [config.Load] in RunE. Load errors are returned to Cobra; on success
-// the command prints "publish: not yet implemented" to stderr.
+// [config.Load] in RunE. On a valid load the work runs through
+// [runPublish]; errors from either layer are returned to Cobra.
 func newPublishCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish",
 		Short: "Publish generated localnet artifacts to the network artifact ConfigMap",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if _, err := config.Load(commandContext.viper); err != nil {
+			cfg, err := config.Load(commandContext.viper)
+			if err != nil {
 				return err
 			}
-			_, err := fmt.Fprintln(cmd.ErrOrStderr(), "publish: not yet implemented")
-			return err
+			return runPublish(cmd.Context(), cfg, cmd.OutOrStdout())
 		},
 	}
 
@@ -45,4 +56,166 @@ func newPublishCommand(commandContext *commandContext) *cobra.Command {
 
 	_ = commandContext
 	return cmd
+}
+
+// runPublish reads the localnet artifacts and manifest from disk,
+// hands them to the builder, and applies the resulting patch via the
+// k8s adapter. On success it writes a one-line confirmation
+// containing the published data hash to out.
+func runPublish(ctx context.Context, cfg config.Config, out io.Writer) error {
+	manifest, err := readManifest(cfg.LocalnetEnvDir, cfg.LocalnetPlanManifestFile)
+	if err != nil {
+		return err
+	}
+
+	artifacts, err := readArtifacts(cfg.LocalnetEnvDir)
+	if err != nil {
+		return err
+	}
+
+	patch, err := builder.Build(builder.Input{
+		Network: builder.NetworkIdentity{
+			Name:           cfg.CardanoNetworkName,
+			Namespace:      cfg.CardanoNetworkNamespace,
+			Mode:           cfg.CardanoNetworkMode,
+			Era:            cfg.CardanoNetworkEra,
+			NodeToNodeHost: cfg.CardanoNodeToNodeHost,
+			NodeToNodePort: cfg.CardanoNodeToNodePort,
+			NodeToNodeURL:  cfg.CardanoNodeToNodeURL,
+		},
+		Manifest:  manifest,
+		Artifacts: artifacts,
+	})
+	if err != nil {
+		return err
+	}
+
+	kubeClient, err := k8s.New(k8s.Config{
+		APIURL:    cfg.KubernetesAPIURL,
+		TokenPath: cfg.ArtifactTokenPath,
+		CAPath:    cfg.ArtifactCAPath,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := kubeClient.PatchConfigMap(
+		ctx,
+		cfg.ArtifactConfigMapNamespace,
+		cfg.ArtifactConfigMapName,
+		toClientPatch(patch),
+	); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "published Cardano network artifacts to ConfigMap %s/%s with data hash %s\n",
+		cfg.ArtifactConfigMapNamespace, cfg.ArtifactConfigMapName, patch.Annotations.DataHash)
+	return err
+}
+
+// toClientPatch projects a [builder.Patch] onto the [client.ConfigMapPatch]
+// shape: present data becomes SetData, keys in KnownKeys but not in
+// Data become PruneData, and the builder's typed annotations become a
+// flat map keyed by the public annotation constants.
+func toClientPatch(patch builder.Patch) client.ConfigMapPatch {
+	prune := make([]string, 0)
+	for _, key := range patch.KnownKeys {
+		if _, present := patch.Data[key]; present {
+			continue
+		}
+		prune = append(prune, key)
+	}
+	return client.ConfigMapPatch{
+		SetData:   patch.Data,
+		PruneData: prune,
+		Annotations: map[string]string{
+			builder.AnnotationSchemaVersion:       patch.Annotations.SchemaVersion,
+			builder.AnnotationLocalnetFingerprint: patch.Annotations.LocalnetFingerprint,
+			builder.AnnotationDataHash:            patch.Annotations.DataHash,
+		},
+	}
+}
+
+// readManifest reads the localnet plan manifest from manifestPath,
+// validates its path is absolute and equals envDir/yacd-localnet-plan.json,
+// and parses out the network magic and fingerprint. The returned
+// [builder.Manifest] also carries the verbatim manifest content for
+// publication.
+func readManifest(envDir, manifestPath string) (builder.Manifest, error) {
+	if strings.TrimSpace(manifestPath) == "" {
+		return builder.Manifest{}, fmt.Errorf("manifest file path is required")
+	}
+	if !path.IsAbs(manifestPath) {
+		return builder.Manifest{}, fmt.Errorf("manifest file must be an absolute path")
+	}
+	expected := path.Join(envDir, "yacd-localnet-plan.json")
+	if manifestPath != expected {
+		return builder.Manifest{}, fmt.Errorf("manifest file must be %s", expected)
+	}
+
+	raw, err := readArtifactTextFile(manifestPath)
+	if err != nil {
+		return builder.Manifest{}, fmt.Errorf("read localnet manifest: %w", err)
+	}
+
+	var parsed manifestJSON
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return builder.Manifest{}, fmt.Errorf("parse localnet manifest: %w", err)
+	}
+	if parsed.Inputs.NetworkMagic == nil {
+		return builder.Manifest{}, fmt.Errorf("localnet manifest inputs.networkMagic is required")
+	}
+	if strings.TrimSpace(parsed.Fingerprint.Value) == "" {
+		return builder.Manifest{}, fmt.Errorf("localnet manifest fingerprint.value is required")
+	}
+
+	return builder.Manifest{
+		NetworkMagic: *parsed.Inputs.NetworkMagic,
+		Fingerprint:  parsed.Fingerprint.Value,
+		Raw:          raw,
+	}, nil
+}
+
+// readArtifacts walks [builder.Sources] and reads each declared file
+// from envDir as UTF-8 text. Optional sources missing on disk are
+// skipped; any other read error is returned as "read artifact <path>:
+// <err>".
+func readArtifacts(envDir string) (map[string]string, error) {
+	sources := builder.Sources()
+	artifacts := make(map[string]string, len(sources))
+	for _, src := range sources {
+		content, err := readArtifactTextFile(path.Join(envDir, src.RelativePath))
+		if errors.Is(err, os.ErrNotExist) && src.Optional {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read artifact %s: %w", src.RelativePath, err)
+		}
+		artifacts[src.Key] = content
+	}
+	return artifacts, nil
+}
+
+// readArtifactTextFile reads the file at filePath and returns its
+// contents as a string. The file must be valid UTF-8.
+func readArtifactTextFile(filePath string) (string, error) {
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", err
+	}
+	if !utf8.Valid(raw) {
+		return "", fmt.Errorf("file %s is not valid UTF-8", filePath)
+	}
+	return string(raw), nil
+}
+
+// manifestJSON is the subset of yacd-localnet-plan.json the publisher
+// parses to populate [builder.Manifest].
+type manifestJSON struct {
+	Inputs struct {
+		NetworkMagic *int64 `json:"networkMagic"`
+	} `json:"inputs"`
+	Fingerprint struct {
+		Value string `json:"value"`
+	} `json:"fingerprint"`
 }
