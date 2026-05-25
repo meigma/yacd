@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.0.1-yacd.4](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.3...cardano-testnet/v11.0.1-yacd.4) (2026-05-25)
+
+
+### Features
+
+* **cardano-testnet:** rewrite publisher as Cobra/Viper module with hexagonal layers ([#25](https://github.com/meigma/yacd/issues/25)) ([ac4ece0](https://github.com/meigma/yacd/commit/ac4ece03d7ed4cffd640d62be2190499096c5876))
+
 ## [11.0.1-yacd.3](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.2...cardano-testnet/v11.0.1-yacd.3) (2026-05-24)
 
 
