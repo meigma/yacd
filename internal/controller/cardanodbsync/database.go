@@ -29,6 +29,7 @@ type databaseRuntime struct {
 	Mode                    databaseMode
 	Database                dbsync.Database
 	PasswordSecret          *corev1.Secret
+	CredentialVersion       string
 	PostgresEndpoint        *yacdv1alpha1.ServiceEndpointStatus
 	GeneratedAuthSecretName string
 }
@@ -70,6 +71,20 @@ func (r *CardanoDBSyncReconciler) resolveExternalDatabase(
 	}, true, nil
 }
 
+func (runtime databaseRuntime) workloadPasswordSecret() *corev1.Secret {
+	if runtime.PasswordSecret == nil {
+		return nil
+	}
+	if runtime.Mode != databaseModeManaged || runtime.CredentialVersion == "" {
+		return runtime.PasswordSecret
+	}
+
+	secret := runtime.PasswordSecret.DeepCopy()
+	secret.ResourceVersion = runtime.CredentialVersion
+
+	return secret
+}
+
 func (r *CardanoDBSyncReconciler) resolveManagedDatabase(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -99,11 +114,16 @@ func (r *CardanoDBSyncReconciler) resolveManagedDatabase(
 	}
 
 	database := dbSyncDatabaseFromManaged(dbSync, secret.Name)
+	credentialVersion, err := managedPostgresCredentialVersion(dbSync, secret)
+	if err != nil {
+		return databaseRuntime{}, false, err
+	}
 
 	return databaseRuntime{
 		Mode:                    databaseModeManaged,
 		Database:                database,
 		PasswordSecret:          secret,
+		CredentialVersion:       credentialVersion,
 		PostgresEndpoint:        postgresEndpointFor(database, managedPostgresServiceName(dbSync)),
 		GeneratedAuthSecretName: generatedAuthSecretName,
 	}, true, nil
@@ -196,10 +216,13 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 		if err != nil {
 			return nil, err
 		}
+		desired.Annotations = map[string]string{
+			managedPostgresPasswordFingerprintAnno: managedPostgresPasswordFingerprint(password),
+		}
 		desired.Data = map[string][]byte{
 			managedPostgresPasswordKey: password,
 		}
-		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
+		if err := r.Create(ctx, desired); err != nil {
 			return nil, err
 		}
 
@@ -210,6 +233,18 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	}
 	if err := validateControllerOwner(current, desired); err != nil {
 		return nil, err
+	}
+	password := current.Data[managedPostgresPasswordKey]
+	if len(password) > 0 {
+		passwordFingerprint := managedPostgresPasswordFingerprint(password)
+		if acceptedFingerprint := current.Annotations[managedPostgresPasswordFingerprintAnno]; acceptedFingerprint != "" && acceptedFingerprint != passwordFingerprint {
+			return nil, unsupportedDatabaseIdentityChange(
+				"Managed Postgres generated auth Secret password changed after database initialization; delete and recreate the CardanoDBSync with a fresh database",
+			)
+		}
+		desired.Annotations = map[string]string{
+			managedPostgresPasswordFingerprintAnno: passwordFingerprint,
+		}
 	}
 
 	before := current.DeepCopy()

@@ -180,26 +180,42 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	databaseRuntime databaseRuntime,
 ) (ctrl.Result, error) {
 	builder := dbSyncWorkloadBuilder{scheme: r.Scheme}
+	var postgresResources *managedPostgresResources
 	if databaseRuntime.Mode == databaseModeManaged {
-		ready, err := r.reconcileManagedPostgres(ctx, log, dbSync, builder, databaseRuntime)
+		var err error
+		postgresResources, err = builder.managedPostgresResources(dbSync, databaseRuntime.workloadPasswordSecret())
 		if err != nil {
 			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 		}
-		if ready.Status != metav1.ConditionTrue {
-			if err := r.patchManagedPostgresAppliedStatus(ctx, dbSync, databaseRuntime, ready); err != nil {
-				return ctrl.Result{}, err
-			}
-			return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+		if err := r.validateAcceptedManagedPostgresIdentity(ctx, dbSync, postgresResources.IdentityFingerprint); err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 		}
 	}
 
-	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.PasswordSecret, databaseRuntime.Database)
+	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
+	if databaseRuntime.Mode == databaseModeManaged {
+		ready, err := r.reconcileManagedPostgresResources(ctx, log, dbSync, postgresResources)
+		if err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+		}
+		if ready.Status != metav1.ConditionTrue {
+			acceptedIdentity, err := r.currentAcceptedDBSyncDatabaseIdentity(ctx, dbSync)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.patchManagedPostgresAppliedStatus(ctx, dbSync, databaseRuntime, ready, acceptedIdentity); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+		}
+	}
+
 	applyResults, err := r.applyDBSyncWorkloadResources(ctx, resources)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
@@ -235,17 +251,12 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	return ctrl.Result{}, nil
 }
 
-func (r *CardanoDBSyncReconciler) reconcileManagedPostgres(
+func (r *CardanoDBSyncReconciler) reconcileManagedPostgresResources(
 	ctx context.Context,
 	log logr.Logger,
 	dbSync *yacdv1alpha1.CardanoDBSync,
-	builder dbSyncWorkloadBuilder,
-	databaseRuntime databaseRuntime,
+	resources *managedPostgresResources,
 ) (metav1.Condition, error) {
-	resources, err := builder.managedPostgresResources(dbSync, databaseRuntime.PasswordSecret)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
 	applyResults, err := r.applyManagedPostgresResources(ctx, resources)
 	if err != nil {
 		return metav1.Condition{}, err

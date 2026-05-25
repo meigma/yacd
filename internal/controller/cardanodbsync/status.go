@@ -151,21 +151,36 @@ func (r *CardanoDBSyncReconciler) patchManagedPostgresAppliedStatus(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	databaseRuntime databaseRuntime,
 	postgresReady metav1.Condition,
+	acceptedIdentityFingerprint string,
 ) error {
+	followerNodeReady, err := r.workloadContainerReadyCondition(ctx, dbSync, followerNodeContainerName, conditionTypeFollowerNodeReady, conditionReasonFollowerNodeReady, "Follower node container is ready", "Follower node container is not ready")
+	if err != nil {
+		return err
+	}
+	dbSyncReady, err := r.workloadContainerReadyCondition(ctx, dbSync, dbSyncContainerName, conditionTypeDBSyncReady, conditionReasonDBSyncReady, "db-sync container is ready", "db-sync container is not ready")
+	if err != nil {
+		return err
+	}
+	metricsEndpoint, err := r.currentDBSyncMetricsEndpoint(ctx, dbSync)
+	if err != nil {
+		return err
+	}
+
 	synced := syncedCondition(conditionReasonSyncNotProbed, "db-sync chain progress is not probed by this controller slice")
 	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
 		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
 			Postgres: databaseRuntime.PostgresEndpoint,
+			Metrics:  metricsEndpoint,
 		}
-		status.Database = databaseStatus("", databaseRuntime.GeneratedAuthSecretName)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
 		status.Sync = nil
 	},
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, "Managed Postgres resources are applied"),
 		progressingCondition(metav1.ConditionTrue, postgresReady.Reason, postgresReady.Message),
 		readyCondition(postgresReady.Reason, postgresReady.Message),
-		followerNodeReadyCondition(conditionReasonWorkloadMissing, "CardanoDBSync Deployment is not applied until managed Postgres is ready"),
+		followerNodeReady,
 		postgresReady,
-		dbSyncReadyCondition(conditionReasonWorkloadMissing, "CardanoDBSync Deployment is not applied until managed Postgres is ready"),
+		dbSyncReady,
 		synced,
 	)
 }
@@ -275,6 +290,24 @@ func (r *CardanoDBSyncReconciler) workloadContainerReadyCondition(
 	}
 
 	return condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage), nil
+}
+
+func (r *CardanoDBSyncReconciler) currentDBSyncMetricsEndpoint(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (*yacdv1alpha1.ServiceEndpointStatus, error) {
+	service := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncMetricsServiceName(dbSync)}, service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !controlledBy(service, dbSync) {
+		return nil, nil
+	}
+
+	return serviceEndpointFor(service, "http", "/metrics"), nil
 }
 
 func (r *CardanoDBSyncReconciler) managedPostgresReadyCondition(

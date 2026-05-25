@@ -1,6 +1,9 @@
 package cardanodbsync
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +31,9 @@ const (
 	managedPostgresDataDir       = "/var/lib/postgresql/data/pgdata"
 	managedPostgresPasswordKey   = "password"
 
+	managedPostgresIdentityAnno            = "yacd.meigma.io/managed-postgres-identity"
+	managedPostgresPasswordFingerprintAnno = "yacd.meigma.io/managed-postgres-password-fingerprint"
+
 	defaultManagedPostgresImage             = "postgres:17.2-alpine"
 	defaultManagedPostgresDatabase          = "cexplorer"
 	defaultManagedPostgresUser              = "postgres"
@@ -41,6 +47,7 @@ type managedPostgresResources struct {
 	PersistentVolumeClaim *corev1.PersistentVolumeClaim
 	Service               *corev1.Service
 	Deployment            *appsv1.Deployment
+	IdentityFingerprint   string
 }
 
 func (b dbSyncWorkloadBuilder) managedPostgresResources(
@@ -60,7 +67,11 @@ func (b dbSyncWorkloadBuilder) managedPostgresResources(
 		return nil, fmt.Errorf("scheme is required")
 	}
 
-	pvc, err := b.managedPostgresPersistentVolumeClaim(dbSync)
+	identityFingerprint, err := managedPostgresIdentityFingerprint(dbSync, authSecret)
+	if err != nil {
+		return nil, err
+	}
+	pvc, err := b.managedPostgresPersistentVolumeClaim(dbSync, identityFingerprint)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +79,7 @@ func (b dbSyncWorkloadBuilder) managedPostgresResources(
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := b.managedPostgresDeployment(dbSync, authSecret)
+	deployment, err := b.managedPostgresDeployment(dbSync, authSecret, identityFingerprint)
 	if err != nil {
 		return nil, err
 	}
@@ -77,21 +88,26 @@ func (b dbSyncWorkloadBuilder) managedPostgresResources(
 		PersistentVolumeClaim: pvc,
 		Service:               service,
 		Deployment:            deployment,
+		IdentityFingerprint:   identityFingerprint,
 	}, nil
 }
 
-func (b dbSyncWorkloadBuilder) managedPostgresPersistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync) (*corev1.PersistentVolumeClaim, error) {
+func (b dbSyncWorkloadBuilder) managedPostgresPersistentVolumeClaim(dbSync *yacdv1alpha1.CardanoDBSync, identityFingerprint string) (*corev1.PersistentVolumeClaim, error) {
 	managed := dbSync.Spec.Database.Managed
 	quantity, err := resource.ParseQuantity(storageSizeFrom(managed.Storage, defaultManagedPostgresStorageSize))
 	if err != nil {
 		return nil, unsupportedSpec("parse managed Postgres PVC storage size: %v", err)
 	}
+	annotations := map[string]string{
+		managedPostgresIdentityAnno: identityFingerprint,
+	}
 
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      managedPostgresPVCName(dbSync),
-			Namespace: dbSync.Namespace,
-			Labels:    managedPostgresLabels(dbSync),
+			Name:        managedPostgresPVCName(dbSync),
+			Namespace:   dbSync.Namespace,
+			Labels:      managedPostgresLabels(dbSync),
+			Annotations: annotations,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
 			AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
@@ -104,9 +120,7 @@ func (b dbSyncWorkloadBuilder) managedPostgresPersistentVolumeClaim(dbSync *yacd
 	}
 	if managed.Storage != nil && managed.Storage.StorageClassName != nil {
 		pvc.Spec.StorageClassName = managed.Storage.StorageClassName
-		pvc.Annotations = map[string]string{
-			requestedStorageClassAnno: *managed.Storage.StorageClassName,
-		}
+		pvc.Annotations[requestedStorageClassAnno] = *managed.Storage.StorageClassName
 	}
 	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
 		return nil, fmt.Errorf("set managed Postgres state PVC owner reference: %w", err)
@@ -143,9 +157,14 @@ func (b dbSyncWorkloadBuilder) managedPostgresService(dbSync *yacdv1alpha1.Carda
 func (b dbSyncWorkloadBuilder) managedPostgresDeployment(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	authSecret *corev1.Secret,
+	identityFingerprint string,
 ) (*appsv1.Deployment, error) {
 	managed := dbSync.Spec.Database.Managed
 	selectorLabels := managedPostgresSelectorLabels(dbSync)
+	secretVersion, err := managedPostgresCredentialVersion(dbSync, authSecret)
+	if err != nil {
+		return nil, err
+	}
 	labels := managedPostgresLabels(dbSync)
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -163,7 +182,8 @@ func (b dbSyncWorkloadBuilder) managedPostgresDeployment(
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: selectorLabels,
 					Annotations: map[string]string{
-						dbSyncSecretVersionAnno: authSecret.ResourceVersion,
+						dbSyncSecretVersionAnno:     secretVersion,
+						managedPostgresIdentityAnno: identityFingerprint,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -342,6 +362,83 @@ func managedPostgresUser(managed *yacdv1alpha1.CardanoDBSyncManagedDatabaseSpec)
 	}
 
 	return strings.TrimSpace(managed.User)
+}
+
+type managedPostgresIdentityInput struct {
+	Kind         string                           `json:"kind"`
+	Image        string                           `json:"image"`
+	Database     string                           `json:"database"`
+	User         string                           `json:"user"`
+	Port         int32                            `json:"port"`
+	PasswordKey  string                           `json:"passwordKey"`
+	AuthSecret   managedPostgresAuthIdentityInput `json:"authSecret"`
+	AuthProvided bool                             `json:"authProvided"`
+}
+
+type managedPostgresAuthIdentityInput struct {
+	Name    string `json:"name"`
+	UID     string `json:"uid,omitempty"`
+	Version string `json:"version"`
+}
+
+func managedPostgresIdentityFingerprint(dbSync *yacdv1alpha1.CardanoDBSync, authSecret *corev1.Secret) (string, error) {
+	managed := dbSync.Spec.Database.Managed
+	credentialVersion, err := managedPostgresCredentialVersion(dbSync, authSecret)
+	if err != nil {
+		return "", err
+	}
+
+	input, err := json.Marshal(managedPostgresIdentityInput{
+		Kind:         "managed-postgres/v1",
+		Image:        managedPostgresImage(managed),
+		Database:     managedPostgresDatabaseName(managed),
+		User:         managedPostgresUser(managed),
+		Port:         managedPostgresPort,
+		PasswordKey:  managedPostgresPasswordKey,
+		AuthProvided: managed.AuthSecretRef != nil,
+		AuthSecret: managedPostgresAuthIdentityInput{
+			Name:    authSecret.Name,
+			UID:     string(authSecret.UID),
+			Version: credentialVersion,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal managed Postgres identity input: %w", err)
+	}
+	sum := sha256.Sum256(input)
+
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func managedPostgresCredentialVersion(dbSync *yacdv1alpha1.CardanoDBSync, authSecret *corev1.Secret) (string, error) {
+	if dbSync == nil || dbSync.Spec.Database.Managed == nil {
+		return "", unsupportedSpec("managed database spec is required")
+	}
+	if authSecret == nil {
+		return "", fmt.Errorf("managed Postgres auth Secret is required")
+	}
+	if dbSync.Spec.Database.Managed.AuthSecretRef == nil {
+		fingerprint := authSecret.Annotations[managedPostgresPasswordFingerprintAnno]
+		if fingerprint == "" {
+			return "", unsupportedSpec("managed Postgres generated auth Secret is missing password fingerprint")
+		}
+
+		return fingerprint, nil
+	}
+	if authSecret.ResourceVersion != "" {
+		return authSecret.ResourceVersion, nil
+	}
+	if authSecret.UID != "" {
+		return string(authSecret.UID), nil
+	}
+
+	return "unversioned", nil
+}
+
+func managedPostgresPasswordFingerprint(password []byte) string {
+	sum := sha256.Sum256(password)
+
+	return hex.EncodeToString(sum[:])
 }
 
 func managedPostgresAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {

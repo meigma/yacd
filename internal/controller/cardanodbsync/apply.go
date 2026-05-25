@@ -164,6 +164,17 @@ func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 	)
 }
 
+func (r *CardanoDBSyncReconciler) currentAcceptedDBSyncDatabaseIdentity(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (string, error) {
+	if dbSync.Status.Database != nil && dbSync.Status.Database.AcceptedIdentityFingerprint != "" {
+		return dbSync.Status.Database.AcceptedIdentityFingerprint, nil
+	}
+
+	return r.acceptedDBSyncDatabaseIdentityFromPVC(ctx, dbSync)
+}
+
 func dbSyncDatabaseAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
 	if dbSync.Status.Database == nil {
 		return ""
@@ -188,6 +199,60 @@ func (r *CardanoDBSyncReconciler) acceptedDBSyncDatabaseIdentityFromPVC(
 	}
 
 	return pvc.Annotations[dbSyncDatabaseIdentityAnno], nil
+}
+
+func (r *CardanoDBSyncReconciler) validateAcceptedManagedPostgresIdentity(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	desiredFingerprint string,
+) error {
+	if desiredFingerprint == "" {
+		return unsupportedSpec("managed Postgres identity fingerprint is required")
+	}
+
+	acceptedFingerprint, err := r.acceptedManagedPostgresIdentity(ctx, dbSync)
+	if err != nil {
+		return err
+	}
+	if acceptedFingerprint == "" || acceptedFingerprint == desiredFingerprint {
+		return nil
+	}
+
+	return unsupportedDatabaseIdentityChange(
+		"Managed Postgres bootstrap inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh database",
+	)
+}
+
+func (r *CardanoDBSyncReconciler) acceptedManagedPostgresIdentity(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (string, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresPVCName(dbSync)}, pvc); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", err
+		}
+	} else if controlledBy(pvc, dbSync) {
+		if fingerprint := pvc.Annotations[managedPostgresIdentityAnno]; fingerprint != "" {
+			return fingerprint, nil
+		}
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresDeploymentName(dbSync)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !controlledBy(deployment, dbSync) {
+		return "", nil
+	}
+	if fingerprint := deployment.Annotations[managedPostgresIdentityAnno]; fingerprint != "" {
+		return fingerprint, nil
+	}
+
+	return deployment.Spec.Template.Annotations[managedPostgresIdentityAnno], nil
 }
 
 func (r *CardanoDBSyncReconciler) handleDBSyncWorkloadApplyError(
@@ -538,6 +603,8 @@ func mergeDBSyncOwnedAnnotations(current map[string]string, desired map[string]s
 		dbSyncDatabaseIdentityAnno,
 		dbSyncSecretVersionAnno,
 		dbSyncArtifactDataHashAnno,
+		managedPostgresIdentityAnno,
+		managedPostgresPasswordFingerprintAnno,
 		requestedStorageClassAnno,
 	} {
 		if value, ok := desired[key]; ok {

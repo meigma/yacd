@@ -88,11 +88,19 @@ func TestDBSyncWorkloadBuilderBuildsManagedPostgresResources(t *testing.T) {
 	authSecret.Name = managedPostgresAuthSecretName(dbSync)
 	authSecret.Namespace = dbSync.Namespace
 	authSecret.ResourceVersion = "11"
+	authSecret.Data = map[string][]byte{
+		managedPostgresPasswordKey: []byte("managed-secret"),
+	}
+	authSecret.Annotations = map[string]string{
+		managedPostgresPasswordFingerprintAnno: managedPostgresPasswordFingerprint(authSecret.Data[managedPostgresPasswordKey]),
+	}
 
 	resources, err := builder.managedPostgresResources(dbSync, authSecret)
 
 	require.NoError(t, err)
+	assert.NotEmpty(t, resources.IdentityFingerprint)
 	assert.Equal(t, "dbsync-postgres-state", resources.PersistentVolumeClaim.Name)
+	assert.Equal(t, resources.IdentityFingerprint, resources.PersistentVolumeClaim.Annotations[managedPostgresIdentityAnno])
 	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Equal(t, "10Gi", storage.String())
 	assert.Equal(t, "dbsync-postgres", resources.Service.Name)
@@ -108,7 +116,8 @@ func TestDBSyncWorkloadBuilderBuildsManagedPostgresResources(t *testing.T) {
 	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsUser)
 	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsGroup)
 	assert.Equal(t, managedPostgresRunAsID, *deployment.Spec.Template.Spec.SecurityContext.FSGroup)
-	assert.Equal(t, "11", deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, resources.IdentityFingerprint, deployment.Spec.Template.Annotations[managedPostgresIdentityAnno])
+	assert.Equal(t, authSecret.Annotations[managedPostgresPasswordFingerprintAnno], deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	postgres := requireContainer(t, deployment, managedPostgresContainerName)
 	assert.Equal(t, defaultManagedPostgresImage, postgres.Image)
 	assert.Equal(t, managedPostgresRunAsID, *postgres.SecurityContext.RunAsUser)
@@ -400,7 +409,16 @@ func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
-	managedResources, err := builder.managedPostgresResources(managedCardanoDBSync(dbSync.Name, "ready-network"), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: managedPostgresAuthSecretName(dbSync), Namespace: dbSync.Namespace}})
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: managedPostgresAuthSecretName(dbSync), Namespace: dbSync.Namespace},
+		Data: map[string][]byte{
+			managedPostgresPasswordKey: []byte("managed-secret"),
+		},
+	}
+	authSecret.Annotations = map[string]string{
+		managedPostgresPasswordFingerprintAnno: managedPostgresPasswordFingerprint(authSecret.Data[managedPostgresPasswordKey]),
+	}
+	managedResources, err := builder.managedPostgresResources(managedCardanoDBSync(dbSync.Name, "ready-network"), authSecret)
 	require.NoError(t, err)
 	for _, name := range []string{
 		resources.ConfigMap.Name,
