@@ -1,3 +1,3 @@
-// Package artifacts validates non-secret ConfigMap artifact handoff contracts
-// shared by producing and consuming controllers.
+// Package artifacts contains generic non-secret ConfigMap artifact hashing and
+// validation helpers. Callers own product-specific contracts.
 package artifacts

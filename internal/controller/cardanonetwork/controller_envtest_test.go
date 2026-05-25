@@ -8,6 +8,7 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -543,7 +544,7 @@ func recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(
 	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
 	verifiedArtifactsConfigMapUID := configMap.UID
 	configMap.Finalizers = append(configMap.Finalizers, "yacd.meigma.io/test-artifacts-finalizer")
-	delete(configMap.Data, "configuration.yaml")
+	delete(configMap.Data, networkartifacts.ConfigurationKey)
 	require.NoError(t, apiClient.Update(ctx, configMap))
 
 	require.Eventually(t, func() bool {
@@ -607,7 +608,7 @@ func publishNetworkArtifactsWithClient(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = ctrlartifacts.CardanoNetworkSchemaVersion
+	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = networkartifacts.SchemaVersion
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
@@ -619,6 +620,6 @@ func publishNetworkArtifactsWithClient(
 func networkArtifactsStatusMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
 	return current.Status.Artifacts != nil &&
 		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
-		current.Status.Artifacts.SchemaVersion == ctrlartifacts.CardanoNetworkSchemaVersion &&
+		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
 		current.Status.Artifacts.DataHash == testNetworkArtifactsDataHash
 }

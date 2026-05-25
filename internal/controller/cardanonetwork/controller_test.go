@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	"github.com/stretchr/testify/assert"
@@ -192,7 +193,7 @@ func TestCardanoNetworkReconcilerReconcilePublishesVerifiedNetworkArtifacts(t *t
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Artifacts)
 	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
-	assert.Equal(t, ctrlartifacts.CardanoNetworkSchemaVersion, current.Status.Artifacts.SchemaVersion)
+	assert.Equal(t, networkartifacts.SchemaVersion, current.Status.Artifacts.SchemaVersion)
 	assert.Equal(t, testNetworkArtifactsDataHash, current.Status.Artifacts.DataHash)
 }
 
@@ -243,7 +244,7 @@ func TestCardanoNetworkReconcilerReconcileRecoversCorruptedNetworkArtifactsConfi
 	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
 
 	corrupted := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	delete(corrupted.Data, "configuration.yaml")
+	delete(corrupted.Data, networkartifacts.ConfigurationKey)
 	require.NoError(t, reconciler.Update(ctx, corrupted))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -276,7 +277,7 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "devnet-network-artifacts",
 			Annotations: map[string]string{
-				ctrlartifacts.SchemaVersionAnnotation: ctrlartifacts.CardanoNetworkSchemaVersion,
+				ctrlartifacts.SchemaVersionAnnotation: networkartifacts.SchemaVersion,
 				localnetFingerprintAnno:               "fingerprint",
 				ctrlartifacts.DataHashAnnotation:      "sha256:test",
 			},
@@ -293,13 +294,13 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 	assert.True(t, result.ready)
 	assert.Equal(t, testNetworkArtifactsDataHash, result.status.DataHash)
 
-	configMap.Data["configuration.yaml"] = "corrupted"
+	configMap.Data[networkartifacts.ConfigurationKey] = "corrupted"
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.False(t, result.ready)
 	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.reason)
 
 	configMap.Data = testNetworkArtifactsData()
-	configMap.Data["dijkstra-genesis.json"] = "test dijkstra-genesis.json"
+	configMap.Data[networkartifacts.DijkstraGenesisKey] = "test dijkstra-genesis.json"
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	result = artifactConfigMapStatus(configMap, "fingerprint")
 	assert.True(t, result.ready)
@@ -2071,7 +2072,7 @@ func publishNetworkArtifacts(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = ctrlartifacts.CardanoNetworkSchemaVersion
+	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = networkartifacts.SchemaVersion
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
@@ -2084,14 +2085,14 @@ func publishNetworkArtifacts(
 
 func testNetworkArtifactsData() map[string]string {
 	return map[string]string{
-		"configuration.yaml":      "test configuration.yaml",
-		"byron-genesis.json":      "test byron-genesis.json",
-		"shelley-genesis.json":    "test shelley-genesis.json",
-		"alonzo-genesis.json":     "test alonzo-genesis.json",
-		"conway-genesis.json":     "test conway-genesis.json",
-		"primary-topology.json":   "test primary-topology.json",
-		"yacd-localnet-plan.json": "test yacd-localnet-plan.json",
-		"connection.json":         "test connection.json",
+		networkartifacts.ConfigurationKey:   "test configuration.yaml",
+		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
+		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
+		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
+		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
+		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
+		networkartifacts.PlanManifestKey:    "test yacd-localnet-plan.json",
+		networkartifacts.ConnectionKey:      "test connection.json",
 	}
 }
 

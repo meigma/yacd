@@ -7,6 +7,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
@@ -207,7 +208,7 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 		Paths: dbsync.Paths{
 			ConfigFile:   dbSyncConfigFilePath(),
 			TopologyFile: followerTopologyFilePath(),
-			NodeConfig:   networkArtifactFilePath("configuration.yaml"),
+			NodeConfig:   networkArtifactFilePath(networkartifacts.ConfigurationKey),
 			SocketPath:   dbSyncNodeSocketPath,
 			StateDir:     dbSyncStateMountDir,
 			PGPassFile:   dbSyncPGPassFilePath(),

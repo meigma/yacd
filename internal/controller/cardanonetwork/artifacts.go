@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
@@ -192,13 +193,13 @@ func artifactConfigMapStatus(configMap *corev1.ConfigMap, expectedFingerprint st
 		}
 	}
 
-	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != ctrlartifacts.CardanoNetworkSchemaVersion {
+	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != networkartifacts.SchemaVersion {
 		return networkArtifactsStatusResult{
 			status: status,
 			reason: "artifact ConfigMap schema version is not published",
 		}
 	}
-	status.SchemaVersion = ctrlartifacts.CardanoNetworkSchemaVersion
+	status.SchemaVersion = networkartifacts.SchemaVersion
 
 	if configMap.Annotations[localnetFingerprintAnno] != expectedFingerprint {
 		return networkArtifactsStatusResult{
@@ -215,7 +216,7 @@ func artifactConfigMapStatus(configMap *corev1.ConfigMap, expectedFingerprint st
 		}
 	}
 
-	if err := ctrlartifacts.ValidateConfigMapData(configMap, ctrlartifacts.CardanoNetworkContract(), dataHash); err != nil {
+	if err := ctrlartifacts.ValidateConfigMapData(configMap, networkartifacts.Contract(), dataHash); err != nil {
 		return networkArtifactsStatusResult{
 			status: status,
 			reason: err.Error(),

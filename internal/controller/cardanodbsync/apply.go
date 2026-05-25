@@ -299,7 +299,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Data = maps.Clone(desired.Data)
@@ -337,7 +337,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Type = corev1.SecretTypeOpaque
@@ -404,7 +404,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	if current.Spec.Resources.Requests == nil {
@@ -457,13 +457,13 @@ func (r *CardanoDBSyncReconciler) applyDBSyncDeployment(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Paused = desired.Spec.Paused
 	current.Spec.Replicas = desired.Spec.Replicas
 	current.Spec.Strategy = desired.Spec.Strategy
-	current.Spec.Template.Labels = ctrlmetadata.MergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
+	current.Spec.Template.Labels = ctrlmetadata.OverlayStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
 	current.Spec.Template.Annotations = mergeDBSyncOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
 	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
 	current.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
@@ -507,8 +507,8 @@ func (r *CardanoDBSyncReconciler) applyDBSyncMetricsService(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Type = desired.Spec.Type
 	current.Spec.Selector = maps.Clone(desired.Spec.Selector)

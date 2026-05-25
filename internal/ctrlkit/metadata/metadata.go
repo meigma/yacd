@@ -38,9 +38,9 @@ func ObjectKey(obj interface {
 	}
 }
 
-// MergeStringMap overlays desired onto current and returns nil for an empty
+// OverlayStringMap overlays desired onto current and returns nil for an empty
 // result, matching Kubernetes object metadata conventions.
-func MergeStringMap(current map[string]string, desired map[string]string) map[string]string {
+func OverlayStringMap(current map[string]string, desired map[string]string) map[string]string {
 	merged := map[string]string{}
 	maps.Copy(merged, current)
 	maps.Copy(merged, desired)

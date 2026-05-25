@@ -262,7 +262,7 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Type = corev1.SecretTypeOpaque

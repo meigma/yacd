@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -154,7 +155,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork artifact ConfigMap metadata does not match status",
 		)
 	}
-	if err := ctrlartifacts.ValidateConfigMapData(configMap, ctrlartifacts.CardanoNetworkContract(), network.Status.Artifacts.DataHash); err != nil {
+	if err := ctrlartifacts.ValidateConfigMapData(configMap, networkartifacts.Contract(), network.Status.Artifacts.DataHash); err != nil {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsMismatch,
 			"Referenced CardanoNetwork artifact ConfigMap is invalid: "+err.Error(),

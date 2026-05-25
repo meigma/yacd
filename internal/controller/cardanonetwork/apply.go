@@ -84,7 +84,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	if current.Spec.Resources.Requests == nil {
@@ -138,13 +138,13 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Paused = desired.Spec.Paused
 	current.Spec.Replicas = desired.Spec.Replicas
 	current.Spec.Strategy = desired.Spec.Strategy
-	current.Spec.Template.Labels = ctrlmetadata.MergeStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
+	current.Spec.Template.Labels = ctrlmetadata.OverlayStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
 	current.Spec.Template.Annotations = mergeOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
 	current.Spec.Template.Spec.ServiceAccountName = desired.Spec.Template.Spec.ServiceAccountName
 	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
@@ -198,8 +198,8 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 
 	if equality.Semantic.DeepEqual(before, current) {
@@ -235,8 +235,8 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherServiceAccount(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
 
@@ -273,8 +273,8 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherRole(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Rules = desired.Rules
 
@@ -317,8 +317,8 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherRoleBinding(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Subjects = desired.Subjects
 
@@ -359,8 +359,8 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Spec.Type = desired.Spec.Type
 	current.Spec.Selector = maps.Clone(desired.Spec.Selector)
@@ -411,8 +411,8 @@ func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.MergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.MergeStringMap(current.Annotations, desired.Annotations)
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Type = corev1.SecretTypeOpaque
 	if current.Data == nil {

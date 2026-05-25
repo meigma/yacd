@@ -17,18 +17,18 @@ func TestObjectKey(t *testing.T) {
 	assert.Equal(t, types.NamespacedName{Namespace: "testing", Name: "child"}, ObjectKey(obj))
 }
 
-func TestMergeStringMap(t *testing.T) {
+func TestOverlayStringMap(t *testing.T) {
 	current := map[string]string{"keep": "current", "replace": "old"}
 	desired := map[string]string{"replace": "new", "add": "desired"}
 
-	got := MergeStringMap(current, desired)
+	got := OverlayStringMap(current, desired)
 
 	assert.Equal(t, map[string]string{"keep": "current", "replace": "new", "add": "desired"}, got)
 	assert.Equal(t, "old", current["replace"])
 }
 
-func TestMergeStringMapReturnsNilWhenEmpty(t *testing.T) {
-	assert.Nil(t, MergeStringMap(nil, nil))
+func TestOverlayStringMapReturnsNilWhenEmpty(t *testing.T) {
+	assert.Nil(t, OverlayStringMap(nil, nil))
 }
 
 func TestMergeOwnedAnnotations(t *testing.T) {
