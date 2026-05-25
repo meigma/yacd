@@ -8,12 +8,13 @@ import (
 )
 
 // TestMain registers the publisher binary so testscript cases can
-// invoke it by name. The registered entrypoint is the existing run()
-// function so exit codes flow through unchanged.
+// invoke it by name. The registered entrypoint wraps run() so exit
+// codes flow through testscript.Main, which handles m.Run and
+// os.Exit internally.
 func TestMain(m *testing.M) {
-	os.Exit(testscript.RunMain(m, map[string]func() int{
-		"yacd-cardano-testnet-publisher": run,
-	}))
+	testscript.Main(m, map[string]func(){
+		"yacd-cardano-testnet-publisher": func() { os.Exit(run()) },
+	})
 }
 
 // TestPublish exercises the publish pipeline end-to-end via golden

@@ -77,7 +77,7 @@ func validatePublicArtifactSource(s SourceFile) error {
 		"stake-delegators":  {},
 		"utxo-keys":         {},
 	}
-	for _, part := range strings.Split(clean, "/") {
+	for part := range strings.SplitSeq(clean, "/") {
 		if _, denied := deniedComponents[strings.ToLower(part)]; denied {
 			return fmt.Errorf("source %s is under secret/key material", s.RelativePath)
 		}

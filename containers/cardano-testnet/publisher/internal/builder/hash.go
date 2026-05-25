@@ -27,7 +27,7 @@ func computeDataHash(data map[string]string) string {
 	digest := sha256.New()
 	for _, key := range keys {
 		value := data[key]
-		fmt.Fprintf(digest, "%d:%s\n%d:", len(key), key, len(value))
+		_, _ = fmt.Fprintf(digest, "%d:%s\n%d:", len(key), key, len(value))
 		_, _ = io.WriteString(digest, value)
 		_, _ = io.WriteString(digest, "\n")
 	}

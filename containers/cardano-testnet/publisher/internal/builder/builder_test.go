@@ -2,6 +2,7 @@ package builder
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -119,14 +120,7 @@ func TestBuild_OptionalDijkstraAbsent(t *testing.T) {
 		t.Error("dijkstra-genesis.json present in Data despite being absent in input")
 	}
 
-	var sawDijkstra bool
-	for _, k := range patch.KnownKeys {
-		if k == "dijkstra-genesis.json" {
-			sawDijkstra = true
-			break
-		}
-	}
-	if !sawDijkstra {
+	if !slices.Contains(patch.KnownKeys, "dijkstra-genesis.json") {
 		t.Error("KnownKeys missing dijkstra-genesis.json — adapter cannot prune it")
 	}
 
