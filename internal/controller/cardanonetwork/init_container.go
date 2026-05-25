@@ -13,7 +13,7 @@ import (
 
 const (
 	cardanoTestnetImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
-	cardanoTestnetImageRevision   = "yacd.3"
+	cardanoTestnetImageRevision   = "yacd.4"
 
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	faucetSourceAddressInitContainerName = "faucet-source-addresses"

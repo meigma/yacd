@@ -52,11 +52,33 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 
 	deployment := resources.Deployment
 	assert.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
+	require.NotNil(t, deployment.Spec.Template.Spec.SecurityContext)
+	assert.Equal(t, dbSyncRunAsID, *deployment.Spec.Template.Spec.SecurityContext.FSGroup)
+	assert.Equal(t, dbSyncRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsGroup)
+	assert.True(t, *deployment.Spec.Template.Spec.SecurityContext.RunAsNonRoot)
+	assert.Equal(t, dbSyncRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsUser)
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	pgPassInit := requireInitContainer(t, deployment, dbSyncPGPassInitName)
 	follower := requireContainer(t, deployment, followerNodeContainerName)
 	dbSyncContainer := requireContainer(t, deployment, dbSyncContainerName)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.3", follower.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", follower.Image)
+	assert.Equal(t, "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0", pgPassInit.Image)
 	assert.Equal(t, "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0", dbSyncContainer.Image)
+	assert.Equal(t, []string{"/bin/sh", "-eu", "-c"}, pgPassInit.Command)
+	assert.Contains(t, pgPassInit.Args[0], "chmod 0600 /configuration/pgpass")
+	require.NotNil(t, follower.SecurityContext)
+	require.NotNil(t, pgPassInit.SecurityContext)
+	require.NotNil(t, dbSyncContainer.SecurityContext)
+	assert.True(t, *follower.SecurityContext.RunAsNonRoot)
+	assert.True(t, *pgPassInit.SecurityContext.RunAsNonRoot)
+	assert.True(t, *dbSyncContainer.SecurityContext.RunAsNonRoot)
+	assert.Equal(t, dbSyncRunAsID, *follower.SecurityContext.RunAsUser)
+	assert.Equal(t, dbSyncRunAsID, *pgPassInit.SecurityContext.RunAsUser)
+	assert.Equal(t, dbSyncRunAsID, *dbSyncContainer.SecurityContext.RunAsUser)
+	assert.Equal(t, dbSyncRunAsID, *follower.SecurityContext.RunAsGroup)
+	assert.Equal(t, dbSyncRunAsID, *pgPassInit.SecurityContext.RunAsGroup)
+	assert.Equal(t, dbSyncRunAsID, *dbSyncContainer.SecurityContext.RunAsGroup)
 	assert.Contains(t, follower.Args, "/network-artifacts/configuration.yaml")
 	assert.Empty(t, dbSyncContainer.Command)
 	assert.NotContains(t, dbSyncContainer.Args, "--schema-dir")
@@ -70,10 +92,13 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Empty(t, envVarValue(dbSyncContainer, "PGPASSWORD"))
 	assert.Contains(t, dbSyncContainer.Args, "--pg-pass-env")
 	assert.Contains(t, dbSyncContainer.Args, "PGPASSFILE")
-	assert.Equal(t, dbSyncPGPassSecretName(dbSync), requireVolume(t, deployment, dbSyncPGPassVolumeName).Secret.SecretName)
-	assert.Equal(t, int32(0o600), *requireVolume(t, deployment, dbSyncPGPassVolumeName).Secret.DefaultMode)
+	assert.Equal(t, dbSyncPGPassSecretName(dbSync), requireVolume(t, deployment, dbSyncPGPassSecretVolumeName).Secret.SecretName)
+	assert.Equal(t, int32(0o440), *requireVolume(t, deployment, dbSyncPGPassSecretVolumeName).Secret.DefaultMode)
+	require.NotNil(t, requireVolume(t, deployment, dbSyncPGPassVolumeName).EmptyDir)
 	assert.Equal(t, dbSyncFollowerPVCName(dbSync), requireVolume(t, deployment, followerNodeStateVolumeName).PersistentVolumeClaim.ClaimName)
 	assert.Equal(t, dbSyncNodeDatabaseDir, requireVolumeMount(t, follower, followerNodeStateVolumeName).MountPath)
+	assert.Equal(t, dbSyncPGPassSecretMountDir, requireVolumeMount(t, pgPassInit, dbSyncPGPassSecretVolumeName).MountPath)
+	assert.Equal(t, dbSyncPGPassMountDir, requireVolumeMount(t, pgPassInit, dbSyncPGPassVolumeName).MountPath)
 	assert.Equal(t, dbSyncPGPassMountDir, requireVolumeMount(t, dbSyncContainer, dbSyncPGPassVolumeName).MountPath)
 	assert.Equal(t, dbSyncStateMountDir, requireVolumeMount(t, dbSyncContainer, dbSyncStateVolumeName).MountPath)
 	assert.Equal(t, int32(8080), resources.MetricsService.Spec.Ports[0].Port)
@@ -460,6 +485,18 @@ func requireContainer(t *testing.T, deployment *appsv1.Deployment, name string) 
 		}
 	}
 	require.Failf(t, "missing container", "expected container %s", name)
+	return corev1.Container{}
+}
+
+func requireInitContainer(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Container {
+	t.Helper()
+
+	for _, container := range deployment.Spec.Template.Spec.InitContainers {
+		if container.Name == name {
+			return container
+		}
+	}
+	require.Failf(t, "missing init container", "expected init container %s", name)
 	return corev1.Container{}
 }
 

@@ -36,6 +36,7 @@ const (
 	defaultExternalDatabasePasswordKey = "password"
 
 	dbSyncWorkloadReadinessRequeueAfter = 15 * time.Second
+	dbSyncRuntimeProbeRequeueAfter      = 30 * time.Second
 )
 
 // CardanoDBSyncReconciler reconciles CardanoDBSync resources.
@@ -49,6 +50,9 @@ type CardanoDBSyncReconciler struct {
 
 	// Scheme is the runtime scheme available to future owned child resources.
 	Scheme *runtime.Scheme
+
+	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.
+	runtimeProberOverride cardanoDBSyncRuntimeProber
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs,verbs=get;list;watch
@@ -240,9 +244,12 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 		"metricsServiceOperation", applyResults.MetricsService,
 		"planFingerprint", resources.Plan.Fingerprint.Value)
 
-	ready, err := r.patchWorkloadsAppliedStatus(ctx, dbSync, resources.MetricsService, databaseRuntime, resources.Plan.DatabaseIdentityFingerprint.Value)
+	ready, probed, err := r.patchWorkloadsAppliedStatus(ctx, dbSync, network, resources.MetricsService, databaseRuntime, resources.Plan.DatabaseIdentityFingerprint.Value)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if probed {
+		return ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, nil
 	}
 	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
 		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/artifacts"
 	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/builder"
 	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/client"
 	"github.com/meigma/yacd/containers/cardano-testnet/publisher/internal/client/k8s"
@@ -69,7 +70,11 @@ func runPublish(ctx context.Context, cfg config.Config, out io.Writer) error {
 		return err
 	}
 
-	artifacts, err := readArtifacts(cfg.LocalnetEnvDir)
+	artifactData, err := readArtifacts(cfg.LocalnetEnvDir)
+	if err != nil {
+		return err
+	}
+	artifactData, err = artifacts.EnrichGenesisHashes(ctx, cfg.LocalnetEnvDir, artifactData, artifacts.CardanoCLIHasherFromEnv())
 	if err != nil {
 		return err
 	}
@@ -85,7 +90,7 @@ func runPublish(ctx context.Context, cfg config.Config, out io.Writer) error {
 			NodeToNodeURL:  cfg.CardanoNodeToNodeURL,
 		},
 		Manifest:  manifest,
-		Artifacts: artifacts,
+		Artifacts: artifactData,
 	})
 	if err != nil {
 		return err
@@ -194,7 +199,7 @@ func readManifest(envDir, manifestPath string) (builder.Manifest, error) {
 // <err>".
 func readArtifacts(envDir string) (map[string]string, error) {
 	sources := builder.Sources()
-	artifacts := make(map[string]string, len(sources))
+	artifactData := make(map[string]string, len(sources))
 	for _, src := range sources {
 		content, err := readArtifactTextFile(path.Join(envDir, src.RelativePath))
 		if errors.Is(err, os.ErrNotExist) && src.Optional {
@@ -203,9 +208,9 @@ func readArtifacts(envDir string) (map[string]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read artifact %s: %w", src.RelativePath, err)
 		}
-		artifacts[src.Key] = content
+		artifactData[src.Key] = content
 	}
-	return artifacts, nil
+	return artifactData, nil
 }
 
 // readArtifactTextFile reads the file at filePath and returns its

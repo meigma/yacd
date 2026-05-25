@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -111,7 +112,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesManagedPostgresAndGatesDBSyncWor
 	result, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
 	pgpass := &corev1.Secret{}
@@ -459,14 +460,14 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExternalDatabaseWorkloads(t *tes
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonExternalDatabaseNotProbed)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonSyncNotProbed)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonRuntimeProbesPending)
 
 	current := requireDBSync(t, ctx, reconciler, dbSync)
 	require.NotNil(t, current.Status.Endpoints)
@@ -503,14 +504,145 @@ func TestCardanoDBSyncReconcilerReconcileReportsRuntimeReadyContainers(t *testin
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assert.Empty(t, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonRuntimeProbesPending)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonRuntimeProbesPending)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionTrue, conditionReasonFollowerNodeReady)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonExternalDatabaseNotProbed)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionTrue, conditionReasonDBSyncReady)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonSyncNotProbed)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Sync)
+	assert.Equal(t, int64(99), *current.Status.Sync.DBBlockHeight)
+	assert.Equal(t, int64(100), *current.Status.Sync.NodeBlockHeight)
+	assert.Equal(t, int64(1), *current.Status.Sync.LagBlocks)
+	prober := reconciler.runtimeProberOverride.(*fakeCardanoDBSyncRuntimeProber)
+	require.Len(t, prober.calls, 1)
+	assert.Equal(t, "postgres.default.svc.cluster.local", prober.calls[0].Database.Host)
+	assert.Equal(t, "ws://ready-network-ogmios.default.svc.cluster.local:1337", prober.calls[0].OgmiosURL)
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableProbe(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{result: dbSyncRuntimeProbeResult{
+		Sync:          nil,
+		PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, "Postgres progress query failed: dial refused"),
+		Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+	}}
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, deployment)
+	markDBSyncPodContainersReady(t, ctx, reconciler, dbSync, followerNodeContainerName, dbSyncContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonPostgresUnavailable)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	assert.Nil(t, current.Status.Sync)
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableBeforeDBSyncReady(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	postgresResult := dbSyncRuntimeProbeResult{
+		Sync:          nil,
+		PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, "Postgres progress query failed: password authentication failed"),
+		Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+	}
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{postgresResult: &postgresResult}
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, deployment)
+	markDBSyncPodContainersReady(t, ctx, reconciler, dbSync, followerNodeContainerName)
+	prober := reconciler.runtimeProberOverride.(*fakeCardanoDBSyncRuntimeProber)
+	prober.postgresCalls = nil
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionTrue, conditionReasonFollowerNodeReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonPostgresUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonPostgresUnavailable)
+	require.Len(t, prober.postgresCalls, 1)
+	assert.Empty(t, prober.calls)
+}
+
+func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailable(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{result: dbSyncRuntimeProbeResult{
+		Sync: &yacdv1alpha1.CardanoDBSyncProgressStatus{
+			DBBlockHeight: ptr.To[int64](41),
+			DBSlotHeight:  ptr.To[int64](4100),
+			Epoch:         ptr.To[int64](3),
+		},
+		PostgresReady: condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
+		Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
+	}}
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, deployment)
+	markDBSyncPodContainersReady(t, ctx, reconciler, dbSync, followerNodeContainerName, dbSyncContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSynced, metav1.ConditionFalse, conditionReasonNodeTipUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonNodeTipUnavailable)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Sync)
+	assert.Equal(t, int64(41), *current.Status.Sync.DBBlockHeight)
+	assert.Equal(t, int64(4100), *current.Status.Sync.DBSlotHeight)
+	assert.Nil(t, current.Status.Sync.NodeBlockHeight)
+}
+
+func TestCardanoDBSyncReconcilerReconcileLeavesStatusUnchangedForSameProbe(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	deployment := requireDBSyncDeployment(t, ctx, reconciler, dbSync)
+	markDBSyncDeploymentAvailable(t, ctx, reconciler, deployment)
+	markDBSyncPodContainersReady(t, ctx, reconciler, dbSync, followerNodeContainerName, dbSyncContainerName)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	first := requireDBSync(t, ctx, reconciler, dbSync).Status.DeepCopy()
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	assert.Equal(t, first, &current.Status)
 }
 
 func TestCardanoDBSyncReconcilerReconcileKeepsFollowerAndDBSyncReadinessSeparate(t *testing.T) {
@@ -528,8 +660,9 @@ func TestCardanoDBSyncReconcilerReconcileKeepsFollowerAndDBSyncReadinessSeparate
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionTrue, conditionReasonFollowerNodeReady)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDBSyncReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
@@ -1172,9 +1305,10 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoDBSyncRec
 	fakeClient := builder.Build()
 
 	return &CardanoDBSyncReconciler{
-		Client: fakeClient,
-		Reader: fakeClient,
-		Scheme: scheme,
+		Client:                fakeClient,
+		Reader:                fakeClient,
+		Scheme:                scheme,
+		runtimeProberOverride: &fakeCardanoDBSyncRuntimeProber{result: syncedRuntimeProbeResult(99, 100)},
 	}
 }
 
@@ -1288,6 +1422,11 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 					ServiceName: name + "-node",
 					Port:        3001,
 					URL:         "tcp://" + name + "-node.default.svc.cluster.local:3001",
+				},
+				Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-ogmios",
+					Port:        1337,
+					URL:         "ws://" + name + "-ogmios.default.svc.cluster.local:1337",
 				},
 			},
 			Conditions: []metav1.Condition{{
