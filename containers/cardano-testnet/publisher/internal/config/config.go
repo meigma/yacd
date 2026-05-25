@@ -155,9 +155,8 @@ func Load(vp *viper.Viper) (Config, error) {
 }
 
 // validate returns an error when c is missing a required field or
-// carries an out-of-range port. Validation runs after all derivation
-// rules have been applied, so error messages can name the original
-// user-facing flag the caller should set.
+// carries an out-of-range port. Error messages reference the
+// user-facing flag name for each offending field.
 func (c Config) validate() error {
 	required := []struct {
 		flag  string

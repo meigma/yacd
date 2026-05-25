@@ -14,11 +14,9 @@ import (
 //
 //	<len(key)>:<key>\n<len(value)>:<value>\n
 //
-// The framing prevents collision between distinct (key, value)
-// boundary placements. The wire format is part of the YACD controller's
-// artifact verification contract; downstream consumers recompute this
-// hash to verify the published ConfigMap data, so the format must not
-// change without coordinated controller updates.
+// The framing is stable and forms part of the published artifact
+// contract; changes here must be coordinated with the YACD controller
+// that re-verifies the hash.
 func computeDataHash(data map[string]string) string {
 	keys := make([]string, 0, len(data))
 	for key := range data {

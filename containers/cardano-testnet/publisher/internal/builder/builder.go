@@ -1,12 +1,6 @@
-// Package builder assembles the publisher's patch payload from
-// precompiled inputs. It performs no filesystem access and produces no
-// Kubernetes types: callers supply already-read file contents in a
-// typed [Input] and receive a domain [Patch] that a separate adapter
-// converts into a ConfigMap merge patch.
-//
-// The package is intentionally pure. Same input produces the same
-// output, no globals are mutated, and no I/O happens past the package
-// boundary, which makes the contract trivially unit-testable.
+// Package builder assembles the publisher's patch payload from a
+// typed [Input] and returns a [Patch] holding the resulting data map,
+// owned-key set, and metadata annotations.
 package builder
 
 import (
@@ -49,9 +43,7 @@ const (
 )
 
 // NetworkIdentity is the subset of operator-facing configuration the
-// builder needs to render connection.json. It is intentionally narrow
-// so the builder stays decoupled from publisher configuration concerns
-// (paths, ServiceAccount mounts, Kubernetes API URLs).
+// builder needs to render connection.json.
 type NetworkIdentity struct {
 	// Name is the owning CardanoNetwork resource name.
 	Name string
@@ -86,17 +78,15 @@ type Manifest struct {
 	Raw string
 }
 
-// Input bundles the precompiled inputs [Build] consumes. No filesystem
-// access happens past this boundary; callers read files and parse the
-// manifest, then hand the results to [Build].
+// Input bundles the values [Build] consumes.
 type Input struct {
 	// Network is the network identity surfaced in connection.json.
 	Network NetworkIdentity
 	// Manifest is the parsed localnet plan plus its raw bytes.
 	Manifest Manifest
-	// Artifacts is the map of declared source keys (see [Sources]) to
-	// already-read file contents. Optional sources may be omitted;
-	// keys not declared by [Sources] are rejected.
+	// Artifacts maps declared source keys (see [Sources]) to file
+	// contents. Optional sources may be omitted; keys not declared by
+	// [Sources] are rejected.
 	Artifacts map[string]string
 }
 
@@ -113,17 +103,16 @@ type Annotations struct {
 	DataHash string
 }
 
-// Patch is the domain patch payload produced by [Build]. A separate
-// Kubernetes adapter converts this into the merge patch sent to the
-// API server. The builder itself is API-agnostic.
+// Patch is the payload produced by [Build].
 type Patch struct {
 	// Data holds the ConfigMap data keys that should be set, mapping
 	// each key to its UTF-8 string content.
 	Data map[string]string
 	// KnownKeys is the full set of data keys the publisher owns: every
 	// declared source key plus [PlanManifestKey] and [ConnectionKey],
-	// regardless of which optional sources are present. The K8s
-	// adapter prunes any [KnownKeys] entry absent from [Data].
+	// regardless of which optional sources are present. Any [KnownKeys]
+	// entry absent from [Data] should be pruned by the caller when
+	// applying the patch.
 	KnownKeys []string
 	// Annotations are the metadata annotations to apply alongside
 	// [Data].
@@ -132,19 +121,11 @@ type Patch struct {
 
 // Build assembles a [Patch] from input.
 //
-// Build walks the source registry from [Sources], collecting file
-// contents from input.Artifacts. Required sources missing from
-// Artifacts cause an error; optional sources may be absent. Build
-// rejects keys in Artifacts that are not declared by [Sources] as a
-// defense-in-depth check against the caller publishing unintended
-// content. The manifest and network identity are validated before any
-// data is assembled.
-//
-// The returned [Patch] is self-contained: [Patch.Data] holds present
-// keys with their content, [Patch.KnownKeys] enumerates everything the
-// publisher owns so adapters can prune absent keys, and
-// [Patch.Annotations] carries the schema version, localnet
-// fingerprint, and data hash.
+// Build validates input.Manifest and input.Network, walks the source
+// registry from [Sources] to collect file contents from
+// input.Artifacts, synthesizes connection.json, and computes the data
+// hash. Missing required sources, unknown artifact keys, an invalid
+// manifest, or an invalid network identity each return an error.
 func Build(input Input) (Patch, error) {
 	if err := validateManifest(input.Manifest); err != nil {
 		return Patch{}, err
@@ -211,10 +192,8 @@ func Build(input Input) (Patch, error) {
 	}, nil
 }
 
-// validateManifest returns an error when m is missing one of the
-// fields Build relies on. All three fields are required because
-// fingerprint and network magic appear in connection.json and the raw
-// manifest is published verbatim.
+// validateManifest returns an error when m has a zero NetworkMagic or
+// an empty Fingerprint or Raw.
 func validateManifest(m Manifest) error {
 	if m.NetworkMagic == 0 {
 		return fmt.Errorf("manifest network magic is required")
@@ -229,9 +208,7 @@ func validateManifest(m Manifest) error {
 }
 
 // validateNetwork returns an error when n is missing a required field
-// or carries an out-of-range TCP port. The same shape is enforced by
-// the config package upstream, but the builder validates again so it
-// stands alone as a contract.
+// or carries a TCP port outside 1-65535.
 func validateNetwork(n NetworkIdentity) error {
 	required := []struct {
 		field string

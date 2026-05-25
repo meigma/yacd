@@ -27,10 +27,7 @@ type SourceFile struct {
 }
 
 // generatedSources is the registered set of localnet artifacts the
-// publisher publishes to the network artifact ConfigMap. The list is
-// validated at test time by [validatePublicArtifactSource] (see
-// sources_test.go) so additions that would expose secret/key material
-// fail the build.
+// publisher publishes to the network artifact ConfigMap.
 //
 //nolint:gochecknoglobals // immutable declarative registry.
 var generatedSources = []SourceFile{
@@ -50,14 +47,11 @@ func Sources() []SourceFile {
 	return append([]SourceFile(nil), generatedSources...)
 }
 
-// validatePublicArtifactSource returns an error when s declares a path
-// that could expose secret or key material from the localnet
-// environment, or escapes the env dir.
-//
-// The check is defense-in-depth: the package-private
-// [generatedSources] list is static and known to pass, and this
-// function is exercised at test time to catch future additions that
-// would publish private key material.
+// validatePublicArtifactSource returns an error when s has an empty
+// Key or RelativePath, when RelativePath escapes the localnet env dir
+// (absolute, "..", or ".."-prefixed), or when RelativePath traverses a
+// denylisted secret/key directory or ends in a denylisted key
+// extension (.cert, .counter, .skey, .vkey).
 func validatePublicArtifactSource(s SourceFile) error {
 	if strings.TrimSpace(s.Key) == "" {
 		return fmt.Errorf("source has empty Key")

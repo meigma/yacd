@@ -12,9 +12,7 @@ import (
 //
 //	<binary> <version> (<commit>) built <date>
 //
-// using the [BuildInfo] supplied at root construction. This is the
-// scriptable counterpart to the root command's --version flag, which
-// renders the same information via its version template.
+// using the supplied [BuildInfo].
 func newVersionCommand(commandContext *commandContext, build BuildInfo) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "version",

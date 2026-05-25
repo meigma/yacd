@@ -9,12 +9,9 @@ import (
 
 // newPublishCommand builds the "publish" subcommand.
 //
-// The command declares the publisher's full configuration surface (15
-// flags) and delegates value resolution and validation to
-// [config.Load]. On successful load the run body is a no-op stub that
-// prints "publish: not yet implemented" while the artifact-payload and
-// PATCH layers are being ported. Validation errors from config.Load are
-// returned to Cobra, which renders them to the configured stderr writer.
+// The command declares the publisher's configuration flags and calls
+// [config.Load] in RunE. Load errors are returned to Cobra; on success
+// the command prints "publish: not yet implemented" to stderr.
 func newPublishCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish",

@@ -5,10 +5,7 @@ import (
 	"fmt"
 )
 
-// connectionDocument is the on-wire shape of connection.json. The
-// field order, JSON tags, and indentation are deliberately preserved
-// from the legacy publisher so downstream consumers do not see a wire
-// format change.
+// connectionDocument is the on-wire shape of connection.json.
 type connectionDocument struct {
 	SchemaVersion     string             `json:"schemaVersion"`
 	Network           connectionNetwork  `json:"network"`
@@ -17,8 +14,7 @@ type connectionDocument struct {
 }
 
 // connectionNetwork is the network-identity sub-object of
-// connection.json. The fingerprint field carries the localnet plan
-// fingerprint propagated from the manifest.
+// connection.json.
 type connectionNetwork struct {
 	Name                string `json:"name"`
 	Namespace           string `json:"namespace"`
@@ -29,7 +25,7 @@ type connectionNetwork struct {
 }
 
 // connectionEndpoint is the primary node-to-node endpoint sub-object
-// of connection.json. URL is the canonical form clients consume.
+// of connection.json.
 type connectionEndpoint struct {
 	Host string `json:"host"`
 	Port int    `json:"port"`
@@ -39,7 +35,7 @@ type connectionEndpoint struct {
 // renderConnection serializes the connection.json document for input
 // using fileKeys as the connection-key-to-ConfigMap-data-key mapping.
 // The returned string is JSON with two-space indentation and a
-// trailing newline, matching the legacy publisher's output bytes.
+// trailing newline.
 func renderConnection(input Input, fileKeys map[string]string) (string, error) {
 	doc := connectionDocument{
 		SchemaVersion: SchemaVersion,

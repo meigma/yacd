@@ -1,10 +1,6 @@
 // Package cli builds the Cobra command tree for the
-// yacd-cardano-testnet-publisher binary.
-//
-// The root command and its subcommands are constructed by
-// [NewRootCommand]. The package owns flag declarations, Viper-based
-// configuration intake wiring (delegating value resolution to the
-// publisher/internal/config package), and the version subcommand.
+// yacd-cardano-testnet-publisher binary. The root command and its
+// subcommands are constructed by [NewRootCommand].
 package cli
 
 import (
@@ -16,10 +12,9 @@ import (
 	"github.com/spf13/viper"
 )
 
-// binaryName is the public name of the publisher executable. It is used
-// for the root command's Use string, the version template, and the
-// version subcommand output. It must match the binary file name produced
-// by the build so help text and shell completions stay consistent.
+// binaryName is the public name of the publisher executable used in
+// the root command's Use string, the version template, and the
+// version subcommand output.
 const binaryName = "yacd-cardano-testnet-publisher"
 
 // BuildInfo describes linker-injected build metadata surfaced through
@@ -57,8 +52,7 @@ type Options struct {
 }
 
 // commandContext carries the shared dependencies that subcommands need
-// at construction and runtime. It is intentionally unexported: callers
-// configure the root through [Options] and never touch this directly.
+// at construction and runtime.
 type commandContext struct {
 	// in is the input reader threaded through to subcommands that need
 	// it.
@@ -74,10 +68,9 @@ type commandContext struct {
 
 // NewRootCommand constructs the publisher's Cobra command tree.
 //
-// The returned command wires PersistentPreRunE to [initializeConfig] so
-// that any subcommand has its flags bound to Viper (and therefore to the
-// matching YACD_* environment variables) before its RunE executes.
-// Subcommands registered today are publish and version.
+// The returned command wires PersistentPreRunE to [initializeConfig]
+// so the active subcommand's flags are bound to Viper before its RunE
+// executes.
 func NewRootCommand(options Options) *cobra.Command {
 	if options.In == nil {
 		options.In = strings.NewReader("")
@@ -122,9 +115,7 @@ func NewRootCommand(options Options) *cobra.Command {
 }
 
 // withDefaults returns a copy of b with empty fields replaced by their
-// development defaults ("dev", "none", "unknown"). This keeps help and
-// version output coherent when the binary is run before -ldflags
-// metadata has been injected.
+// development defaults ("dev", "none", "unknown").
 func (b BuildInfo) withDefaults() BuildInfo {
 	if strings.TrimSpace(b.Version) == "" {
 		b.Version = "dev"
@@ -138,14 +129,10 @@ func (b BuildInfo) withDefaults() BuildInfo {
 	return b
 }
 
-// initializeConfig configures the shared Viper instance and binds the
-// flag set of the currently executing command to it.
-//
 // initializeConfig sets the YACD environment prefix and a "-" to "_"
-// key replacer so that a flag named foo-bar is also resolved from the
-// YACD_FOO_BAR environment variable, then calls BindPFlags on cmd.Flags
-// to register the active subcommand's flag set with Viper. It is
-// intended to be called from the root command's PersistentPreRunE.
+// key replacer on vp, enables AutomaticEnv, and binds cmd.Flags to vp.
+// A flag named foo-bar is then resolvable from the YACD_FOO_BAR
+// environment variable.
 func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 	vp.SetEnvPrefix("YACD")
 	vp.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
