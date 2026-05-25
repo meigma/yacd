@@ -18,9 +18,11 @@ fi
 echo "== go lint =="
 golangci-lint config verify --config .golangci.yml
 golangci-lint run --config .golangci.yml ./... --show-stats=false
+(cd containers/cardano-testnet/publisher && golangci-lint run --config ../../../.golangci.yml ./... --show-stats=false)
 
 echo "== cardano-testnet tools tests =="
 (cd containers/cardano-testnet && go test ./...)
+(cd containers/cardano-testnet/publisher && go test ./...)
 
 echo "== generated artifacts =="
 controller-gen object paths="./..."

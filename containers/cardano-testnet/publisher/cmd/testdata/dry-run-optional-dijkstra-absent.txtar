@@ -1,0 +1,55 @@
+# publish --dry-run with the optional dijkstra-genesis.json absent
+# from the localnet env dir. The rendered body sets the present keys
+# and serializes "dijkstra-genesis.json" as null so a downstream
+# merge-patch consumer prunes any stale value.
+
+env YACD_ARTIFACT_CONFIGMAP_NAME=demo-artifacts
+env YACD_ARTIFACT_CONFIGMAP_NAMESPACE=dev
+env YACD_LOCALNET_ENV_DIR=$WORK/env
+env YACD_LOCALNET_PLAN_MANIFEST_FILE=$WORK/env/yacd-localnet-plan.json
+env YACD_CARDANO_NETWORK_NAME=demo
+env YACD_CARDANO_NETWORK_MODE=local
+env YACD_CARDANO_NETWORK_ERA=conway
+env YACD_CARDANO_NODE_TO_NODE_HOST=demo-node.dev.svc.cluster.local
+env YACD_CARDANO_NODE_TO_NODE_PORT=3001
+env YACD_CARDANO_NODE_TO_NODE_URL=tcp://demo-node.dev.svc.cluster.local:3001
+env YACD_KUBERNETES_API_URL=https://kubernetes.default.svc
+
+exec yacd-cardano-testnet-publisher publish --dry-run
+cmp stdout expected.json
+
+-- env/configuration.yaml --
+ConwayGenesisFile: conway-genesis.json
+-- env/byron-genesis.json --
+{"byron":true}
+-- env/shelley-genesis.json --
+{"shelley":true}
+-- env/alonzo-genesis.json --
+{"alonzo":true}
+-- env/conway-genesis.json --
+{"conway":true}
+-- env/node-data/node1/topology.json --
+{"Producers":[]}
+-- env/yacd-localnet-plan.json --
+{"schemaVersion":"test","inputs":{"networkMagic":42},"fingerprint":{"algorithm":"sha256","value":"abc123"}}
+-- expected.json --
+{
+  "metadata": {
+    "annotations": {
+      "yacd.meigma.io/artifact-data-hash": "sha256:a0b69faae61d592bf1c2fe1419d51ebc554c6272b0ad93a09b7758b34abd638f",
+      "yacd.meigma.io/artifact-schema-version": "yacd.meigma.io/cardano-network-artifacts/v1alpha1",
+      "yacd.meigma.io/localnet-fingerprint": "abc123"
+    }
+  },
+  "data": {
+    "alonzo-genesis.json": "{\"alonzo\":true}\n",
+    "byron-genesis.json": "{\"byron\":true}\n",
+    "configuration.yaml": "ConwayGenesisFile: conway-genesis.json\n",
+    "connection.json": "{\n  \"schemaVersion\": \"yacd.meigma.io/cardano-network-artifacts/v1alpha1\",\n  \"network\": {\n    \"name\": \"demo\",\n    \"namespace\": \"dev\",\n    \"mode\": \"local\",\n    \"networkMagic\": 42,\n    \"era\": \"conway\",\n    \"localnetFingerprint\": \"abc123\"\n  },\n  \"primaryNodeToNode\": {\n    \"host\": \"demo-node.dev.svc.cluster.local\",\n    \"port\": 3001,\n    \"url\": \"tcp://demo-node.dev.svc.cluster.local:3001\"\n  },\n  \"files\": {\n    \"alonzoGenesis\": \"alonzo-genesis.json\",\n    \"byronGenesis\": \"byron-genesis.json\",\n    \"configuration\": \"configuration.yaml\",\n    \"connection\": \"connection.json\",\n    \"conwayGenesis\": \"conway-genesis.json\",\n    \"localnetPlan\": \"yacd-localnet-plan.json\",\n    \"primaryTopology\": \"primary-topology.json\",\n    \"shelleyGenesis\": \"shelley-genesis.json\"\n  }\n}\n",
+    "conway-genesis.json": "{\"conway\":true}\n",
+    "dijkstra-genesis.json": null,
+    "primary-topology.json": "{\"Producers\":[]}\n",
+    "shelley-genesis.json": "{\"shelley\":true}\n",
+    "yacd-localnet-plan.json": "{\"schemaVersion\":\"test\",\"inputs\":{\"networkMagic\":42},\"fingerprint\":{\"algorithm\":\"sha256\",\"value\":\"abc123\"}}\n"
+  }
+}

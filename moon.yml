@@ -16,6 +16,8 @@ fileGroups:
     - 'cmd/**/*.go'
     - 'containers/cardano-testnet/**/*.go'
     - 'containers/cardano-testnet/go.mod'
+    - 'containers/cardano-testnet/publisher/go.mod'
+    - 'containers/cardano-testnet/publisher/go.sum'
     - 'internal/**/*.go'
     - 'services/**/*.go'
     - 'test/**/*.go'
@@ -71,6 +73,7 @@ tasks:
       set -euo pipefail
       KUBEBUILDER_ASSETS="$(setup-envtest use 1.35.x -p path)" go test ./...
       (cd containers/cardano-testnet && go test ./...)
+      (cd containers/cardano-testnet/publisher && go test ./...)
     inputs:
       - '@group(goSources)'
       - '@group(generatorSources)'

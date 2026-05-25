@@ -37,15 +37,22 @@ FROM --platform=$BUILDPLATFORM golang:1.26.3-bookworm@sha256:386d475a660466863d9
 
 ARG TARGETARCH
 ARG TARGETOS=linux
+ARG YACD_PUBLISHER_VERSION=dev
+ARG YACD_PUBLISHER_COMMIT=none
+ARG YACD_PUBLISHER_DATE=unknown
 
 WORKDIR /src
 
-COPY go.mod ./
-COPY cmd ./cmd
-COPY internal ./internal
+COPY publisher/go.mod publisher/go.sum ./
+RUN go mod download
+
+COPY publisher/cmd ./cmd
+COPY publisher/internal ./internal
 
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath -o /out/bin/yacd-cardano-testnet-publisher ./cmd/yacd-cardano-testnet-publisher; \
+    go build -trimpath \
+      -ldflags "-X main.version=${YACD_PUBLISHER_VERSION} -X main.commit=${YACD_PUBLISHER_COMMIT} -X main.date=${YACD_PUBLISHER_DATE}" \
+      -o /out/bin/yacd-cardano-testnet-publisher ./cmd; \
     test -x /out/bin/yacd-cardano-testnet-publisher
 
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb

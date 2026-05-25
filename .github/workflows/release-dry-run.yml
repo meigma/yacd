@@ -285,6 +285,9 @@ jobs:
           build-args: |
             CARDANO_NODE_VERSION=11.0.1
             YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_PUBLISHER_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_PUBLISHER_COMMIT=${{ github.sha }}
+            YACD_PUBLISHER_DATE=dryrun
 
       - name: Validate cardano-testnet platform OCI archive
         run: test -s /tmp/cardano-testnet-dry-run-${{ matrix.arch }}.oci
@@ -330,6 +333,9 @@ jobs:
           build-args: |
             CARDANO_NODE_VERSION=11.0.1
             YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_PUBLISHER_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_PUBLISHER_COMMIT=${{ github.sha }}
+            YACD_PUBLISHER_DATE=dryrun
 
       - name: Smoke test local cardano-testnet image
         run: |

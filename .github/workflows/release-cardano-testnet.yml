@@ -160,6 +160,9 @@ jobs:
           build-args: |
             CARDANO_NODE_VERSION=${{ needs.resolve-release.outputs.upstream-version }}
             YACD_CARDANO_TESTNET_VERSION=${{ steps.image.outputs.version }}
+            YACD_PUBLISHER_VERSION=${{ steps.image.outputs.version }}
+            YACD_PUBLISHER_COMMIT=${{ steps.image.outputs.commit }}
+            YACD_PUBLISHER_DATE=${{ steps.image.outputs.date }}
 
       - name: Smoke test platform image
         env:
