@@ -14,3 +14,6 @@ Created implementation worktree `/Users/josh/code/meigma/yacd/.wt/feat-ctrlkit-f
 
 ## 2026-05-25 13:28 — ctrlkit foundation pushed
 Implemented only `internal/ctrlkit/**`: `names`, `metadata`, `conditions`, `readiness`, and `artifacts`, each with package docs and focused table-driven tests. Validation passed with `go test ./internal/ctrlkit/...`, `moon run root:test`, `moon run root:check`, and `git diff --check`. Committed `abb9747` (`feat(ctrlkit): add controller utility foundation`) and pushed `feat/ctrlkit-foundation` to origin.
+
+## 2026-05-25 14:29 — ctrlkit controller integration pushed
+Integrated `internal/ctrlkit` into the `CardanoNetwork` and `CardanoDBSync` controllers as a refactor-only slice. Added shared `ctrlkit/apply` and `ctrlkit/storage` helpers, extended artifact/name contracts, removed duplicated db-sync network artifact helpers, and rewired controller naming, metadata merge, ownership, conditions, readiness predicates, artifact validation, and requested storage-class handling through ctrlkit while preserving controller-specific wrappers and messages. Validation passed with `go test ./internal/ctrlkit/...`, `moon run root:test`, `moon run root:check`, and `git diff --check`. Committed `6482867` (`refactor(ctrlkit): share controller helper logic`) and pushed `feat/ctrlkit-foundation` to origin.
