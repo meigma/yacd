@@ -18,8 +18,8 @@
 - `CardanoDBSync` is the first supporting-service CRD/controller. It uses a
   required same-namespace `spec.networkRef.name`, consumes fresh verified
   `CardanoNetwork.status.artifacts.networkConfigMapName`, and currently
-  supports external Postgres only; `database.managed` remains a reserved API
-  branch until the managed database slice exists.
+  supports external Postgres by reference and managed local/dev Postgres
+  through `spec.database.managed`.
 - The `CardanoDBSync` controller renders an owned config ConfigMap, pgpass
   Secret, db-sync state PVC, follower-node state PVC, two-container
   follower/db-sync Deployment, and metrics Service. It validates live network
@@ -29,13 +29,27 @@
 - `internal/cardano/dbsync` is the Kubernetes-free planner for db-sync config,
   topology, invocation args, environment, plan fingerprint, and database
   identity fingerprint. The accepted database identity includes network
-  artifact hash, external DB address/user, db-sync image, ledger backend, and
-  insert options; changes to that identity are rejected until a recreate or
-  migration story exists.
+  artifact hash, DB address/user, db-sync image, ledger backend, and insert
+  options; changes to that identity are rejected until a recreate or migration
+  story exists.
+- Managed `CardanoDBSync` Postgres creates `<dbsync>-postgres-auth` when
+  `managed.authSecretRef` is omitted, `<dbsync>-postgres-state`,
+  `<dbsync>-postgres` Service, and `<dbsync>-postgres` Deployment. The
+  generated password is create-once only; if the generated Secret is deleted
+  after managed DB identity acceptance, the controller degrades instead of
+  regenerating a random password for an initialized data directory. Provided
+  managed auth Secret identity is based on password material, not Secret
+  resourceVersion metadata.
+- Managed Postgres bootstrap-affecting inputs are immutable after acceptance:
+  image, database name, user, port/password key, auth Secret name, and password
+  material are captured in the managed Postgres identity stored on the owned
+  PVC/template. Drift is rejected before owned Postgres children are mutated.
 - `CardanoDBSync` runtime status is intentionally conservative: the controller
   reports Deployment availability and follower/db-sync container readiness, but
-  `PostgresReady`, `DBSyncReady`, `Synced`, and aggregate `Ready` stay false
-  with `RuntimeProbesPending` until Postgres and sync-lag probes are added.
+  `DBSyncReady`, `Synced`, and aggregate `Ready` stay false with
+  `RuntimeProbesPending` until sync-lag probes are added. Managed mode sets
+  `PostgresReady=True` only from live managed Postgres Deployment/container
+  readiness; external mode still reports `ExternalDatabaseNotProbed`.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
