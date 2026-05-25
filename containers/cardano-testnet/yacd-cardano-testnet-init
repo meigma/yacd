@@ -11,7 +11,7 @@ publish_artifacts() {
     return 0
   fi
 
-  yacd-cardano-testnet-publisher
+  yacd-cardano-testnet-publisher publish
 }
 
 if [ "$#" -eq 0 ]; then

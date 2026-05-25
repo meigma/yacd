@@ -40,12 +40,14 @@ ARG TARGETOS=linux
 
 WORKDIR /src
 
-COPY go.mod ./
-COPY cmd ./cmd
-COPY internal ./internal
+COPY publisher/go.mod publisher/go.sum ./
+RUN go mod download
+
+COPY publisher/cmd ./cmd
+COPY publisher/internal ./internal
 
 RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath -o /out/bin/yacd-cardano-testnet-publisher ./cmd/yacd-cardano-testnet-publisher; \
+    go build -trimpath -o /out/bin/yacd-cardano-testnet-publisher ./cmd; \
     test -x /out/bin/yacd-cardano-testnet-publisher
 
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
