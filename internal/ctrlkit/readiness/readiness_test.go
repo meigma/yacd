@@ -74,7 +74,7 @@ func TestDeploymentAvailable(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, DeploymentAvailable(tt.deployment))
+			assert.Equal(t, tt.want, deploymentAvailable(tt.deployment))
 		})
 	}
 }
@@ -222,7 +222,7 @@ func TestPodContainerReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, PodContainerReady(tt.pod, "node"))
+			assert.Equal(t, tt.want, podContainerReady(tt.pod, "node"))
 		})
 	}
 }

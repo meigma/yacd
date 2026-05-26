@@ -25,31 +25,31 @@ func TestDNSLabelWithSuffix(t *testing.T) {
 			name:   "sanitized value includes hash",
 			value:  "Network One",
 			suffix: "node",
-			want:   "network-one-" + ShortHash("Network One") + "-node",
+			want:   "network-one-" + shortHash("Network One") + "-node",
 		},
 		{
 			name:   "empty value",
 			value:  "",
 			suffix: "node",
-			want:   "x-" + ShortHash("") + "-node",
+			want:   "x-" + shortHash("") + "-node",
 		},
 		{
 			name:   "trimmed punctuation",
 			value:  "___",
 			suffix: "node",
-			want:   "x-" + ShortHash("___") + "-node",
+			want:   "x-" + shortHash("___") + "-node",
 		},
 		{
 			name:   "sanitized suffix includes hash",
 			value:  "network",
 			suffix: "Node One",
-			want:   "network-" + ShortHash("network\x00Node One") + "-node-one",
+			want:   "network-" + shortHash("network\x00Node One") + "-node-one",
 		},
 		{
 			name:   "empty suffix",
 			value:  "network",
 			suffix: "",
-			want:   "network-" + ShortHash("network\x00") + "-x",
+			want:   "network-" + shortHash("network\x00") + "-x",
 		},
 	}
 
@@ -66,7 +66,7 @@ func TestDNSLabelWithSuffixTruncatesWithHash(t *testing.T) {
 	got := DNSLabelWithSuffix(value, "network-artifacts")
 
 	require.LessOrEqual(t, len(got), MaxLabelValueLength)
-	assert.True(t, strings.HasSuffix(got, "-"+ShortHash(value)+"-network-artifacts"))
+	assert.True(t, strings.HasSuffix(got, "-"+shortHash(value)+"-network-artifacts"))
 }
 
 func TestDNSLabelWithSuffixTruncatesLongSuffix(t *testing.T) {
@@ -75,7 +75,7 @@ func TestDNSLabelWithSuffixTruncatesLongSuffix(t *testing.T) {
 	got := DNSLabelWithSuffix("network", suffix)
 
 	require.LessOrEqual(t, len(got), MaxLabelValueLength)
-	assert.True(t, strings.HasPrefix(got, "n-"+ShortHash("network\x00"+suffix)+"-"))
+	assert.True(t, strings.HasPrefix(got, "n-"+shortHash("network\x00"+suffix)+"-"))
 }
 
 func TestDNSLabelWithSuffixHashesTruncatedSuffix(t *testing.T) {
@@ -108,7 +108,7 @@ func TestLabelValue(t *testing.T) {
 		{
 			name:  "empty value becomes hash",
 			value: "",
-			want:  ShortHash(""),
+			want:  shortHash(""),
 		},
 	}
 
@@ -125,10 +125,10 @@ func TestLabelValueTruncatesWithHash(t *testing.T) {
 	got := LabelValue(value)
 
 	require.LessOrEqual(t, len(got), MaxLabelValueLength)
-	assert.True(t, strings.HasSuffix(got, "-"+ShortHash(value)))
+	assert.True(t, strings.HasSuffix(got, "-"+shortHash(value)))
 }
 
 func TestShortHashIsStable(t *testing.T) {
-	assert.Equal(t, "955af62a37", ShortHash("Network One"))
-	assert.Len(t, ShortHash("Network One"), ShortHashLength)
+	assert.Equal(t, "955af62a37", shortHash("Network One"))
+	assert.Len(t, shortHash("Network One"), shortHashLength)
 }

@@ -6,9 +6,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// RequestedStorageClass returns the originally requested storage class encoded
+// requestedStorageClass returns the originally requested storage class encoded
 // on a controller-owned PVC.
-func RequestedStorageClass(annotations map[string]string, annotationKey string) (string, bool) {
+func requestedStorageClass(annotations map[string]string, annotationKey string) (string, bool) {
 	if annotations == nil {
 		return "", false
 	}
@@ -63,19 +63,19 @@ type PersistentVolumeClaimDrift struct {
 
 // CurrentDisplay formats the current requested storage class for messages.
 func (d RequestedStorageClassDrift) CurrentDisplay() string {
-	return AnnotationValue(d.Current, d.CurrentSet)
+	return annotationValue(d.Current, d.CurrentSet)
 }
 
 // DesiredDisplay formats the desired requested storage class for messages.
 func (d RequestedStorageClassDrift) DesiredDisplay() string {
-	return AnnotationValue(d.Desired, d.DesiredSet)
+	return annotationValue(d.Desired, d.DesiredSet)
 }
 
 // RequestedStorageClassDriftFor compares the controller-owned requested
 // storage class annotation on current and desired object annotations.
 func RequestedStorageClassDriftFor(current map[string]string, desired map[string]string, annotationKey string) (RequestedStorageClassDrift, bool) {
-	currentStorageClass, currentSet := RequestedStorageClass(current, annotationKey)
-	desiredStorageClass, desiredSet := RequestedStorageClass(desired, annotationKey)
+	currentStorageClass, currentSet := requestedStorageClass(current, annotationKey)
+	desiredStorageClass, desiredSet := requestedStorageClass(desired, annotationKey)
 	drift := RequestedStorageClassDrift{
 		Current:    currentStorageClass,
 		CurrentSet: currentSet,
@@ -97,11 +97,11 @@ func PersistentVolumeClaimDriftFor(current *corev1.PersistentVolumeClaim, desire
 			Desired: drift.DesiredDisplay(),
 		}, true
 	}
-	if !StorageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
+	if !storageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
 		return PersistentVolumeClaimDrift{
 			Reason:  PersistentVolumeClaimDriftStorageClass,
-			Current: StringPtrValue(current.Spec.StorageClassName),
-			Desired: StringPtrValue(desired.Spec.StorageClassName),
+			Current: stringPtrValue(current.Spec.StorageClassName),
+			Desired: stringPtrValue(desired.Spec.StorageClassName),
 		}, true
 	}
 	if !reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) {
@@ -123,9 +123,9 @@ func PersistentVolumeClaimDriftFor(current *corev1.PersistentVolumeClaim, desire
 	return PersistentVolumeClaimDrift{}, false
 }
 
-// StorageClassCompatible returns true when the desired storage class can be
+// storageClassCompatible returns true when the desired storage class can be
 // reconciled onto the current PVC without changing the bound class.
-func StorageClassCompatible(current *string, desired *string) bool {
+func storageClassCompatible(current *string, desired *string) bool {
 	if desired == nil {
 		return true
 	}
@@ -136,8 +136,8 @@ func StorageClassCompatible(current *string, desired *string) bool {
 	return *current == *desired
 }
 
-// AnnotationValue formats annotation presence for status and error messages.
-func AnnotationValue(value string, ok bool) string {
+// annotationValue formats annotation presence for status and error messages.
+func annotationValue(value string, ok bool) string {
 	if !ok {
 		return "<default>"
 	}
@@ -145,8 +145,8 @@ func AnnotationValue(value string, ok bool) string {
 	return value
 }
 
-// StringPtrValue formats optional string fields for status and error messages.
-func StringPtrValue(value *string) string {
+// stringPtrValue formats optional string fields for status and error messages.
+func stringPtrValue(value *string) string {
 	if value == nil {
 		return "<default>"
 	}

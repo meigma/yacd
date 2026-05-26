@@ -10,10 +10,10 @@ import (
 const (
 	// MaxLabelValueLength is the Kubernetes DNS label and label-value length limit.
 	MaxLabelValueLength = 63
-	// ShortHashLength is the number of hex characters used in derived names.
-	ShortHashLength = 10
+	// shortHashLength is the number of hex characters used in derived names.
+	shortHashLength = 10
 
-	maxHashedSuffixLength = MaxLabelValueLength - len("x-") - ShortHashLength - len("-")
+	maxHashedSuffixLength = MaxLabelValueLength - len("x-") - shortHashLength - len("-")
 )
 
 // DNSLabelWithSuffix returns a DNS-label-safe name with suffix appended. A
@@ -38,7 +38,7 @@ func DNSLabelWithSuffix(value string, suffix string) string {
 	if suffixNeedsHash {
 		hashInput = value + "\x00" + suffix
 	}
-	hash := ShortHash(hashInput)
+	hash := shortHash(hashInput)
 
 	candidateSuffix := "-" + safeSuffix
 	if needsHash || suffixNeedsHash {
@@ -50,7 +50,7 @@ func DNSLabelWithSuffix(value string, suffix string) string {
 	}
 
 	if len(safeSuffix) > maxHashedSuffixLength {
-		hash = ShortHash(value + "\x00" + suffix)
+		hash = shortHash(value + "\x00" + suffix)
 	}
 	hashSuffix := fmt.Sprintf("-%s-%s", hash, truncateHashSuffix(safeSuffix))
 	prefixLength := MaxLabelValueLength - len(hashSuffix)
@@ -67,13 +67,13 @@ func DNSLabelWithSuffix(value string, suffix string) string {
 func LabelValue(value string) string {
 	base := sanitizeLabelValue(value)
 	if base == "" {
-		base = ShortHash(value)
+		base = shortHash(value)
 	}
 	if len(base) <= MaxLabelValueLength {
 		return base
 	}
 
-	hashSuffix := "-" + ShortHash(value)
+	hashSuffix := "-" + shortHash(value)
 	prefixLength := MaxLabelValueLength - len(hashSuffix)
 	prefix := strings.TrimRight(base[:prefixLength], "-_.")
 	if prefix == "" {
@@ -83,10 +83,10 @@ func LabelValue(value string) string {
 	return prefix + hashSuffix
 }
 
-// ShortHash returns the stable short hash used by controller-derived names.
-func ShortHash(value string) string {
+// shortHash returns the stable short hash used by controller-derived names.
+func shortHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:ShortHashLength]
+	return hex.EncodeToString(sum[:])[:shortHashLength]
 }
 
 // truncateHashSuffix clips suffix to maxHashedSuffixLength while preserving a

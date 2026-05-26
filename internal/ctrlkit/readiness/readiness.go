@@ -38,9 +38,9 @@ func (r DeploymentContainerResult) Ready() bool {
 	return r.State == DeploymentContainerReady
 }
 
-// DeploymentAvailable returns true when the Deployment has at least the desired
+// deploymentAvailable returns true when the Deployment has at least the desired
 // number of updated, ready, and available replicas and reports Available=True.
-func DeploymentAvailable(deployment *appsv1.Deployment) bool {
+func deploymentAvailable(deployment *appsv1.Deployment) bool {
 	if deployment == nil {
 		return false
 	}
@@ -82,11 +82,11 @@ func DeploymentContainerReadiness(
 	if deployment.Status.ObservedGeneration != deployment.Generation {
 		return DeploymentContainerResult{State: DeploymentContainerStale}
 	}
-	if !DeploymentAvailable(deployment) {
+	if !deploymentAvailable(deployment) {
 		return DeploymentContainerResult{State: DeploymentContainerUnavailable}
 	}
 	for i := range pods {
-		if PodContainerReady(&pods[i], containerName) {
+		if podContainerReady(&pods[i], containerName) {
 			return DeploymentContainerResult{State: DeploymentContainerReady}
 		}
 	}
@@ -94,9 +94,9 @@ func DeploymentContainerReadiness(
 	return DeploymentContainerResult{State: DeploymentContainerNotReady}
 }
 
-// PodContainerReady returns true only for a running, non-deleting Pod whose
+// podContainerReady returns true only for a running, non-deleting Pod whose
 // named container is Ready and currently running.
-func PodContainerReady(pod *corev1.Pod, containerName string) bool {
+func podContainerReady(pod *corev1.Pod, containerName string) bool {
 	if pod == nil || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
 		return false
 	}
