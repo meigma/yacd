@@ -17,7 +17,7 @@ import (
 )
 
 func TestDefaultDBSyncRuntimeProberMapsNoRows(t *testing.T) {
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{}, nil
 		},
@@ -39,7 +39,7 @@ func TestDefaultDBSyncRuntimeProberMapsNoRows(t *testing.T) {
 }
 
 func TestDefaultDBSyncRuntimeProberMapsLatestIndexedBlock(t *testing.T) {
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{
 				DBBlockHeight: ptr.To[int64](99),
@@ -67,7 +67,7 @@ func TestDefaultDBSyncRuntimeProberMapsLatestIndexedBlock(t *testing.T) {
 }
 
 func TestDefaultDBSyncRuntimeProberMapsMissingSchemaAsProgressing(t *testing.T) {
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{}, errDBSyncSchemaPending
 		},
@@ -90,7 +90,7 @@ func TestDefaultDBSyncRuntimeProberMapsMissingSchemaAsProgressing(t *testing.T) 
 
 func TestDefaultDBSyncRuntimeProberMapsDBConnectionFailure(t *testing.T) {
 	queriedOgmios := false
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{}, errors.New("dial refused")
 		},
@@ -113,7 +113,7 @@ func TestDefaultDBSyncRuntimeProberMapsDBConnectionFailure(t *testing.T) {
 
 func TestDefaultDBSyncRuntimeProberProbePostgresDoesNotQueryOgmios(t *testing.T) {
 	queriedOgmios := false
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{DBBlockHeight: ptr.To[int64](12)}, nil
 		},
@@ -137,7 +137,7 @@ func TestDefaultDBSyncRuntimeProberProbePostgresDoesNotQueryOgmios(t *testing.T)
 }
 
 func TestDefaultDBSyncRuntimeProberMapsOgmiosTipFailure(t *testing.T) {
-	prober := defaultDBSyncRuntimeProber{
+	prober := defaultRuntimeProber{
 		queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 			return dbSyncDatabaseProgress{DBBlockHeight: ptr.To[int64](12)}, nil
 		},
@@ -187,7 +187,7 @@ func TestDefaultDBSyncRuntimeProberMapsLagThreshold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prober := defaultDBSyncRuntimeProber{
+			prober := defaultRuntimeProber{
 				queryDB: func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 					dbBlock := tt.dbBlock
 					return dbSyncDatabaseProgress{DBBlockHeight: &dbBlock}, nil
@@ -217,7 +217,7 @@ func TestDefaultDBSyncRuntimeProberQueriesOgmiosTip(t *testing.T) {
 		_, _ = w.Write([]byte(`{"lastKnownTip":{"slot":101,"id":"abc","height":77},"connectionStatus":"connected"}`))
 	}))
 	t.Cleanup(server.Close)
-	prober := defaultDBSyncRuntimeProber{httpClient: server.Client()}
+	prober := defaultRuntimeProber{httpClient: server.Client()}
 
 	tip, err := prober.nodeTip(context.Background(), server.URL)
 
@@ -231,7 +231,7 @@ func TestDefaultDBSyncRuntimeProberMapsOgmiosHTTPFailure(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
-	prober := defaultDBSyncRuntimeProber{httpClient: server.Client()}
+	prober := defaultRuntimeProber{httpClient: server.Client()}
 
 	_, err := prober.nodeTip(context.Background(), server.URL)
 

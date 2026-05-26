@@ -50,7 +50,7 @@ type CardanoDBSyncReconciler struct {
 	Scheme *runtime.Scheme
 
 	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.
-	runtimeProberOverride cardanoDBSyncRuntimeProber
+	runtimeProberOverride runtimeProber
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs,verbs=get;list;watch
