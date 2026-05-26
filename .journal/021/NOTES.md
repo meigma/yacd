@@ -37,3 +37,36 @@ Coordination problem with PR #37 (session 020):
 Did NOT stop their dev stack. Did NOT touch their worktree. Halted my implementation pending user direction.
 
 Asked user how to proceed: (a) pause 021 until #37 merges, (b) base 021 on #37's branch and accept the bundled rebase, (c) proceed on master without dev-up and accept rebase-on-merge cost, (d) something else.
+
+## 2026-05-26 10:48 — Implementation complete, PR opened
+Session 020 was closed by the user during the pause; PR #37 merged into master at `c4974ab` and the dev stack was released. Rebased `refactor/controller-cardanonetwork` onto fresh master (no conflicts — the ctrlkit/readiness type renames in #37 were absorbed cleanly) and started the dev stack from the implementation worktree.
+
+Implemented across 7 commits on the branch (squash merge will collapse them):
+1. `ba76c8d` — extract defaults / names / labels / annotations / errors.
+2. `9101295` — extract settings (sidecar types + resolve*) and validate (spec-side validation + image parsers).
+3. `1042715` — split containers and resources, slim builder.go (from 1283 → 232 lines; the test file is renamed via `git mv` so blame survives).
+4. `f892296` — split apply.go into apply / callbacks / delete / faucet_auth (from 593 → ~170 lines).
+5. `a339773` — split status.go into status / readiness / conditions (from 562 → ~210 lines). statusReader collapsed into liveReader.
+6. `1f463a2` — add doc.go (package contract paragraph) and tighten remaining godocs (artifacts.go and controller.go internal types + orchestrators).
+
+Final shape: 18 source files (from 6), each one a coherent category — mirrors the `internal/cardano/dbsync` / `internal/cardano/localnet` planner discipline.
+
+Maintainability wins landed:
+- statusReader → liveReader consolidation (§3a).
+- Kupo cascade default has an explicit comment naming the product rule and clarifying that the dependent "kupo requires ogmios" check is the builder's responsibility (§3c).
+- Annotation keys centralized in `cardanoNetworkOwnedAnnotations` so future owned annotations auto-extend `mergeOwnedAnnotations` (§3d).
+- Label key strategy documented in `labels.go` (§3e).
+- `resolvedDefaultFaucetImage` consolidated next to its caller in settings.go with a comment naming the deliberate controller-side default exception (§3h).
+- Pure `validFaucetAuthToken` and `generateFaucetAuthToken` extracted into faucet_auth.go with a `faucetAuthTokenByteLength` const wiring the validator to the generator (§4a).
+
+Deferred to follow-up PRs (recorded in PR body):
+- `applyPrimaryFaucetAuthSecret` rewrite onto `ApplyOwnedObject` (§3f) — behavior preserved, but the rewrite expands the test surface and belongs in its own PR.
+- Readiness-method consolidation (§3b) — the four primary*ReadyCondition methods stay readable as-is.
+- Strong-typed `conditionType` / `conditionReason` (§3g) — would require updating `assertCondition` and every test call site (~50+); cleaner as a focused commit later.
+
+Verification all green from the implementation worktree:
+- `moon run root:check` — 23s, gofmt / vet / lint / helm / chainsaw-manifests clean.
+- `moon run root:test` — 12s with cache hits, all envtest matrices + unit packages.
+- `moon run root:test-e2e` — 3m 29s, Chainsaw `manager-smoke` passed: local-mode CardanoNetwork reached `Ready=True`, returned real Ogmios `queryNetwork/tip` through Service, optional services flipped off cleanly, ownership-protected teardown succeeded.
+
+PR #38 opened: https://github.com/meigma/yacd/pull/38 — awaiting CI/Kusari + user review. Branch pushed; dev stack stopped (`root:dev-down`) per session protocol since this is the explicit close path.
