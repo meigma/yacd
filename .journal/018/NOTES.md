@@ -33,3 +33,18 @@ Verification:
 - `moon run root:test-e2e` — chainsaw manager-smoke passes in 165s; load-bearing proof that `renderConfig`, `renderTopology`, and `buildInvocation` are byte-equivalent to the old code (db-sync indexes blocks, sync status publishes, owned cleanup works).
 
 Next: surface the diff to the user for review and ask whether to commit, push, and open the PR.
+
+## 2026-05-26 07:53 — Fix DatabaseIdentityFingerprint upgrade regression
+Review agent flagged a P1: the refactor added camelCase `json:` tags to `Spec` and nested types, but `databaseIdentity` (`fingerprint.go:32`) re-embeds `InsertOptions` directly. So the wire shape of the database identity fingerprint shifted, and the controller at `internal/controller/cardanodbsync/apply.go:148` treats that identity as immutable — it would reject every existing healthy `CardanoDBSync` as `UnsupportedDatabaseIdentityChange` and scale db-sync to zero after upgrade.
+
+Verified the OLD wire-shape hash for `minimalSpec()` is `2ddec468399a6c1e1b6d48af1ad40376d1016680217fc47d5a69268c1aa82400` (computed against master via `BuildPlan(minimalSpec())`).
+
+Fix in `internal/cardano/dbsync/fingerprint.go`: introduced private legacy-shape structs `insertIdentity`, `txOutIdentity`, `featureSelectionIdentity` with explicit Go-name `json:` tags and no `omitempty`. These mirror the original on-wire shape exactly (PascalCase keys, nil slices serialize as `null`). Replaced `Insert InsertOptions` in `databaseIdentity` with `Insert insertIdentity`, added `insertIdentityFor`/`featureSelectionIdentityFor` converters. The public domain types remain free to evolve their JSON tags; the database identity wire shape is now frozen by these private types.
+
+Added `TestDatabaseIdentityFingerprintIsFrozenAgainstLegacyWire` pinning the legacy hash for `minimalSpec()`. This locks the wire shape — any future drift fails the test immediately, before it can brick existing resources.
+
+Verification:
+- `go test -run TestDatabaseIdentityFingerprintIsFrozenAgainstLegacyWire ./internal/cardano/dbsync/` — passes.
+- `moon run root:test` — full unit + envtest passes.
+- `moon run root:check` — fmt/lint/generate/helm/chainsaw manifests all clean (staticcheck S1016 cleanup landed on the FeatureSelection converter).
+- `moon run root:test-e2e` — chainsaw manager-smoke passes in 158s. Existing CR's identity acceptance path is no longer disrupted.
