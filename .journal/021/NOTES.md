@@ -70,3 +70,23 @@ Verification all green from the implementation worktree:
 - `moon run root:test-e2e` — 3m 29s, Chainsaw `manager-smoke` passed: local-mode CardanoNetwork reached `Ready=True`, returned real Ogmios `queryNetwork/tip` through Service, optional services flipped off cleanly, ownership-protected teardown succeeded.
 
 PR #38 opened: https://github.com/meigma/yacd/pull/38 — awaiting CI/Kusari + user review. Branch pushed; dev stack stopped (`root:dev-down`) per session protocol since this is the explicit close path.
+
+## 2026-05-26 10:54 — PR #38 merged; followup branch created
+User merged PR #38 as squash commit `3570d8c`. Fast-forwarded `master` in the primary checkout, removed the implementation worktree, and created a fresh worktree `refactor/cardanonetwork-followups` at `.wt/refactor-cardanonetwork-followups` based on the new master.
+
+## 2026-05-26 11:32 — Followup plan approved, implementation complete
+Re-entered plan mode. Rewrote `/Users/josh/.claude/plans/we-re-going-to-do-zazzy-widget.md` for the four deferred items: strong-typing condition vocabulary, sidecar readiness consolidation, kupo cascade two-step, faucet auth reshape. One design pivot from the previous plan: §3f does NOT route the faucet auth Secret through `ctrlapply.ApplyOwnedObject` — verifying ctrlkit's signature showed two hard misfits (Secrets are uncached + ApplyOwnedObject.Mutate does not run on Create). The plan was updated to "reshape inline + document the exception," matching the artifact ConfigMap precedent. User approved with the recommended option.
+
+Started the dev stack from the followup worktree (`moon run root:dev-up`, 45s) and implemented across four commits:
+
+1. `7be0b1d` — strong-type `conditionType` / `conditionReason`. Casts at the ctrlstatus seam keep wire shape unchanged; `assertCondition` / `conditionHas` retype; five `assert.Equal(t, constant, got.Reason)` sites cast back to the typed alias. Caught the testify type-strictness regression on the first run and fixed by casting the live string side of the comparison.
+2. `f34684b` — sidecar readiness consolidation. Extract `primarySidecarReadyCondition` + `sidecarReadinessConfig` in `readiness.go`; ogmios/kupo/faucet collapse to adapters. Faucet's Secret-token check plugs in through `cfg.preReadinessCheck` (`faucetAuthSecretReady`). Node stays separate.
+3. `815225c` — kupo cascade two-step. `resolveKupoSettings` reads only `spec.ChainAPI.Kupo` now and returns `(kupoSettings, kupoMentioned bool, error)`. New `applyDependentDefaults` encodes the single product rule (kupo follows ogmios when unmentioned). Hard invariant "kupo requires ogmios" stays in builder.
+4. `352a480` — faucet auth reshape. Split into `createFaucetAuthSecretWithToken` + `reconcileFaucetAuthSecret`, with `applyPrimaryFaucetAuthSecret` as a small live-reader dispatcher. File-level comment names the two ctrlkit-fit constraints and points at the `applyNetworkArtifactsConfigMap` precedent.
+
+Verification all green from the implementation worktree:
+- `moon run root:check` — 22s, gofmt / vet / lint / helm / chainsaw-manifests clean.
+- `moon run root:test` — passed including the cardanonetwork envtest matrices; pinned condition strings unchanged on the wire.
+- `moon run root:test-e2e` — 4m 17s, Chainsaw `manager-smoke` passed end-to-end with the new readiness consolidation in the runtime path.
+
+PR #39 opened: https://github.com/meigma/yacd/pull/39 — awaiting CI/Kusari + user review. Dev stack still running per protocol (only stop at explicit session close).
