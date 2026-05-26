@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -168,7 +168,7 @@ func artifactPublisherVolumeMount() corev1.VolumeMount {
 }
 
 func artifactConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerprint string) bool {
-	return networkartifacts.ProducerConfigMapNeedsRecovery(configMap, expectedFingerprint)
+	return ctrlnetworkartifacts.ProducerConfigMapNeedsRecovery(configMap, expectedFingerprint)
 }
 
 func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap *corev1.ConfigMap) {

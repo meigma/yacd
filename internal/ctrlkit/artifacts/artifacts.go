@@ -17,11 +17,10 @@ const (
 	DataHashAnnotation      = "yacd.meigma.io/artifact-data-hash"
 )
 
-// Contract describes the schema and key allowlist for a ConfigMap artifact set.
+// Contract describes the data key allowlist for a ConfigMap artifact set.
 type Contract struct {
-	SchemaVersion string
-	RequiredKeys  []string
-	OptionalKeys  []string
+	RequiredKeys []string
+	OptionalKeys []string
 }
 
 // ValidateConfigMapData validates a ConfigMap payload after callers have

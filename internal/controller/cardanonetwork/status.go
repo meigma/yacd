@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
@@ -93,7 +93,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	artifactResult := networkartifacts.ProducerConfigMap(networkArtifactsConfigMap, localnetFingerprint)
+	artifactResult := ctrlnetworkartifacts.ProducerConfigMap(networkArtifactsConfigMap, localnetFingerprint)
 	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
 	artifactsReady := artifactsReadyCondition(
 		metav1.ConditionFalse,

@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -120,7 +120,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork has not published fresh verified artifacts",
 		)
 	}
-	artifactStatus := networkartifacts.ConsumerStatus(network.Status.Artifacts)
+	artifactStatus := ctrlnetworkartifacts.ConsumerStatus(network.Status.Artifacts)
 	if !artifactStatus.Ready {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsPending,
@@ -132,7 +132,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	configMapKey := client.ObjectKey{Namespace: dbSync.Namespace, Name: artifactStatus.ConfigMapName}
 	if err := r.liveReader().Get(ctx, configMapKey, configMap); err != nil {
 		if apierrors.IsNotFound(err) {
-			result := networkartifacts.ConsumerConfigMap(nil, *network.Status.Artifacts)
+			result := ctrlnetworkartifacts.ConsumerConfigMap(nil, *network.Status.Artifacts)
 			return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 				conditionReasonNetworkArtifactsPending,
 				result.Message,
@@ -141,7 +141,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	configMapResult := networkartifacts.ConsumerConfigMap(configMap, *network.Status.Artifacts)
+	configMapResult := ctrlnetworkartifacts.ConsumerConfigMap(configMap, *network.Status.Artifacts)
 	if configMapResult.Ready {
 		return r.reconcileReadyDBSync(ctx, log, dbSync, network, configMap, databaseRuntime)
 	}
