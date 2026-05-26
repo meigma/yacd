@@ -529,23 +529,6 @@ func (r *CardanoDBSyncReconciler) defaultObject(object client.Object) error {
 	return nil
 }
 
-// mergeDBSyncOwnedAnnotations preserves the cardanodbsync-owned annotation
-// set from current onto desired and discards any unrelated annotations that
-// live on the cluster object but are not owned by this controller.
-func mergeDBSyncOwnedAnnotations(current map[string]string, desired map[string]string) map[string]string {
-	return ctrlmetadata.MergeOwnedAnnotations(
-		current,
-		desired,
-		dbSyncPlanFingerprintAnno,
-		dbSyncDatabaseIdentityAnno,
-		dbSyncSecretVersionAnno,
-		dbSyncArtifactDataHashAnno,
-		managedPostgresIdentityAnno,
-		managedPostgresPasswordFingerprintAnno,
-		ctrlannotations.RequestedStorageClass,
-	)
-}
-
 // validateControllerOwner asserts that current is owned by the same
 // controller as desired. Wraps the ctrlkit ownership check into a
 // resourceConflict error the reconciler can surface as a Degraded

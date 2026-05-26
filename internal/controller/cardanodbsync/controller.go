@@ -32,8 +32,6 @@ const (
 	cardanoDBSyncExternalDatabaseSecretNameField = "spec.database.external.passwordSecretRef.name"
 	cardanoDBSyncManagedDatabaseSecretNameField  = "spec.database.managed.authSecretRef.name"
 
-	defaultExternalDatabasePasswordKey = "password"
-
 	dbSyncWorkloadReadinessRequeueAfter = 15 * time.Second
 	dbSyncRuntimeProbeRequeueAfter      = 30 * time.Second
 )

@@ -9,7 +9,6 @@ import (
 	"github.com/meigma/yacd/internal/cardano/dbsync"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -20,18 +19,10 @@ import (
 )
 
 const (
-	dbSyncNameSuffix = "dbsync"
-
 	dbSyncContainerName       = "cardano-db-sync"
 	followerNodeContainerName = "follower-node"
 	dbSyncMetricsPortName     = "metrics"
 	followerNodePortName      = "node-to-node"
-
-	dbSyncConfigMapSuffix    = "dbsync-config"
-	dbSyncStatePVCSuffix     = "dbsync-state"
-	dbSyncFollowerPVCSuffix  = "follower-state"
-	dbSyncPGPassSecretSuffix = "dbsync-pgpass"
-	dbSyncMetricsSuffix      = "dbsync-metrics"
 
 	dbSyncConfigMapVolumeName          = "dbsync-config"
 	networkArtifactsVolumeName         = "network-artifacts"
@@ -53,28 +44,10 @@ const (
 	dbSyncNodeHostAddress              = "0.0.0.0"
 	dbSyncNodePort               int32 = 3001
 
-	dbSyncConfigFileName       = "db-sync-config.yaml"
-	followerTopologyFileName   = "follower-topology.json"
-	dbSyncPGPassFileName       = "pgpass"
-	dbSyncPGPassInitName       = "dbsync-pgpass-setup"
-	dbSyncPlanFingerprintAnno  = "yacd.meigma.io/dbsync-plan-fingerprint"
-	dbSyncDatabaseIdentityAnno = "yacd.meigma.io/dbsync-database-identity"
-	dbSyncSecretVersionAnno    = "yacd.meigma.io/external-database-secret-resource-version"
-	dbSyncArtifactDataHashAnno = "yacd.meigma.io/network-artifact-data-hash"
-
-	labelAppName       = "app.kubernetes.io/name"
-	labelAppInstance   = "app.kubernetes.io/instance"
-	labelAppComponent  = "app.kubernetes.io/component"
-	labelAppManagedBy  = "app.kubernetes.io/managed-by"
-	labelDBSync        = "yacd.meigma.io/cardanodbsync"
-	labelCardanoRole   = "yacd.meigma.io/role"
-	labelDBSyncAppName = "cardano-db-sync"
-	labelDBSyncRole    = "dbsync"
-
-	defaultFollowerNodeImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
-	defaultFollowerNodeImageRevision   = "yacd.4"
-	defaultFollowerNodeStorageSize     = "10Gi"
-	dbSyncRunAsID                      = int64(10001)
+	dbSyncConfigFileName     = "db-sync-config.yaml"
+	followerTopologyFileName = "follower-topology.json"
+	dbSyncPGPassFileName     = "pgpass"
+	dbSyncPGPassInitName     = "dbsync-pgpass-setup"
 )
 
 type dbSyncWorkloadResources struct {
@@ -249,8 +222,8 @@ func runtimeSettings(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.Runtime {
 
 func storageSettings(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.Storage {
 	settings := dbsync.Storage{
-		LedgerBackend: "lsm",
-		NearTipEpoch:  580,
+		LedgerBackend: defaultLedgerBackend,
+		NearTipEpoch:  defaultNearTipEpoch,
 	}
 	if dbSync.Spec.Config.LedgerBackend != "" {
 		settings.LedgerBackend = string(dbSync.Spec.Config.LedgerBackend)
@@ -885,43 +858,3 @@ func dbSyncPGPassFilePath() string {
 	return dbSyncPGPassMountDir + "/" + dbSyncPGPassFileName
 }
 
-func dbSyncWorkloadName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncNameSuffix)
-}
-
-func dbSyncConfigMapName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncConfigMapSuffix)
-}
-
-func dbSyncStatePVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncStatePVCSuffix)
-}
-
-func dbSyncFollowerPVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncFollowerPVCSuffix)
-}
-
-func dbSyncPGPassSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncPGPassSecretSuffix)
-}
-
-func dbSyncMetricsServiceName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncMetricsSuffix)
-}
-
-func dbSyncWorkloadSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	instance := ctrlnames.LabelValue(dbSync.Name)
-	return map[string]string{
-		labelAppName:      labelDBSyncAppName,
-		labelAppInstance:  instance,
-		labelAppComponent: labelDBSyncRole,
-		labelDBSync:       instance,
-		labelCardanoRole:  labelDBSyncRole,
-	}
-}
-
-func dbSyncWorkloadLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	labels := dbSyncWorkloadSelectorLabels(dbSync)
-	labels[labelAppManagedBy] = "yacd"
-	return labels
-}

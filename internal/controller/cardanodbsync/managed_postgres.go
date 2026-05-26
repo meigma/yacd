@@ -11,7 +11,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -21,28 +20,11 @@ import (
 )
 
 const (
-	managedPostgresAuthSecretSuffix = "postgres-auth"
-	managedPostgresStatePVCSuffix   = "postgres-state"
-	managedPostgresSuffix           = "postgres"
-
 	managedPostgresContainerName = "postgres"
 	managedPostgresPortName      = "postgres"
-	managedPostgresRole          = "postgres"
 	managedPostgresDataVolume    = "postgres-state"
 	managedPostgresDataMountDir  = "/var/lib/postgresql/data"
 	managedPostgresDataDir       = "/var/lib/postgresql/data/pgdata"
-	managedPostgresPasswordKey   = "password"
-
-	managedPostgresIdentityAnno            = "yacd.meigma.io/managed-postgres-identity"
-	managedPostgresPasswordFingerprintAnno = "yacd.meigma.io/managed-postgres-password-fingerprint"
-
-	defaultManagedPostgresImage             = "postgres:17.2-alpine"
-	defaultManagedPostgresDatabase          = "cexplorer"
-	defaultManagedPostgresUser              = "postgres"
-	defaultManagedPostgresStorageSize       = "10Gi"
-	defaultManagedPostgresSSLMode           = "disable"
-	managedPostgresPort               int32 = 5432
-	managedPostgresRunAsID            int64 = 70
 )
 
 type managedPostgresResources struct {
@@ -440,35 +422,3 @@ func managedPostgresPasswordFingerprint(password []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func managedPostgresAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresAuthSecretSuffix)
-}
-
-func managedPostgresPVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresStatePVCSuffix)
-}
-
-func managedPostgresServiceName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
-}
-
-func managedPostgresDeploymentName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
-}
-
-func managedPostgresSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	instance := ctrlnames.LabelValue(dbSync.Name)
-	return map[string]string{
-		labelAppName:      labelDBSyncAppName,
-		labelAppInstance:  instance,
-		labelAppComponent: managedPostgresRole,
-		labelDBSync:       instance,
-		labelCardanoRole:  managedPostgresRole,
-	}
-}
-
-func managedPostgresLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	labels := managedPostgresSelectorLabels(dbSync)
-	labels[labelAppManagedBy] = "yacd"
-	return labels
-}
