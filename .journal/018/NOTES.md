@@ -48,3 +48,8 @@ Verification:
 - `moon run root:test` — full unit + envtest passes.
 - `moon run root:check` — fmt/lint/generate/helm/chainsaw manifests all clean (staticcheck S1016 cleanup landed on the FeatureSelection converter).
 - `moon run root:test-e2e` — chainsaw manager-smoke passes in 158s. Existing CR's identity acceptance path is no longer disrupted.
+
+## 2026-05-26 08:14 — Close
+PR #35 merged as `e030333`. CI (`ci`, Kusari Inspector) and Kusari Inspector passed before merge. Local `master` fast-forwarded to the merge commit. Implementation worktree `.wt/refactor-dbsync-package` and branch `refactor/dbsync-package` removed. Dev stack shut down (`moon run root:dev-down`).
+
+Handoff state: `master` clean at `e030333`. `TECH_NOTES.md` updated to record the new dbsync layout, the `DefaultInsertOptions()` construction baseline, the `Runtime.Disable*` semantics, and the frozen `DatabaseIdentityFingerprint` wire shape (with the regression test that locks it). The next refactor sweep target is open — the controller package (`internal/controller/cardanodbsync`) is the natural follow-up since it still carries redundant default knowledge (storage `lsm`, `NearTipEpoch: 580`) that the dbsync planner already defaults.

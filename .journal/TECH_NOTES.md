@@ -31,7 +31,18 @@
   identity fingerprint. The accepted database identity includes network
   artifact hash, DB address/user, db-sync image, ledger backend, and insert
   options; changes to that identity are rejected until a recreate or migration
-  story exists.
+  story exists. The package is split into focused files mirroring the
+  `internal/cardano/localnet` layout; `DefaultInsertOptions()` is the
+  recommended construction baseline, and `Runtime.DisableCache` /
+  `Runtime.DisableEpochTable` map directly to the db-sync CLI flags so the
+  zero value leaves the feature active.
+- The `DatabaseIdentityFingerprint` wire shape is frozen behind private
+  legacy-shape structs (`insertIdentity`, `txOutIdentity`,
+  `featureSelectionIdentity`) so the immutable identity check in the controller
+  (`internal/controller/cardanodbsync/apply.go`) does not reject existing
+  resources when public Spec types add or rename JSON tags. The pinned hash in
+  `TestDatabaseIdentityFingerprintIsFrozenAgainstLegacyWire` catches drift —
+  fix the wire shape rather than updating the expected value.
 - Managed `CardanoDBSync` Postgres creates `<dbsync>-postgres-auth` when
   `managed.authSecretRef` is omitted, `<dbsync>-postgres-state`,
   `<dbsync>-postgres` Service, and `<dbsync>-postgres` Deployment. The

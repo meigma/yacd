@@ -18,3 +18,4 @@
 | 014 | 2026-05-24 | Managed Postgres for CardanoDBSync | complete | Added the managed Postgres runtime path for `CardanoDBSync`, hardened auth/identity behavior, merged PR #24, and cleaned up the dev stack/worktree. |
 | 015 | 2026-05-24 | CardanoDBSync progress probes | complete | Added efficient Postgres/Ogmios db-sync progress probes, released the hash-enriching tools image, merged PR #31, and cleaned up the session worktrees. |
 | 017 | 2026-05-25 | ctrlkit foundation | complete | Added and integrated shared controller utility foundations while keeping Cardano/YACD domain contracts outside `ctrlkit`, then merged PR #33. |
+| 018 | 2026-05-26 | dbsync planner package refactor | complete | Split `internal/cardano/dbsync` into a localnet-style layout with godocs, errors.Join validation, renamed Runtime disable booleans, exported `DefaultInsertOptions`, stable Spec JSON tags, and a frozen `DatabaseIdentityFingerprint` wire shape, then merged PR #35. |
