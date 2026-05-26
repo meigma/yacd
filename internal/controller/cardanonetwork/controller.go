@@ -96,7 +96,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
-			ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, string(conditionReasonUnsupportedSpec), conditionMessagePrimaryWorkloadUnsupported),
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -169,7 +169,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"localnetFingerprint", localnetFingerprint)
 
-	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
+	if ready.Status != metav1.ConditionTrue && ready.Reason == string(conditionReasonDeploymentProgressing) {
 		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, nil
 	}
 	if resources.FaucetAuthSecret != nil {
@@ -327,19 +327,23 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
 		return ctrl.Result{}, revokeErr
 	}
+	// conditionErr.Reason is untyped (it crosses the ctrlstatus boundary as a
+	// plain string); cast to conditionReason once and reuse for the condition
+	// builders below.
+	reason := conditionReason(conditionErr.Reason)
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
-		degradedCondition(metav1.ConditionTrue, conditionErr.Reason, conditionErr.Message),
-		progressingCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		nodeReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		ogmiosReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		kupoReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		faucetReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
-		artifactsReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		degradedCondition(metav1.ConditionTrue, reason, conditionErr.Message),
+		progressingCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		nodeReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		ogmiosReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		kupoReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		faucetReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		artifactsReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if conditionErr.Reason == conditionReasonResourceConflict {
+	if reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, nil
 	}
 

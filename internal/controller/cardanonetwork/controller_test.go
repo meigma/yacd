@@ -1738,23 +1738,23 @@ func TestCardanoNetworkReconcilerPrimaryNodeReadyConditionReportsMissingChildren
 
 	got, err := reconciler.primaryNodeReadyCondition(ctx, network)
 	require.NoError(t, err)
-	assert.Equal(t, conditionTypeNodeReady, got.Type)
+	assert.Equal(t, conditionTypeNodeReady, conditionType(got.Type))
 	assert.Equal(t, metav1.ConditionFalse, got.Status)
-	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, conditionReason(got.Reason))
 	assert.Equal(t, "Primary node PVC is missing", got.Message)
 
 	require.NoError(t, reconciler.Create(ctx, resources.PersistentVolumeClaim))
 	got, err = reconciler.primaryNodeReadyCondition(ctx, network)
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, got.Status)
-	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, conditionReason(got.Reason))
 	assert.Equal(t, "Primary node Service is missing", got.Message)
 
 	require.NoError(t, reconciler.Create(ctx, resources.Service))
 	got, err = reconciler.primaryNodeReadyCondition(ctx, network)
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, got.Status)
-	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, got.Reason)
+	assert.Equal(t, conditionReasonPrimaryWorkloadMissing, conditionReason(got.Reason))
 	assert.Equal(t, "Primary node Deployment is missing", got.Message)
 }
 
@@ -1775,7 +1775,7 @@ func TestCardanoNetworkReconcilerPrimaryNodeReadyConditionRequiresFreshAvailable
 	got, err := reconciler.primaryNodeReadyCondition(ctx, network)
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionFalse, got.Status)
-	assert.Equal(t, conditionReasonDeploymentProgressing, got.Reason)
+	assert.Equal(t, conditionReasonDeploymentProgressing, conditionReason(got.Reason))
 	assert.Equal(t, "Primary node Deployment has not observed the latest generation", got.Message)
 }
 
@@ -2330,17 +2330,17 @@ func assertCondition(
 	ctx context.Context,
 	reconciler *CardanoNetworkReconciler,
 	network *yacdv1alpha1.CardanoNetwork,
-	conditionType string,
+	ct conditionType,
 	status metav1.ConditionStatus,
-	reason string,
+	reason conditionReason,
 ) {
 	t.Helper()
 
 	current := requireNetwork(t, ctx, reconciler, network)
-	condition := apimeta.FindStatusCondition(current.Status.Conditions, conditionType)
+	condition := apimeta.FindStatusCondition(current.Status.Conditions, string(ct))
 	require.NotNil(t, condition)
 	assert.Equal(t, status, condition.Status)
-	assert.Equal(t, reason, condition.Reason)
+	assert.Equal(t, string(reason), condition.Reason)
 	assert.Equal(t, current.Generation, condition.ObservedGeneration)
 	assert.Equal(t, current.Generation, current.Status.ObservedGeneration)
 }
