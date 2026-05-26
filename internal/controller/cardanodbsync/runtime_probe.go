@@ -18,62 +18,122 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
-	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
+	// dbSyncRuntimeProbeTimeout bounds how long a single probe call (one
+	// Postgres connect + query, or one Ogmios HTTP request) waits before
+	// the reconciler abandons the probe with a transient failure.
 	dbSyncRuntimeProbeTimeout = 3 * time.Second
-	dbSyncSyncedLagThreshold  = int64(1)
 
+	// dbSyncSyncedLagThreshold is the maximum number of blocks db-sync may
+	// trail the node tip while still being reported Synced=True.
+	dbSyncSyncedLagThreshold = int64(1)
+
+	// latestDBSyncBlockSQL fetches the latest indexed block from the
+	// db-sync block table. The query is what the prober runs against
+	// Postgres to derive sync progress.
 	latestDBSyncBlockSQL = "select block_no, slot_no, epoch_no from block where block_no is not null order by id desc limit 1"
 )
 
+// errDBSyncSchemaPending is the sentinel returned by latestDBBlock when
+// the db-sync block table is not yet present. The reconciler maps this to
+// a Synced=False condition with reason PostgresSchemaPending rather than
+// treating it as a Postgres outage.
 var errDBSyncSchemaPending = errors.New("db-sync schema is pending")
 
-type cardanoDBSyncRuntimeProber interface {
+// runtimeProber is the port the reconciler uses to derive chain-sync
+// progress. It is intentionally narrow: ProbePostgres queries Postgres
+// alone (used while the dbsync workload is still starting), and Probe
+// extends that with an Ogmios node-tip query (used once both containers
+// are ready). The reconciler holds the prober behind this interface so
+// tests can stub it with deterministic results.
+type runtimeProber interface {
+	// ProbePostgres queries Postgres for the latest indexed block and
+	// returns the resulting PostgresReady + Synced conditions and the
+	// progress payload.
 	ProbePostgres(context.Context, dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error)
+	// Probe runs ProbePostgres and, when Postgres is healthy, additionally
+	// queries the Ogmios node tip to compute Synced status against the
+	// chain head.
 	Probe(context.Context, dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error)
 }
 
+// dbSyncRuntimeProbeTarget is the input to a runtime probe call: the
+// database connection inputs (host/port/credentials), the live password
+// Secret to read the password from, and the Ogmios URL published by the
+// referenced CardanoNetwork.
 type dbSyncRuntimeProbeTarget struct {
-	Database       dbsync.Database
+	// Database holds the resolved connection inputs (the planner-shaped
+	// Database value used by the dbsync workload).
+	Database dbsync.Database
+	// PasswordSecret is the live Secret carrying the libpq password.
 	PasswordSecret *corev1.Secret
-	OgmiosURL      string
+	// OgmiosURL is the referenced CardanoNetwork's published Ogmios
+	// endpoint. Empty when ogmios is disabled.
+	OgmiosURL string
 }
 
+// dbSyncRuntimeProbeResult carries the conditions and progress payload
+// derived from a probe call. Sync is nil when the result represents a
+// failure path.
 type dbSyncRuntimeProbeResult struct {
-	Sync          *yacdv1alpha1.CardanoDBSyncProgressStatus
+	// Sync is the progress payload published as CardanoDBSync.Status.Sync.
+	Sync *yacdv1alpha1.CardanoDBSyncProgressStatus
+	// PostgresReady is the PostgresReady condition derived from the
+	// Postgres query result.
 	PostgresReady metav1.Condition
-	Synced        metav1.Condition
+	// Synced is the aggregate Synced condition. When Probe ran the
+	// node-tip query, Synced reflects the dbsync-versus-node-tip lag.
+	Synced metav1.Condition
 }
 
-type defaultDBSyncRuntimeProber struct {
-	httpClient  *http.Client
-	queryDB     func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error)
+// defaultRuntimeProber is the production [runtimeProber] adapter. It
+// connects to Postgres through pgx and queries the Ogmios health endpoint
+// over HTTP; the two queryDB / queryOgmios fields are seams used by tests
+// to inject deterministic results without standing up real servers.
+type defaultRuntimeProber struct {
+	// httpClient is used for Ogmios queries. http.DefaultClient is used
+	// when this field is nil.
+	httpClient *http.Client
+	// queryDB, when non-nil, replaces the live Postgres connect+query.
+	// Used by tests to inject deterministic database progress.
+	queryDB func(context.Context, dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error)
+	// queryOgmios, when non-nil, replaces the live Ogmios HTTP query.
+	// Used by tests to inject deterministic node-tip results.
 	queryOgmios func(context.Context, string) (dbSyncNodeTip, error)
 }
 
+// dbSyncDatabaseProgress is the raw db-sync block progress read from
+// Postgres. All fields are optional because the block table may exist
+// without any indexed rows.
 type dbSyncDatabaseProgress struct {
 	DBBlockHeight *int64
 	DBSlotHeight  *int64
 	Epoch         *int64
 }
 
+// dbSyncNodeTip is the chain tip read from Ogmios. BlockHeight is
+// optional because some Ogmios versions return a partial response while
+// the node is still synchronizing.
 type dbSyncNodeTip struct {
 	BlockHeight *int64
 }
 
-func (r *CardanoDBSyncReconciler) runtimeProber() cardanoDBSyncRuntimeProber {
+// runtimeProber returns the prober the reconciler uses for runtime
+// probes. Tests override the prober through runtimeProberOverride to
+// avoid requiring real Postgres / Ogmios instances.
+func (r *CardanoDBSyncReconciler) runtimeProber() runtimeProber {
 	if r.runtimeProberOverride != nil {
 		return r.runtimeProberOverride
 	}
 
-	return defaultDBSyncRuntimeProber{httpClient: http.DefaultClient}
+	return defaultRuntimeProber{httpClient: http.DefaultClient}
 }
 
-func (p defaultDBSyncRuntimeProber) Probe(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error) {
+func (p defaultRuntimeProber) Probe(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error) {
 	dbResult, err := p.ProbePostgres(ctx, target)
 	if err != nil {
 		return dbSyncRuntimeProbeResult{}, err
@@ -90,7 +150,7 @@ func (p defaultDBSyncRuntimeProber) Probe(ctx context.Context, target dbSyncRunt
 	return p.probeNodeTip(ctx, target.OgmiosURL, sync, dbResult.PostgresReady, dbResult.Synced)
 }
 
-func (p defaultDBSyncRuntimeProber) ProbePostgres(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error) {
+func (p defaultRuntimeProber) ProbePostgres(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncRuntimeProbeResult, error) {
 	sync := &yacdv1alpha1.CardanoDBSyncProgressStatus{}
 
 	dbCtx, cancel := context.WithTimeout(ctx, dbSyncRuntimeProbeTimeout)
@@ -103,35 +163,35 @@ func (p defaultDBSyncRuntimeProber) ProbePostgres(ctx context.Context, target db
 	case errors.Is(dbErr, errDBSyncSchemaPending):
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
-			PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable"),
-			Synced:        syncedCondition(conditionReasonPostgresSchemaPending, "db-sync has not created the block table yet"),
+			PostgresReady: postgresReadyCondition(metav1.ConditionTrue, conditionReasonPostgresReady, conditionMessagePostgresReachable),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresSchemaPending, conditionMessageSchemaPending),
 		}, nil
 	default:
 		message := fmt.Sprintf("Postgres progress query failed: %v", dbErr)
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
-			PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, message),
-			Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+			PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, message),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
 		}, nil
 	}
 
-	postgresReady := ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded")
+	postgresReady := postgresReadyCondition(metav1.ConditionTrue, conditionReasonPostgresReady, conditionMessagePostgresReady)
 	if sync.DBBlockHeight == nil {
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
 			PostgresReady: postgresReady,
-			Synced:        syncedCondition(conditionReasonSyncLagging, "db-sync has not indexed any blocks yet"),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, conditionMessageNoBlocksIndexed),
 		}, nil
 	}
 
 	return dbSyncRuntimeProbeResult{
 		Sync:          sync,
 		PostgresReady: postgresReady,
-		Synced:        syncedCondition(conditionReasonRuntimeProbesPending, "node tip will be probed after db-sync workloads are ready"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonRuntimeProbesPending, conditionMessageNodeTipProbedPending),
 	}, nil
 }
 
-func (p defaultDBSyncRuntimeProber) latestDBBlock(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
+func (p defaultRuntimeProber) latestDBBlock(ctx context.Context, target dbSyncRuntimeProbeTarget) (dbSyncDatabaseProgress, error) {
 	if p.queryDB != nil {
 		return p.queryDB(ctx, target)
 	}
@@ -167,7 +227,7 @@ func (p defaultDBSyncRuntimeProber) latestDBBlock(ctx context.Context, target db
 	}, nil
 }
 
-func (p defaultDBSyncRuntimeProber) probeNodeTip(
+func (p defaultRuntimeProber) probeNodeTip(
 	ctx context.Context,
 	ogmiosURL string,
 	sync *yacdv1alpha1.CardanoDBSyncProgressStatus,
@@ -180,7 +240,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 
 	if nodeErr != nil {
 		if fallbackSynced.Type == "" || sync.DBBlockHeight != nil {
-			fallbackSynced = syncedCondition(conditionReasonNodeTipUnavailable, fmt.Sprintf("Ogmios node tip query failed: %v", nodeErr))
+			fallbackSynced = syncedCondition(metav1.ConditionFalse, conditionReasonNodeTipUnavailable, fmt.Sprintf("Ogmios node tip query failed: %v", nodeErr))
 		}
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
@@ -192,7 +252,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 	sync.NodeBlockHeight = nodeTip.BlockHeight
 	if sync.DBBlockHeight == nil {
 		if fallbackSynced.Type == "" {
-			fallbackSynced = syncedCondition(conditionReasonSyncLagging, "db-sync has not indexed any blocks yet")
+			fallbackSynced = syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, conditionMessageNoBlocksIndexed)
 		}
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
@@ -204,7 +264,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
 			PostgresReady: postgresReady,
-			Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip did not include a block height"),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonNodeTipUnavailable, "Ogmios node tip did not include a block height"),
 		}, nil
 	}
 
@@ -214,18 +274,18 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
 			PostgresReady: postgresReady,
-			Synced:        ctrlstatus.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
+			Synced:        syncedCondition(metav1.ConditionTrue, conditionReasonSynced, conditionMessageSynced),
 		}, nil
 	}
 
 	return dbSyncRuntimeProbeResult{
 		Sync:          sync,
 		PostgresReady: postgresReady,
-		Synced:        syncedCondition(conditionReasonSyncLagging, fmt.Sprintf("db-sync is %d blocks behind the node tip", lag)),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, fmt.Sprintf("db-sync is %d blocks behind the node tip", lag)),
 	}, nil
 }
 
-func (p defaultDBSyncRuntimeProber) nodeTip(ctx context.Context, ogmiosURL string) (dbSyncNodeTip, error) {
+func (p defaultRuntimeProber) nodeTip(ctx context.Context, ogmiosURL string) (dbSyncNodeTip, error) {
 	if p.queryOgmios != nil {
 		return p.queryOgmios(ctx, ogmiosURL)
 	}

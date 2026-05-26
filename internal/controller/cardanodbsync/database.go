@@ -20,22 +20,51 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// databaseMode names the two CardanoDBSync database modes. The
+// reconciler rejects specs that set both modes (or neither).
 type databaseMode string
 
 const (
+	// databaseModeExternal indicates the user supplied an external
+	// Postgres reference under spec.database.external.
 	databaseModeExternal databaseMode = "external"
-	databaseModeManaged  databaseMode = "managed"
+
+	// databaseModeManaged indicates the controller should run an owned
+	// Postgres workload (spec.database.managed).
+	databaseModeManaged databaseMode = "managed"
 )
 
+// databaseRuntime is the resolved per-reconcile database context. The
+// reconciler builds it once at the top of Reconcile and passes it down to
+// the workload builder and the status patchers; it carries enough
+// material for both the planner ([dbsync.Database]) and the status
+// endpoints.
 type databaseRuntime struct {
-	Mode                    databaseMode
-	Database                dbsync.Database
-	PasswordSecret          *corev1.Secret
-	CredentialVersion       string
-	PostgresEndpoint        *yacdv1alpha1.ServiceEndpointStatus
+	// Mode is the selected database mode (external or managed).
+	Mode databaseMode
+	// Database is the resolved planner-shaped connection input.
+	Database dbsync.Database
+	// PasswordSecret is the live Secret carrying the libpq password.
+	PasswordSecret *corev1.Secret
+	// CredentialVersion is the version string stamped onto Pod-template
+	// annotations and identity fingerprints. For managed Postgres it is
+	// the password fingerprint (so a rotated password rolls identity);
+	// for external Postgres it is empty (the caller uses the Secret
+	// ResourceVersion directly).
+	CredentialVersion string
+	// PostgresEndpoint is the Service endpoint payload published into
+	// CardanoDBSync.Status.Endpoints.Postgres.
+	PostgresEndpoint *yacdv1alpha1.ServiceEndpointStatus
+	// GeneratedAuthSecretName is the name of the controller-generated
+	// managed-Postgres auth Secret. Empty for the user-provided and
+	// external paths.
 	GeneratedAuthSecretName string
 }
 
+// resolveDatabase dispatches to the external or managed resolver. The
+// returned bool is true when resolution succeeded; false when the
+// function already published a Degraded / Waiting status patch (the
+// caller should bail out of the reconcile and wait for the next event).
 func (r *CardanoDBSyncReconciler) resolveDatabase(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -54,6 +83,10 @@ func (r *CardanoDBSyncReconciler) resolveDatabase(
 	}
 }
 
+// resolveExternalDatabase reads the external Postgres password Secret
+// and returns a databaseRuntime pointing at it. Returns (zero, false,
+// err) when validation failed; err may be nil if the function already
+// surfaced the failure through a status patch.
 func (r *CardanoDBSyncReconciler) resolveExternalDatabase(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -73,6 +106,11 @@ func (r *CardanoDBSyncReconciler) resolveExternalDatabase(
 	}, true, nil
 }
 
+// workloadPasswordSecret returns the password Secret the builder embeds
+// into the pgpass Secret. For managed Postgres with a controller-managed
+// password, the returned Secret carries the password fingerprint as its
+// ResourceVersion so a password rotation rolls the dbsync Pod through
+// the standard Deployment hash-change path.
 func (runtime databaseRuntime) workloadPasswordSecret() *corev1.Secret {
 	if runtime.PasswordSecret == nil {
 		return nil
@@ -87,6 +125,13 @@ func (runtime databaseRuntime) workloadPasswordSecret() *corev1.Secret {
 	return secret
 }
 
+// resolveManagedDatabase resolves the managed Postgres auth Secret and
+// returns the resulting databaseRuntime. When the user supplies
+// spec.database.managed.authSecretRef the controller validates the
+// referenced Secret; otherwise the controller ensures its own generated
+// Secret exists. The Secret apply is the documented exception to the
+// otherwise uniform ApplyOwnedObject flow because the password is
+// create-once: see ensureManagedPostgresAuthSecret.
 func (r *CardanoDBSyncReconciler) resolveManagedDatabase(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -131,6 +176,10 @@ func (r *CardanoDBSyncReconciler) resolveManagedDatabase(
 	}, true, nil
 }
 
+// validateProvidedManagedPostgresAuthSecret reads and validates a
+// user-supplied managed-Postgres auth Secret (spec.database.managed.
+// authSecretRef). Returns (zero, false, err) on failure; err may be nil
+// when the function already surfaced the failure through a status patch.
 func (r *CardanoDBSyncReconciler) validateProvidedManagedPostgresAuthSecret(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -172,6 +221,10 @@ func (r *CardanoDBSyncReconciler) validateProvidedManagedPostgresAuthSecret(
 	return secret, true, nil
 }
 
+// validateManagedPostgresAuthSecret checks that the auth Secret carries
+// a usable password value. Returns (false, err) on failure; err may be
+// nil when the function already surfaced the failure through a status
+// patch.
 func (r *CardanoDBSyncReconciler) validateManagedPostgresAuthSecret(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -195,6 +248,20 @@ func (r *CardanoDBSyncReconciler) validateManagedPostgresAuthSecret(
 	return true, nil
 }
 
+// ensureManagedPostgresAuthSecret reconciles the controller-generated
+// managed-Postgres auth Secret. It is the deliberate exception to the
+// otherwise uniform ApplyOwnedObject flow because the password is
+// create-once: the Secret is created with a freshly generated password
+// the first time the dbsync is reconciled, then mutated only to track
+// metadata. Two safety checks prevent silent data loss:
+//
+//  1. If the Secret is missing but a managed-Postgres identity has been
+//     accepted (the PVC carries an identity annotation), the function
+//     refuses to generate a new password — that would orphan the
+//     initialized Postgres data directory.
+//  2. If the live Secret carries an accepted-fingerprint annotation that
+//     does not match the live password, the function returns a typed
+//     UnsupportedDatabaseIdentityChange error rather than overwriting.
 func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -220,7 +287,7 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 		}
 		if acceptedIdentity != "" {
 			return nil, statusConditionError{
-				Reason: conditionReasonManagedDatabaseSecretMissing,
+				Reason: string(conditionReasonManagedDatabaseSecretMissing),
 				Message: fmt.Sprintf(
 					"Managed Postgres generated auth Secret %s is missing after database initialization; restore the original Secret or recreate the CardanoDBSync with a fresh database",
 					ctrlmetadata.ObjectKey(desired),
@@ -277,6 +344,9 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	return current, nil
 }
 
+// generateManagedPostgresPassword returns a 32-byte random password
+// base64-encoded for safe inclusion in env-var Secret data. This is the
+// only crypto/rand caller in the package.
 func generateManagedPostgresPassword() ([]byte, error) {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
