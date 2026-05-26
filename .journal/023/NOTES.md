@@ -78,3 +78,14 @@ Tooling notes worth remembering:
   call lands.
 
 Awaiting CI + review. Dev stack still running.
+
+## 2026-05-26 16:11 — Close
+PR #41 merged as squash commit `939219c`. Local `master` fast-forwarded;
+`refactor/cli-packages` worktree and branch removed; dev stack stopped via
+`moon run root:dev-down`. `SUMMARY.md` and `INDEX.md` written;
+`TECH_NOTES.md` revised to capture the new CLI layout, the topup_trust
+security boundary, the devconfig two-pass validation contract, and the
+mockery + Testify wiring (including the proto-go-shim PATH workaround).
+Hand-off state: clean. Open thread for the next pass is migrating the
+controller and ctrlkit tests to mockery — the precedent and tooling are
+now in place.

@@ -222,3 +222,35 @@
   implementation worktree, keep it running across ordinary turns and review
   pauses, and stop it at explicit session close/end-of-session unless the human
   asks otherwise.
+- The CLI lives under `cli/` and ships the `yacd` binary built from
+  `./cli/cmd/yacd`. Its packages follow the same readability / hexagonal /
+  typed-vocabulary discipline as the controller packages: each has a
+  `doc.go` contract; `kube` carries the `Client` port + `Adapter`
+  implementation (`kube.NewClient` returns `*Adapter` per Rule 7) plus
+  the typed `ConditionType` vocabulary (`ConditionReady`,
+  `ConditionDegraded`, `ConditionFaucetReady`); the `cli` package
+  decomposes into per-command files (`deploy.go`, `info.go` +
+  `info_print.go`, `topup.go` + `topup_trust.go` + `topup_transport.go`)
+  plus `options.go` / `config.go` / `root.go`.
+- `topup_trust.go` is security-load-bearing: `validateFaucetURLTrust`
+  defends three attack vectors (token exfiltration to attacker-supplied
+  URL, accidental non-loopback exposure, plaintext eavesdropping) and
+  carries paragraph + per-check comments. Tests preserve the invariant
+  via `mock.AssertNotCalled(t, "GetSecretValue", ...)` — do not delete
+  this assertion when touching the trust gate.
+- `devconfig.Load` runs a two-pass validation. Pass 1 (`Validate`)
+  checks the decoded Go envelope; pass 2 (`validateExplicitFields`)
+  re-decodes the raw YAML into a map and enforces that
+  surprising-when-defaulted fields are spelled out explicitly. Both
+  are required because the typed decoder cannot distinguish "absent"
+  from "zero" on the strongly-typed API value.
+- Mockery + Testify are the test stack. Mockery v3 is pinned via proto
+  at `.moon/proto/mockery.toml` and `.prototools`; `.mockery.yml` at
+  the repo root drives generation. Mocks live in `cli/internal/mocks`
+  for the cli ports (`Client`, `HTTPDoer`). Regeneration goes through
+  `moon run root:generate`. The Moon task prepends the direct Go
+  toolchain bin to PATH because the proto `go` shim word-splits the
+  templated `-f "{{context.GOARCH}} {{context.Compiler}}"` argument
+  `golang.org/x/tools/go/packages` passes to `go list`; without the
+  workaround mockery (and any other x/tools-based generator) errors
+  with `malformed import path "{{context.GOARCH}}"`.
