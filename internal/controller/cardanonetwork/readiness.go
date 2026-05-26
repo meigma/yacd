@@ -58,154 +58,175 @@ func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
 	), nil
 }
 
-// primaryOgmiosReadyCondition computes the OgmiosReady condition. When
-// ogmios is disabled by the spec, returns the canonical OgmiosDisabled
-// condition without performing any cluster reads.
+// sidecarReadinessConfig captures the per-sidecar variation consumed by
+// primarySidecarReadyCondition. The node readiness path stays separate
+// because it has no disabled branch and probes a PVC as well as a Service.
+type sidecarReadinessConfig struct {
+	// serviceName resolves the per-CardanoNetwork Service name.
+	serviceName func(*yacdv1alpha1.CardanoNetwork) string
+	// containerName names the sidecar's container in the primary Deployment.
+	containerName string
+	// condition constructs the typed component condition (e.g. ogmiosReadyCondition).
+	condition primaryDeploymentConditionFunc
+	// disabledReason and disabledMessage describe the no-cluster-read branch
+	// taken when the sidecar is turned off by spec.
+	disabledReason  conditionReason
+	disabledMessage string
+	// readyReason and readyMessage describe the success branch.
+	readyReason  conditionReason
+	readyMessage string
+	// missingServiceMessage, unavailableMessage, and containerNotReadyMessage
+	// flow into primaryDeploymentContainerBlockedCondition.
+	missingServiceMessage    string
+	unavailableMessage       string
+	containerNotReadyMessage string
+	// preReadinessCheck runs after the Service get and before the container
+	// readiness probe. Non-nil only for the faucet, which must also verify
+	// its uncached auth Secret carries a usable token.
+	preReadinessCheck func(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) (notReady *metav1.Condition, err error)
+}
+
+// primarySidecarReadyCondition is the shared body used by the three optional
+// sidecars (ogmios, kupo, faucet). Each one customizes the variation through
+// sidecarReadinessConfig; the orchestration (disabled short circuit, Service
+// get, optional pre-readiness check, container readiness probe, blocked
+// mapping, success condition) lives here once.
+func (r *CardanoNetworkReconciler) primarySidecarReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	enabled bool,
+	cfg sidecarReadinessConfig,
+) (metav1.Condition, error) {
+	if !enabled {
+		return cfg.condition(metav1.ConditionFalse, cfg.disabledReason, cfg.disabledMessage), nil
+	}
+
+	service := &corev1.Service{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: cfg.serviceName(network)}, service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return cfg.condition(metav1.ConditionFalse, conditionReasonPrimaryWorkloadMissing, cfg.missingServiceMessage), nil
+		}
+		return metav1.Condition{}, err
+	}
+
+	if cfg.preReadinessCheck != nil {
+		notReady, err := cfg.preReadinessCheck(ctx, network)
+		if err != nil {
+			return metav1.Condition{}, err
+		}
+		if notReady != nil {
+			return *notReady, nil
+		}
+	}
+
+	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, cfg.containerName)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+	if blocked := primaryDeploymentContainerBlockedCondition(readiness, cfg.unavailableMessage, cfg.containerNotReadyMessage, cfg.condition); blocked != nil {
+		return *blocked, nil
+	}
+
+	return cfg.condition(metav1.ConditionTrue, cfg.readyReason, cfg.readyMessage), nil
+}
+
+// primaryOgmiosReadyCondition computes the OgmiosReady condition. See
+// primarySidecarReadyCondition for the shared shape.
 func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	enabled bool,
 ) (metav1.Condition, error) {
-	if !enabled {
-		return ogmiosReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonOgmiosDisabled,
-			conditionMessageOgmiosDisabled,
-		), nil
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryOgmiosServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ogmiosReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Ogmios Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, ogmiosContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Ogmios sidecar is not available", "Ogmios sidecar is not ready", ogmiosReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return ogmiosReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonOgmiosReady,
-		conditionMessageOgmiosReady,
-	), nil
+	return r.primarySidecarReadyCondition(ctx, network, enabled, sidecarReadinessConfig{
+		serviceName:              primaryOgmiosServiceName,
+		containerName:            ogmiosContainerName,
+		condition:                ogmiosReadyCondition,
+		disabledReason:           conditionReasonOgmiosDisabled,
+		disabledMessage:          conditionMessageOgmiosDisabled,
+		readyReason:              conditionReasonOgmiosReady,
+		readyMessage:             conditionMessageOgmiosReady,
+		missingServiceMessage:    "Ogmios Service is missing",
+		unavailableMessage:       "Ogmios sidecar is not available",
+		containerNotReadyMessage: "Ogmios sidecar is not ready",
+	})
 }
 
-// primaryKupoReadyCondition computes the KupoReady condition. When kupo is
-// disabled by the spec, returns KupoDisabled without performing any cluster
-// reads.
+// primaryKupoReadyCondition computes the KupoReady condition. See
+// primarySidecarReadyCondition for the shared shape.
 func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	enabled bool,
 ) (metav1.Condition, error) {
-	if !enabled {
-		return kupoReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonKupoDisabled,
-			conditionMessageKupoDisabled,
-		), nil
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryKupoServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return kupoReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Kupo Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, kupoContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Kupo sidecar is not available", "Kupo sidecar is not ready", kupoReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return kupoReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonKupoReady,
-		conditionMessageKupoReady,
-	), nil
+	return r.primarySidecarReadyCondition(ctx, network, enabled, sidecarReadinessConfig{
+		serviceName:              primaryKupoServiceName,
+		containerName:            kupoContainerName,
+		condition:                kupoReadyCondition,
+		disabledReason:           conditionReasonKupoDisabled,
+		disabledMessage:          conditionMessageKupoDisabled,
+		readyReason:              conditionReasonKupoReady,
+		readyMessage:             conditionMessageKupoReady,
+		missingServiceMessage:    "Kupo Service is missing",
+		unavailableMessage:       "Kupo sidecar is not available",
+		containerNotReadyMessage: "Kupo sidecar is not ready",
+	})
 }
 
-// primaryFaucetReadyCondition computes the FaucetReady condition. When the
-// faucet is disabled by the spec, returns FaucetDisabled without performing
-// any cluster reads. When enabled, the live Secret (uncached) must also
-// carry a valid token before the faucet is reported ready.
+// primaryFaucetReadyCondition computes the FaucetReady condition. The
+// faucet's preReadinessCheck verifies the uncached auth Secret carries a
+// usable token before reporting ready.
 func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	enabled bool,
 ) (metav1.Condition, error) {
-	if !enabled {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonFaucetDisabled,
-			conditionMessageFaucetDisabled,
-		), nil
-	}
+	return r.primarySidecarReadyCondition(ctx, network, enabled, sidecarReadinessConfig{
+		serviceName:              primaryFaucetServiceName,
+		containerName:            faucetContainerName,
+		condition:                faucetReadyCondition,
+		disabledReason:           conditionReasonFaucetDisabled,
+		disabledMessage:          conditionMessageFaucetDisabled,
+		readyReason:              conditionReasonFaucetReady,
+		readyMessage:             conditionMessageFaucetReady,
+		missingServiceMessage:    "Faucet Service is missing",
+		unavailableMessage:       "Faucet sidecar is not available",
+		containerNotReadyMessage: "Faucet sidecar is not ready",
+		preReadinessCheck:        r.faucetAuthSecretReady,
+	})
+}
 
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return faucetReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Faucet Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
+// faucetAuthSecretReady is the faucet's preReadinessCheck. It reads the
+// uncached auth Secret and returns a non-ready FaucetReady condition when
+// the Secret is missing or carries an invalid token; returns (nil, nil) when
+// the Secret is healthy and the caller should proceed to the container
+// readiness probe.
+func (r *CardanoNetworkReconciler) faucetAuthSecretReady(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (*metav1.Condition, error) {
 	// Secrets are not cached; liveReader bypasses the manager cache.
 	secret := &corev1.Secret{}
 	if err := r.liveReader().Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
 		if apierrors.IsNotFound(err) {
-			return faucetReadyCondition(
+			blocked := faucetReadyCondition(
 				metav1.ConditionFalse,
 				conditionReasonPrimaryWorkloadMissing,
 				"Faucet auth Secret is missing",
-			), nil
+			)
+			return &blocked, nil
 		}
-		return metav1.Condition{}, err
+		return nil, err
 	}
 	if !validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])) {
-		return faucetReadyCondition(
+		blocked := faucetReadyCondition(
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"Faucet auth Secret token is not ready",
-		), nil
+		)
+		return &blocked, nil
 	}
 
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, faucetContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Faucet sidecar is not available", "Faucet sidecar is not ready", faucetReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return faucetReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonFaucetReady,
-		conditionMessageFaucetReady,
-	), nil
+	return nil, nil
 }
 
 // primaryDeploymentContainerReadiness returns the readiness state for a
