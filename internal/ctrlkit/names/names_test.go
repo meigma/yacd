@@ -39,6 +39,18 @@ func TestDNSLabelWithSuffix(t *testing.T) {
 			suffix: "node",
 			want:   "x-" + ShortHash("___") + "-node",
 		},
+		{
+			name:   "sanitized suffix includes hash",
+			value:  "network",
+			suffix: "Node One",
+			want:   "network-" + ShortHash("network\x00Node One") + "-node-one",
+		},
+		{
+			name:   "empty suffix",
+			value:  "network",
+			suffix: "",
+			want:   "network-" + ShortHash("network\x00") + "-x",
+		},
 	}
 
 	for _, tt := range tests {
@@ -55,6 +67,26 @@ func TestDNSLabelWithSuffixTruncatesWithHash(t *testing.T) {
 
 	require.LessOrEqual(t, len(got), MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(got, "-"+ShortHash(value)+"-network-artifacts"))
+}
+
+func TestDNSLabelWithSuffixTruncatesLongSuffix(t *testing.T) {
+	suffix := strings.Repeat("suffix", 20)
+
+	got := DNSLabelWithSuffix("network", suffix)
+
+	require.LessOrEqual(t, len(got), MaxLabelValueLength)
+	assert.True(t, strings.HasPrefix(got, "n-"+ShortHash("network\x00"+suffix)+"-"))
+}
+
+func TestDNSLabelWithSuffixHashesTruncatedSuffix(t *testing.T) {
+	prefix := strings.Repeat("suffix", 20)
+
+	first := DNSLabelWithSuffix("network", prefix+"first")
+	second := DNSLabelWithSuffix("network", prefix+"second")
+
+	require.LessOrEqual(t, len(first), MaxLabelValueLength)
+	require.LessOrEqual(t, len(second), MaxLabelValueLength)
+	assert.NotEqual(t, first, second)
 }
 
 func TestLabelValue(t *testing.T) {

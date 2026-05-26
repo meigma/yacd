@@ -19,6 +19,32 @@ func TestRequestedStorageClass(t *testing.T) {
 	assert.Empty(t, value)
 }
 
+func TestRequestedStorageClassDriftFor(t *testing.T) {
+	drift, changed := RequestedStorageClassDriftFor(
+		map[string]string{RequestedStorageClassAnnotation: "slow"},
+		map[string]string{RequestedStorageClassAnnotation: "fast"},
+	)
+
+	assert.True(t, changed)
+	assert.Equal(t, "slow", drift.Current)
+	assert.True(t, drift.CurrentSet)
+	assert.Equal(t, "fast", drift.Desired)
+	assert.True(t, drift.DesiredSet)
+	assert.Equal(t, "slow", drift.CurrentDisplay())
+	assert.Equal(t, "fast", drift.DesiredDisplay())
+
+	drift, changed = RequestedStorageClassDriftFor(nil, map[string]string{RequestedStorageClassAnnotation: "fast"})
+	assert.True(t, changed)
+	assert.Equal(t, "<default>", drift.CurrentDisplay())
+	assert.Equal(t, "fast", drift.DesiredDisplay())
+
+	_, changed = RequestedStorageClassDriftFor(
+		map[string]string{RequestedStorageClassAnnotation: "fast"},
+		map[string]string{RequestedStorageClassAnnotation: "fast"},
+	)
+	assert.False(t, changed)
+}
+
 func TestStorageClassCompatible(t *testing.T) {
 	fast := "fast"
 	slow := "slow"

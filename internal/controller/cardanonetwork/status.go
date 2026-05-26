@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
@@ -92,15 +93,15 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	artifactResult := artifactConfigMapStatus(networkArtifactsConfigMap, localnetFingerprint)
+	artifactResult := networkartifacts.ProducerConfigMap(networkArtifactsConfigMap, localnetFingerprint)
 	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
 	artifactsReady := artifactsReadyCondition(
 		metav1.ConditionFalse,
 		conditionReasonArtifactsPending,
-		artifactResult.reason,
+		artifactResult.Message,
 	)
-	if artifactResult.ready {
-		artifactsStatus = &artifactResult.status
+	if artifactResult.Ready {
+		artifactsStatus = &artifactResult.Status
 		artifactsReady = artifactsReadyCondition(
 			metav1.ConditionTrue,
 			conditionReasonArtifactsReady,
@@ -278,31 +279,12 @@ func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nodeReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Deployment is missing",
-			), nil
-		}
+	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Primary node Deployment is not available", nodeReadyCondition)
+	if err != nil {
 		return metav1.Condition{}, err
 	}
-
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return nodeReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		), nil
-	}
-	if deployment.Status.UpdatedReplicas < 1 {
-		return nodeReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment is not available",
-		), nil
+	if blocked != nil {
+		return *blocked, nil
 	}
 
 	containerReady, err := r.primaryPodContainerReady(ctx, network, cardanoNodeContainerName)
@@ -349,30 +331,12 @@ func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ogmiosReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Deployment is missing",
-			), nil
-		}
+	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Ogmios sidecar is not available", ogmiosReadyCondition)
+	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return ogmiosReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		), nil
-	}
-	if deployment.Status.UpdatedReplicas < 1 {
-		return ogmiosReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Ogmios sidecar is not available",
-		), nil
+	if blocked != nil {
+		return *blocked, nil
 	}
 
 	containerReady, err := r.primaryPodContainerReady(ctx, network, ogmiosContainerName)
@@ -419,30 +383,12 @@ func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return kupoReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Deployment is missing",
-			), nil
-		}
+	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Kupo sidecar is not available", kupoReadyCondition)
+	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return kupoReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		), nil
-	}
-	if deployment.Status.UpdatedReplicas < 1 {
-		return kupoReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Kupo sidecar is not available",
-		), nil
+	if blocked != nil {
+		return *blocked, nil
 	}
 
 	containerReady, err := r.primaryPodContainerReady(ctx, network, kupoContainerName)
@@ -508,30 +454,12 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 		), nil
 	}
 
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return faucetReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Deployment is missing",
-			), nil
-		}
+	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Faucet sidecar is not available", faucetReadyCondition)
+	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		), nil
-	}
-	if deployment.Status.UpdatedReplicas < 1 {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Faucet sidecar is not available",
-		), nil
+	if blocked != nil {
+		return *blocked, nil
 	}
 
 	containerReady, err := r.primaryPodContainerReady(ctx, network, faucetContainerName)
@@ -551,6 +479,46 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 		conditionReasonFaucetReady,
 		conditionMessageFaucetReady,
 	), nil
+}
+
+type primaryDeploymentConditionFunc func(metav1.ConditionStatus, string, string) metav1.Condition
+
+func (r *CardanoNetworkReconciler) primaryDeploymentAvailabilityCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	unavailableMessage string,
+	condition primaryDeploymentConditionFunc,
+) (*metav1.Condition, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			blocked := condition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Primary node Deployment is missing",
+			)
+			return &blocked, nil
+		}
+		return nil, err
+	}
+	if deployment.Status.ObservedGeneration != deployment.Generation {
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		)
+		return &blocked, nil
+	}
+	if !ctrlreadiness.DeploymentAvailable(deployment) {
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			unavailableMessage,
+		)
+		return &blocked, nil
+	}
+
+	return nil, nil
 }
 
 func (r *CardanoNetworkReconciler) primaryPodContainerReady(

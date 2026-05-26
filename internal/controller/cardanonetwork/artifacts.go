@@ -2,11 +2,9 @@ package cardanonetwork
 
 import (
 	"fmt"
-	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -34,12 +32,6 @@ const (
 	artifactNodeToNodeURLEnv          = "YACD_CARDANO_NODE_TO_NODE_URL"
 	artifactPublisherTokenTTL   int64 = 3600
 )
-
-type networkArtifactsStatusResult struct {
-	status yacdv1alpha1.CardanoNetworkArtifactsStatus
-	ready  bool
-	reason string
-}
 
 func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) (*corev1.ConfigMap, error) {
 	configMap := &corev1.ConfigMap{
@@ -175,67 +167,8 @@ func artifactPublisherVolumeMount() corev1.VolumeMount {
 	}
 }
 
-func artifactConfigMapStatus(configMap *corev1.ConfigMap, expectedFingerprint string) networkArtifactsStatusResult {
-	if configMap == nil {
-		return networkArtifactsStatusResult{
-			reason: "artifact ConfigMap is missing",
-		}
-	}
-
-	status := yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: configMap.Name,
-	}
-
-	if !configMap.DeletionTimestamp.IsZero() {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap is deleting",
-		}
-	}
-
-	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != networkartifacts.SchemaVersion {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap schema version is not published",
-		}
-	}
-	status.SchemaVersion = networkartifacts.SchemaVersion
-
-	if configMap.Annotations[localnetFingerprintAnno] != expectedFingerprint {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap localnet fingerprint does not match the accepted localnet",
-		}
-	}
-
-	dataHash := strings.TrimSpace(configMap.Annotations[ctrlartifacts.DataHashAnnotation])
-	if !ctrlartifacts.ValidDataHash(dataHash) {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap data hash is not published",
-		}
-	}
-
-	if err := ctrlartifacts.ValidateConfigMapData(configMap, networkartifacts.Contract(), dataHash); err != nil {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: err.Error(),
-		}
-	}
-	status.DataHash = dataHash
-
-	return networkArtifactsStatusResult{
-		status: status,
-		ready:  true,
-	}
-}
-
 func artifactConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerprint string) bool {
-	if configMap == nil || !ctrlartifacts.HasPublishedData(configMap) {
-		return false
-	}
-
-	return !artifactConfigMapStatus(configMap, expectedFingerprint).ready
+	return networkartifacts.ProducerConfigMapNeedsRecovery(configMap, expectedFingerprint)
 }
 
 func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap *corev1.ConfigMap) {

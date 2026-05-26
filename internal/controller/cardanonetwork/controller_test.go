@@ -285,40 +285,40 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 		Data: testNetworkArtifactsData(),
 	}
 
-	result := artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap data hash is not published", result.reason)
+	result := networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap data hash is not published", result.Message)
 
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.True(t, result.ready)
-	assert.Equal(t, testNetworkArtifactsDataHash, result.status.DataHash)
+	result = networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.True(t, result.Ready)
+	assert.Equal(t, testNetworkArtifactsDataHash, result.Status.DataHash)
 
 	configMap.Data[networkartifacts.ConfigurationKey] = "corrupted"
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.reason)
+	result = networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.Message)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data[networkartifacts.DijkstraGenesisKey] = "test dijkstra-genesis.json"
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.True(t, result.ready)
-	assert.Equal(t, configMap.Annotations[ctrlartifacts.DataHashAnnotation], result.status.DataHash)
+	result = networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.True(t, result.Ready)
+	assert.Equal(t, configMap.Annotations[ctrlartifacts.DataHashAnnotation], result.Status.DataHash)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data["pool-keys/secret.skey"] = "do not publish"
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.reason)
+	result = networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.Message)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.BinaryData = map[string][]byte{"secret": []byte("do not publish")}
 	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap contains binary data", result.reason)
+	result = networkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap contains binary data", result.Message)
 }
 
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {

@@ -12,10 +12,13 @@ const (
 	MaxLabelValueLength = 63
 	// ShortHashLength is the number of hex characters used in derived names.
 	ShortHashLength = 10
+
+	maxHashedSuffixLength = MaxLabelValueLength - len("x-") - ShortHashLength - len("-")
 )
 
 // DNSLabelWithSuffix returns a DNS-label-safe name with suffix appended. A
-// short hash is inserted whenever the input is sanitized or truncated.
+// short hash is inserted whenever the input or suffix is sanitized or
+// truncated.
 func DNSLabelWithSuffix(value string, suffix string) string {
 	base := sanitizeDNSLabel(value)
 	needsHash := base != value
@@ -24,16 +27,32 @@ func DNSLabelWithSuffix(value string, suffix string) string {
 		needsHash = true
 	}
 
-	candidateSuffix := "-" + suffix
-	if needsHash {
-		candidateSuffix = fmt.Sprintf("-%s-%s", ShortHash(value), suffix)
+	safeSuffix := sanitizeDNSLabel(suffix)
+	suffixNeedsHash := safeSuffix != suffix
+	if safeSuffix == "" {
+		safeSuffix = "x"
+		suffixNeedsHash = true
+	}
+
+	hashInput := value
+	if suffixNeedsHash {
+		hashInput = value + "\x00" + suffix
+	}
+	hash := ShortHash(hashInput)
+
+	candidateSuffix := "-" + safeSuffix
+	if needsHash || suffixNeedsHash {
+		candidateSuffix = fmt.Sprintf("-%s-%s", hash, safeSuffix)
 	}
 	candidate := base + candidateSuffix
 	if len(candidate) <= MaxLabelValueLength {
 		return candidate
 	}
 
-	hashSuffix := fmt.Sprintf("-%s-%s", ShortHash(value), suffix)
+	if len(safeSuffix) > maxHashedSuffixLength {
+		hash = ShortHash(value + "\x00" + suffix)
+	}
+	hashSuffix := fmt.Sprintf("-%s-%s", hash, truncateHashSuffix(safeSuffix))
 	prefixLength := MaxLabelValueLength - len(hashSuffix)
 	prefix := strings.Trim(base[:prefixLength], "-")
 	if prefix == "" {
@@ -68,6 +87,19 @@ func LabelValue(value string) string {
 func ShortHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])[:ShortHashLength]
+}
+
+func truncateHashSuffix(suffix string) string {
+	if len(suffix) <= maxHashedSuffixLength {
+		return suffix
+	}
+
+	truncated := strings.Trim(suffix[:maxHashedSuffixLength], "-")
+	if truncated == "" {
+		return "x"
+	}
+
+	return truncated
 }
 
 func sanitizeDNSLabel(value string) string {

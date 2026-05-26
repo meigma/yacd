@@ -769,16 +769,15 @@ func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired 
 }
 
 func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	currentStorageClass, currentHasStorageClassRequest := ctrlstorage.RequestedStorageClass(current.Annotations)
-	desiredStorageClass, desiredHasStorageClassRequest := ctrlstorage.RequestedStorageClass(desired.Annotations)
-	if currentHasStorageClassRequest == desiredHasStorageClassRequest && currentStorageClass == desiredStorageClass {
+	drift, changed := ctrlstorage.RequestedStorageClassDriftFor(current.Annotations, desired.Annotations)
+	if !changed {
 		return nil
 	}
 
 	return unsupportedStorageChange(
 		"PVC %s requested storageClassName cannot be changed from %s to %s",
 		ctrlmetadata.ObjectKey(desired),
-		ctrlstorage.AnnotationValue(currentStorageClass, currentHasStorageClassRequest),
-		ctrlstorage.AnnotationValue(desiredStorageClass, desiredHasStorageClassRequest),
+		drift.CurrentDisplay(),
+		drift.DesiredDisplay(),
 	)
 }
