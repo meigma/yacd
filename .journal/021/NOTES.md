@@ -90,3 +90,10 @@ Verification all green from the implementation worktree:
 - `moon run root:test-e2e` — 4m 17s, Chainsaw `manager-smoke` passed end-to-end with the new readiness consolidation in the runtime path.
 
 PR #39 opened: https://github.com/meigma/yacd/pull/39 — awaiting CI/Kusari + user review. Dev stack still running per protocol (only stop at explicit session close).
+
+## 2026-05-26 12:07 — Close
+User approved PR #39 (LGTM) and invoked `session-close`. PR #39 squash-merged as `777ead0`. Local `master` fast-forwarded from `3570d8c` to `777ead0`. `refactor/cardanonetwork-followups` worktree and remote branch removed via `wt remove`. Dev stack stopped via `moon run root:dev-down` — Tilt-managed resources removed, Kind cluster and local registry deleted, `.run/yacd-dev` runtime state gone.
+
+Merged PRs for this session: #38 (`3570d8c`, structural split + godoc + bulk maintainability) and #39 (`777ead0`, typed conditions + readiness consolidation + kupo two-step + faucet auth reshape). `internal/controller/cardanonetwork` is now at the bar set by the planner-package refactors (#33, #35, #36, #37). The next sibling target in the sweep is `internal/controller/cardanodbsync`; the deferred dbsync controller storage-default bleed from session 018's open threads should be addressed during that pass.
+
+Handoff state: clean. `master` at `777ead0`, primary checkout clean, only `journal/jmgilman` worktree remains under `.wt/`.
