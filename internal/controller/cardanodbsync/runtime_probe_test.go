@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -285,7 +285,7 @@ func syncedRuntimeProbeResult(dbBlock int64, nodeBlock int64) dbSyncRuntimeProbe
 			NodeBlockHeight: &nodeBlock,
 			LagBlocks:       &lag,
 		},
-		PostgresReady: ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
-		Synced:        ctrlconditions.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
+		PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
+		Synced:        ctrlstatus.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
 	}
 }

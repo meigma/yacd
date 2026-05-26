@@ -12,9 +12,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
-// TestFoundationManagerConstruction proves the current operator shell can
-// construct a controller-runtime manager against envtest, register its API
-// types, and register controller scaffolds.
+// TestFoundationManagerConstruction proves the operator can construct a
+// controller-runtime manager against envtest, register its API types, and
+// register controllers.
 func TestFoundationManagerConstruction(t *testing.T) {
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths: []string{filepath.Join("..", "charts", "yacd", "crds")},

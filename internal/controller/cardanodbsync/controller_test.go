@@ -9,7 +9,7 @@ import (
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
-	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -601,7 +601,7 @@ func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailabl
 			DBSlotHeight:  ptr.To[int64](4100),
 			Epoch:         ptr.To[int64](3),
 		},
-		PostgresReady: ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
+		PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
 		Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
 	}}
 

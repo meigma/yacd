@@ -2,7 +2,6 @@ package apply
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
@@ -17,23 +16,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
-
-func TestUnsupported(t *testing.T) {
-	err := Unsupported("ResourceConflict", "resource %s is unavailable", "testing/child")
-
-	assert.Equal(t, "ResourceConflict", err.Reason)
-	assert.Equal(t, "resource testing/child is unavailable", err.Message)
-	assert.Equal(t, err.Message, err.Error())
-}
-
-func TestUnsupportedErrorSupportsErrorsAs(t *testing.T) {
-	err := error(Unsupported("UnsupportedSpec", "bad spec"))
-
-	var unsupported UnsupportedError
-	require.True(t, errors.As(err, &unsupported))
-	assert.Equal(t, "UnsupportedSpec", unsupported.Reason)
-	assert.Equal(t, "bad spec", unsupported.Message)
-}
 
 func TestApplyOwnedObjectCreatesMissingObject(t *testing.T) {
 	ctx := context.Background()
@@ -185,15 +167,22 @@ func TestApplyOwnedObjectMapsOwnerConflict(t *testing.T) {
 	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
 		Current: &corev1.ConfigMap{},
 		OwnerConflict: func(err error) error {
-			return Unsupported("ResourceConflict", "%s", err.Error())
+			return mappedOwnerConflict{message: err.Error()}
 		},
 	})
 
 	assert.Equal(t, controllerutil.OperationResultNone, result)
-	var unsupported UnsupportedError
-	require.True(t, errors.As(err, &unsupported))
-	assert.Equal(t, "ResourceConflict", unsupported.Reason)
-	assert.Equal(t, "resource testing/child already exists without a controller owner", unsupported.Message)
+	var mapped mappedOwnerConflict
+	require.ErrorAs(t, err, &mapped)
+	assert.Equal(t, "resource testing/child already exists without a controller owner", err.Error())
+}
+
+type mappedOwnerConflict struct {
+	message string
+}
+
+func (e mappedOwnerConflict) Error() string {
+	return e.message
 }
 
 func newApplyTestClient(t *testing.T, objects ...client.Object) client.Client {

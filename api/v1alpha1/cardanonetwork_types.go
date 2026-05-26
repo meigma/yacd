@@ -46,7 +46,7 @@ const (
 )
 
 // GenesisProfile chooses a curated local genesis preset. Custom genesis tuning
-// should grow here after the first controller slice proves the generated path.
+// should grow here when a supported runtime path needs it.
 // +kubebuilder:validation:Enum=default;zero-fee;zero-min-utxo;zero-fee-and-min-utxo
 type GenesisProfile string
 
@@ -151,9 +151,9 @@ type LocalNetworkSpec struct {
 	// +required
 	Timing LocalNetworkTimingSpec `json:"timing"`
 
-	// topology describes the initial local network topology. The first
-	// controller slice only reconciles one primary node, but this keeps the CRD
-	// environment-shaped instead of node-shaped.
+	// topology describes the initial local network topology. The current runtime
+	// reconciles one primary node, but this keeps the CRD environment-shaped
+	// instead of node-shaped.
 	// +required
 	Topology LocalNetworkTopologySpec `json:"topology"`
 

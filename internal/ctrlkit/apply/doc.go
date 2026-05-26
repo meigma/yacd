@@ -1,5 +1,5 @@
-// Package apply contains shared reconciliation apply mechanics and error
-// helpers for controller-owned Kubernetes child objects.
+// Package apply contains shared reconciliation apply mechanics for
+// controller-owned Kubernetes child objects.
 //
 // ApplyOwnedObject encodes the common owned-child contract used by reconcilers:
 // callers build a fully-owned desired object, the helper creates it when

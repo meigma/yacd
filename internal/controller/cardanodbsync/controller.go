@@ -47,7 +47,8 @@ type CardanoDBSyncReconciler struct {
 	// Reader is the uncached reader used for live dependency checks.
 	Reader client.Reader
 
-	// Scheme is the runtime scheme available to future owned child resources.
+	// Scheme is the runtime scheme used when setting controller references on
+	// owned child resources.
 	Scheme *runtime.Scheme
 
 	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.

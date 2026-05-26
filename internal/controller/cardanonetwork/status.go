@@ -6,11 +6,10 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -152,13 +151,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		clearFaucetStatus(network)
 		clearArtifactsStatus(network)
 	}
-	ctrlconditions.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
+	ctrlstatus.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
 
-	if equality.Semantic.DeepEqual(original.Status, network.Status) {
-		return nil
-	}
-
-	return r.Status().Patch(ctx, network, client.MergeFrom(original))
+	return ctrlstatus.PatchIfChanged(ctx, r.Status(), network, original)
 }
 
 func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1alpha1.CardanoNetworkArtifactsStatus) {
@@ -558,69 +553,54 @@ func (r *CardanoNetworkReconciler) liveReader() client.Reader {
 }
 
 func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, artifactsReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
-	if nodeReady.Status == metav1.ConditionTrue &&
-		ogmiosReady.Status == metav1.ConditionTrue &&
-		(!kupoEnabled || kupoReady.Status == metav1.ConditionTrue) &&
-		(!faucetEnabled || faucetReady.Status == metav1.ConditionTrue) &&
-		artifactsReady.Status == metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
+	dependencies := []metav1.Condition{nodeReady, ogmiosReady}
+	if kupoEnabled {
+		dependencies = append(dependencies, kupoReady)
 	}
-	if nodeReady.Status != metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, nodeReady.Reason, nodeReady.Message)
+	if faucetEnabled {
+		dependencies = append(dependencies, faucetReady)
 	}
-	if ogmiosReady.Status != metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, ogmiosReady.Reason, ogmiosReady.Message)
-	}
-	if kupoEnabled && kupoReady.Status != metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, kupoReady.Reason, kupoReady.Message)
-	}
-	if faucetEnabled && faucetReady.Status != metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, faucetReady.Reason, faucetReady.Message)
-	}
-	if artifactsReady.Status != metav1.ConditionTrue {
-		return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionFalse, artifactsReady.Reason, artifactsReady.Message)
-	}
+	dependencies = append(dependencies, artifactsReady)
 
-	return ctrlconditions.Condition(conditionTypeReady, metav1.ConditionTrue, conditionReasonReady, conditionMessageReady)
+	return ctrlstatus.AggregateReady(conditionTypeReady, conditionReasonReady, conditionMessageReady, dependencies...)
 }
 
 func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeDegraded, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeDegraded, status, reason, message)
 }
 
 func nodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeNodeReady, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeNodeReady, status, reason, message)
 }
 
 func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeOgmiosReady, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeOgmiosReady, status, reason, message)
 }
 
 func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeKupoReady, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeKupoReady, status, reason, message)
 }
 
 func faucetReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeFaucetReady, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeFaucetReady, status, reason, message)
 }
 
 func artifactsReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeArtifactsReady, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeArtifactsReady, status, reason, message)
 }
 
 func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlconditions.Condition(conditionTypeProgressing, status, reason, message)
+	return ctrlstatus.Condition(conditionTypeProgressing, status, reason, message)
 }
 
 func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
-	if ready.Status == metav1.ConditionTrue {
-		return progressingCondition(metav1.ConditionFalse, conditionReasonReady, conditionMessageReady)
-	}
-	if ready.Reason == conditionReasonDeploymentProgressing ||
-		ready.Reason == conditionReasonPrimaryWorkloadMissing ||
-		ready.Reason == conditionReasonArtifactsPending {
-		return progressingCondition(metav1.ConditionTrue, ready.Reason, ready.Message)
-	}
-
-	return progressingCondition(metav1.ConditionFalse, ready.Reason, ready.Message)
+	return ctrlstatus.ProgressingForReady(
+		conditionTypeProgressing,
+		conditionReasonReady,
+		conditionMessageReady,
+		ready,
+		conditionReasonDeploymentProgressing,
+		conditionReasonPrimaryWorkloadMissing,
+		conditionReasonArtifactsPending,
+	)
 }

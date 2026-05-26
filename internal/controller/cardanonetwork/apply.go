@@ -6,14 +6,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"maps"
-	"reflect"
 	"unicode"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
+	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-type unsupportedApplyError = ctrlapply.UnsupportedError
+type unsupportedStatusError = ctrlstatus.UnsupportedError
 
 const operationResultDeleted controllerutil.OperationResult = "deleted"
 
@@ -61,51 +61,15 @@ func validatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim,
 	if err := validateLocalnetFingerprint(current, desired); err != nil {
 		return err
 	}
-	if err := validateRequestedStorageClass(current, desired); err != nil {
-		return err
-	}
-	if !ctrlstorage.StorageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
-		return unsupportedStorageChange(
-			"PVC %s storageClassName cannot be changed from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			ctrlstorage.StringPtrValue(current.Spec.StorageClassName),
-			ctrlstorage.StringPtrValue(desired.Spec.StorageClassName),
-		)
-	}
-	if !reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) {
-		return unsupportedStorageChange(
-			"PVC %s accessModes drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	}
-
-	currentStorage := current.Spec.Resources.Requests[corev1.ResourceStorage]
-	desiredStorage := desired.Spec.Resources.Requests[corev1.ResourceStorage]
-	if currentStorage.Cmp(desiredStorage) > 0 {
-		return unsupportedStorageChange(
-			"PVC %s storage cannot be decreased from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			currentStorage.String(),
-			desiredStorage.String(),
-		)
+	if drift, changed := ctrlstorage.PersistentVolumeClaimDriftFor(current, desired, ctrlannotations.RequestedStorageClass); changed {
+		return unsupportedPersistentVolumeClaimDrift(desired, drift)
 	}
 
 	return nil
 }
 
 func mutatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	currentStorage := current.Spec.Resources.Requests[corev1.ResourceStorage]
-	desiredStorage := desired.Spec.Resources.Requests[corev1.ResourceStorage]
-
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	if current.Spec.Resources.Requests == nil {
-		current.Spec.Resources.Requests = corev1.ResourceList{}
-	}
-	if currentStorage.Cmp(desiredStorage) < 0 {
-		current.Spec.Resources.Requests[corev1.ResourceStorage] = desiredStorage
-	}
+	ctrlresources.MutatePersistentVolumeClaim(current, desired, mergeOwnedAnnotations)
 
 	return nil
 }
@@ -122,20 +86,14 @@ func validatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deplo
 }
 
 func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deployment) error {
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	current.Spec.Paused = desired.Spec.Paused
-	current.Spec.Replicas = desired.Spec.Replicas
-	current.Spec.Strategy = desired.Spec.Strategy
-	current.Spec.Template.Labels = ctrlmetadata.OverlayStringMap(current.Spec.Template.Labels, desired.Spec.Template.Labels)
-	current.Spec.Template.Annotations = mergeOwnedAnnotations(current.Spec.Template.Annotations, desired.Spec.Template.Annotations)
-	current.Spec.Template.Spec.ServiceAccountName = desired.Spec.Template.Spec.ServiceAccountName
-	current.Spec.Template.Spec.AutomountServiceAccountToken = desired.Spec.Template.Spec.AutomountServiceAccountToken
-	current.Spec.Template.Spec.SecurityContext = desired.Spec.Template.Spec.SecurityContext
-	current.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
-	current.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
-	current.Spec.Template.Spec.Volumes = desired.Spec.Template.Spec.Volumes
+	ctrlresources.MutateDeployment(current, desired, mergeOwnedAnnotations, func(current *corev1.PodSpec, desired *corev1.PodSpec) {
+		current.ServiceAccountName = desired.ServiceAccountName
+		current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
+		current.SecurityContext = desired.SecurityContext
+		current.InitContainers = desired.InitContainers
+		current.Containers = desired.Containers
+		current.Volumes = desired.Volumes
+	})
 
 	return nil
 }
@@ -227,18 +185,14 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherRoleBinding(
 }
 
 func mutateArtifactPublisherServiceAccount(current *corev1.ServiceAccount, desired *corev1.ServiceAccount) error {
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
+	ctrlresources.MutateObjectMetadata(current, desired, nil)
 	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
 
 	return nil
 }
 
 func mutateArtifactPublisherRole(current *rbacv1.Role, desired *rbacv1.Role) error {
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
+	ctrlresources.MutateObjectMetadata(current, desired, nil)
 	current.Rules = desired.Rules
 
 	return nil
@@ -256,9 +210,7 @@ func validateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *
 }
 
 func mutateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *rbacv1.RoleBinding) error {
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
+	ctrlresources.MutateObjectMetadata(current, desired, nil)
 	current.Subjects = desired.Subjects
 
 	return nil
@@ -278,13 +230,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 }
 
 func mutatePrimaryService(current *corev1.Service, desired *corev1.Service) error {
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	current.Spec.Type = desired.Spec.Type
-	current.Spec.Selector = maps.Clone(desired.Spec.Selector)
-	current.Spec.Ports = desired.Spec.Ports
-	current.Spec.ExternalName = desired.Spec.ExternalName
+	ctrlresources.MutateService(current, desired, nil)
 
 	return nil
 }
@@ -323,9 +269,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
+	ctrlresources.MutateObjectMetadata(current, desired, nil)
 	current.Type = corev1.SecretTypeOpaque
 	if current.Data == nil {
 		current.Data = map[string][]byte{}
@@ -619,28 +563,28 @@ func mergeOwnedAnnotations(current map[string]string, desired map[string]string)
 	)
 }
 
-func resourceConflict(format string, args ...any) unsupportedApplyError {
-	return ctrlapply.Unsupported(conditionReasonResourceConflict, format, args...)
+func resourceConflict(format string, args ...any) unsupportedStatusError {
+	return ctrlstatus.Unsupported(conditionReasonResourceConflict, format, args...)
 }
 
 func controllerOwnerConflict(err error) error {
 	return resourceConflict("%s", err.Error())
 }
 
-func unsupportedStorageChange(format string, args ...any) unsupportedApplyError {
-	return ctrlapply.Unsupported(conditionReasonUnsupportedStorageChange, format, args...)
+func unsupportedStorageChange(format string, args ...any) unsupportedStatusError {
+	return ctrlstatus.Unsupported(conditionReasonUnsupportedStorageChange, format, args...)
 }
 
-func unsupportedWorkloadChange(format string, args ...any) unsupportedApplyError {
-	return ctrlapply.Unsupported(conditionReasonUnsupportedWorkloadChange, format, args...)
+func unsupportedWorkloadChange(format string, args ...any) unsupportedStatusError {
+	return ctrlstatus.Unsupported(conditionReasonUnsupportedWorkloadChange, format, args...)
 }
 
-func unsupportedLocalnetChange(format string, args ...any) unsupportedApplyError {
-	return ctrlapply.Unsupported(conditionReasonUnsupportedLocalnetChange, format, args...)
+func unsupportedLocalnetChange(format string, args ...any) unsupportedStatusError {
+	return ctrlstatus.Unsupported(conditionReasonUnsupportedLocalnetChange, format, args...)
 }
 
-func missingLocalnetFingerprint(format string, args ...any) unsupportedApplyError {
-	return ctrlapply.Unsupported(conditionReasonMissingLocalnetFingerprint, format, args...)
+func missingLocalnetFingerprint(format string, args ...any) unsupportedStatusError {
+	return ctrlstatus.Unsupported(conditionReasonMissingLocalnetFingerprint, format, args...)
 }
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
@@ -684,16 +628,38 @@ func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired 
 	return nil
 }
 
-func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	drift, changed := ctrlstorage.RequestedStorageClassDriftFor(current.Annotations, desired.Annotations, ctrlannotations.RequestedStorageClass)
-	if !changed {
-		return nil
+func unsupportedPersistentVolumeClaimDrift(desired *corev1.PersistentVolumeClaim, drift ctrlstorage.PersistentVolumeClaimDrift) unsupportedStatusError {
+	switch drift.Reason {
+	case ctrlstorage.PersistentVolumeClaimDriftRequestedStorageClass:
+		return unsupportedStorageChange(
+			"PVC %s requested storageClassName cannot be changed from %s to %s",
+			ctrlmetadata.ObjectKey(desired),
+			drift.Current,
+			drift.Desired,
+		)
+	case ctrlstorage.PersistentVolumeClaimDriftStorageClass:
+		return unsupportedStorageChange(
+			"PVC %s storageClassName cannot be changed from %s to %s",
+			ctrlmetadata.ObjectKey(desired),
+			drift.Current,
+			drift.Desired,
+		)
+	case ctrlstorage.PersistentVolumeClaimDriftAccessModes:
+		return unsupportedStorageChange(
+			"PVC %s accessModes drifted from desired value",
+			ctrlmetadata.ObjectKey(desired),
+		)
+	case ctrlstorage.PersistentVolumeClaimDriftStorageDecrease:
+		return unsupportedStorageChange(
+			"PVC %s storage cannot be decreased from %s to %s",
+			ctrlmetadata.ObjectKey(desired),
+			drift.Current,
+			drift.Desired,
+		)
+	default:
+		return unsupportedStorageChange(
+			"PVC %s drifted from desired value",
+			ctrlmetadata.ObjectKey(desired),
+		)
 	}
-
-	return unsupportedStorageChange(
-		"PVC %s requested storageClassName cannot be changed from %s to %s",
-		ctrlmetadata.ObjectKey(desired),
-		drift.CurrentDisplay(),
-		drift.DesiredDisplay(),
-	)
 }

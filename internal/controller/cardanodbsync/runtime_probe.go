@@ -18,7 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
-	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -103,7 +103,7 @@ func (p defaultDBSyncRuntimeProber) ProbePostgres(ctx context.Context, target db
 	case errors.Is(dbErr, errDBSyncSchemaPending):
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
-			PostgresReady: ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable"),
+			PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable"),
 			Synced:        syncedCondition(conditionReasonPostgresSchemaPending, "db-sync has not created the block table yet"),
 		}, nil
 	default:
@@ -115,7 +115,7 @@ func (p defaultDBSyncRuntimeProber) ProbePostgres(ctx context.Context, target db
 		}, nil
 	}
 
-	postgresReady := ctrlconditions.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded")
+	postgresReady := ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded")
 	if sync.DBBlockHeight == nil {
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
@@ -214,7 +214,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
 			PostgresReady: postgresReady,
-			Synced:        ctrlconditions.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
+			Synced:        ctrlstatus.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
 		}, nil
 	}
 

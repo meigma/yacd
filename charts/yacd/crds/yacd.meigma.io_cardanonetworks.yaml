@@ -415,9 +415,9 @@ spec:
                     type: object
                   topology:
                     description: |-
-                      topology describes the initial local network topology. The first
-                      controller slice only reconciles one primary node, but this keeps the CRD
-                      environment-shaped instead of node-shaped.
+                      topology describes the initial local network topology. The current runtime
+                      reconciles one primary node, but this keeps the CRD environment-shaped
+                      instead of node-shaped.
                     properties:
                       pools:
                         description: pools configures generated stake pool nodes.
