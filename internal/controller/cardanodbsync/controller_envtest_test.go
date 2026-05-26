@@ -84,8 +84,8 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
 			return false
 		}
-		condition := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeProgressing)
-		return condition != nil && condition.Reason == conditionReasonNetworkStatusStale
+		condition := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeProgressing))
+		return condition != nil && condition.Reason == string(conditionReasonNetworkStatusStale)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	artifactConfigMapName := "watched-network-network-artifacts"
@@ -131,15 +131,15 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
 			return false
 		}
-		progressing := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeProgressing)
-		ready := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeReady)
+		progressing := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeProgressing))
+		ready := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeReady))
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonDeploymentProgressing &&
+			progressing.Reason == string(conditionReasonDeploymentProgressing) &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonDeploymentProgressing
+			ready.Reason == string(conditionReasonDeploymentProgressing)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	ownedConfigMap := &corev1.ConfigMap{}
@@ -182,10 +182,10 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(secretWatchedDBSync), current); err != nil {
 			return false
 		}
-		degraded := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeDegraded)
+		degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
 		return degraded != nil &&
 			degraded.Status == metav1.ConditionTrue &&
-			degraded.Reason == conditionReasonExternalDatabaseSecretInvalid
+			degraded.Reason == string(conditionReasonExternalDatabaseSecretInvalid)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	currentSecret := &corev1.Secret{}
@@ -198,15 +198,15 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(secretWatchedDBSync), current); err != nil {
 			return false
 		}
-		progressing := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeProgressing)
-		ready := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeReady)
+		progressing := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeProgressing))
+		ready := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeReady))
 		return current.Status.ObservedGeneration == current.Generation &&
 			progressing != nil &&
 			progressing.Status == metav1.ConditionTrue &&
-			progressing.Reason == conditionReasonDeploymentProgressing &&
+			progressing.Reason == string(conditionReasonDeploymentProgressing) &&
 			ready != nil &&
 			ready.Status == metav1.ConditionFalse &&
-			ready.Reason == conditionReasonDeploymentProgressing
+			ready.Reason == string(conditionReasonDeploymentProgressing)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
@@ -233,10 +233,10 @@ func assertManagedPostgresSecretAndChildWatches(
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(managedSecretWatchedDBSync), current); err != nil {
 			return false
 		}
-		degraded := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypeDegraded)
+		degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
 		return degraded != nil &&
 			degraded.Status == metav1.ConditionTrue &&
-			degraded.Reason == conditionReasonManagedDatabaseSecretInvalid
+			degraded.Reason == string(conditionReasonManagedDatabaseSecretInvalid)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	currentManagedSecret := &corev1.Secret{}
@@ -249,11 +249,11 @@ func assertManagedPostgresSecretAndChildWatches(
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(managedSecretWatchedDBSync), current); err != nil {
 			return false
 		}
-		postgres := apimeta.FindStatusCondition(current.Status.Conditions, conditionTypePostgresReady)
+		postgres := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypePostgresReady))
 		return current.Status.ObservedGeneration == current.Generation &&
 			postgres != nil &&
 			postgres.Status == metav1.ConditionFalse &&
-			postgres.Reason == conditionReasonDeploymentProgressing
+			postgres.Reason == string(conditionReasonDeploymentProgressing)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	managedPostgresService := &corev1.Service{}

@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
-	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -103,31 +102,31 @@ func (p defaultDBSyncRuntimeProber) ProbePostgres(ctx context.Context, target db
 	case errors.Is(dbErr, errDBSyncSchemaPending):
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
-			PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable"),
-			Synced:        syncedCondition(conditionReasonPostgresSchemaPending, "db-sync has not created the block table yet"),
+			PostgresReady: postgresReadyCondition(metav1.ConditionTrue, conditionReasonPostgresReady, conditionMessagePostgresReachable),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresSchemaPending, conditionMessageSchemaPending),
 		}, nil
 	default:
 		message := fmt.Sprintf("Postgres progress query failed: %v", dbErr)
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
-			PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, message),
-			Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+			PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, message),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
 		}, nil
 	}
 
-	postgresReady := ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded")
+	postgresReady := postgresReadyCondition(metav1.ConditionTrue, conditionReasonPostgresReady, conditionMessagePostgresReady)
 	if sync.DBBlockHeight == nil {
 		return dbSyncRuntimeProbeResult{
 			Sync:          nil,
 			PostgresReady: postgresReady,
-			Synced:        syncedCondition(conditionReasonSyncLagging, "db-sync has not indexed any blocks yet"),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, conditionMessageNoBlocksIndexed),
 		}, nil
 	}
 
 	return dbSyncRuntimeProbeResult{
 		Sync:          sync,
 		PostgresReady: postgresReady,
-		Synced:        syncedCondition(conditionReasonRuntimeProbesPending, "node tip will be probed after db-sync workloads are ready"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonRuntimeProbesPending, conditionMessageNodeTipProbedPending),
 	}, nil
 }
 
@@ -180,7 +179,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 
 	if nodeErr != nil {
 		if fallbackSynced.Type == "" || sync.DBBlockHeight != nil {
-			fallbackSynced = syncedCondition(conditionReasonNodeTipUnavailable, fmt.Sprintf("Ogmios node tip query failed: %v", nodeErr))
+			fallbackSynced = syncedCondition(metav1.ConditionFalse, conditionReasonNodeTipUnavailable, fmt.Sprintf("Ogmios node tip query failed: %v", nodeErr))
 		}
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
@@ -192,7 +191,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 	sync.NodeBlockHeight = nodeTip.BlockHeight
 	if sync.DBBlockHeight == nil {
 		if fallbackSynced.Type == "" {
-			fallbackSynced = syncedCondition(conditionReasonSyncLagging, "db-sync has not indexed any blocks yet")
+			fallbackSynced = syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, conditionMessageNoBlocksIndexed)
 		}
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
@@ -204,7 +203,7 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
 			PostgresReady: postgresReady,
-			Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip did not include a block height"),
+			Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonNodeTipUnavailable, "Ogmios node tip did not include a block height"),
 		}, nil
 	}
 
@@ -214,14 +213,14 @@ func (p defaultDBSyncRuntimeProber) probeNodeTip(
 		return dbSyncRuntimeProbeResult{
 			Sync:          sync,
 			PostgresReady: postgresReady,
-			Synced:        ctrlstatus.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
+			Synced:        syncedCondition(metav1.ConditionTrue, conditionReasonSynced, conditionMessageSynced),
 		}, nil
 	}
 
 	return dbSyncRuntimeProbeResult{
 		Sync:          sync,
 		PostgresReady: postgresReady,
-		Synced:        syncedCondition(conditionReasonSyncLagging, fmt.Sprintf("db-sync is %d blocks behind the node tip", lag)),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonSyncLagging, fmt.Sprintf("db-sync is %d blocks behind the node tip", lag)),
 	}, nil
 }
 

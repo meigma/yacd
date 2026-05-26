@@ -30,9 +30,9 @@ func TestDefaultDBSyncRuntimeProberMapsNoRows(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, result.PostgresReady.Status)
-	assert.Equal(t, conditionReasonPostgresReady, result.PostgresReady.Reason)
+	assert.Equal(t, string(conditionReasonPostgresReady), result.PostgresReady.Reason)
 	assert.Equal(t, metav1.ConditionFalse, result.Synced.Status)
-	assert.Equal(t, conditionReasonSyncLagging, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonSyncLagging), result.Synced.Reason)
 	require.NotNil(t, result.Sync)
 	assert.Nil(t, result.Sync.DBBlockHeight)
 	assert.Equal(t, int64(10), *result.Sync.NodeBlockHeight)
@@ -57,7 +57,7 @@ func TestDefaultDBSyncRuntimeProberMapsLatestIndexedBlock(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, result.PostgresReady.Status)
 	assert.Equal(t, metav1.ConditionTrue, result.Synced.Status)
-	assert.Equal(t, conditionReasonSynced, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonSynced), result.Synced.Reason)
 	require.NotNil(t, result.Sync)
 	assert.Equal(t, int64(99), *result.Sync.DBBlockHeight)
 	assert.Equal(t, int64(1200), *result.Sync.DBSlotHeight)
@@ -80,9 +80,9 @@ func TestDefaultDBSyncRuntimeProberMapsMissingSchemaAsProgressing(t *testing.T) 
 
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, result.PostgresReady.Status)
-	assert.Equal(t, conditionReasonPostgresReady, result.PostgresReady.Reason)
+	assert.Equal(t, string(conditionReasonPostgresReady), result.PostgresReady.Reason)
 	assert.Equal(t, metav1.ConditionFalse, result.Synced.Status)
-	assert.Equal(t, conditionReasonPostgresSchemaPending, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonPostgresSchemaPending), result.Synced.Reason)
 	require.NotNil(t, result.Sync)
 	assert.Equal(t, int64(7), *result.Sync.NodeBlockHeight)
 	assert.Nil(t, result.Sync.DBBlockHeight)
@@ -105,9 +105,9 @@ func TestDefaultDBSyncRuntimeProberMapsDBConnectionFailure(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, queriedOgmios)
 	assert.Equal(t, metav1.ConditionFalse, result.PostgresReady.Status)
-	assert.Equal(t, conditionReasonPostgresUnavailable, result.PostgresReady.Reason)
+	assert.Equal(t, string(conditionReasonPostgresUnavailable), result.PostgresReady.Reason)
 	assert.Equal(t, metav1.ConditionFalse, result.Synced.Status)
-	assert.Equal(t, conditionReasonPostgresUnavailable, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonPostgresUnavailable), result.Synced.Reason)
 	assert.Nil(t, result.Sync)
 }
 
@@ -128,9 +128,9 @@ func TestDefaultDBSyncRuntimeProberProbePostgresDoesNotQueryOgmios(t *testing.T)
 	require.NoError(t, err)
 	assert.False(t, queriedOgmios)
 	assert.Equal(t, metav1.ConditionTrue, result.PostgresReady.Status)
-	assert.Equal(t, conditionReasonPostgresReady, result.PostgresReady.Reason)
+	assert.Equal(t, string(conditionReasonPostgresReady), result.PostgresReady.Reason)
 	assert.Equal(t, metav1.ConditionFalse, result.Synced.Status)
-	assert.Equal(t, conditionReasonRuntimeProbesPending, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonRuntimeProbesPending), result.Synced.Reason)
 	require.NotNil(t, result.Sync)
 	assert.Equal(t, int64(12), *result.Sync.DBBlockHeight)
 	assert.Nil(t, result.Sync.NodeBlockHeight)
@@ -150,9 +150,9 @@ func TestDefaultDBSyncRuntimeProberMapsOgmiosTipFailure(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, metav1.ConditionTrue, result.PostgresReady.Status)
-	assert.Equal(t, conditionReasonPostgresReady, result.PostgresReady.Reason)
+	assert.Equal(t, string(conditionReasonPostgresReady), result.PostgresReady.Reason)
 	assert.Equal(t, metav1.ConditionFalse, result.Synced.Status)
-	assert.Equal(t, conditionReasonNodeTipUnavailable, result.Synced.Reason)
+	assert.Equal(t, string(conditionReasonNodeTipUnavailable), result.Synced.Reason)
 	require.NotNil(t, result.Sync)
 	assert.Equal(t, int64(12), *result.Sync.DBBlockHeight)
 	assert.Nil(t, result.Sync.NodeBlockHeight)
@@ -164,7 +164,7 @@ func TestDefaultDBSyncRuntimeProberMapsLagThreshold(t *testing.T) {
 		dbBlock    int64
 		nodeBlock  int64
 		wantStatus metav1.ConditionStatus
-		wantReason string
+		wantReason conditionReason
 		wantLag    int64
 	}{
 		{
@@ -202,7 +202,7 @@ func TestDefaultDBSyncRuntimeProberMapsLagThreshold(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantStatus, result.Synced.Status)
-			assert.Equal(t, tt.wantReason, result.Synced.Reason)
+			assert.Equal(t, string(tt.wantReason), result.Synced.Reason)
 			require.NotNil(t, result.Sync)
 			assert.Equal(t, tt.wantLag, *result.Sync.LagBlocks)
 		})
@@ -264,7 +264,7 @@ func (f *fakeCardanoDBSyncRuntimeProber) ProbePostgres(_ context.Context, target
 	return dbSyncRuntimeProbeResult{
 		Sync:          f.result.Sync,
 		PostgresReady: f.result.PostgresReady,
-		Synced:        syncedCondition(conditionReasonRuntimeProbesPending, "db-sync progress will be probed after workloads are ready"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonRuntimeProbesPending, "db-sync progress will be probed after workloads are ready"),
 	}, f.postgresErr
 }
 
@@ -285,7 +285,7 @@ func syncedRuntimeProbeResult(dbBlock int64, nodeBlock int64) dbSyncRuntimeProbe
 			NodeBlockHeight: &nodeBlock,
 			LagBlocks:       &lag,
 		},
-		PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
-		Synced:        ctrlstatus.Condition(conditionTypeSynced, metav1.ConditionTrue, conditionReasonSynced, "db-sync is caught up to the node tip"),
+		PostgresReady: ctrlstatus.Condition(string(conditionTypePostgresReady), metav1.ConditionTrue, string(conditionReasonPostgresReady), "Postgres is reachable and db-sync progress query succeeded"),
+		Synced:        ctrlstatus.Condition(string(conditionTypeSynced), metav1.ConditionTrue, string(conditionReasonSynced), "db-sync is caught up to the node tip"),
 	}
 }

@@ -256,7 +256,7 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	if probed {
 		return ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, nil
 	}
-	if ready.Status != metav1.ConditionTrue && ready.Reason == conditionReasonDeploymentProgressing {
+	if ready.Status != metav1.ConditionTrue && ready.Reason == string(conditionReasonDeploymentProgressing) {
 		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
 	}
 

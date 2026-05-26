@@ -534,8 +534,8 @@ func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableProbe(t *test
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{result: dbSyncRuntimeProbeResult{
 		Sync:          nil,
-		PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, "Postgres progress query failed: dial refused"),
-		Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+		PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress query failed: dial refused"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
 	}}
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -562,8 +562,8 @@ func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableBeforeDBSyncR
 	network := readyCardanoNetwork("ready-network")
 	postgresResult := dbSyncRuntimeProbeResult{
 		Sync:          nil,
-		PostgresReady: postgresReadyCondition(conditionReasonPostgresUnavailable, "Postgres progress query failed: password authentication failed"),
-		Synced:        syncedCondition(conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
+		PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress query failed: password authentication failed"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
 	}
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
 	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{postgresResult: &postgresResult}
@@ -601,8 +601,8 @@ func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailabl
 			DBSlotHeight:  ptr.To[int64](4100),
 			Epoch:         ptr.To[int64](3),
 		},
-		PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
-		Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
+		PostgresReady: ctrlstatus.Condition(string(conditionTypePostgresReady), metav1.ConditionTrue, string(conditionReasonPostgresReady), "Postgres is reachable and db-sync progress query succeeded"),
+		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
 	}}
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1078,7 +1078,7 @@ func assertDependencyWaiting(
 	ctx context.Context,
 	reconciler *CardanoDBSyncReconciler,
 	dbSync *yacdv1alpha1.CardanoDBSync,
-	reason string,
+	reason conditionReason,
 ) {
 	t.Helper()
 
@@ -1092,17 +1092,17 @@ func assertCondition(
 	ctx context.Context,
 	reconciler *CardanoDBSyncReconciler,
 	dbSync *yacdv1alpha1.CardanoDBSync,
-	conditionType string,
+	ct conditionType,
 	status metav1.ConditionStatus,
-	reason string,
+	reason conditionReason,
 ) {
 	t.Helper()
 
 	current := requireDBSync(t, ctx, reconciler, dbSync)
-	condition := apimeta.FindStatusCondition(current.Status.Conditions, conditionType)
-	require.NotNil(t, condition, "expected condition %s", conditionType)
+	condition := apimeta.FindStatusCondition(current.Status.Conditions, string(ct))
+	require.NotNil(t, condition, "expected condition %s", ct)
 	assert.Equal(t, status, condition.Status)
-	assert.Equal(t, reason, condition.Reason)
+	assert.Equal(t, string(reason), condition.Reason)
 	assert.Equal(t, current.Generation, condition.ObservedGeneration)
 	assert.Equal(t, current.Generation, current.Status.ObservedGeneration)
 }
