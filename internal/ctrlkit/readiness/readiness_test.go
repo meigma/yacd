@@ -79,13 +79,13 @@ func TestDeploymentAvailable(t *testing.T) {
 	}
 }
 
-func TestDeploymentContainerReadiness(t *testing.T) {
+func TestDeploymentReadiness(t *testing.T) {
 	replicas := int32(1)
 	tests := []struct {
 		name       string
 		deployment *appsv1.Deployment
 		pods       []corev1.Pod
-		want       DeploymentContainerState
+		want       DeploymentReadinessState
 	}{
 		{
 			name: "ready",
@@ -103,11 +103,11 @@ func TestDeploymentContainerReadiness(t *testing.T) {
 				},
 			},
 			pods: []corev1.Pod{readyPod("node")},
-			want: DeploymentContainerReady,
+			want: DeploymentReady,
 		},
 		{
 			name: "missing deployment",
-			want: DeploymentContainerMissing,
+			want: DeploymentMissing,
 		},
 		{
 			name: "stale deployment",
@@ -115,7 +115,7 @@ func TestDeploymentContainerReadiness(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Generation: 2},
 				Status:     appsv1.DeploymentStatus{ObservedGeneration: 1},
 			},
-			want: DeploymentContainerStale,
+			want: DeploymentStale,
 		},
 		{
 			name: "unavailable deployment",
@@ -124,7 +124,7 @@ func TestDeploymentContainerReadiness(t *testing.T) {
 				Spec:       appsv1.DeploymentSpec{Replicas: &replicas},
 				Status:     appsv1.DeploymentStatus{ObservedGeneration: 2},
 			},
-			want: DeploymentContainerUnavailable,
+			want: DeploymentUnavailable,
 		},
 		{
 			name: "container not ready",
@@ -142,16 +142,15 @@ func TestDeploymentContainerReadiness(t *testing.T) {
 				},
 			},
 			pods: []corev1.Pod{{Status: corev1.PodStatus{Phase: corev1.PodRunning}}},
-			want: DeploymentContainerNotReady,
+			want: ContainerNotReady,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := DeploymentContainerReadiness(tt.deployment, tt.pods, "node")
+			got := DeploymentReadiness(tt.deployment, tt.pods, "node")
 
-			assert.Equal(t, tt.want, got.State)
-			assert.Equal(t, tt.want == DeploymentContainerReady, got.Ready())
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

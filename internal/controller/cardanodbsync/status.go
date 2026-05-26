@@ -356,13 +356,13 @@ func (r *CardanoDBSyncReconciler) deploymentContainerReadiness(
 	deploymentName string,
 	selectorLabels map[string]string,
 	containerName string,
-) (ctrlreadiness.DeploymentContainerResult, error) {
+) (ctrlreadiness.DeploymentReadinessState, error) {
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deploymentName}, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ctrlreadiness.DeploymentContainerResult{State: ctrlreadiness.DeploymentContainerMissing}, nil
+			return ctrlreadiness.DeploymentMissing, nil
 		}
-		return ctrlreadiness.DeploymentContainerResult{}, err
+		return "", err
 	}
 
 	pods := &corev1.PodList{}
@@ -372,14 +372,14 @@ func (r *CardanoDBSyncReconciler) deploymentContainerReadiness(
 		client.InNamespace(namespace),
 		client.MatchingLabels(selectorLabels),
 	); err != nil {
-		return ctrlreadiness.DeploymentContainerResult{}, err
+		return "", err
 	}
 
-	return ctrlreadiness.DeploymentContainerReadiness(deployment, pods.Items, containerName), nil
+	return ctrlreadiness.DeploymentReadiness(deployment, pods.Items, containerName), nil
 }
 
 func deploymentContainerCondition(
-	readiness ctrlreadiness.DeploymentContainerResult,
+	readiness ctrlreadiness.DeploymentReadinessState,
 	conditionType string,
 	readyReason string,
 	readyMessage string,
@@ -388,14 +388,14 @@ func deploymentContainerCondition(
 	unavailableMessage string,
 	containerNotReadyMessage string,
 ) metav1.Condition {
-	switch readiness.State {
-	case ctrlreadiness.DeploymentContainerReady:
+	switch readiness {
+	case ctrlreadiness.DeploymentReady:
 		return ctrlstatus.Condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage)
-	case ctrlreadiness.DeploymentContainerMissing:
+	case ctrlreadiness.DeploymentMissing:
 		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonWorkloadMissing, missingMessage)
-	case ctrlreadiness.DeploymentContainerStale:
+	case ctrlreadiness.DeploymentStale:
 		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, staleMessage)
-	case ctrlreadiness.DeploymentContainerUnavailable:
+	case ctrlreadiness.DeploymentUnavailable:
 		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, unavailableMessage)
 	default:
 		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, containerNotReadyMessage)
