@@ -55,3 +55,26 @@ State of the world:
   the primary checkout per the singleton-runtime contract).
 - Task list seeded with 13 tasks covering the eight plan deliverables plus
   verification + PR.
+
+## 2026-05-26 15:36 — PR open
+PR #41 (https://github.com/meigma/yacd/pull/41) open against master,
+commit `dcef47e`. All 13 tasks completed. Verification: `moon run root:check`,
+`root:test`, `root:test-e2e`, and live-operator smoke against `kind-yacd-dev`
+(deploy --dry-run, deploy, info --json, not-found and faucet-trust error
+paths) all green.
+
+Tooling notes worth remembering:
+- Mockery v3 + the proto `go` shim do not coexist. The shim mangles the
+  templated `-f "{{context.GOARCH}} {{context.Compiler}}"` argument that
+  `golang.org/x/tools/go/packages` passes through to `go list`, splitting
+  on the space and feeding each fragment as a package path. Workaround
+  baked into `moon.yml`: prepend the direct toolchain bin (via
+  `proto bin go`) to PATH for the mockery invocation only.
+- Mockery v3 default `template: testify` produces the `EXPECT()` builder
+  pattern, which made the migration from hand-rolled fakes mechanical.
+- `mocks.Client.AssertNotCalled(t, "GetSecretValue", ...)` is the right
+  primitive for preserving the no-token-leak invariant on the faucet trust
+  gate. The prior fake counted calls; the mock auto-fails if an unexpected
+  call lands.
+
+Awaiting CI + review. Dev stack still running.
