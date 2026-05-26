@@ -6,57 +6,16 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	conditionTypeProgressing    = "Progressing"
-	conditionTypeDegraded       = "Degraded"
-	conditionTypeReady          = "Ready"
-	conditionTypeNodeReady      = "NodeReady"
-	conditionTypeOgmiosReady    = "OgmiosReady"
-	conditionTypeKupoReady      = "KupoReady"
-	conditionTypeFaucetReady    = "FaucetReady"
-	conditionTypeArtifactsReady = "ArtifactsReady"
-
-	conditionReasonReconcileSucceeded          = "ReconcileSucceeded"
-	conditionReasonUnsupportedSpec             = "UnsupportedSpec"
-	conditionReasonUnsupportedLocalnetChange   = "UnsupportedLocalnetChange"
-	conditionReasonMissingLocalnetFingerprint  = "MissingLocalnetFingerprint"
-	conditionReasonUnsupportedStorageChange    = "UnsupportedStorageChange"
-	conditionReasonUnsupportedWorkloadChange   = "UnsupportedWorkloadChange"
-	conditionReasonResourceConflict            = "ResourceConflict"
-	conditionReasonDeploymentProgressing       = "DeploymentProgressing"
-	conditionReasonReady                       = "Ready"
-	conditionReasonNodeReady                   = "NodeReady"
-	conditionReasonOgmiosReady                 = "OgmiosReady"
-	conditionReasonOgmiosDisabled              = "OgmiosDisabled"
-	conditionReasonKupoReady                   = "KupoReady"
-	conditionReasonKupoDisabled                = "KupoDisabled"
-	conditionReasonFaucetReady                 = "FaucetReady"
-	conditionReasonFaucetDisabled              = "FaucetDisabled"
-	conditionReasonArtifactsReady              = "ArtifactsReady"
-	conditionReasonArtifactsPending            = "ArtifactsPending"
-	conditionReasonPrimaryWorkloadMissing      = "PrimaryWorkloadMissing"
-	conditionMessagePrimaryWorkloadApplied     = "Primary node, artifact publisher, and chain API resources are applied"
-	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
-	conditionMessageReady                      = "CardanoNetwork is usable through its published endpoints"
-	conditionMessagePrimaryNodeReady           = "Primary node container is ready"
-	conditionMessageOgmiosReady                = "Ogmios sidecar is connected and available through its Service"
-	conditionMessageOgmiosDisabled             = "Ogmios chain API is disabled"
-	conditionMessageKupoReady                  = "Kupo sidecar is available through its Service"
-	conditionMessageKupoDisabled               = "Kupo chain index API is disabled"
-	conditionMessageFaucetReady                = "Faucet sidecar is available through its Service"
-	conditionMessageFaucetDisabled             = "Faucet API is disabled"
-	conditionMessageArtifactsReady             = "Network artifact ConfigMap is published and verified"
-)
-
+// patchStatusConditionsClearingFaucet writes a status patch that clears the
+// faucet endpoints and artifact status while applying the caller-supplied
+// conditions. Used on the Degraded paths (unsupported spec, apply error)
+// where the faucet must be torn down and the conditions must reflect the
+// failure reason.
 func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -65,6 +24,10 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
+// patchPrimaryWorkloadAppliedStatus computes per-component readiness for
+// the freshly applied primary workload and writes the aggregated status
+// patch. Returns the aggregate Ready condition so the reconciler can use
+// it to decide requeue behavior.
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -92,6 +55,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
+
+	// Project the artifact ConfigMap verification result into both a status
+	// payload (Status.Artifacts) and a ready/pending condition.
 	artifactResult := ctrlnetworkartifacts.ProducerConfigMap(networkArtifactsConfigMap, localnetFingerprint)
 	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
 	artifactsReady := artifactsReadyCondition(
@@ -125,6 +91,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	return ready, nil
 }
 
+// patchPrimaryWorkloadStatus writes the CardanoNetwork status patch.
+// Setter helpers below carry the actual mutations; this function owns the
+// observedGeneration stamp and the diff-aware patch through ctrlstatus.
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -156,6 +125,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	return ctrlstatus.PatchIfChanged(ctx, r.Status(), network, original)
 }
 
+// setArtifactsStatus copies the verified artifact status payload onto the
+// CardanoNetwork or clears it when nil. The payload is deep-copied so the
+// caller can mutate the source freely.
 func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1alpha1.CardanoNetworkArtifactsStatus) {
 	if artifacts == nil {
 		network.Status.Artifacts = nil
@@ -166,6 +138,9 @@ func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1a
 	network.Status.Artifacts = &copied
 }
 
+// clearFaucetStatus removes the faucet endpoint and auth secret name from
+// CardanoNetwork status. Used on the Degraded path to ensure the faucet
+// status does not lag the live faucet revocation.
 func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
 	if network.Status.Endpoints != nil {
 		network.Status.Endpoints.Faucet = nil
@@ -173,10 +148,15 @@ func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
 	network.Status.Faucet = nil
 }
 
+// clearArtifactsStatus removes the artifact verification payload from
+// CardanoNetwork status. Used on the Degraded path.
 func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
 	network.Status.Artifacts = nil
 }
 
+// setLocalnetIdentityStatus stamps the accepted localnet identity onto
+// CardanoNetwork status. Used as the acceptance gate for the
+// validateAcceptedLocalnetFingerprint check on subsequent reconciles.
 func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {
 	if network.Status.Network == nil {
 		network.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{}
@@ -194,6 +174,8 @@ func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFin
 	network.Status.Network.Era = &era
 }
 
+// setEndpointStatus publishes the in-cluster endpoint URLs for the primary
+// node-to-node Service and any enabled chain API sidecars.
 func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service, faucetService *corev1.Service) {
 	if network.Status.Endpoints == nil {
 		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
@@ -235,6 +217,8 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 	}
 }
 
+// setFaucetStatus publishes the faucet auth Secret reference into
+// CardanoNetwork status. The CLI consumes this to locate the token.
 func setFaucetStatus(network *yacdv1alpha1.CardanoNetwork, faucetAuthSecret *corev1.Secret) {
 	if faucetAuthSecret == nil {
 		network.Status.Faucet = nil
@@ -244,319 +228,4 @@ func setFaucetStatus(network *yacdv1alpha1.CardanoNetwork, faucetAuthSecret *cor
 	network.Status.Faucet = &yacdv1alpha1.FaucetStatus{
 		AuthSecretName: faucetAuthSecret.Name,
 	}
-}
-
-func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-) (metav1.Condition, error) {
-	pvc := &corev1.PersistentVolumeClaim{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryNodeStatePVCName(network)}, pvc); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nodeReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node PVC is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nodeReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, cardanoNodeContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Primary node Deployment is not available", "Primary node container is not ready", nodeReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return nodeReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonNodeReady,
-		conditionMessagePrimaryNodeReady,
-	), nil
-}
-
-func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	enabled bool,
-) (metav1.Condition, error) {
-	if !enabled {
-		return ogmiosReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonOgmiosDisabled,
-			conditionMessageOgmiosDisabled,
-		), nil
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryOgmiosServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ogmiosReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Ogmios Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, ogmiosContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Ogmios sidecar is not available", "Ogmios sidecar is not ready", ogmiosReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return ogmiosReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonOgmiosReady,
-		conditionMessageOgmiosReady,
-	), nil
-}
-
-func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	enabled bool,
-) (metav1.Condition, error) {
-	if !enabled {
-		return kupoReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonKupoDisabled,
-			conditionMessageKupoDisabled,
-		), nil
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryKupoServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return kupoReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Kupo Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, kupoContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Kupo sidecar is not available", "Kupo sidecar is not ready", kupoReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return kupoReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonKupoReady,
-		conditionMessageKupoReady,
-	), nil
-}
-
-func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	enabled bool,
-) (metav1.Condition, error) {
-	if !enabled {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonFaucetDisabled,
-			conditionMessageFaucetDisabled,
-		), nil
-	}
-
-	service := &corev1.Service{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetServiceName(network)}, service); err != nil {
-		if apierrors.IsNotFound(err) {
-			return faucetReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Faucet Service is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	secret := &corev1.Secret{}
-	if err := r.liveReader().Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
-		if apierrors.IsNotFound(err) {
-			return faucetReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Faucet auth Secret is missing",
-			), nil
-		}
-		return metav1.Condition{}, err
-	}
-	if !validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])) {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Faucet auth Secret token is not ready",
-		), nil
-	}
-
-	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, faucetContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Faucet sidecar is not available", "Faucet sidecar is not ready", faucetReadyCondition); blocked != nil {
-		return *blocked, nil
-	}
-
-	return faucetReadyCondition(
-		metav1.ConditionTrue,
-		conditionReasonFaucetReady,
-		conditionMessageFaucetReady,
-	), nil
-}
-
-type primaryDeploymentConditionFunc func(metav1.ConditionStatus, string, string) metav1.Condition
-
-func (r *CardanoNetworkReconciler) primaryDeploymentContainerReadiness(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	containerName string,
-) (ctrlreadiness.DeploymentReadinessState, error) {
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrlreadiness.DeploymentMissing, nil
-		}
-		return "", err
-	}
-
-	pods := &corev1.PodList{}
-	if err := r.statusReader().List(
-		ctx,
-		pods,
-		client.InNamespace(network.Namespace),
-		client.MatchingLabels(primaryWorkloadSelectorLabels(network)),
-	); err != nil {
-		return "", err
-	}
-
-	return ctrlreadiness.DeploymentReadiness(deployment, pods.Items, containerName), nil
-}
-
-func primaryDeploymentContainerBlockedCondition(
-	readiness ctrlreadiness.DeploymentReadinessState,
-	unavailableMessage string,
-	containerNotReadyMessage string,
-	condition primaryDeploymentConditionFunc,
-) *metav1.Condition {
-	switch readiness {
-	case ctrlreadiness.DeploymentReady:
-		return nil
-	case ctrlreadiness.DeploymentMissing:
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonPrimaryWorkloadMissing,
-			"Primary node Deployment is missing",
-		)
-		return &blocked
-	case ctrlreadiness.DeploymentStale:
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		)
-		return &blocked
-	case ctrlreadiness.DeploymentUnavailable:
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			unavailableMessage,
-		)
-		return &blocked
-	default:
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			containerNotReadyMessage,
-		)
-		return &blocked
-	}
-}
-
-func (r *CardanoNetworkReconciler) statusReader() client.Reader {
-	return r.liveReader()
-}
-
-func (r *CardanoNetworkReconciler) liveReader() client.Reader {
-	if r.Reader != nil {
-		return r.Reader
-	}
-
-	return r.Client
-}
-
-func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, artifactsReady metav1.Condition, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
-	dependencies := []metav1.Condition{nodeReady, ogmiosReady}
-	if kupoEnabled {
-		dependencies = append(dependencies, kupoReady)
-	}
-	if faucetEnabled {
-		dependencies = append(dependencies, faucetReady)
-	}
-	dependencies = append(dependencies, artifactsReady)
-
-	return ctrlstatus.AggregateReady(conditionTypeReady, conditionReasonReady, conditionMessageReady, dependencies...)
-}
-
-func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeDegraded, status, reason, message)
-}
-
-func nodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeNodeReady, status, reason, message)
-}
-
-func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeOgmiosReady, status, reason, message)
-}
-
-func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeKupoReady, status, reason, message)
-}
-
-func faucetReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeFaucetReady, status, reason, message)
-}
-
-func artifactsReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeArtifactsReady, status, reason, message)
-}
-
-func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeProgressing, status, reason, message)
-}
-
-func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
-	return ctrlstatus.ProgressingForReady(
-		conditionTypeProgressing,
-		conditionReasonReady,
-		conditionMessageReady,
-		ready,
-		conditionReasonDeploymentProgressing,
-		conditionReasonPrimaryWorkloadMissing,
-		conditionReasonArtifactsPending,
-	)
 }

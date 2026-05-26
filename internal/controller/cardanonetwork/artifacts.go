@@ -5,7 +5,6 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -13,26 +12,49 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// Artifact publisher constants. Env vars are read by the
+// /opt/yacd/bin/yacd-cardano-testnet-init wrapper inside the tools image;
+// projected volume paths match what client-go reads off the standard
+// in-cluster ServiceAccount mount.
 const (
-	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
-	artifactConfigMapNameEnv         = "YACD_ARTIFACT_CONFIGMAP_NAME"
+	// artifactConfigMapNameEnv carries the artifact ConfigMap name into the
+	// init container.
+	artifactConfigMapNameEnv = "YACD_ARTIFACT_CONFIGMAP_NAME"
 
+	// artifactPublisherServiceAccountMountDir is where the in-Pod projected
+	// volume mounts the per-network token, root CA, and namespace files.
+	// Client-go discovers these by convention.
 	artifactPublisherServiceAccountMountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
-	artifactPublisherTokenVolumeName        = "artifact-publisher-token"
-	artifactPublisherTokenPath              = "token"
-	artifactPublisherCAPath                 = "ca.crt"
-	artifactPublisherNamespacePath          = "namespace"
+	// artifactPublisherTokenVolumeName names the projected volume.
+	artifactPublisherTokenVolumeName = "artifact-publisher-token"
+	// artifactPublisherTokenPath / CAPath / NamespacePath are the file names
+	// projected inside artifactPublisherServiceAccountMountDir.
+	artifactPublisherTokenPath     = "token"
+	artifactPublisherCAPath        = "ca.crt"
+	artifactPublisherNamespacePath = "namespace"
 
-	artifactNetworkNameEnv            = "YACD_CARDANO_NETWORK_NAME"
-	artifactNetworkNamespaceEnv       = "YACD_CARDANO_NETWORK_NAMESPACE"
-	artifactNetworkModeEnv            = "YACD_CARDANO_NETWORK_MODE"
-	artifactNetworkEraEnv             = "YACD_CARDANO_NETWORK_ERA"
-	artifactNodeToNodeHostEnv         = "YACD_CARDANO_NODE_TO_NODE_HOST"
-	artifactNodeToNodePortEnv         = "YACD_CARDANO_NODE_TO_NODE_PORT"
-	artifactNodeToNodeURLEnv          = "YACD_CARDANO_NODE_TO_NODE_URL"
-	artifactPublisherTokenTTL   int64 = 3600
+	// Env vars consumed by the artifact publisher to populate the artifact
+	// ConfigMap content. The init container fills them from spec/identity at
+	// pod startup.
+	artifactNetworkNameEnv      = "YACD_CARDANO_NETWORK_NAME"
+	artifactNetworkNamespaceEnv = "YACD_CARDANO_NETWORK_NAMESPACE"
+	artifactNetworkModeEnv      = "YACD_CARDANO_NETWORK_MODE"
+	artifactNetworkEraEnv       = "YACD_CARDANO_NETWORK_ERA"
+	artifactNodeToNodeHostEnv   = "YACD_CARDANO_NODE_TO_NODE_HOST"
+	artifactNodeToNodePortEnv   = "YACD_CARDANO_NODE_TO_NODE_PORT"
+	artifactNodeToNodeURLEnv    = "YACD_CARDANO_NODE_TO_NODE_URL"
+
+	// artifactPublisherTokenTTL bounds the lifetime of the projected
+	// ServiceAccount token. The token only needs to live long enough for
+	// the init container to patch the artifact ConfigMap once, so a short
+	// TTL keeps the security footprint small.
+	artifactPublisherTokenTTL int64 = 3600
 )
 
+// networkArtifactsConfigMap builds the empty artifact ConfigMap the init
+// container later patches with the generated network artifacts. The
+// fingerprint annotation lets downstream verification reject a ConfigMap
+// produced for a different localnet shape.
 func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) (*corev1.ConfigMap, error) {
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -51,6 +73,10 @@ func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.
 	return configMap, nil
 }
 
+// artifactPublisherServiceAccount builds the dedicated ServiceAccount the
+// init container uses to patch the artifact ConfigMap. Pod-level token
+// automount is disabled because only the init container needs a token, and
+// it receives a short-lived projected token through artifactPublisherProjectedVolume.
 func (b primaryWorkloadBuilder) artifactPublisherServiceAccount(network *yacdv1alpha1.CardanoNetwork) (*corev1.ServiceAccount, error) {
 	serviceAccount := &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
@@ -67,6 +93,10 @@ func (b primaryWorkloadBuilder) artifactPublisherServiceAccount(network *yacdv1a
 	return serviceAccount, nil
 }
 
+// artifactPublisherRole builds the namespaced Role granting get/patch on
+// exactly the network artifact ConfigMap. resourceNames is the security
+// boundary: the init container cannot read or mutate any other ConfigMap
+// in the namespace.
 func (b primaryWorkloadBuilder) artifactPublisherRole(network *yacdv1alpha1.CardanoNetwork) (*rbacv1.Role, error) {
 	role := &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{
@@ -90,6 +120,8 @@ func (b primaryWorkloadBuilder) artifactPublisherRole(network *yacdv1alpha1.Card
 	return role, nil
 }
 
+// artifactPublisherRoleBinding binds the artifact publisher Role to the
+// matching ServiceAccount.
 func (b primaryWorkloadBuilder) artifactPublisherRoleBinding(network *yacdv1alpha1.CardanoNetwork) (*rbacv1.RoleBinding, error) {
 	roleBinding := &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
@@ -117,7 +149,13 @@ func (b primaryWorkloadBuilder) artifactPublisherRoleBinding(network *yacdv1alph
 	return roleBinding, nil
 }
 
+// artifactPublisherProjectedVolume builds the projected volume that mounts
+// a scoped, short-lived ServiceAccount token, the cluster root CA, and the
+// namespace file into the init container. Using a projected volume (instead
+// of leaning on automounted Pod tokens) lets us bypass pod-level automount
+// while still giving the init container the API client materials it needs.
 func artifactPublisherProjectedVolume() corev1.Volume {
+	// 0444 read-only file mode; the init container only reads the files.
 	defaultMode := int32(0444)
 	expirationSeconds := artifactPublisherTokenTTL
 	return corev1.Volume{
@@ -159,6 +197,9 @@ func artifactPublisherProjectedVolume() corev1.Volume {
 	}
 }
 
+// artifactPublisherVolumeMount returns the read-only init-container mount
+// for the projected artifact publisher volume. Pairs with
+// artifactPublisherProjectedVolume.
 func artifactPublisherVolumeMount() corev1.VolumeMount {
 	return corev1.VolumeMount{
 		Name:      artifactPublisherTokenVolumeName,
@@ -167,37 +208,21 @@ func artifactPublisherVolumeMount() corev1.VolumeMount {
 	}
 }
 
+// artifactConfigMapNeedsRecovery reports whether the live artifact
+// ConfigMap fails the producer-side verification and should be deleted and
+// recreated. Thin wrapper around the shared networkartifacts predicate so
+// the apply path reads naturally.
 func artifactConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerprint string) bool {
 	return ctrlnetworkartifacts.ProducerConfigMapNeedsRecovery(configMap, expectedFingerprint)
 }
 
+// setDeploymentArtifactConfigMapUID stamps the live artifact ConfigMap UID
+// onto the Deployment pod-template annotations. The UID changes after a
+// recovery delete+create, which rolls the primary Pod through the standard
+// Deployment hash-change path and forces the init container to re-publish.
 func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap *corev1.ConfigMap) {
 	if deployment.Spec.Template.Annotations == nil {
 		deployment.Spec.Template.Annotations = map[string]string{}
 	}
 	deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] = string(configMap.UID)
-}
-
-func nodeToNodeHost(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local", primaryWorkloadName(network), network.Namespace)
-}
-
-func nodeToNodeURL(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("tcp://%s:%d", nodeToNodeHost(network), network.Spec.Node.Port)
-}
-
-func networkArtifactsConfigMapName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "network-artifacts")
-}
-
-func artifactPublisherServiceAccountName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-func artifactPublisherRoleName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-func artifactPublisherRoleBindingName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
 }
