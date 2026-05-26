@@ -10,7 +10,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -22,8 +21,6 @@ import (
 )
 
 const (
-	primaryNodeNameSuffix = "node"
-
 	cardanoNodeContainerName = "cardano-node"
 	cardanoNodeCommand       = "cardano-node"
 	cardanoNodePortName      = "node-to-node"
@@ -32,84 +29,37 @@ const (
 	cardanoNodeDatabaseDir   = "/state/db"
 	cardanoNodeHostAddress   = "0.0.0.0"
 
-	ogmiosContainerName  = "ogmios"
-	ogmiosCommand        = "/bin/ogmios"
-	ogmiosPortName       = "ogmios"
-	ogmiosHostAddress    = "0.0.0.0"
-	defaultOgmiosImage   = "cardanosolutions/ogmios:v6.14.0"
-	defaultOgmiosPort    = 1337
-	ogmiosHealthPath     = "/health"
-	ogmiosServiceURLType = "ws"
+	ogmiosContainerName = "ogmios"
+	ogmiosCommand       = "/bin/ogmios"
+	ogmiosPortName      = "ogmios"
+	ogmiosHostAddress   = "0.0.0.0"
+	ogmiosHealthPath    = "/health"
 
-	kupoContainerName       = "kupo"
-	kupoPortName            = "kupo"
-	kupoHostAddress         = "0.0.0.0"
-	kupoOgmiosHostAddress   = "127.0.0.1"
-	kupoWorkDir             = "/kupo"
-	kupoDBVolumeName        = "kupo-db"
-	kupoTmpDir              = "/tmp"
-	kupoTmpVolumeName       = "kupo-tmp"
-	defaultKupoImage        = "cardanosolutions/kupo:v2.11.0"
-	defaultKupoPort         = 1442
-	defaultKupoSince        = "origin"
-	defaultKupoMatchPattern = "*/*"
-	defaultKupoDBSizeLimit  = "1Gi"
-	defaultKupoTmpSizeLimit = "256Mi"
-	defaultKupoStorageLimit = "1536Mi"
-	kupoServiceURLType      = "http"
+	kupoContainerName     = "kupo"
+	kupoPortName          = "kupo"
+	kupoHostAddress       = "0.0.0.0"
+	kupoOgmiosHostAddress = "127.0.0.1"
+	kupoWorkDir           = "/kupo"
+	kupoDBVolumeName      = "kupo-db"
+	kupoTmpDir            = "/tmp"
+	kupoTmpVolumeName     = "kupo-tmp"
 
-	faucetContainerName      = "faucet"
-	faucetPortName           = "faucet"
-	faucetHostAddress        = "0.0.0.0"
-	faucetChainHostAddress   = "127.0.0.1"
-	faucetAuthVolumeName     = "faucet-auth"
-	faucetAuthTokenKey       = "token"
-	faucetAuthTokenMountDir  = "/var/run/yacd-faucet"
-	faucetAuthTokenPath      = "/var/run/yacd-faucet/token"
-	defaultFaucetImage       = "ghcr.io/meigma/yacd/faucet:dev"
-	defaultFaucetPort        = 8080
-	defaultFaucetSource      = "utxo1"
-	defaultFaucetMinLovelace = 1_000_000
-	defaultFaucetMaxLovelace = 10_000_000_000
-	faucetServiceURLType     = "http"
-	faucetUTXOKeysDir        = "/state/env/utxo-keys"
-	faucetOgmiosURLScheme    = "ws"
-	faucetKupoURLScheme      = "http"
-	faucetHealthPath         = "/healthz"
-	faucetReadinessPath      = "/readyz"
+	faucetContainerName     = "faucet"
+	faucetPortName          = "faucet"
+	faucetHostAddress       = "0.0.0.0"
+	faucetChainHostAddress  = "127.0.0.1"
+	faucetAuthVolumeName    = "faucet-auth"
+	faucetAuthTokenKey      = "token"
+	faucetAuthTokenMountDir = "/var/run/yacd-faucet"
+	faucetAuthTokenPath     = "/var/run/yacd-faucet/token"
+	faucetUTXOKeysDir       = "/state/env/utxo-keys"
+	faucetOgmiosURLScheme   = "ws"
+	faucetKupoURLScheme     = "http"
+	faucetHealthPath        = "/healthz"
+	faucetReadinessPath     = "/readyz"
 
-	nodeIPCVolumeName       = "node-ipc"
-	defaultNodeStorageSize  = "10Gi"
-	localnetFingerprintAnno = ctrlannotations.LocalnetFingerprint
-
-	labelAppName         = "app.kubernetes.io/name"
-	labelAppInstance     = "app.kubernetes.io/instance"
-	labelAppComponent    = "app.kubernetes.io/component"
-	labelAppManagedBy    = "app.kubernetes.io/managed-by"
-	labelCardanoNetwork  = "yacd.meigma.io/cardanonetwork"
-	labelCardanoRole     = "yacd.meigma.io/role"
-	labelPrimaryNodeName = "cardano-node"
-	labelPrimaryRole     = "primary-node"
-
-	// localnetStateDir is the durable state mount root used by the first
-	// CardanoNetwork workload shape.
-	localnetStateDir = "/state"
-
-	// localnetEnvDir is the cardano-testnet create-env output directory used by
-	// the first CardanoNetwork workload shape.
-	localnetEnvDir = "/state/env"
+	nodeIPCVolumeName = "node-ipc"
 )
-
-var supportedOgmiosNodeVersions = map[string][]string{
-	"v6.14": {"10.5.1", "10.5.3", "11.0.1"},
-	"v6.13": {"10.1.2", "10.1.3", "10.1.4"},
-	"v6.12": {"10.1.2", "10.1.3", "10.1.4"},
-	"v6.11": {"10.1.2", "10.1.3", "10.1.4"},
-	"v6.10": {"10.1.2", "10.1.3", "10.1.4"},
-	"v6.9":  {"10.1.2", "10.1.3"},
-	"v6.8":  {"9.1.1", "9.2.0"},
-	"v6.7":  {"9.1.1", "9.2.0"},
-}
 
 // primaryWorkloadResources are the Kubernetes resources that run the initial
 // singleton primary Cardano node.
@@ -132,10 +82,6 @@ type primaryWorkloadResources struct {
 type primaryWorkloadBuilder struct {
 	scheme             *runtime.Scheme
 	defaultFaucetImage string
-}
-
-type unsupportedSpecError struct {
-	message string
 }
 
 type ogmiosSettings struct {
@@ -163,14 +109,6 @@ type faucetSettings struct {
 	authSecretName    string
 	authSecretKey     string
 	authTokenFilePath string
-}
-
-func (e unsupportedSpecError) Error() string {
-	return e.message
-}
-
-func unsupportedSpec(format string, args ...any) unsupportedSpecError {
-	return unsupportedSpecError{message: fmt.Sprintf(format, args...)}
 }
 
 func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*primaryWorkloadResources, error) {
@@ -988,17 +926,6 @@ func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios 
 	return container
 }
 
-func defaultKupoResources() corev1.ResourceRequirements {
-	return corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoTmpSizeLimit),
-		},
-		Limits: corev1.ResourceList{
-			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoStorageLimit),
-		},
-	}
-}
-
 func faucetHTTPProbe(probePath string, port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -1011,11 +938,6 @@ func faucetHTTPProbe(probePath string, port int32, periodSeconds int32, timeoutS
 		TimeoutSeconds:   timeoutSeconds,
 		FailureThreshold: failureThreshold,
 	}
-}
-
-func resourceQuantity(value string) *resource.Quantity {
-	quantity := resource.MustParse(value)
-	return &quantity
 }
 
 func ogmiosHealthProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
@@ -1239,45 +1161,3 @@ func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.
 	}
 }
 
-func primaryWorkloadName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
-}
-
-func primaryNodeStatePVCName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "node-state")
-}
-
-func primaryOgmiosServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "ogmios")
-}
-
-func primaryKupoServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "kupo")
-}
-
-func primaryFaucetServiceName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet")
-}
-
-func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet-auth")
-}
-
-func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	instance := ctrlnames.LabelValue(network.Name)
-
-	return map[string]string{
-		labelAppName:        labelPrimaryNodeName,
-		labelAppInstance:    instance,
-		labelAppComponent:   labelPrimaryRole,
-		labelCardanoNetwork: instance,
-		labelCardanoRole:    labelPrimaryRole,
-	}
-}
-
-func primaryWorkloadLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	labels := primaryWorkloadSelectorLabels(network)
-	labels[labelAppManagedBy] = "yacd"
-
-	return labels
-}

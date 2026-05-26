@@ -14,7 +14,6 @@ import (
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
-	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,8 +24,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
-
-type statusConditionError = ctrlstatus.ConditionError
 
 const operationResultDeleted controllerutil.OperationResult = "deleted"
 
@@ -552,36 +549,6 @@ func (r *CardanoNetworkReconciler) defaultObject(object client.Object) error {
 	r.Scheme.Default(object)
 
 	return nil
-}
-
-func mergeOwnedAnnotations(current map[string]string, desired map[string]string) map[string]string {
-	return ctrlmetadata.MergeOwnedAnnotations(
-		current,
-		desired,
-		localnetFingerprintAnno,
-		ctrlannotations.RequestedStorageClass,
-		networkArtifactsConfigMapUIDAnno,
-	)
-}
-
-func resourceConflict(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonResourceConflict, format, args...)
-}
-
-func controllerOwnerConflict(err error) error {
-	return resourceConflict("%s", err.Error())
-}
-
-func unsupportedWorkloadChange(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonUnsupportedWorkloadChange, format, args...)
-}
-
-func unsupportedLocalnetChange(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonUnsupportedLocalnetChange, format, args...)
-}
-
-func missingLocalnetFingerprint(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonMissingLocalnetFingerprint, format, args...)
 }
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {

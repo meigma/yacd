@@ -5,7 +5,6 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -14,8 +13,7 @@ import (
 )
 
 const (
-	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
-	artifactConfigMapNameEnv         = "YACD_ARTIFACT_CONFIGMAP_NAME"
+	artifactConfigMapNameEnv = "YACD_ARTIFACT_CONFIGMAP_NAME"
 
 	artifactPublisherServiceAccountMountDir = "/var/run/secrets/kubernetes.io/serviceaccount"
 	artifactPublisherTokenVolumeName        = "artifact-publisher-token"
@@ -178,26 +176,3 @@ func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap 
 	deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] = string(configMap.UID)
 }
 
-func nodeToNodeHost(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("%s.%s.svc.cluster.local", primaryWorkloadName(network), network.Namespace)
-}
-
-func nodeToNodeURL(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("tcp://%s:%d", nodeToNodeHost(network), network.Spec.Node.Port)
-}
-
-func networkArtifactsConfigMapName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "network-artifacts")
-}
-
-func artifactPublisherServiceAccountName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-func artifactPublisherRoleName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-func artifactPublisherRoleBindingName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
