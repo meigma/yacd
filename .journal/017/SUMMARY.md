@@ -11,7 +11,7 @@ related_sessions: [012, 013, 015]
 Establish a small internal controller utility library that makes the existing `CardanoNetwork` and `CardanoDBSync` controller mechanics easier to reason about without swallowing Cardano/YACD domain rules. Start from a standalone `internal/ctrlkit` foundation, then integrate it into both controllers where real call sites proved the shape.
 
 ## Outcome
-The goal was met. PR #33 merged as `d8b610e` with a squash commit titled `refactor(ctrlkit): share controller foundations`; CI and Kusari Inspector passed before merge. The local dev stack was shut down, local `master` was fast-forwarded to the merge commit, and the feature worktree was removed.
+The goal was met. PR #33 merged as `d8b610e` with a squash commit titled `refactor(ctrlkit): share controller foundations`; CI and Kusari Inspector passed before merge. The local dev stack was shut down, local `master` was fast-forwarded to the merge commit, and the feature worktree and remote feature branch were removed.
 
 ## Key Decisions
 - Keep `ctrlkit` generic and domain-free -> review feedback repeatedly flagged Cardano/YACD constants in shared helpers as a boundary smell, so artifact contracts and annotation keys now live in `internal/cardano/*` or controller-side packages.

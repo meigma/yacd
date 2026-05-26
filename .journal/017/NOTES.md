@@ -44,3 +44,6 @@ Found the implementation worktree had one local unpushed commit plus remaining i
 
 ## 2026-05-25 21:56 — Close
 Closed the session after user approval. Ran `moon run root:dev-down` from the implementation worktree; the Kind/Tilt dev stack reported `YACD dev stack is down`. PR #33 was already reviewed and CI-green, then squash-merged as `d8b610e` (`refactor(ctrlkit): share controller foundations (#33)`). Updated the main checkout's `master` branch with an explicit `git pull --ff-only origin master` and removed the `feat/ctrlkit-foundation` Worktrunk worktree. Wrote `.journal/017/SUMMARY.md`, updated `.journal/INDEX.md`, and added compact durable `ctrlkit` boundary notes to `.journal/TECH_NOTES.md`.
+
+## 2026-05-25 21:58 — Remote branch cleanup
+Deleted the merged remote branch `origin/feat/ctrlkit-foundation` after confirming PR #33 had merged and the local worktree/branch were already removed.
