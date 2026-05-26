@@ -27,7 +27,7 @@ func validatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim,
 		return err
 	}
 	if drift, changed := ctrlstorage.PersistentVolumeClaimDriftFor(current, desired, ctrlannotations.RequestedStorageClass); changed {
-		return controllerstorage.UnsupportedPersistentVolumeClaimDrift(conditionReasonUnsupportedStorageChange, desired, drift)
+		return controllerstorage.UnsupportedPersistentVolumeClaimDrift(string(conditionReasonUnsupportedStorageChange), desired, drift)
 	}
 
 	return nil

@@ -398,8 +398,8 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-func findCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
-	return apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
+func findCondition(network *yacdv1alpha1.CardanoNetwork, ct conditionType) *metav1.Condition {
+	return apimeta.FindStatusCondition(network.Status.Conditions, string(ct))
 }
 
 func statusHasProgressingEndpoints(
@@ -473,16 +473,16 @@ func statusHasDisabledFaucetReadyConditions(
 
 func conditionHas(
 	network *yacdv1alpha1.CardanoNetwork,
-	conditionType string,
+	ct conditionType,
 	status metav1.ConditionStatus,
-	reason string,
+	reason conditionReason,
 ) bool {
-	condition := findCondition(network, conditionType)
+	condition := findCondition(network, ct)
 	if condition == nil || condition.Status != status {
 		return false
 	}
 
-	return reason == "" || condition.Reason == reason
+	return reason == "" || condition.Reason == string(reason)
 }
 
 func nodeToNodeEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {

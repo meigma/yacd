@@ -33,7 +33,7 @@ func unsupportedSpec(format string, args ...any) unsupportedSpecError {
 // reconciler requeues with backoff so the foreign object has time to be
 // resolved by an operator.
 func resourceConflict(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonResourceConflict, format, args...)
+	return ctrlstatus.NewConditionError(string(conditionReasonResourceConflict), format, args...)
 }
 
 // controllerOwnerConflict adapts the ctrlkit ownership-validation error into a
@@ -47,19 +47,19 @@ func controllerOwnerConflict(err error) error {
 // (Deployment selector, RoleBinding roleRef, etc.). The reconciler treats it
 // as a hard error and emits a Degraded condition.
 func unsupportedWorkloadChange(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonUnsupportedWorkloadChange, format, args...)
+	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedWorkloadChange), format, args...)
 }
 
 // unsupportedLocalnetChange reports that the accepted localnet fingerprint
 // has changed after CardanoNetwork acceptance. The CR must be deleted and
 // recreated to change localnet parameters.
 func unsupportedLocalnetChange(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonUnsupportedLocalnetChange, format, args...)
+	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedLocalnetChange), format, args...)
 }
 
 // missingLocalnetFingerprint reports that the primary node PVC has lost the
 // localnet fingerprint annotation. The CR must be deleted and recreated to
 // recover.
 func missingLocalnetFingerprint(format string, args ...any) statusConditionError {
-	return ctrlstatus.NewConditionError(conditionReasonMissingLocalnetFingerprint, format, args...)
+	return ctrlstatus.NewConditionError(string(conditionReasonMissingLocalnetFingerprint), format, args...)
 }

@@ -5,48 +5,60 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// Condition type strings used on CardanoNetwork.Status.Conditions.
+// conditionType is the typed name of a CardanoNetwork status condition. The
+// underlying string is what appears on the wire; the typed form keeps the
+// package-internal vocabulary closed so callers cannot accidentally pass an
+// arbitrary string to a condition builder.
+type conditionType string
+
+// conditionReason is the typed reason carried by a CardanoNetwork status
+// condition. Same intent as [conditionType]: closed package-internal
+// vocabulary, untyped on the wire.
+type conditionReason string
+
+// Condition types used on CardanoNetwork.Status.Conditions.
 const (
-	conditionTypeProgressing    = "Progressing"
-	conditionTypeDegraded       = "Degraded"
-	conditionTypeReady          = "Ready"
-	conditionTypeNodeReady      = "NodeReady"
-	conditionTypeOgmiosReady    = "OgmiosReady"
-	conditionTypeKupoReady      = "KupoReady"
-	conditionTypeFaucetReady    = "FaucetReady"
-	conditionTypeArtifactsReady = "ArtifactsReady"
+	conditionTypeProgressing    conditionType = "Progressing"
+	conditionTypeDegraded       conditionType = "Degraded"
+	conditionTypeReady          conditionType = "Ready"
+	conditionTypeNodeReady      conditionType = "NodeReady"
+	conditionTypeOgmiosReady    conditionType = "OgmiosReady"
+	conditionTypeKupoReady      conditionType = "KupoReady"
+	conditionTypeFaucetReady    conditionType = "FaucetReady"
+	conditionTypeArtifactsReady conditionType = "ArtifactsReady"
 )
 
 // Shared condition reasons used across multiple condition types.
 const (
-	conditionReasonReconcileSucceeded         = "ReconcileSucceeded"
-	conditionReasonUnsupportedSpec            = "UnsupportedSpec"
-	conditionReasonUnsupportedLocalnetChange  = "UnsupportedLocalnetChange"
-	conditionReasonMissingLocalnetFingerprint = "MissingLocalnetFingerprint"
-	conditionReasonUnsupportedStorageChange   = "UnsupportedStorageChange"
-	conditionReasonUnsupportedWorkloadChange  = "UnsupportedWorkloadChange"
-	conditionReasonResourceConflict           = "ResourceConflict"
-	conditionReasonDeploymentProgressing      = "DeploymentProgressing"
-	conditionReasonReady                      = "Ready"
-	conditionReasonPrimaryWorkloadMissing     = "PrimaryWorkloadMissing"
+	conditionReasonReconcileSucceeded         conditionReason = "ReconcileSucceeded"
+	conditionReasonUnsupportedSpec            conditionReason = "UnsupportedSpec"
+	conditionReasonUnsupportedLocalnetChange  conditionReason = "UnsupportedLocalnetChange"
+	conditionReasonMissingLocalnetFingerprint conditionReason = "MissingLocalnetFingerprint"
+	conditionReasonUnsupportedStorageChange   conditionReason = "UnsupportedStorageChange"
+	conditionReasonUnsupportedWorkloadChange  conditionReason = "UnsupportedWorkloadChange"
+	conditionReasonResourceConflict           conditionReason = "ResourceConflict"
+	conditionReasonDeploymentProgressing      conditionReason = "DeploymentProgressing"
+	conditionReasonReady                      conditionReason = "Ready"
+	conditionReasonPrimaryWorkloadMissing     conditionReason = "PrimaryWorkloadMissing"
 )
 
 // Per-component condition reasons. The Ready / Disabled pair appears for
 // each optional sidecar (ogmios is technically required for chain access,
 // but the API admits explicit opt-out).
 const (
-	conditionReasonNodeReady        = "NodeReady"
-	conditionReasonOgmiosReady      = "OgmiosReady"
-	conditionReasonOgmiosDisabled   = "OgmiosDisabled"
-	conditionReasonKupoReady        = "KupoReady"
-	conditionReasonKupoDisabled     = "KupoDisabled"
-	conditionReasonFaucetReady      = "FaucetReady"
-	conditionReasonFaucetDisabled   = "FaucetDisabled"
-	conditionReasonArtifactsReady   = "ArtifactsReady"
-	conditionReasonArtifactsPending = "ArtifactsPending"
+	conditionReasonNodeReady        conditionReason = "NodeReady"
+	conditionReasonOgmiosReady      conditionReason = "OgmiosReady"
+	conditionReasonOgmiosDisabled   conditionReason = "OgmiosDisabled"
+	conditionReasonKupoReady        conditionReason = "KupoReady"
+	conditionReasonKupoDisabled     conditionReason = "KupoDisabled"
+	conditionReasonFaucetReady      conditionReason = "FaucetReady"
+	conditionReasonFaucetDisabled   conditionReason = "FaucetDisabled"
+	conditionReasonArtifactsReady   conditionReason = "ArtifactsReady"
+	conditionReasonArtifactsPending conditionReason = "ArtifactsPending"
 )
 
-// Condition messages with stable wording across reconciles.
+// Condition messages with stable wording across reconciles. Messages stay
+// untyped string — they have no enumerable domain.
 const (
 	conditionMessagePrimaryWorkloadApplied     = "Primary node, artifact publisher, and chain API resources are applied"
 	conditionMessagePrimaryWorkloadUnsupported = "Primary node workload is not supported for this CardanoNetwork spec"
@@ -65,7 +77,7 @@ const (
 // per-component readiness condition builders. primaryDeploymentContainerBlockedCondition
 // uses it to project a single "container not ready" verdict back to whichever
 // component condition the caller is computing.
-type primaryDeploymentConditionFunc func(metav1.ConditionStatus, string, string) metav1.Condition
+type primaryDeploymentConditionFunc func(metav1.ConditionStatus, conditionReason, string) metav1.Condition
 
 // readyCondition aggregates the per-component readiness conditions into a
 // single Ready condition. Optional sidecar conditions only contribute when
@@ -81,44 +93,44 @@ func readyCondition(nodeReady metav1.Condition, ogmiosReady metav1.Condition, ku
 	}
 	dependencies = append(dependencies, artifactsReady)
 
-	return ctrlstatus.AggregateReady(conditionTypeReady, conditionReasonReady, conditionMessageReady, dependencies...)
+	return ctrlstatus.AggregateReady(string(conditionTypeReady), string(conditionReasonReady), conditionMessageReady, dependencies...)
 }
 
 // degradedCondition constructs a Degraded condition with the canonical
 // type/reason/message shape.
-func degradedCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeDegraded, status, reason, message)
+func degradedCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeDegraded), status, string(reason), message)
 }
 
 // nodeReadyCondition constructs a NodeReady condition.
-func nodeReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeNodeReady, status, reason, message)
+func nodeReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeNodeReady), status, string(reason), message)
 }
 
 // ogmiosReadyCondition constructs an OgmiosReady condition.
-func ogmiosReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeOgmiosReady, status, reason, message)
+func ogmiosReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeOgmiosReady), status, string(reason), message)
 }
 
 // kupoReadyCondition constructs a KupoReady condition.
-func kupoReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeKupoReady, status, reason, message)
+func kupoReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeKupoReady), status, string(reason), message)
 }
 
 // faucetReadyCondition constructs a FaucetReady condition.
-func faucetReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeFaucetReady, status, reason, message)
+func faucetReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeFaucetReady), status, string(reason), message)
 }
 
 // artifactsReadyCondition constructs an ArtifactsReady condition.
-func artifactsReadyCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeArtifactsReady, status, reason, message)
+func artifactsReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeArtifactsReady), status, string(reason), message)
 }
 
 // progressingCondition constructs a Progressing condition with the canonical
 // type/reason/message shape.
-func progressingCondition(status metav1.ConditionStatus, reason string, message string) metav1.Condition {
-	return ctrlstatus.Condition(conditionTypeProgressing, status, reason, message)
+func progressingCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeProgressing), status, string(reason), message)
 }
 
 // progressingForReadyCondition projects a Progressing condition out of the
@@ -128,12 +140,12 @@ func progressingCondition(status metav1.ConditionStatus, reason string, message 
 // condition only.
 func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
 	return ctrlstatus.ProgressingForReady(
-		conditionTypeProgressing,
-		conditionReasonReady,
+		string(conditionTypeProgressing),
+		string(conditionReasonReady),
 		conditionMessageReady,
 		ready,
-		conditionReasonDeploymentProgressing,
-		conditionReasonPrimaryWorkloadMissing,
-		conditionReasonArtifactsPending,
+		string(conditionReasonDeploymentProgressing),
+		string(conditionReasonPrimaryWorkloadMissing),
+		string(conditionReasonArtifactsPending),
 	)
 }

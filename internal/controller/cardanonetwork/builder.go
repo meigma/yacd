@@ -104,12 +104,14 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	if err != nil {
 		return nil, err
 	}
-	kupo, err := resolveKupoSettings(network, ogmios)
+	kupo, kupoMentioned, err := resolveKupoSettings(network)
 	if err != nil {
 		return nil, err
 	}
-	// Dependent-default validation: kupo requires ogmios. Done here so each
-	// resolve* function stays a single-component decision.
+	// Apply cross-component defaults (kupo follows ogmios when unmentioned)
+	// before the hard invariant check: kupo cannot be explicitly enabled
+	// without ogmios.
+	kupo = applyDependentDefaults(ogmios, kupo, kupoMentioned)
 	if kupo.enabled && !ogmios.enabled {
 		return nil, unsupportedSpec("kupo requires ogmios to be enabled")
 	}

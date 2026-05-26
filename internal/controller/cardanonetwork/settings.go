@@ -97,48 +97,63 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 }
 
 // resolveKupoSettings applies the CardanoNetwork spec on top of the package
-// defaults and returns the effective kupo configuration.
+// defaults and returns the effective kupo configuration based ONLY on the
+// per-kupo spec.
 //
-// Product rule: kupo defaults to enabled when the CardanoNetwork spec does
-// not mention kupo and ogmios is enabled (kupo without ogmios is meaningless
-// because kupo follows the chain through ogmios). If ogmios is disabled and
-// kupo is not explicitly enabled, kupo is disabled by default. The dependent
-// "kupo requires ogmios" check is enforced by the builder after settings
-// resolution, not here, so this function stays a single-component decision.
-func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork, ogmios ogmiosSettings) (kupoSettings, error) {
+// The second return value reports whether the user explicitly mentioned
+// kupo in spec.ChainAPI.Kupo. applyDependentDefaults consumes that signal
+// to decide whether the implicit "kupo follows ogmios" cascade applies.
+//
+// This function never reads ogmios state — cross-component defaults are
+// resolved in a dedicated step so each per-component resolver stays a
+// single-component decision.
+func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork) (kupoSettings, bool, error) {
 	settings := kupoSettings{
 		enabled: true,
 		image:   defaultKupoImage,
 		port:    defaultKupoPort,
 	}
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Kupo == nil {
-		// Cascade default: kupo follows ogmios when the user has not asked for
-		// it explicitly.
-		if !ogmios.enabled {
-			settings.enabled = false
-		}
-		return settings, nil
+		return settings, false, nil
 	}
 
 	spec := network.Spec.ChainAPI.Kupo
 	if !spec.Enabled {
 		settings.enabled = false
-		return settings, nil
+		return settings, true, nil
 	}
 
 	settings.image = strings.TrimSpace(spec.Image)
 	if settings.image == "" {
-		return kupoSettings{}, unsupportedSpec("kupo image is required")
+		return kupoSettings{}, true, unsupportedSpec("kupo image is required")
 	}
 	if spec.Port < 1 || spec.Port > 65535 {
-		return kupoSettings{}, unsupportedSpec("kupo port must be between 1 and 65535")
+		return kupoSettings{}, true, unsupportedSpec("kupo port must be between 1 and 65535")
 	}
 	settings.port = spec.Port
 	if spec.Resources != nil {
 		settings.resources = spec.Resources.DeepCopy()
 	}
 
-	return settings, nil
+	return settings, true, nil
+}
+
+// applyDependentDefaults encodes cross-component defaults that depend on
+// more than one resolved settings value. Per-component resolve* functions
+// remain pure single-component decisions; this step runs after all of them.
+//
+// Product rule (kupo follows ogmios): when the user did not mention kupo in
+// spec.ChainAPI.Kupo and ogmios is disabled, kupo defaults to disabled.
+// kupo without ogmios is meaningless (kupo follows the chain through
+// ogmios), and the user has not asked for it explicitly, so we keep kupo
+// off by default in that combination. The "kupo cannot be enabled without
+// ogmios" invariant is a separate hard error enforced by the builder.
+func applyDependentDefaults(ogmios ogmiosSettings, kupo kupoSettings, kupoMentioned bool) kupoSettings {
+	if !kupoMentioned && !ogmios.enabled {
+		kupo.enabled = false
+	}
+
+	return kupo
 }
 
 // resolveFaucetSettings applies the CardanoNetwork spec on top of the package
