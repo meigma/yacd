@@ -39,3 +39,10 @@ PR: https://github.com/meigma/yacd/pull/40
 
 Open follow-ups (none new from this session — all locked at plan time):
 - The five rejected architectural changes (K8s client port, readiness prober port, RuntimeProber split, subpackage adapter, mockery) — separable cross-cutting decisions the user explicitly excluded from this pass.
+
+## 2026-05-26 14:19 — Close
+PR #40 squash-merged as `b131069`. Local `master` fast-forwarded; the `refactor/controller-cardanodbsync` worktree and branch removed; dev stack stopped (`moon run root:dev-down`).
+
+Pre-merge: review agent flagged one P3 doc regression in `postgres_identity.go` (incorrect godoc claimed user-provided auth path uses Secret `ResourceVersion`; both paths actually hash password material). Fixed in commit `911d1e3` before merge — see SUMMARY.md Lessons for the durable takeaway.
+
+Handoff: `master` now contains the cardanodbsync controller refactored to the cardanonetwork bar. The cross-package refactor sweep that started with PR #35 (dbsync planner, session 018) is now complete across `internal/cardano/dbsync`, `internal/cardano/localnet`, `internal/ctrlkit`, `internal/controller/cardanonetwork`, and `internal/controller/cardanodbsync`. No new open threads from this session.
