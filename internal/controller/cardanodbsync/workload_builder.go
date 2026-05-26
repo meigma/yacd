@@ -233,17 +233,13 @@ func dbSyncDatabaseFromExternal(external *yacdv1alpha1.CardanoDBSyncExternalData
 }
 
 func runtimeSettings(dbSync *yacdv1alpha1.CardanoDBSync) dbsync.Runtime {
-	settings := dbsync.Runtime{
-		Cache:       true,
-		EpochTable:  true,
-		MetricsPort: 8080,
-	}
+	settings := dbsync.Runtime{MetricsPort: 8080}
 	if dbSync.Spec.Config.Runtime == nil {
 		return settings
 	}
 
-	settings.Cache = dbSync.Spec.Config.Runtime.Cache
-	settings.EpochTable = dbSync.Spec.Config.Runtime.EpochTable
+	settings.DisableCache = !dbSync.Spec.Config.Runtime.Cache
+	settings.DisableEpochTable = !dbSync.Spec.Config.Runtime.EpochTable
 	settings.ForceIndexes = dbSync.Spec.Config.Runtime.ForceIndexes
 	if dbSync.Spec.Config.Runtime.MetricsPort != 0 {
 		settings.MetricsPort = dbSync.Spec.Config.Runtime.MetricsPort
