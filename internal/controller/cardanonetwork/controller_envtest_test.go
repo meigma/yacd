@@ -9,7 +9,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -608,8 +608,8 @@ func publishNetworkArtifactsWithClient(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = networkartifacts.SchemaVersion
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
 	}

@@ -5,6 +5,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	cardanonetworkartifacts "github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
@@ -20,7 +21,7 @@ func TestProducerConfigMap(t *testing.T) {
 	assert.Empty(t, result.Message)
 	assert.Equal(t, configMap.Name, result.Status.NetworkConfigMapName)
 	assert.Equal(t, cardanonetworkartifacts.SchemaVersion, result.Status.SchemaVersion)
-	assert.Equal(t, configMap.Annotations[ctrlartifacts.DataHashAnnotation], result.Status.DataHash)
+	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], result.Status.DataHash)
 }
 
 func TestProducerConfigMapValidationOrder(t *testing.T) {
@@ -49,7 +50,7 @@ func TestProducerConfigMapValidationOrder(t *testing.T) {
 			name: "schema not published",
 			configMap: func() *corev1.ConfigMap {
 				cm := validConfigMap()
-				delete(cm.Annotations, ctrlartifacts.SchemaVersionAnnotation)
+				delete(cm.Annotations, ctrlannotations.ArtifactSchemaVersion)
 				return cm
 			}(),
 			fingerprint: "fingerprint",
@@ -65,7 +66,7 @@ func TestProducerConfigMapValidationOrder(t *testing.T) {
 			name: "hash not published",
 			configMap: func() *corev1.ConfigMap {
 				cm := validConfigMap()
-				delete(cm.Annotations, ctrlartifacts.DataHashAnnotation)
+				delete(cm.Annotations, ctrlannotations.ArtifactDataHash)
 				return cm
 			}(),
 			fingerprint: "fingerprint",
@@ -76,7 +77,7 @@ func TestProducerConfigMapValidationOrder(t *testing.T) {
 			configMap: func() *corev1.ConfigMap {
 				cm := validConfigMap()
 				delete(cm.Data, cardanonetworkartifacts.ConfigurationKey)
-				cm.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(cm.Data)
+				cm.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(cm.Data)
 				return cm
 			}(),
 			fingerprint: "fingerprint",
@@ -172,7 +173,7 @@ func TestConsumerConfigMapRejectsDeletingConfigMap(t *testing.T) {
 
 func TestConsumerConfigMapRejectsMetadataMismatch(t *testing.T) {
 	configMap := validConfigMap()
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = "sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 	result := ConsumerConfigMap(configMap, validConfigMapStatus())
 
@@ -184,9 +185,9 @@ func TestConsumerConfigMapRejectsMetadataMismatch(t *testing.T) {
 func TestConsumerConfigMapRejectsInvalidData(t *testing.T) {
 	configMap := validConfigMap()
 	delete(configMap.Data, cardanonetworkartifacts.ConfigurationKey)
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	status := validConfigMapStatus()
-	status.DataHash = configMap.Annotations[ctrlartifacts.DataHashAnnotation]
+	status.DataHash = configMap.Annotations[ctrlannotations.ArtifactDataHash]
 
 	result := ConsumerConfigMap(configMap, status)
 
@@ -211,9 +212,9 @@ func validConfigMap() *corev1.ConfigMap {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "network-artifacts",
 			Annotations: map[string]string{
-				ctrlartifacts.SchemaVersionAnnotation: cardanonetworkartifacts.SchemaVersion,
+				ctrlannotations.ArtifactSchemaVersion: cardanonetworkartifacts.SchemaVersion,
 				LocalnetFingerprintAnnotation:         "fingerprint",
-				ctrlartifacts.DataHashAnnotation:      ctrlartifacts.ComputeDataHash(data),
+				ctrlannotations.ArtifactDataHash:      ctrlartifacts.ComputeDataHash(data),
 			},
 		},
 		Data: data,
@@ -225,6 +226,6 @@ func validConfigMapStatus() yacdv1alpha1.CardanoNetworkArtifactsStatus {
 	return yacdv1alpha1.CardanoNetworkArtifactsStatus{
 		NetworkConfigMapName: configMap.Name,
 		SchemaVersion:        cardanonetworkartifacts.SchemaVersion,
-		DataHash:             configMap.Annotations[ctrlartifacts.DataHashAnnotation],
+		DataHash:             configMap.Annotations[ctrlannotations.ArtifactDataHash],
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	cardanonetworkartifacts "github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -47,7 +48,7 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 		}
 	}
 
-	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != cardanonetworkartifacts.SchemaVersion {
+	if configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] != cardanonetworkartifacts.SchemaVersion {
 		return ProducerResult{
 			Status:  status,
 			Message: "artifact ConfigMap schema version is not published",
@@ -62,7 +63,7 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 		}
 	}
 
-	dataHash := strings.TrimSpace(configMap.Annotations[ctrlartifacts.DataHashAnnotation])
+	dataHash := strings.TrimSpace(configMap.Annotations[ctrlannotations.ArtifactDataHash])
 	if !ctrlartifacts.ValidDataHash(dataHash) {
 		return ProducerResult{
 			Status:  status,
@@ -87,7 +88,10 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 // ProducerConfigMapNeedsRecovery returns true when a producer-owned ConfigMap
 // appears published but fails producer validation.
 func ProducerConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerprint string) bool {
-	if configMap == nil || !ctrlartifacts.HasPublishedData(configMap) {
+	if configMap == nil || !ctrlartifacts.HasPublishedData(configMap,
+		ctrlannotations.ArtifactSchemaVersion,
+		ctrlannotations.ArtifactDataHash,
+	) {
 		return false
 	}
 
@@ -147,8 +151,8 @@ func ConsumerConfigMap(
 			Message: "Referenced CardanoNetwork artifact ConfigMap is deleting",
 		}
 	}
-	if configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] != status.SchemaVersion ||
-		configMap.Annotations[ctrlartifacts.DataHashAnnotation] != status.DataHash {
+	if configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] != status.SchemaVersion ||
+		configMap.Annotations[ctrlannotations.ArtifactDataHash] != status.DataHash {
 		return ConsumerConfigMapResult{
 			Message: "Referenced CardanoNetwork artifact ConfigMap metadata does not match status",
 		}

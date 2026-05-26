@@ -278,9 +278,9 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "devnet-network-artifacts",
 			Annotations: map[string]string{
-				ctrlartifacts.SchemaVersionAnnotation: networkartifacts.SchemaVersion,
+				ctrlannotations.ArtifactSchemaVersion: networkartifacts.SchemaVersion,
 				localnetFingerprintAnno:               "fingerprint",
-				ctrlartifacts.DataHashAnnotation:      "sha256:test",
+				ctrlannotations.ArtifactDataHash:      "sha256:test",
 			},
 		},
 		Data: testNetworkArtifactsData(),
@@ -290,7 +290,7 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 	assert.False(t, result.Ready)
 	assert.Equal(t, "artifact ConfigMap data hash is not published", result.Message)
 
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
 	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
 	assert.True(t, result.Ready)
 	assert.Equal(t, testNetworkArtifactsDataHash, result.Status.DataHash)
@@ -302,21 +302,21 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data[networkartifacts.DijkstraGenesisKey] = "test dijkstra-genesis.json"
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
 	assert.True(t, result.Ready)
-	assert.Equal(t, configMap.Annotations[ctrlartifacts.DataHashAnnotation], result.Status.DataHash)
+	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], result.Status.DataHash)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data["pool-keys/secret.skey"] = "do not publish"
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
 	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
 	assert.False(t, result.Ready)
 	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.Message)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.BinaryData = map[string][]byte{"secret": []byte("do not publish")}
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
 	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
 	assert.False(t, result.Ready)
 	assert.Equal(t, "artifact ConfigMap contains binary data", result.Message)
@@ -2073,8 +2073,8 @@ func publishNetworkArtifacts(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[ctrlartifacts.SchemaVersionAnnotation] = networkartifacts.SchemaVersion
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
 	}

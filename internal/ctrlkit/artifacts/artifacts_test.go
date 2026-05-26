@@ -40,15 +40,23 @@ func TestValidateConfigMapData(t *testing.T) {
 }
 
 func TestHasPublishedData(t *testing.T) {
+	const (
+		schemaVersionAnnotation = "testing.example/artifact-schema-version"
+		dataHashAnnotation      = "testing.example/artifact-data-hash"
+	)
+
 	assert.False(t, HasPublishedData(nil))
 	assert.False(t, HasPublishedData(&corev1.ConfigMap{}))
 	assert.True(t, HasPublishedData(&corev1.ConfigMap{Data: map[string]string{"a": "one"}}))
 	assert.True(t, HasPublishedData(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{SchemaVersionAnnotation: "v1"}},
-	}))
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{schemaVersionAnnotation: "v1"}},
+	}, schemaVersionAnnotation, dataHashAnnotation))
 	assert.True(t, HasPublishedData(&corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{DataHashAnnotation: "sha256:test"}},
-	}))
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{dataHashAnnotation: "sha256:test"}},
+	}, schemaVersionAnnotation, dataHashAnnotation))
+	assert.False(t, HasPublishedData(&corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{schemaVersionAnnotation: "v1"}},
+	}, dataHashAnnotation))
 }
 
 func TestValidDataHash(t *testing.T) {

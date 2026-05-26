@@ -7,6 +7,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlconditions "github.com/meigma/yacd/internal/ctrlkit/conditions"
 	"github.com/stretchr/testify/assert"
@@ -416,7 +417,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForMatchingArtifactConfigMapMetada
 	dbSync := localCardanoDBSync("dbsync", "mismatched-configmap")
 	network := readyCardanoNetwork("mismatched-configmap")
 	configMap := artifactConfigMapFor(network)
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -431,8 +432,8 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForValidArtifactConfigMapData(t *t
 	network := readyCardanoNetwork("invalid-configmap-data")
 	configMap := artifactConfigMapFor(network)
 	delete(configMap.Data, networkartifacts.ConfigurationKey)
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	network.Status.Artifacts.DataHash = configMap.Annotations[ctrlartifacts.DataHashAnnotation]
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	network.Status.Artifacts.DataHash = configMap.Annotations[ctrlannotations.ArtifactDataHash]
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1062,7 +1063,7 @@ func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenArtifactsMismatch(t
 	require.NoError(t, err)
 	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
 
-	configMap.Annotations[ctrlartifacts.DataHashAnnotation] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
 	require.NoError(t, reconciler.Update(ctx, configMap))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1450,8 +1451,8 @@ func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMa
 			Name:      network.Status.Artifacts.NetworkConfigMapName,
 			Namespace: network.Namespace,
 			Annotations: map[string]string{
-				ctrlartifacts.SchemaVersionAnnotation: network.Status.Artifacts.SchemaVersion,
-				ctrlartifacts.DataHashAnnotation:      network.Status.Artifacts.DataHash,
+				ctrlannotations.ArtifactSchemaVersion: network.Status.Artifacts.SchemaVersion,
+				ctrlannotations.ArtifactDataHash:      network.Status.Artifacts.DataHash,
 			},
 		},
 		Data: testNetworkArtifactsData(),

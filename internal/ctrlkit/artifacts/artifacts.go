@@ -12,11 +12,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const (
-	SchemaVersionAnnotation = "yacd.meigma.io/artifact-schema-version"
-	DataHashAnnotation      = "yacd.meigma.io/artifact-data-hash"
-)
-
 // Contract describes the data key allowlist for a ConfigMap artifact set.
 type Contract struct {
 	RequiredKeys []string
@@ -48,14 +43,15 @@ func ValidateConfigMapData(configMap *corev1.ConfigMap, contract Contract, expec
 }
 
 // HasPublishedData returns true when a ConfigMap appears to contain a published
-// artifact payload or publishing metadata.
-func HasPublishedData(configMap *corev1.ConfigMap) bool {
+// artifact payload or caller-owned publishing metadata.
+func HasPublishedData(configMap *corev1.ConfigMap, annotationKeys ...string) bool {
 	if configMap == nil {
 		return false
 	}
-	if configMap.Annotations[SchemaVersionAnnotation] != "" ||
-		configMap.Annotations[DataHashAnnotation] != "" {
-		return true
+	for _, key := range annotationKeys {
+		if configMap.Annotations[key] != "" {
+			return true
+		}
 	}
 
 	return len(configMap.Data) > 0
