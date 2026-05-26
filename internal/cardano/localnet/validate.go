@@ -1,24 +1,9 @@
 package localnet
 
-import (
-	"errors"
-	"fmt"
-	"path"
-	"strings"
-)
+import "errors"
 
-// cleanAbsolutePath trims and normalizes a container path, rejecting relative
-// locations.
-func cleanAbsolutePath(value string, field string) (string, error) {
-	cleaned := path.Clean(strings.TrimSpace(value))
-	if cleaned == "." || !strings.HasPrefix(cleaned, "/") {
-		return "", fmt.Errorf("%s must be an absolute container path", field)
-	}
-
-	return cleaned, nil
-}
-
-// validateSpec checks the normalized localnet spec invariants.
+// validateSpec checks normalized Spec invariants and collects every violation
+// via errors.Join so callers see the full picture, not just the first failure.
 func validateSpec(spec Spec) error {
 	var errs []error
 

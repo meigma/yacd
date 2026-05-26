@@ -42,7 +42,8 @@ type Paths struct {
 
 // Tool identifies the cardano-testnet executable used by the plan.
 type Tool struct {
-	// Binary is the command used to invoke cardano-testnet.
+	// Binary is the cardano-testnet command name or absolute path used to
+	// invoke create-env.
 	Binary string
 
 	// Version optionally records the cardano-testnet release used to generate
@@ -95,6 +96,11 @@ type Layout struct {
 	ManifestFile string
 }
 
+// JSON tags on Fingerprint, Manifest, and ManifestInputs are the on-disk and
+// fingerprint wire contract. Adding a field is safe; renaming or removing a
+// tag rolls every persisted fingerprint and breaks init-container readback of
+// existing local environments. Do not change them.
+
 // Fingerprint identifies a normalized local testnet plan.
 type Fingerprint struct {
 	// Algorithm is the digest algorithm used to compute Value.
@@ -110,7 +116,7 @@ type Manifest struct {
 	// SchemaVersion identifies the manifest wire format.
 	SchemaVersion string `json:"schemaVersion"`
 
-	// Inputs are the normalized create-env inputs covered by Fingerprint.
+	// Inputs are the fingerprint inputs covered by Fingerprint.
 	Inputs ManifestInputs `json:"inputs"`
 
 	// Fingerprint identifies the normalized create-env inputs.
@@ -129,7 +135,8 @@ type ManifestInputs struct {
 	// EpochLength is the number of slots in each epoch.
 	EpochLength int `json:"epochLength"`
 
-	// SlotLength is the create-env slot length value in seconds.
+	// SlotLength is the rendered create-env slot length value in seconds,
+	// e.g. "0.1".
 	SlotLength string `json:"slotLength"`
 
 	// EnvDir is the create-env output directory.
