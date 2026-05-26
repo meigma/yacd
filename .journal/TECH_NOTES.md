@@ -145,6 +145,16 @@
   fingerprint matches, rejects storage shrink and requested storage class
   drift, and refuses unowned or foreign-owned same-name children rather than
   adopting them silently.
+- Shared controller mechanics now live in `internal/ctrlkit`: naming,
+  metadata/ownership, owned-child apply, artifact data hash/key validation,
+  readiness predicates, resource mutation helpers, status error/condition
+  helpers, and storage drift detection. Keep `ctrlkit` domain-free; YACD
+  annotation keys and condition-message mapping belong under `internal/controller`,
+  while Cardano artifact schema/key contracts belong under `internal/cardano`.
+- Owned-child reconciliation should prefer `ctrlkit/apply.ApplyOwnedObject` for
+  create/read/controller-owner/validate/mutate/persist flows. Callbacks are the
+  field-ownership boundary: create uses the defaulted desired object directly,
+  while `Validate` and `Mutate` only run for existing owned objects.
 - The primary node Service uses the same safe name as the Deployment
   (`<safe CardanoNetwork name>-node`), targets the named `node-to-node`
   container port, preserves Kubernetes-assigned cluster IP fields, and refuses

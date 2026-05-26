@@ -41,3 +41,6 @@ Addressed the latest review pass. Made consumer-side network artifact validation
 
 ## 2026-05-25 20:48 — PR opened and CI verified
 Found the implementation worktree had one local unpushed commit plus remaining in-scope controller/ctrlkit cleanup. Validated the full local state with `moon run root:test`, `moon run root:check`, and `git diff --check`, committed `4f994ab` (`refactor(ctrlkit): finish controller foundation cleanup`), and pushed `feat/ctrlkit-foundation`. Opened PR #33 (`refactor(ctrlkit): share controller foundations`) at https://github.com/meigma/yacd/pull/33. GitHub checks completed successfully for head `4f994ab`: `ci` passed, `Kusari Inspector` passed, and release/image dry-run jobs were skipped as expected.
+
+## 2026-05-25 21:56 — Close
+Closed the session after user approval. Ran `moon run root:dev-down` from the implementation worktree; the Kind/Tilt dev stack reported `YACD dev stack is down`. PR #33 was already reviewed and CI-green, then squash-merged as `d8b610e` (`refactor(ctrlkit): share controller foundations (#33)`). Updated the main checkout's `master` branch with an explicit `git pull --ff-only origin master` and removed the `feat/ctrlkit-foundation` Worktrunk worktree. Wrote `.journal/017/SUMMARY.md`, updated `.journal/INDEX.md`, and added compact durable `ctrlkit` boundary notes to `.journal/TECH_NOTES.md`.
