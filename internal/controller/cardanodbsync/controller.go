@@ -380,13 +380,6 @@ func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 	return secret, true, nil
 }
 
-func externalDatabasePasswordKey(database *yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec) string {
-	if database.PasswordSecretRef.Key != "" {
-		return database.PasswordSecretRef.Key
-	}
-	return defaultExternalDatabasePasswordKey
-}
-
 func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, object client.Object) []reconcile.Request {
 	network, ok := object.(*yacdv1alpha1.CardanoNetwork)
 	if !ok {
