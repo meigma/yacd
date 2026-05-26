@@ -7,6 +7,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -525,7 +527,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		deployment.Spec.Template.Annotations[localnetFingerprintAnno],
 		persistentVolumeClaim.Annotations[localnetFingerprintAnno],
 	)
-	assert.NotContains(t, persistentVolumeClaim.Annotations, requestedStorageClassAnno)
+	assert.NotContains(t, persistentVolumeClaim.Annotations, ctrlannotations.RequestedStorageClass)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.Equal(t, "devnet-artifact-publisher", deployment.Spec.Template.Spec.ServiceAccountName)
@@ -849,29 +851,29 @@ func TestPrimaryWorkloadBuilderUsesSafeNamesAndLabels(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(resources.Deployment.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.Deployment.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.Deployment.Name, "-node"))
 	assert.NotContains(t, resources.Deployment.Name, ".")
 	assert.Equal(t, resources.Deployment.Name, resources.Service.Name)
-	assert.LessOrEqual(t, len(resources.OgmiosService.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.OgmiosService.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.OgmiosService.Name, "-ogmios"))
 	assert.NotContains(t, resources.OgmiosService.Name, ".")
-	assert.LessOrEqual(t, len(resources.KupoService.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.KupoService.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.KupoService.Name, "-kupo"))
 	assert.NotContains(t, resources.KupoService.Name, ".")
-	assert.LessOrEqual(t, len(resources.FaucetService.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.FaucetService.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.FaucetService.Name, "-faucet"))
 	assert.NotContains(t, resources.FaucetService.Name, ".")
-	assert.LessOrEqual(t, len(resources.FaucetAuthSecret.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.FaucetAuthSecret.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.FaucetAuthSecret.Name, "-faucet-auth"))
 	assert.NotContains(t, resources.FaucetAuthSecret.Name, ".")
-	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), maxLabelValueLength)
+	assert.LessOrEqual(t, len(resources.PersistentVolumeClaim.Name), ctrlnames.MaxLabelValueLength)
 	assert.True(t, strings.HasSuffix(resources.PersistentVolumeClaim.Name, "-node-state"))
 	assert.NotContains(t, resources.PersistentVolumeClaim.Name, ".")
 
 	selector := resources.Deployment.Spec.Selector.MatchLabels
-	assert.LessOrEqual(t, len(selector[labelAppInstance]), maxLabelValueLength)
-	assert.LessOrEqual(t, len(selector[labelCardanoNetwork]), maxLabelValueLength)
+	assert.LessOrEqual(t, len(selector[labelAppInstance]), ctrlnames.MaxLabelValueLength)
+	assert.LessOrEqual(t, len(selector[labelCardanoNetwork]), ctrlnames.MaxLabelValueLength)
 	assert.NotEqual(t, network.Name, selector[labelAppInstance])
 	assert.Equal(t, selector, resources.Deployment.Spec.Template.Labels)
 }
@@ -925,7 +927,7 @@ func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
 	require.NotNil(t, resources.PersistentVolumeClaim.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[requestedStorageClassAnno])
+	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[ctrlannotations.RequestedStorageClass])
 }
 
 func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {

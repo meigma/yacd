@@ -6,6 +6,10 @@ import (
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -22,9 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const testNetworkArtifactSchemaVersion = "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
+const testNetworkArtifactSchemaVersion = networkartifacts.SchemaVersion
 
-var testNetworkArtifactDataHash = computeNetworkArtifactDataHash(testNetworkArtifactsData())
+var testNetworkArtifactDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 const driftedDBSyncConfig = "drifted"
 
@@ -413,7 +417,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForMatchingArtifactConfigMapMetada
 	dbSync := localCardanoDBSync("dbsync", "mismatched-configmap")
 	network := readyCardanoNetwork("mismatched-configmap")
 	configMap := artifactConfigMapFor(network)
-	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -427,9 +431,9 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForValidArtifactConfigMapData(t *t
 	dbSync := localCardanoDBSync("dbsync", "invalid-configmap-data")
 	network := readyCardanoNetwork("invalid-configmap-data")
 	configMap := artifactConfigMapFor(network)
-	delete(configMap.Data, "configuration.yaml")
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
-	network.Status.Artifacts.DataHash = configMap.Annotations[networkArtifactDataHashAnno]
+	delete(configMap.Data, networkartifacts.ConfigurationKey)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	network.Status.Artifacts.DataHash = configMap.Annotations[ctrlannotations.ArtifactDataHash]
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -597,7 +601,7 @@ func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailabl
 			DBSlotHeight:  ptr.To[int64](4100),
 			Epoch:         ptr.To[int64](3),
 		},
-		PostgresReady: condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
+		PostgresReady: ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Postgres is reachable and db-sync progress query succeeded"),
 		Synced:        syncedCondition(conditionReasonNodeTipUnavailable, "Ogmios node tip query failed: unavailable"),
 	}}
 
@@ -1059,7 +1063,7 @@ func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenArtifactsMismatch(t
 	require.NoError(t, err)
 	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
 
-	configMap.Annotations[networkArtifactDataHashAnno] = "sha256:" + strings.Repeat("b", 64)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
 	require.NoError(t, reconciler.Update(ctx, configMap))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1447,8 +1451,8 @@ func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMa
 			Name:      network.Status.Artifacts.NetworkConfigMapName,
 			Namespace: network.Namespace,
 			Annotations: map[string]string{
-				networkArtifactSchemaVersionAnno: network.Status.Artifacts.SchemaVersion,
-				networkArtifactDataHashAnno:      network.Status.Artifacts.DataHash,
+				ctrlannotations.ArtifactSchemaVersion: network.Status.Artifacts.SchemaVersion,
+				ctrlannotations.ArtifactDataHash:      network.Status.Artifacts.DataHash,
 			},
 		},
 		Data: testNetworkArtifactsData(),
@@ -1457,13 +1461,13 @@ func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMa
 
 func testNetworkArtifactsData() map[string]string {
 	return map[string]string{
-		"configuration.yaml":      "test configuration.yaml",
-		"byron-genesis.json":      "test byron-genesis.json",
-		"shelley-genesis.json":    "test shelley-genesis.json",
-		"alonzo-genesis.json":     "test alonzo-genesis.json",
-		"conway-genesis.json":     "test conway-genesis.json",
-		"primary-topology.json":   "test primary-topology.json",
-		"yacd-localnet-plan.json": "test yacd-localnet-plan.json",
-		"connection.json":         "test connection.json",
+		networkartifacts.ConfigurationKey:   "test configuration.yaml",
+		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
+		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
+		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
+		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
+		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
+		networkartifacts.PlanManifestKey:    "test yacd-localnet-plan.json",
+		networkartifacts.ConnectionKey:      "test connection.json",
 	}
 }

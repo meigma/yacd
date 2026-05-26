@@ -10,6 +10,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
+	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -210,18 +212,18 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	}
 
 	current := &corev1.Secret{}
-	err := r.Get(ctx, clientObjectKey(desired), current)
+	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		acceptedIdentity, err := r.acceptedManagedPostgresIdentity(ctx, dbSync)
 		if err != nil {
 			return nil, err
 		}
 		if acceptedIdentity != "" {
-			return nil, unsupportedApplyError{
-				reason: conditionReasonManagedDatabaseSecretMissing,
-				message: fmt.Sprintf(
+			return nil, statusConditionError{
+				Reason: conditionReasonManagedDatabaseSecretMissing,
+				Message: fmt.Sprintf(
 					"Managed Postgres generated auth Secret %s is missing after database initialization; restore the original Secret or recreate the CardanoDBSync with a fresh database",
-					clientObjectKey(desired),
+					ctrlmetadata.ObjectKey(desired),
 				),
 			}
 		}
@@ -261,9 +263,7 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 	}
 
 	before := current.DeepCopy()
-	current.Labels = mergeStringMap(current.Labels, desired.Labels)
-	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
+	ctrlresources.MutateObjectMetadata(current, desired, mergeDBSyncOwnedAnnotations)
 	current.Type = corev1.SecretTypeOpaque
 	current.Data = maps.Clone(current.Data)
 	current.StringData = nil

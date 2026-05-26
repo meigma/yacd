@@ -10,6 +10,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -120,7 +122,7 @@ func (b dbSyncWorkloadBuilder) managedPostgresPersistentVolumeClaim(dbSync *yacd
 	}
 	if managed.Storage != nil && managed.Storage.StorageClassName != nil {
 		pvc.Spec.StorageClassName = managed.Storage.StorageClassName
-		pvc.Annotations[requestedStorageClassAnno] = *managed.Storage.StorageClassName
+		pvc.Annotations[ctrlannotations.RequestedStorageClass] = *managed.Storage.StorageClassName
 	}
 	if err := controllerutil.SetControllerReference(dbSync, pvc, b.scheme); err != nil {
 		return nil, fmt.Errorf("set managed Postgres state PVC owner reference: %w", err)
@@ -439,23 +441,23 @@ func managedPostgresPasswordFingerprint(password []byte) string {
 }
 
 func managedPostgresAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, managedPostgresAuthSecretSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresAuthSecretSuffix)
 }
 
 func managedPostgresPVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, managedPostgresStatePVCSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresStatePVCSuffix)
 }
 
 func managedPostgresServiceName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
 }
 
 func managedPostgresDeploymentName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, managedPostgresSuffix)
 }
 
 func managedPostgresSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	instance := safeLabelValue(dbSync.Name)
+	instance := ctrlnames.LabelValue(dbSync.Name)
 	return map[string]string{
 		labelAppName:      labelDBSyncAppName,
 		labelAppInstance:  instance,

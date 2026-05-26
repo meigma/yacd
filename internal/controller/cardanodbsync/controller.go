@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -31,8 +32,6 @@ const (
 	cardanoDBSyncExternalDatabaseSecretNameField = "spec.database.external.passwordSecretRef.name"
 	cardanoDBSyncManagedDatabaseSecretNameField  = "spec.database.managed.authSecretRef.name"
 
-	networkArtifactSchemaVersionAnno   = "yacd.meigma.io/artifact-schema-version"
-	networkArtifactDataHashAnno        = "yacd.meigma.io/artifact-data-hash"
 	defaultExternalDatabasePasswordKey = "password"
 
 	dbSyncWorkloadReadinessRequeueAfter = 15 * time.Second
@@ -48,7 +47,8 @@ type CardanoDBSyncReconciler struct {
 	// Reader is the uncached reader used for live dependency checks.
 	Reader client.Reader
 
-	// Scheme is the runtime scheme available to future owned child resources.
+	// Scheme is the runtime scheme used when setting controller references on
+	// owned child resources.
 	Scheme *runtime.Scheme
 
 	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.
@@ -121,46 +121,51 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork has not published fresh verified artifacts",
 		)
 	}
-	if network.Status.Artifacts == nil ||
-		network.Status.Artifacts.NetworkConfigMapName == "" ||
-		network.Status.Artifacts.SchemaVersion == "" ||
-		network.Status.Artifacts.DataHash == "" {
+	artifactStatus := ctrlnetworkartifacts.ConsumerStatus(network.Status.Artifacts)
+	if !artifactStatus.Ready {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsPending,
-			"Referenced CardanoNetwork artifact status is incomplete",
+			artifactStatus.Message,
 		)
 	}
 
 	configMap := &corev1.ConfigMap{}
-	configMapKey := client.ObjectKey{Namespace: dbSync.Namespace, Name: network.Status.Artifacts.NetworkConfigMapName}
+	configMapKey := client.ObjectKey{Namespace: dbSync.Namespace, Name: artifactStatus.ConfigMapName}
 	if err := r.liveReader().Get(ctx, configMapKey, configMap); err != nil {
 		if apierrors.IsNotFound(err) {
+			result := ctrlnetworkartifacts.ConsumerConfigMap(nil, *network.Status.Artifacts)
 			return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 				conditionReasonNetworkArtifactsPending,
-				"Referenced CardanoNetwork artifact ConfigMap does not exist",
+				result.Message,
 			)
 		}
 		return ctrl.Result{}, err
 	}
-	if !configMap.DeletionTimestamp.IsZero() {
+
+	configMapResult := ctrlnetworkartifacts.ConsumerConfigMap(configMap, *network.Status.Artifacts)
+	if configMapResult.Ready {
+		return r.reconcileReadyDBSync(ctx, log, dbSync, network, configMap, databaseRuntime)
+	}
+	if configMapResult.Pending {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
 			conditionReasonNetworkArtifactsPending,
-			"Referenced CardanoNetwork artifact ConfigMap is deleting",
+			configMapResult.Message,
 		)
 	}
-	if configMap.Annotations[networkArtifactSchemaVersionAnno] != network.Status.Artifacts.SchemaVersion ||
-		configMap.Annotations[networkArtifactDataHashAnno] != network.Status.Artifacts.DataHash {
-		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
-			conditionReasonNetworkArtifactsMismatch,
-			"Referenced CardanoNetwork artifact ConfigMap metadata does not match status",
-		)
-	}
-	if err := validateNetworkArtifactsConfigMapData(configMap, network.Status.Artifacts.DataHash); err != nil {
-		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
-			conditionReasonNetworkArtifactsMismatch,
-			"Referenced CardanoNetwork artifact ConfigMap is invalid: "+err.Error(),
-		)
-	}
+	return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
+		conditionReasonNetworkArtifactsMismatch,
+		configMapResult.Message,
+	)
+}
+
+func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
+	ctx context.Context,
+	log logr.Logger,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	configMap *corev1.ConfigMap,
+	databaseRuntime databaseRuntime,
+) (ctrl.Result, error) {
 	if network.Status.Endpoints == nil ||
 		network.Status.Endpoints.NodeToNode == nil ||
 		network.Status.Endpoints.NodeToNode.ServiceName == "" ||

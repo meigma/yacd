@@ -1,15 +1,11 @@
 package cardanonetwork
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
-	"slices"
-	"sort"
-	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
+	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -18,10 +14,6 @@ import (
 )
 
 const (
-	networkArtifactSchemaVersion = "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
-
-	networkArtifactSchemaVersionAnno = "yacd.meigma.io/artifact-schema-version"
-	networkArtifactDataHashAnno      = "yacd.meigma.io/artifact-data-hash"
 	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
 	artifactConfigMapNameEnv         = "YACD_ARTIFACT_CONFIGMAP_NAME"
 
@@ -40,27 +32,6 @@ const (
 	artifactNodeToNodeURLEnv          = "YACD_CARDANO_NODE_TO_NODE_URL"
 	artifactPublisherTokenTTL   int64 = 3600
 )
-
-var requiredNetworkArtifactKeys = []string{
-	"configuration.yaml",
-	"byron-genesis.json",
-	"shelley-genesis.json",
-	"alonzo-genesis.json",
-	"conway-genesis.json",
-	"primary-topology.json",
-	"yacd-localnet-plan.json",
-	"connection.json",
-}
-
-var optionalNetworkArtifactKeys = []string{
-	"dijkstra-genesis.json",
-}
-
-type networkArtifactsStatusResult struct {
-	status yacdv1alpha1.CardanoNetworkArtifactsStatus
-	ready  bool
-	reason string
-}
 
 func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) (*corev1.ConfigMap, error) {
 	configMap := &corev1.ConfigMap{
@@ -196,150 +167,8 @@ func artifactPublisherVolumeMount() corev1.VolumeMount {
 	}
 }
 
-func artifactConfigMapStatus(configMap *corev1.ConfigMap, expectedFingerprint string) networkArtifactsStatusResult {
-	if configMap == nil {
-		return networkArtifactsStatusResult{
-			reason: "artifact ConfigMap is missing",
-		}
-	}
-
-	status := yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: configMap.Name,
-	}
-
-	if !configMap.DeletionTimestamp.IsZero() {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap is deleting",
-		}
-	}
-
-	if configMap.Annotations[networkArtifactSchemaVersionAnno] != networkArtifactSchemaVersion {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap schema version is not published",
-		}
-	}
-	status.SchemaVersion = networkArtifactSchemaVersion
-
-	if configMap.Annotations[localnetFingerprintAnno] != expectedFingerprint {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap localnet fingerprint does not match the accepted localnet",
-		}
-	}
-
-	dataHash := strings.TrimSpace(configMap.Annotations[networkArtifactDataHashAnno])
-	if !validNetworkArtifactDataHash(dataHash) {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap data hash is not published",
-		}
-	}
-
-	if len(configMap.BinaryData) > 0 {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap contains binary data",
-		}
-	}
-	if key, ok := unsupportedNetworkArtifactDataKey(configMap.Data); ok {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: fmt.Sprintf("artifact ConfigMap contains unsupported key %s", key),
-		}
-	}
-
-	for _, key := range requiredNetworkArtifactKeys {
-		if _, ok := configMap.Data[key]; !ok {
-			return networkArtifactsStatusResult{
-				status: status,
-				reason: fmt.Sprintf("artifact ConfigMap is missing %s", key),
-			}
-		}
-	}
-
-	actualHash := computeNetworkArtifactDataHash(configMap.Data)
-	if dataHash != actualHash {
-		return networkArtifactsStatusResult{
-			status: status,
-			reason: "artifact ConfigMap data hash does not match data",
-		}
-	}
-	status.DataHash = dataHash
-
-	return networkArtifactsStatusResult{
-		status: status,
-		ready:  true,
-	}
-}
-
 func artifactConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerprint string) bool {
-	if configMap == nil || !artifactConfigMapHasPublishedData(configMap) {
-		return false
-	}
-
-	return !artifactConfigMapStatus(configMap, expectedFingerprint).ready
-}
-
-func artifactConfigMapHasPublishedData(configMap *corev1.ConfigMap) bool {
-	if configMap.Annotations[networkArtifactSchemaVersionAnno] != "" ||
-		configMap.Annotations[networkArtifactDataHashAnno] != "" {
-		return true
-	}
-
-	return len(configMap.Data) > 0
-}
-
-func unsupportedNetworkArtifactDataKey(data map[string]string) (string, bool) {
-	keys := make([]string, 0, len(data))
-	for key := range data {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	for _, key := range keys {
-		if !networkArtifactDataKeyAllowed(key) {
-			return key, true
-		}
-	}
-
-	return "", false
-}
-
-func networkArtifactDataKeyAllowed(key string) bool {
-	return slices.Contains(requiredNetworkArtifactKeys, key) ||
-		slices.Contains(optionalNetworkArtifactKeys, key)
-}
-
-func validNetworkArtifactDataHash(value string) bool {
-	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+sha256.Size*2 {
-		return false
-	}
-	for _, char := range strings.TrimPrefix(value, "sha256:") {
-		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
-			return false
-		}
-	}
-
-	return true
-}
-
-func computeNetworkArtifactDataHash(data map[string]string) string {
-	keys := make([]string, 0, len(data))
-	for key := range data {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	digest := sha256.New()
-	for _, key := range keys {
-		value := data[key]
-		_, _ = fmt.Fprintf(digest, "%d:%s\n%d:", len(key), key, len(value))
-		_, _ = io.WriteString(digest, value)
-		_, _ = io.WriteString(digest, "\n")
-	}
-	return "sha256:" + hex.EncodeToString(digest.Sum(nil))
+	return ctrlnetworkartifacts.ProducerConfigMapNeedsRecovery(configMap, expectedFingerprint)
 }
 
 func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap *corev1.ConfigMap) {
@@ -358,17 +187,17 @@ func nodeToNodeURL(network *yacdv1alpha1.CardanoNetwork) string {
 }
 
 func networkArtifactsConfigMapName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "network-artifacts")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "network-artifacts")
 }
 
 func artifactPublisherServiceAccountName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "artifact-publisher")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
 }
 
 func artifactPublisherRoleName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "artifact-publisher")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
 }
 
 func artifactPublisherRoleBindingName(network *yacdv1alpha1.CardanoNetwork) string {
-	return safeDNSLabelWithSuffix(network.Name, "artifact-publisher")
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -62,7 +63,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
 
-// Reconcile is the CardanoNetwork controller scaffold.
+// Reconcile applies the CardanoNetwork primary workload and publishes runtime status.
 func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx, "cardanonetwork", req.String())
 
@@ -96,7 +97,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
-			condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -296,8 +297,8 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	network *yacdv1alpha1.CardanoNetwork,
 	err error,
 ) (ctrl.Result, error) {
-	var unsupported unsupportedApplyError
-	if !errors.As(err, &unsupported) {
+	var conditionErr statusConditionError
+	if !errors.As(err, &conditionErr) {
 		return ctrl.Result{}, err
 	}
 
@@ -305,18 +306,18 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		return ctrl.Result{}, revokeErr
 	}
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
-		degradedCondition(metav1.ConditionTrue, unsupported.reason, unsupported.message),
-		progressingCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		condition(conditionTypeReady, metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		nodeReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		kupoReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		faucetReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
-		artifactsReadyCondition(metav1.ConditionFalse, unsupported.reason, unsupported.message),
+		degradedCondition(metav1.ConditionTrue, conditionErr.Reason, conditionErr.Message),
+		progressingCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		nodeReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		ogmiosReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		kupoReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		faucetReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		artifactsReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if unsupported.reason == conditionReasonResourceConflict {
+	if conditionErr.Reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, nil
 	}
 
@@ -326,7 +327,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 // SetupWithManager sets up the CardanoNetwork controller with the manager.
 func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	logf.Log.WithName("controllers").WithName(controllerName).
-		Info("Starting CardanoNetwork controller scaffold")
+		Info("Starting CardanoNetwork controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).

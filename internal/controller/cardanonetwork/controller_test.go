@@ -7,6 +7,10 @@ import (
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -27,7 +31,7 @@ import (
 
 const wrongManagedByLabelValue = "wrong"
 
-var testNetworkArtifactsDataHash = computeNetworkArtifactDataHash(testNetworkArtifactsData())
+var testNetworkArtifactsDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 // TestCardanoNetworkReconcilerReconcileHandlesMissingObject verifies deleted
 // resources are ignored without requeueing.
@@ -190,7 +194,7 @@ func TestCardanoNetworkReconcilerReconcilePublishesVerifiedNetworkArtifacts(t *t
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Artifacts)
 	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
-	assert.Equal(t, networkArtifactSchemaVersion, current.Status.Artifacts.SchemaVersion)
+	assert.Equal(t, networkartifacts.SchemaVersion, current.Status.Artifacts.SchemaVersion)
 	assert.Equal(t, testNetworkArtifactsDataHash, current.Status.Artifacts.DataHash)
 }
 
@@ -241,7 +245,7 @@ func TestCardanoNetworkReconcilerReconcileRecoversCorruptedNetworkArtifactsConfi
 	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
 
 	corrupted := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	delete(corrupted.Data, "configuration.yaml")
+	delete(corrupted.Data, networkartifacts.ConfigurationKey)
 	require.NoError(t, reconciler.Update(ctx, corrupted))
 
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
@@ -274,48 +278,48 @@ func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "devnet-network-artifacts",
 			Annotations: map[string]string{
-				networkArtifactSchemaVersionAnno: networkArtifactSchemaVersion,
-				localnetFingerprintAnno:          "fingerprint",
-				networkArtifactDataHashAnno:      "sha256:test",
+				ctrlannotations.ArtifactSchemaVersion: networkartifacts.SchemaVersion,
+				localnetFingerprintAnno:               "fingerprint",
+				ctrlannotations.ArtifactDataHash:      "sha256:test",
 			},
 		},
 		Data: testNetworkArtifactsData(),
 	}
 
-	result := artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap data hash is not published", result.reason)
+	result := ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap data hash is not published", result.Message)
 
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.True(t, result.ready)
-	assert.Equal(t, testNetworkArtifactsDataHash, result.status.DataHash)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
+	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.True(t, result.Ready)
+	assert.Equal(t, testNetworkArtifactsDataHash, result.Status.DataHash)
 
-	configMap.Data["configuration.yaml"] = "corrupted"
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.reason)
+	configMap.Data[networkartifacts.ConfigurationKey] = "corrupted"
+	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.Message)
 
 	configMap.Data = testNetworkArtifactsData()
-	configMap.Data["dijkstra-genesis.json"] = "test dijkstra-genesis.json"
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.True(t, result.ready)
-	assert.Equal(t, configMap.Annotations[networkArtifactDataHashAnno], result.status.DataHash)
+	configMap.Data[networkartifacts.DijkstraGenesisKey] = "test dijkstra-genesis.json"
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.True(t, result.Ready)
+	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], result.Status.DataHash)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.Data["pool-keys/secret.skey"] = "do not publish"
-	configMap.Annotations[networkArtifactDataHashAnno] = computeNetworkArtifactDataHash(configMap.Data)
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.reason)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
+	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.Message)
 
 	configMap.Data = testNetworkArtifactsData()
 	configMap.BinaryData = map[string][]byte{"secret": []byte("do not publish")}
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
-	result = artifactConfigMapStatus(configMap, "fingerprint")
-	assert.False(t, result.ready)
-	assert.Equal(t, "artifact ConfigMap contains binary data", result.reason)
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
+	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
+	assert.False(t, result.Ready)
+	assert.Equal(t, "artifact ConfigMap contains binary data", result.Message)
 }
 
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
@@ -1298,7 +1302,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T)
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlannotations.RequestedStorageClass])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1325,7 +1329,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassRemoval(t *testing.
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[requestedStorageClassAnno])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlannotations.RequestedStorageClass])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1348,7 +1352,7 @@ func TestCardanoNetworkReconcilerReconcileToleratesDefaultedStorageClass(t *test
 	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, defaultStorageClassName, *pvc.Spec.StorageClassName)
-	assert.NotContains(t, pvc.Annotations, requestedStorageClassAnno)
+	assert.NotContains(t, pvc.Annotations, ctrlannotations.RequestedStorageClass)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -2069,8 +2073,8 @@ func publishNetworkArtifacts(
 	if configMap.Annotations == nil {
 		configMap.Annotations = map[string]string{}
 	}
-	configMap.Annotations[networkArtifactSchemaVersionAnno] = networkArtifactSchemaVersion
-	configMap.Annotations[networkArtifactDataHashAnno] = testNetworkArtifactsDataHash
+	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
+	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
 	if configMap.Data == nil {
 		configMap.Data = map[string]string{}
 	}
@@ -2082,14 +2086,14 @@ func publishNetworkArtifacts(
 
 func testNetworkArtifactsData() map[string]string {
 	return map[string]string{
-		"configuration.yaml":      "test configuration.yaml",
-		"byron-genesis.json":      "test byron-genesis.json",
-		"shelley-genesis.json":    "test shelley-genesis.json",
-		"alonzo-genesis.json":     "test alonzo-genesis.json",
-		"conway-genesis.json":     "test conway-genesis.json",
-		"primary-topology.json":   "test primary-topology.json",
-		"yacd-localnet-plan.json": "test yacd-localnet-plan.json",
-		"connection.json":         "test connection.json",
+		networkartifacts.ConfigurationKey:   "test configuration.yaml",
+		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
+		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
+		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
+		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
+		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
+		networkartifacts.PlanManifestKey:    "test yacd-localnet-plan.json",
+		networkartifacts.ConnectionKey:      "test connection.json",
 	}
 }
 

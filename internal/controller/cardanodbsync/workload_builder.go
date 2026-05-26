@@ -1,14 +1,15 @@
 package cardanodbsync
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -74,8 +75,6 @@ const (
 	defaultFollowerNodeImageRevision   = "yacd.4"
 	defaultFollowerNodeStorageSize     = "10Gi"
 	dbSyncRunAsID                      = int64(10001)
-	maxLabelValueLength                = 63
-	safeNameHashLength                 = 10
 )
 
 type dbSyncWorkloadResources struct {
@@ -209,7 +208,7 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 		Paths: dbsync.Paths{
 			ConfigFile:   dbSyncConfigFilePath(),
 			TopologyFile: followerTopologyFilePath(),
-			NodeConfig:   networkArtifactFilePath("configuration.yaml"),
+			NodeConfig:   networkArtifactFilePath(networkartifacts.ConfigurationKey),
 			SocketPath:   dbSyncNodeSocketPath,
 			StateDir:     dbSyncStateMountDir,
 			PGPassFile:   dbSyncPGPassFilePath(),
@@ -520,7 +519,7 @@ func (b dbSyncWorkloadBuilder) storagePersistentVolumeClaim(
 	if storageClassName != nil {
 		pvc.Spec.StorageClassName = storageClassName
 		pvc.Annotations = map[string]string{
-			requestedStorageClassAnno: *storageClassName,
+			ctrlannotations.RequestedStorageClass: *storageClassName,
 		}
 	}
 
@@ -891,31 +890,31 @@ func dbSyncPGPassFilePath() string {
 }
 
 func dbSyncWorkloadName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncNameSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncNameSuffix)
 }
 
 func dbSyncConfigMapName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncConfigMapSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncConfigMapSuffix)
 }
 
 func dbSyncStatePVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncStatePVCSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncStatePVCSuffix)
 }
 
 func dbSyncFollowerPVCName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncFollowerPVCSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncFollowerPVCSuffix)
 }
 
 func dbSyncPGPassSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncPGPassSecretSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncPGPassSecretSuffix)
 }
 
 func dbSyncMetricsServiceName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	return safeDNSLabelWithSuffix(dbSync.Name, dbSyncMetricsSuffix)
+	return ctrlnames.DNSLabelWithSuffix(dbSync.Name, dbSyncMetricsSuffix)
 }
 
 func dbSyncWorkloadSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string {
-	instance := safeLabelValue(dbSync.Name)
+	instance := ctrlnames.LabelValue(dbSync.Name)
 	return map[string]string{
 		labelAppName:      labelDBSyncAppName,
 		labelAppInstance:  instance,
@@ -929,90 +928,4 @@ func dbSyncWorkloadLabels(dbSync *yacdv1alpha1.CardanoDBSync) map[string]string 
 	labels := dbSyncWorkloadSelectorLabels(dbSync)
 	labels[labelAppManagedBy] = "yacd"
 	return labels
-}
-
-func safeDNSLabelWithSuffix(value string, suffix string) string {
-	base := sanitizeDNSLabel(value)
-	needsHash := base != value
-	if base == "" {
-		base = "x"
-		needsHash = true
-	}
-
-	candidateSuffix := "-" + suffix
-	if needsHash {
-		candidateSuffix = fmt.Sprintf("-%s-%s", shortNameHash(value), suffix)
-	}
-	candidate := base + candidateSuffix
-	if len(candidate) <= maxLabelValueLength {
-		return candidate
-	}
-
-	hash := shortNameHash(value)
-	hashSuffix := fmt.Sprintf("-%s-%s", hash, suffix)
-	prefixLength := maxLabelValueLength - len(hashSuffix)
-	prefix := strings.Trim(base[:prefixLength], "-")
-	if prefix == "" {
-		prefix = "x"
-	}
-
-	return prefix + hashSuffix
-}
-
-func safeLabelValue(value string) string {
-	base := sanitizeLabelValue(value)
-	if base == "" {
-		base = shortNameHash(value)
-	}
-	if len(base) <= maxLabelValueLength {
-		return base
-	}
-
-	hash := shortNameHash(value)
-	hashSuffix := "-" + hash
-	prefixLength := maxLabelValueLength - len(hashSuffix)
-	prefix := strings.TrimRight(base[:prefixLength], "-_.")
-	if prefix == "" {
-		prefix = "x"
-	}
-
-	return prefix + hashSuffix
-}
-
-func sanitizeDNSLabel(value string) string {
-	var builder strings.Builder
-	builder.Grow(len(value))
-	for _, char := range strings.ToLower(value) {
-		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '-' {
-			builder.WriteRune(char)
-			continue
-		}
-		builder.WriteByte('-')
-	}
-
-	return strings.Trim(builder.String(), "-")
-}
-
-func sanitizeLabelValue(value string) string {
-	var builder strings.Builder
-	builder.Grow(len(value))
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') ||
-			(char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') ||
-			char == '-' ||
-			char == '_' ||
-			char == '.' {
-			builder.WriteRune(char)
-			continue
-		}
-		builder.WriteByte('-')
-	}
-
-	return strings.Trim(builder.String(), "-_.")
-}
-
-func shortNameHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:safeNameHashLength]
 }
