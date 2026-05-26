@@ -274,24 +274,12 @@ func (r *CardanoNetworkReconciler) primaryNodeReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Primary node Deployment is not available", nodeReadyCondition)
+	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, cardanoNodeContainerName)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if blocked != nil {
+	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Primary node Deployment is not available", "Primary node container is not ready", nodeReadyCondition); blocked != nil {
 		return *blocked, nil
-	}
-
-	containerReady, err := r.primaryPodContainerReady(ctx, network, cardanoNodeContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if !containerReady {
-		return nodeReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node container is not ready",
-		), nil
 	}
 
 	return nodeReadyCondition(
@@ -326,24 +314,12 @@ func (r *CardanoNetworkReconciler) primaryOgmiosReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Ogmios sidecar is not available", ogmiosReadyCondition)
+	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, ogmiosContainerName)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if blocked != nil {
+	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Ogmios sidecar is not available", "Ogmios sidecar is not ready", ogmiosReadyCondition); blocked != nil {
 		return *blocked, nil
-	}
-
-	containerReady, err := r.primaryPodContainerReady(ctx, network, ogmiosContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if !containerReady {
-		return ogmiosReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Ogmios sidecar is not ready",
-		), nil
 	}
 
 	return ogmiosReadyCondition(
@@ -378,24 +354,12 @@ func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
 		return metav1.Condition{}, err
 	}
 
-	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Kupo sidecar is not available", kupoReadyCondition)
+	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, kupoContainerName)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if blocked != nil {
+	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Kupo sidecar is not available", "Kupo sidecar is not ready", kupoReadyCondition); blocked != nil {
 		return *blocked, nil
-	}
-
-	containerReady, err := r.primaryPodContainerReady(ctx, network, kupoContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if !containerReady {
-		return kupoReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Kupo sidecar is not ready",
-		), nil
 	}
 
 	return kupoReadyCondition(
@@ -449,24 +413,12 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 		), nil
 	}
 
-	blocked, err := r.primaryDeploymentAvailabilityCondition(ctx, network, "Faucet sidecar is not available", faucetReadyCondition)
+	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, faucetContainerName)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if blocked != nil {
+	if blocked := primaryDeploymentContainerBlockedCondition(readiness, "Faucet sidecar is not available", "Faucet sidecar is not ready", faucetReadyCondition); blocked != nil {
 		return *blocked, nil
-	}
-
-	containerReady, err := r.primaryPodContainerReady(ctx, network, faucetContainerName)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
-	if !containerReady {
-		return faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Faucet sidecar is not ready",
-		), nil
 	}
 
 	return faucetReadyCondition(
@@ -478,49 +430,19 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 
 type primaryDeploymentConditionFunc func(metav1.ConditionStatus, string, string) metav1.Condition
 
-func (r *CardanoNetworkReconciler) primaryDeploymentAvailabilityCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	unavailableMessage string,
-	condition primaryDeploymentConditionFunc,
-) (*metav1.Condition, error) {
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			blocked := condition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Primary node Deployment is missing",
-			)
-			return &blocked, nil
-		}
-		return nil, err
-	}
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Primary node Deployment has not observed the latest generation",
-		)
-		return &blocked, nil
-	}
-	if !ctrlreadiness.DeploymentAvailable(deployment) {
-		blocked := condition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			unavailableMessage,
-		)
-		return &blocked, nil
-	}
-
-	return nil, nil
-}
-
-func (r *CardanoNetworkReconciler) primaryPodContainerReady(
+func (r *CardanoNetworkReconciler) primaryDeploymentContainerReadiness(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	containerName string,
-) (bool, error) {
+) (ctrlreadiness.DeploymentContainerResult, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrlreadiness.DeploymentContainerResult{State: ctrlreadiness.DeploymentContainerMissing}, nil
+		}
+		return ctrlreadiness.DeploymentContainerResult{}, err
+	}
+
 	pods := &corev1.PodList{}
 	if err := r.statusReader().List(
 		ctx,
@@ -528,16 +450,50 @@ func (r *CardanoNetworkReconciler) primaryPodContainerReady(
 		client.InNamespace(network.Namespace),
 		client.MatchingLabels(primaryWorkloadSelectorLabels(network)),
 	); err != nil {
-		return false, err
+		return ctrlreadiness.DeploymentContainerResult{}, err
 	}
 
-	for i := range pods.Items {
-		if ctrlreadiness.PodContainerReady(&pods.Items[i], containerName) {
-			return true, nil
-		}
-	}
+	return ctrlreadiness.DeploymentContainerReadiness(deployment, pods.Items, containerName), nil
+}
 
-	return false, nil
+func primaryDeploymentContainerBlockedCondition(
+	readiness ctrlreadiness.DeploymentContainerResult,
+	unavailableMessage string,
+	containerNotReadyMessage string,
+	condition primaryDeploymentConditionFunc,
+) *metav1.Condition {
+	switch readiness.State {
+	case ctrlreadiness.DeploymentContainerReady:
+		return nil
+	case ctrlreadiness.DeploymentContainerMissing:
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonPrimaryWorkloadMissing,
+			"Primary node Deployment is missing",
+		)
+		return &blocked
+	case ctrlreadiness.DeploymentContainerStale:
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		)
+		return &blocked
+	case ctrlreadiness.DeploymentContainerUnavailable:
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			unavailableMessage,
+		)
+		return &blocked
+	default:
+		blocked := condition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			containerNotReadyMessage,
+		)
+		return &blocked
+	}
 }
 
 func (r *CardanoNetworkReconciler) statusReader() client.Reader {

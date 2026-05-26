@@ -49,6 +49,24 @@ func TestApplyOwnedObjectCreatesMissingObject(t *testing.T) {
 	assert.Equal(t, map[string]string{"defaulted": "true"}, stored.Annotations)
 }
 
+func TestApplyOwnedObjectRejectsDesiredWithoutControllerOwner(t *testing.T) {
+	ctx := context.Background()
+	c := newApplyTestClient(t)
+	desired := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: "testing"}}
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	var ownerConflict *ctrlmetadata.OwnerConflictError
+	require.ErrorAs(t, err, &ownerConflict)
+	assert.Equal(t, "resource testing/child has no desired controller owner", err.Error())
+
+	stored := &corev1.ConfigMap{}
+	assert.Error(t, c.Get(ctx, client.ObjectKey{Name: "child", Namespace: "testing"}, stored))
+}
+
 func TestApplyOwnedObjectPatchesChangedObject(t *testing.T) {
 	ctx := context.Background()
 	current := ownedConfigMap(t)

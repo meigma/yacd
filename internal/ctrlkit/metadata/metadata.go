@@ -74,11 +74,10 @@ func ControlledBy(obj metav1.Object, owner metav1.Object, apiVersion string, kin
 		controller.UID == owner.GetUID()
 }
 
-// ValidateControllerOwner verifies that current is controlled by the same
-// controller owner reference declared on desired.
-func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error {
-	desiredController := metav1.GetControllerOf(desired)
-	if desiredController == nil {
+// ValidateDesiredControllerOwner verifies that desired declares the controller
+// owner reference an apply helper requires before creating or reconciling it.
+func ValidateDesiredControllerOwner(desired metav1.Object) error {
+	if metav1.GetControllerOf(desired) == nil {
 		return ownerConflict(
 			desired,
 			"resource %s has no desired controller owner",
@@ -86,6 +85,17 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 		)
 	}
 
+	return nil
+}
+
+// ValidateControllerOwner verifies that current is controlled by the same
+// controller owner reference declared on desired.
+func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error {
+	if err := ValidateDesiredControllerOwner(desired); err != nil {
+		return err
+	}
+
+	desiredController := metav1.GetControllerOf(desired)
 	currentController := metav1.GetControllerOf(current)
 	if currentController == nil {
 		return ownerConflict(

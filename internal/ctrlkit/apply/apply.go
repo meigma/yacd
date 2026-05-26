@@ -65,6 +65,9 @@ func ApplyOwnedObject[T client.Object](
 			return controllerutil.OperationResultNone, zero, err
 		}
 	}
+	if err := ctrlmetadata.ValidateDesiredControllerOwner(desiredCopy); err != nil {
+		return controllerutil.OperationResultNone, zero, err
+	}
 
 	current := options.Current
 	err = c.Get(ctx, ctrlmetadata.ObjectKey(desiredCopy), current)

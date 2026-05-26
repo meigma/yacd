@@ -64,6 +64,18 @@ func TestControlledBy(t *testing.T) {
 	assert.False(t, ControlledBy(child, owner, "v1", "Secret"))
 }
 
+func TestValidateDesiredControllerOwner(t *testing.T) {
+	desired := desiredWithOwner("child", "testing", "v1", "ConfigMap", "parent", "uid-1")
+
+	require.NoError(t, ValidateDesiredControllerOwner(desired))
+
+	err := ValidateDesiredControllerOwner(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: "testing"}})
+
+	var conflict *OwnerConflictError
+	require.True(t, errors.As(err, &conflict))
+	assert.Equal(t, "resource testing/child has no desired controller owner", conflict.Error())
+}
+
 func TestValidateControllerOwner(t *testing.T) {
 	current := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
 		Name:      "child",

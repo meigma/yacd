@@ -10,6 +10,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	controllerstorage "github.com/meigma/yacd/internal/controller/storage"
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
@@ -25,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-type unsupportedStatusError = ctrlstatus.UnsupportedError
+type statusConditionError = ctrlstatus.ConditionError
 
 const operationResultDeleted controllerutil.OperationResult = "deleted"
 
@@ -62,7 +63,7 @@ func validatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim,
 		return err
 	}
 	if drift, changed := ctrlstorage.PersistentVolumeClaimDriftFor(current, desired, ctrlannotations.RequestedStorageClass); changed {
-		return unsupportedPersistentVolumeClaimDrift(desired, drift)
+		return controllerstorage.UnsupportedPersistentVolumeClaimDrift(conditionReasonUnsupportedStorageChange, desired, drift)
 	}
 
 	return nil
@@ -563,28 +564,24 @@ func mergeOwnedAnnotations(current map[string]string, desired map[string]string)
 	)
 }
 
-func resourceConflict(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonResourceConflict, format, args...)
+func resourceConflict(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonResourceConflict, format, args...)
 }
 
 func controllerOwnerConflict(err error) error {
 	return resourceConflict("%s", err.Error())
 }
 
-func unsupportedStorageChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedStorageChange, format, args...)
+func unsupportedWorkloadChange(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonUnsupportedWorkloadChange, format, args...)
 }
 
-func unsupportedWorkloadChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedWorkloadChange, format, args...)
+func unsupportedLocalnetChange(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonUnsupportedLocalnetChange, format, args...)
 }
 
-func unsupportedLocalnetChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedLocalnetChange, format, args...)
-}
-
-func missingLocalnetFingerprint(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonMissingLocalnetFingerprint, format, args...)
+func missingLocalnetFingerprint(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonMissingLocalnetFingerprint, format, args...)
 }
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
@@ -626,40 +623,4 @@ func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired 
 	}
 
 	return nil
-}
-
-func unsupportedPersistentVolumeClaimDrift(desired *corev1.PersistentVolumeClaim, drift ctrlstorage.PersistentVolumeClaimDrift) unsupportedStatusError {
-	switch drift.Reason {
-	case ctrlstorage.PersistentVolumeClaimDriftRequestedStorageClass:
-		return unsupportedStorageChange(
-			"PVC %s requested storageClassName cannot be changed from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftStorageClass:
-		return unsupportedStorageChange(
-			"PVC %s storageClassName cannot be changed from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftAccessModes:
-		return unsupportedStorageChange(
-			"PVC %s accessModes drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftStorageDecrease:
-		return unsupportedStorageChange(
-			"PVC %s storage cannot be decreased from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	default:
-		return unsupportedStorageChange(
-			"PVC %s drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	}
 }

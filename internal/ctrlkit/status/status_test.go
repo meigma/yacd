@@ -14,21 +14,21 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-func TestUnsupported(t *testing.T) {
-	err := Unsupported("ResourceConflict", "resource %s is unavailable", "testing/child")
+func TestNewConditionError(t *testing.T) {
+	err := NewConditionError("ResourceConflict", "resource %s is unavailable", "testing/child")
 
 	assert.Equal(t, "ResourceConflict", err.Reason)
 	assert.Equal(t, "resource testing/child is unavailable", err.Message)
 	assert.Equal(t, err.Message, err.Error())
 }
 
-func TestUnsupportedErrorSupportsErrorsAs(t *testing.T) {
-	err := error(Unsupported("UnsupportedSpec", "bad spec"))
+func TestConditionErrorSupportsErrorsAs(t *testing.T) {
+	err := error(NewConditionError("UnsupportedSpec", "bad spec"))
 
-	var unsupported UnsupportedError
-	require.True(t, errors.As(err, &unsupported))
-	assert.Equal(t, "UnsupportedSpec", unsupported.Reason)
-	assert.Equal(t, "bad spec", unsupported.Message)
+	var conditionErr ConditionError
+	require.True(t, errors.As(err, &conditionErr))
+	assert.Equal(t, "UnsupportedSpec", conditionErr.Reason)
+	assert.Equal(t, "bad spec", conditionErr.Message)
 }
 
 func TestSetObserved(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	controllerstorage "github.com/meigma/yacd/internal/controller/storage"
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
@@ -40,7 +41,7 @@ func unsupportedSpec(format string, args ...any) unsupportedSpecError {
 	return unsupportedSpecError{message: fmt.Sprintf(format, args...)}
 }
 
-type unsupportedStatusError = ctrlstatus.UnsupportedError
+type statusConditionError = ctrlstatus.ConditionError
 
 type dbSyncWorkloadApplyResults struct {
 	ConfigMap                     controllerutil.OperationResult
@@ -264,15 +265,15 @@ func (r *CardanoDBSyncReconciler) handleDBSyncWorkloadApplyError(
 		)
 	}
 
-	var unsupported unsupportedStatusError
-	if !errors.As(err, &unsupported) {
+	var conditionErr statusConditionError
+	if !errors.As(err, &conditionErr) {
 		return ctrl.Result{}, err
 	}
 
-	if statusErr := r.patchWorkloadApplyBlockedStatus(ctx, dbSync, unsupported.Reason, unsupported.Message); statusErr != nil {
+	if statusErr := r.patchWorkloadApplyBlockedStatus(ctx, dbSync, conditionErr.Reason, conditionErr.Message); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if unsupported.Reason == conditionReasonResourceConflict {
+	if conditionErr.Reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: dbSyncResourceConflictRequeueAfter}, nil
 	}
 
@@ -354,7 +355,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncDeployment(
 
 func validateDBSyncPersistentVolumeClaim(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
 	if drift, changed := ctrlstorage.PersistentVolumeClaimDriftFor(current, desired, ctrlannotations.RequestedStorageClass); changed {
-		return unsupportedPersistentVolumeClaimDrift(desired, drift)
+		return controllerstorage.UnsupportedPersistentVolumeClaimDrift(conditionReasonUnsupportedStorageChange, desired, drift)
 	}
 
 	return nil
@@ -464,24 +465,20 @@ func mergeDBSyncOwnedAnnotations(current map[string]string, desired map[string]s
 	)
 }
 
-func resourceConflict(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonResourceConflict, format, args...)
+func resourceConflict(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonResourceConflict, format, args...)
 }
 
 func controllerOwnerConflict(err error) error {
 	return resourceConflict("%s", err.Error())
 }
 
-func unsupportedStorageChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedStorageChange, format, args...)
+func unsupportedWorkloadChange(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonUnsupportedWorkloadChange, format, args...)
 }
 
-func unsupportedWorkloadChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedWorkloadChange, format, args...)
-}
-
-func unsupportedDatabaseIdentityChange(format string, args ...any) unsupportedStatusError {
-	return ctrlstatus.Unsupported(conditionReasonUnsupportedDatabaseIdentityChange, format, args...)
+func unsupportedDatabaseIdentityChange(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(conditionReasonUnsupportedDatabaseIdentityChange, format, args...)
 }
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
@@ -494,40 +491,4 @@ func validateControllerOwner(current metav1.Object, desired metav1.Object) error
 
 func controlledBy(current metav1.Object, owner metav1.Object) bool {
 	return ctrlmetadata.ControlledBy(current, owner, yacdv1alpha1.GroupVersion.String(), "CardanoDBSync")
-}
-
-func unsupportedPersistentVolumeClaimDrift(desired *corev1.PersistentVolumeClaim, drift ctrlstorage.PersistentVolumeClaimDrift) unsupportedStatusError {
-	switch drift.Reason {
-	case ctrlstorage.PersistentVolumeClaimDriftRequestedStorageClass:
-		return unsupportedStorageChange(
-			"PVC %s requested storageClassName cannot be changed from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftStorageClass:
-		return unsupportedStorageChange(
-			"PVC %s storageClassName cannot be changed from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftAccessModes:
-		return unsupportedStorageChange(
-			"PVC %s accessModes drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	case ctrlstorage.PersistentVolumeClaimDriftStorageDecrease:
-		return unsupportedStorageChange(
-			"PVC %s storage cannot be decreased from %s to %s",
-			ctrlmetadata.ObjectKey(desired),
-			drift.Current,
-			drift.Desired,
-		)
-	default:
-		return unsupportedStorageChange(
-			"PVC %s drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	}
 }

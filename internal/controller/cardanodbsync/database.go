@@ -219,7 +219,7 @@ func (r *CardanoDBSyncReconciler) ensureManagedPostgresAuthSecret(
 			return nil, err
 		}
 		if acceptedIdentity != "" {
-			return nil, unsupportedStatusError{
+			return nil, statusConditionError{
 				Reason: conditionReasonManagedDatabaseSecretMissing,
 				Message: fmt.Sprintf(
 					"Managed Postgres generated auth Secret %s is missing after database initialization; restore the original Secret or recreate the CardanoDBSync with a fresh database",

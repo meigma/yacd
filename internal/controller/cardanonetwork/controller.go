@@ -297,8 +297,8 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	network *yacdv1alpha1.CardanoNetwork,
 	err error,
 ) (ctrl.Result, error) {
-	var unsupported unsupportedStatusError
-	if !errors.As(err, &unsupported) {
+	var conditionErr statusConditionError
+	if !errors.As(err, &conditionErr) {
 		return ctrl.Result{}, err
 	}
 
@@ -306,18 +306,18 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		return ctrl.Result{}, revokeErr
 	}
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
-		degradedCondition(metav1.ConditionTrue, unsupported.Reason, unsupported.Message),
-		progressingCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		nodeReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		ogmiosReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		kupoReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		faucetReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
-		artifactsReadyCondition(metav1.ConditionFalse, unsupported.Reason, unsupported.Message),
+		degradedCondition(metav1.ConditionTrue, conditionErr.Reason, conditionErr.Message),
+		progressingCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		ctrlstatus.Condition(conditionTypeReady, metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		nodeReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		ogmiosReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		kupoReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		faucetReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		artifactsReadyCondition(metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
 	}
-	if unsupported.Reason == conditionReasonResourceConflict {
+	if conditionErr.Reason == conditionReasonResourceConflict {
 		return ctrl.Result{RequeueAfter: resourceConflictRequeueAfter}, nil
 	}
 

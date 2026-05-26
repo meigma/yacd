@@ -282,40 +282,27 @@ func (r *CardanoDBSyncReconciler) workloadContainerReadyCondition(
 	readyMessage string,
 	notReadyMessage string,
 ) (metav1.Condition, error) {
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonWorkloadMissing, "CardanoDBSync Deployment is missing"), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return ctrlstatus.Condition(
-			conditionType,
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"CardanoDBSync Deployment has not observed the latest generation",
-		), nil
-	}
-	if !ctrlreadiness.DeploymentAvailable(deployment) {
-		return ctrlstatus.Condition(
-			conditionType,
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"CardanoDBSync Deployment is not available",
-		), nil
-	}
-
-	containerReady, err := r.workloadPodContainerReady(ctx, dbSync, containerName)
+	readiness, err := r.deploymentContainerReadiness(
+		ctx,
+		dbSync.Namespace,
+		dbSyncWorkloadName(dbSync),
+		dbSyncWorkloadSelectorLabels(dbSync),
+		containerName,
+	)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if !containerReady {
-		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, notReadyMessage), nil
-	}
 
-	return ctrlstatus.Condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage), nil
+	return deploymentContainerCondition(
+		readiness,
+		conditionType,
+		readyReason,
+		readyMessage,
+		"CardanoDBSync Deployment is missing",
+		"CardanoDBSync Deployment has not observed the latest generation",
+		"CardanoDBSync Deployment is not available",
+		notReadyMessage,
+	), nil
 }
 
 func (r *CardanoDBSyncReconciler) currentDBSyncMetricsEndpoint(
@@ -340,56 +327,44 @@ func (r *CardanoDBSyncReconciler) managedPostgresReadyCondition(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 ) (metav1.Condition, error) {
-	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresDeploymentName(dbSync)}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonWorkloadMissing, "Managed Postgres Deployment is missing"), nil
-		}
-		return metav1.Condition{}, err
-	}
-
-	if deployment.Status.ObservedGeneration != deployment.Generation {
-		return ctrlstatus.Condition(
-			conditionTypePostgresReady,
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Managed Postgres Deployment has not observed the latest generation",
-		), nil
-	}
-	if !ctrlreadiness.DeploymentAvailable(deployment) {
-		return ctrlstatus.Condition(
-			conditionTypePostgresReady,
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Managed Postgres Deployment is not available",
-		), nil
-	}
-
-	containerReady, err := r.podContainerReady(ctx, dbSync.Namespace, managedPostgresSelectorLabels(dbSync), managedPostgresContainerName)
+	readiness, err := r.deploymentContainerReadiness(
+		ctx,
+		dbSync.Namespace,
+		managedPostgresDeploymentName(dbSync),
+		managedPostgresSelectorLabels(dbSync),
+		managedPostgresContainerName,
+	)
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	if !containerReady {
-		return ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing, "Managed Postgres container is not ready"), nil
-	}
 
-	return ctrlstatus.Condition(conditionTypePostgresReady, metav1.ConditionTrue, conditionReasonPostgresReady, "Managed Postgres container is ready"), nil
+	return deploymentContainerCondition(
+		readiness,
+		conditionTypePostgresReady,
+		conditionReasonPostgresReady,
+		"Managed Postgres container is ready",
+		"Managed Postgres Deployment is missing",
+		"Managed Postgres Deployment has not observed the latest generation",
+		"Managed Postgres Deployment is not available",
+		"Managed Postgres container is not ready",
+	), nil
 }
 
-func (r *CardanoDBSyncReconciler) workloadPodContainerReady(
-	ctx context.Context,
-	dbSync *yacdv1alpha1.CardanoDBSync,
-	containerName string,
-) (bool, error) {
-	return r.podContainerReady(ctx, dbSync.Namespace, dbSyncWorkloadSelectorLabels(dbSync), containerName)
-}
-
-func (r *CardanoDBSyncReconciler) podContainerReady(
+func (r *CardanoDBSyncReconciler) deploymentContainerReadiness(
 	ctx context.Context,
 	namespace string,
+	deploymentName string,
 	selectorLabels map[string]string,
 	containerName string,
-) (bool, error) {
+) (ctrlreadiness.DeploymentContainerResult, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: deploymentName}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ctrlreadiness.DeploymentContainerResult{State: ctrlreadiness.DeploymentContainerMissing}, nil
+		}
+		return ctrlreadiness.DeploymentContainerResult{}, err
+	}
+
 	pods := &corev1.PodList{}
 	if err := r.statusReader().List(
 		ctx,
@@ -397,16 +372,34 @@ func (r *CardanoDBSyncReconciler) podContainerReady(
 		client.InNamespace(namespace),
 		client.MatchingLabels(selectorLabels),
 	); err != nil {
-		return false, err
+		return ctrlreadiness.DeploymentContainerResult{}, err
 	}
 
-	for i := range pods.Items {
-		if ctrlreadiness.PodContainerReady(&pods.Items[i], containerName) {
-			return true, nil
-		}
-	}
+	return ctrlreadiness.DeploymentContainerReadiness(deployment, pods.Items, containerName), nil
+}
 
-	return false, nil
+func deploymentContainerCondition(
+	readiness ctrlreadiness.DeploymentContainerResult,
+	conditionType string,
+	readyReason string,
+	readyMessage string,
+	missingMessage string,
+	staleMessage string,
+	unavailableMessage string,
+	containerNotReadyMessage string,
+) metav1.Condition {
+	switch readiness.State {
+	case ctrlreadiness.DeploymentContainerReady:
+		return ctrlstatus.Condition(conditionType, metav1.ConditionTrue, readyReason, readyMessage)
+	case ctrlreadiness.DeploymentContainerMissing:
+		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonWorkloadMissing, missingMessage)
+	case ctrlreadiness.DeploymentContainerStale:
+		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, staleMessage)
+	case ctrlreadiness.DeploymentContainerUnavailable:
+		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, unavailableMessage)
+	default:
+		return ctrlstatus.Condition(conditionType, metav1.ConditionFalse, conditionReasonDeploymentProgressing, containerNotReadyMessage)
+	}
 }
 
 func (r *CardanoDBSyncReconciler) statusReader() client.Reader {
