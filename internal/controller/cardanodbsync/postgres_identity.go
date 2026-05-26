@@ -25,9 +25,12 @@ type managedPostgresIdentityInput struct {
 }
 
 // managedPostgresAuthIdentityInput is the auth-Secret portion of the
-// managed Postgres identity fingerprint. The Version field is the
-// password fingerprint (generated path) or the Secret ResourceVersion
-// (user-provided path).
+// managed Postgres identity fingerprint. Both auth paths hash password
+// material — never Secret ResourceVersion metadata — so a Secret update
+// that does not change the password leaves identity stable. The
+// generated path reads the cached fingerprint annotation; the
+// user-provided path recomputes the fingerprint fresh from the live
+// password Secret. See managedPostgresCredentialVersion.
 type managedPostgresAuthIdentityInput struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
@@ -64,10 +67,13 @@ func managedPostgresIdentityFingerprint(dbSync *yacdv1alpha1.CardanoDBSync, auth
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// managedPostgresCredentialVersion returns the version string used in the
-// auth-Secret portion of the identity fingerprint. The generated path
-// uses the password fingerprint annotation (so a rotated password rolls
-// identity); the provided path uses the password material directly.
+// managedPostgresCredentialVersion returns the password-material
+// fingerprint that the identity fingerprint uses as the auth-Secret
+// version. Both paths hash the password (never the Secret
+// ResourceVersion) so an unrelated Secret mutation cannot churn
+// identity. The generated path reads the cached fingerprint annotation
+// the controller wrote at create time; the user-provided path
+// recomputes the fingerprint fresh from the live password material.
 func managedPostgresCredentialVersion(dbSync *yacdv1alpha1.CardanoDBSync, authSecret *corev1.Secret) (string, error) {
 	if dbSync == nil || dbSync.Spec.Database.Managed == nil {
 		return "", unsupportedSpec("managed database spec is required")
