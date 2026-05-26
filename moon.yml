@@ -89,12 +89,21 @@ tasks:
         controller-gen object paths="./..."
         controller-gen crd paths="./..." output:crd:artifacts:config=charts/yacd/crds
       fi
+      # Mockery v3 reads `go list` output via x/tools/go/packages. The proto
+      # `go` shim mangles the templated `-f` argument it passes, so prepend
+      # the real toolchain bin directory to PATH for this invocation only.
+      GOTOOLCHAIN_BIN="$(dirname "$(proto bin go)")"
+      MOCKERY_BIN="$(proto bin mockery)"
+      PATH="$GOTOOLCHAIN_BIN:$PATH" "$MOCKERY_BIN"
     inputs:
       - '@group(generatorSources)'
       - '@group(toolchainConfig)'
+      - '.mockery.yml'
+      - 'cli/internal/**/*.go'
     outputs:
       - 'api/**/zz_generated.deepcopy.go'
       - 'charts/yacd/crds/**/*'
+      - 'cli/internal/mocks/**/*.go'
     options:
       cache: false
       runInCI: false

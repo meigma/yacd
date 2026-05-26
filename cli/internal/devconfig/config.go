@@ -11,30 +11,54 @@ import (
 )
 
 const (
+	// APIVersion is the apiVersion key required on every developer
+	// environment document.
 	APIVersion = "yacd.meigma.io/devconfig/v1alpha1"
-	Kind       = "Environment"
+
+	// Kind is the kind key required on every developer environment document.
+	Kind = "Environment"
 )
 
-// Environment is the local developer-facing YACD configuration.
+// Environment is the local developer-facing YACD configuration document.
+// It mirrors the shape of a Kubernetes object so authors recognise the
+// metadata/spec layout, but the controllers consume the rendered
+// CardanoNetwork rather than this envelope.
 type Environment struct {
-	APIVersion string          `json:"apiVersion"`
-	Kind       string          `json:"kind"`
-	Metadata   Metadata        `json:"metadata"`
-	Spec       EnvironmentSpec `json:"spec"`
+	// APIVersion must equal the package APIVersion constant.
+	APIVersion string `json:"apiVersion"`
+
+	// Kind must equal the package Kind constant.
+	Kind string `json:"kind"`
+
+	// Metadata identifies the rendered Kubernetes object.
+	Metadata Metadata `json:"metadata"`
+
+	// Spec carries the CardanoNetwork inputs.
+	Spec EnvironmentSpec `json:"spec"`
 }
 
-// Metadata identifies the generated Kubernetes environment.
+// Metadata identifies the generated Kubernetes object.
 type Metadata struct {
-	Name      string `json:"name"`
+	// Name is the rendered CardanoNetwork's metadata.name; required.
+	Name string `json:"name"`
+
+	// Namespace is the rendered CardanoNetwork's metadata.namespace;
+	// empty defers to the CLI's namespace precedence.
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// EnvironmentSpec contains the cluster resources derived from the local config.
+// EnvironmentSpec wraps the network configuration. It is intentionally a thin
+// envelope so future top-level fields (for example, multiple networks per
+// environment) can be added without changing existing documents.
 type EnvironmentSpec struct {
+	// Network is the desired CardanoNetwork spec, decoded directly into the
+	// API type so developer documents see the same fields the CRD exposes.
 	Network yacdv1alpha1.CardanoNetworkSpec `json:"network"`
 }
 
-// LoadFile reads and validates a developer config file.
+// LoadFile reads and validates a developer environment file at the given path.
+// It is a thin wrapper around Load that adds file-open and file-name context
+// to errors.
 func LoadFile(path string) (*Environment, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -52,7 +76,15 @@ func LoadFile(path string) (*Environment, error) {
 	return environment, nil
 }
 
-// Load reads and validates a developer config document.
+// Load reads, parses, and validates a developer environment document.
+//
+// Validation runs in two passes. The first pass (Validate) checks envelope
+// integrity — apiVersion, kind, required fields on the decoded Go value.
+// The second pass (validateExplicitFields) re-decodes the raw YAML into a
+// generic map and checks that certain CRD-defaulted fields were actually
+// written by the author rather than filled in by Go's zero value. Both are
+// required because the decoder cannot distinguish "absent" from "zero" on
+// the strongly-typed API value.
 func Load(r io.Reader) (*Environment, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -73,7 +105,10 @@ func Load(r io.Reader) (*Environment, error) {
 	return &environment, nil
 }
 
-// Validate checks the local config envelope before rendering Kubernetes objects.
+// Validate checks the document envelope before rendering Kubernetes objects.
+// It accepts only the local-mode network shape that the phase-4 CLI
+// supports; other modes are rejected here so the rendering pipeline can
+// assume a narrow input.
 func (e Environment) Validate() error {
 	if strings.TrimSpace(e.APIVersion) != APIVersion {
 		return fmt.Errorf("apiVersion must be %q", APIVersion)
@@ -100,6 +135,17 @@ func (e Environment) Validate() error {
 	return nil
 }
 
+// validateExplicitFields enforces that certain CRD-defaulted fields are
+// present explicitly in the YAML source, not merely zero on the decoded
+// Go value.
+//
+// The strict decoder catches unknown fields, and Validate catches missing
+// required fields on the typed value, but neither can tell whether the
+// author wrote "port: 0" or omitted the key entirely. For fields whose
+// implied default would silently produce surprising runtime behaviour
+// (for example, an unset node.port leaving the rendered Service with port 0),
+// the document must spell the value out. This pass walks the raw map and
+// fails fast when a required path is missing.
 func validateExplicitFields(data []byte, environment Environment) error {
 	var document map[string]any
 	if err := yaml.Unmarshal(data, &document); err != nil {
@@ -155,6 +201,9 @@ func validateExplicitFields(data []byte, environment Environment) error {
 	return nil
 }
 
+// hasPath reports whether the given dotted path exists with a non-nil value
+// in the decoded YAML map. Only object segments are traversed; an
+// intermediate non-object value or a missing/nil leaf returns false.
 func hasPath(document map[string]any, path ...string) bool {
 	var current any = document
 	for _, segment := range path {

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/meigma/yacd/cli/internal/devconfig"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const validConfig = `
@@ -36,30 +38,15 @@ func TestCardanoNetworkRendersDeveloperConfig(t *testing.T) {
 	t.Parallel()
 
 	environment, err := devconfig.Load(strings.NewReader(validConfig))
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
+	require.NoError(t, err)
 
 	network, err := CardanoNetwork(environment, "override")
-	if err != nil {
-		t.Fatalf("CardanoNetwork returned an error: %v", err)
-	}
-
-	if got, want := network.APIVersion, "yacd.meigma.io/v1alpha1"; got != want {
-		t.Fatalf("apiVersion = %q, want %q", got, want)
-	}
-	if got, want := network.Kind, "CardanoNetwork"; got != want {
-		t.Fatalf("kind = %q, want %q", got, want)
-	}
-	if got, want := network.Name, "devnet"; got != want {
-		t.Fatalf("name = %q, want %q", got, want)
-	}
-	if got, want := network.Namespace, "override"; got != want {
-		t.Fatalf("namespace = %q, want %q", got, want)
-	}
-	if got, want := network.Spec.Local.NetworkMagic, int64(42); got != want {
-		t.Fatalf("network magic = %d, want %d", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "yacd.meigma.io/v1alpha1", network.APIVersion)
+	assert.Equal(t, "CardanoNetwork", network.Kind)
+	assert.Equal(t, "devnet", network.Name)
+	assert.Equal(t, "override", network.Namespace)
+	assert.Equal(t, int64(42), network.Spec.Local.NetworkMagic)
 }
 
 func TestNamespacePrecedence(t *testing.T) {
@@ -78,11 +65,9 @@ func TestNamespacePrecedence(t *testing.T) {
 		{name: "default", want: "default"},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := Namespace(tt.override, tt.configured, tt.fallback); got != tt.want {
-				t.Fatalf("Namespace() = %q, want %q", got, tt.want)
-			}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, Namespace(tc.override, tc.configured, tc.fallback))
 		})
 	}
 }
@@ -91,18 +76,12 @@ func TestManifestRendersInspectableYAML(t *testing.T) {
 	t.Parallel()
 
 	environment, err := devconfig.Load(strings.NewReader(validConfig))
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
+	require.NoError(t, err)
 	network, err := CardanoNetwork(environment, "")
-	if err != nil {
-		t.Fatalf("CardanoNetwork returned an error: %v", err)
-	}
+	require.NoError(t, err)
 
 	manifest, err := Manifest(network)
-	if err != nil {
-		t.Fatalf("Manifest returned an error: %v", err)
-	}
+	require.NoError(t, err)
 
 	output := string(manifest)
 	for _, want := range []string{
@@ -112,8 +91,6 @@ func TestManifestRendersInspectableYAML(t *testing.T) {
 		"namespace: yacd-dev",
 		"networkMagic: 42",
 	} {
-		if !strings.Contains(output, want) {
-			t.Fatalf("manifest missing %q:\n%s", want, output)
-		}
+		assert.Contains(t, output, want)
 	}
 }

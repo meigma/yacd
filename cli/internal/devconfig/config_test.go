@@ -3,6 +3,9 @@ package devconfig
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const validConfig = `
@@ -34,31 +37,18 @@ func TestLoadReadsEnvironmentConfig(t *testing.T) {
 	t.Parallel()
 
 	environment, err := Load(strings.NewReader(validConfig))
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
-
-	if got, want := environment.Metadata.Name, "devnet"; got != want {
-		t.Fatalf("name = %q, want %q", got, want)
-	}
-	if got, want := environment.Metadata.Namespace, "yacd-dev"; got != want {
-		t.Fatalf("namespace = %q, want %q", got, want)
-	}
-	if got, want := environment.Spec.Network.Local.NetworkMagic, int64(42); got != want {
-		t.Fatalf("network magic = %d, want %d", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "devnet", environment.Metadata.Name)
+	assert.Equal(t, "yacd-dev", environment.Metadata.Namespace)
+	assert.Equal(t, int64(42), environment.Spec.Network.Local.NetworkMagic)
 }
 
 func TestLoadRejectsUnknownTopLevelFields(t *testing.T) {
 	t.Parallel()
 
 	_, err := Load(strings.NewReader(validConfig + "\nunknown: true\n"))
-	if err == nil {
-		t.Fatal("Load succeeded, want error")
-	}
-	if got := err.Error(); !strings.Contains(got, "unknown") {
-		t.Fatalf("error = %q, want unknown field message", got)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown")
 }
 
 func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
@@ -106,15 +96,11 @@ func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(strings.NewReader(tt.config))
-			if err == nil {
-				t.Fatal("Load succeeded, want error")
-			}
-			if got := err.Error(); !strings.Contains(got, tt.wantErr) {
-				t.Fatalf("error = %q, want %q", got, tt.wantErr)
-			}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(tc.config))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 }
@@ -130,15 +116,10 @@ func TestLoadAllowsFaucetWithoutImageOverride(t *testing.T) {
         minTopUpLovelace: 1000000
         maxTopUpLovelace: 10000000000
 `))
-	if err != nil {
-		t.Fatalf("Load returned an error: %v", err)
-	}
-	if environment.Spec.Network.ChainAPI == nil || environment.Spec.Network.ChainAPI.Faucet == nil {
-		t.Fatal("faucet config was not loaded")
-	}
-	if environment.Spec.Network.ChainAPI.Faucet.Image != nil {
-		t.Fatalf("faucet image = %q, want nil", *environment.Spec.Network.ChainAPI.Faucet.Image)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, environment.Spec.Network.ChainAPI)
+	require.NotNil(t, environment.Spec.Network.ChainAPI.Faucet)
+	assert.Nil(t, environment.Spec.Network.ChainAPI.Faucet.Image)
 }
 
 func TestValidateRequiresEnvelope(t *testing.T) {
@@ -166,15 +147,11 @@ func TestValidateRequiresEnvelope(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := Load(strings.NewReader(tt.config))
-			if err == nil {
-				t.Fatal("Load succeeded, want error")
-			}
-			if got := err.Error(); !strings.Contains(got, tt.wantErr) {
-				t.Fatalf("error = %q, want %q", got, tt.wantErr)
-			}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(tc.config))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
 }

@@ -11,38 +11,44 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const (
-	defaultNamespace = "default"
-	fieldOwner       = "yacd-cli"
-)
-
-// Config controls Kubernetes client construction.
-type Config struct {
-	Kubeconfig string
-	Context    string
-}
-
-// Client is the Kubernetes behavior used by the CLI command layer.
+// Client is the Kubernetes behaviour the CLI command layer depends on. It is
+// the port; the concrete Adapter below is the controller-runtime-backed
+// implementation. Tests substitute a mock.
 type Client interface {
+	// DefaultNamespace returns the namespace selected by the user's
+	// kubeconfig, falling back to "default".
 	DefaultNamespace() string
+
+	// ApplyCardanoNetwork performs server-side apply of the provided
+	// CardanoNetwork with the CLI as field owner.
 	ApplyCardanoNetwork(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) error
+
+	// GetCardanoNetwork fetches the named CardanoNetwork. A NotFound result
+	// is translated into a typed error message naming namespace and name.
 	GetCardanoNetwork(ctx context.Context, namespace string, name string) (*yacdv1alpha1.CardanoNetwork, error)
+
+	// GetSecretValue reads a single key from a Secret. Missing Secret or
+	// missing key are surfaced as a typed error.
 	GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error)
 }
 
-type runtimeClient struct {
+// Adapter is the controller-runtime-backed implementation of Client. It is
+// returned as a concrete value from NewClient so the construction site holds
+// a typed lifecycle handle; the command layer holds the Client interface.
+type Adapter struct {
 	client    client.Client
 	namespace string
 }
 
-// NewClient constructs a controller-runtime client from the user's kubeconfig.
-func NewClient(config Config) (Client, error) {
-	restConfig, namespace, err := RESTConfig(config)
+// NewClient constructs an Adapter from the user's kubeconfig. The returned
+// concrete type satisfies the Client port. Callers that need a port-typed
+// value (for example, dependency injection in tests) assign the result
+// through a function wrapper at the construction site.
+func NewClient(config Config) (*Adapter, error) {
+	restCfg, namespace, err := restConfig(config)
 	if err != nil {
 		return nil, err
 	}
@@ -51,88 +57,52 @@ func NewClient(config Config) (Client, error) {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(yacdv1alpha1.AddToScheme(scheme))
 
-	kubeClient, err := client.New(restConfig, client.Options{Scheme: scheme})
+	kubeClient, err := client.New(restCfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, fmt.Errorf("create Kubernetes client: %w", err)
 	}
 
-	return &runtimeClient{
+	return &Adapter{
 		client:    kubeClient,
 		namespace: namespace,
 	}, nil
 }
 
-// RESTConfig resolves the user's kubeconfig and default namespace.
-func RESTConfig(config Config) (*rest.Config, string, error) {
-	clientConfig := newClientConfig(config)
-
-	namespace, err := DefaultNamespace(config)
-	if err != nil {
-		return nil, "", err
-	}
-
-	restConfig, err := clientConfig.ClientConfig()
-	if err != nil {
-		return nil, "", fmt.Errorf("load Kubernetes config: %w", err)
-	}
-
-	return restConfig, namespace, nil
-}
-
-// DefaultNamespace resolves the namespace selected by the user's kubeconfig.
-func DefaultNamespace(config Config) (string, error) {
-	clientConfig := newClientConfig(config)
-
-	namespace, _, err := clientConfig.Namespace()
-	if err != nil {
-		return "", fmt.Errorf("resolve Kubernetes namespace: %w", err)
-	}
-	if strings.TrimSpace(namespace) == "" {
-		namespace = defaultNamespace
-	}
-
-	return namespace, nil
-}
-
-func newClientConfig(config Config) clientcmd.ClientConfig {
-	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
-	if strings.TrimSpace(config.Kubeconfig) != "" {
-		loadingRules.ExplicitPath = strings.TrimSpace(config.Kubeconfig)
-	}
-
-	overrides := &clientcmd.ConfigOverrides{
-		CurrentContext: strings.TrimSpace(config.Context),
-	}
-	return clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides)
-}
-
-func (c *runtimeClient) DefaultNamespace() string {
-	if strings.TrimSpace(c.namespace) == "" {
+// DefaultNamespace returns the namespace the adapter resolved at construction
+// time, with the "default" fallback if the kubeconfig selected nothing.
+func (a *Adapter) DefaultNamespace() string {
+	if strings.TrimSpace(a.namespace) == "" {
 		return defaultNamespace
 	}
 
-	return c.namespace
+	return a.namespace
 }
 
-func (c *runtimeClient) ApplyCardanoNetwork(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) error {
+// ApplyCardanoNetwork applies the CardanoNetwork through server-side apply.
+// The Patch call is intentionally still client.Apply rather than the
+// generated apply-config path because the CRD does not ship one yet.
+func (a *Adapter) ApplyCardanoNetwork(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) error {
 	if network == nil {
 		return fmt.Errorf("cardanonetwork is required")
 	}
 	//nolint:staticcheck // client.Apply is still the practical SSA path for CRD object structs without generated apply configurations.
-	if err := c.client.Patch(ctx, network.DeepCopy(), client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
+	if err := a.client.Patch(ctx, network.DeepCopy(), client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("apply cardanonetwork %s/%s: %w", network.Namespace, network.Name, err)
 	}
 
 	return nil
 }
 
-func (c *runtimeClient) GetCardanoNetwork(ctx context.Context, namespace string, name string) (*yacdv1alpha1.CardanoNetwork, error) {
+// GetCardanoNetwork fetches the named CardanoNetwork. A NotFound result is
+// translated to a typed not-found error so callers can show a friendly
+// message; other errors are wrapped with namespace/name context.
+func (a *Adapter) GetCardanoNetwork(ctx context.Context, namespace string, name string) (*yacdv1alpha1.CardanoNetwork, error) {
 	network := &yacdv1alpha1.CardanoNetwork{}
 	key := client.ObjectKey{
 		Namespace: namespace,
 		Name:      name,
 	}
-	if err := c.client.Get(ctx, key, network); err != nil {
+	if err := a.client.Get(ctx, key, network); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, fmt.Errorf("cardanonetwork %s/%s not found", namespace, name)
 		}
@@ -142,13 +112,16 @@ func (c *runtimeClient) GetCardanoNetwork(ctx context.Context, namespace string,
 	return network, nil
 }
 
-func (c *runtimeClient) GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error) {
+// GetSecretValue reads a single key from a Secret. The returned error
+// distinguishes missing Secret from missing/empty key so callers can render
+// a precise diagnostic.
+func (a *Adapter) GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error) {
 	secret := &corev1.Secret{}
 	objectKey := client.ObjectKey{
 		Namespace: namespace,
 		Name:      name,
 	}
-	if err := c.client.Get(ctx, objectKey, secret); err != nil {
+	if err := a.client.Get(ctx, objectKey, secret); err != nil {
 		if apierrors.IsNotFound(err) {
 			return "", fmt.Errorf("secret %s/%s not found", namespace, name)
 		}

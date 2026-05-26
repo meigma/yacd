@@ -11,6 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newDeployCommand wires the `yacd deploy` subcommand. The command loads
+// the developer environment file, renders it into a CardanoNetwork through
+// the render package, and either prints the manifest (--dry-run) or
+// server-side-applies it through the kube.Client port. With --wait the
+// command then polls until the network is Ready or the timeout elapses.
 func newDeployCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deploy",
@@ -46,6 +51,10 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 			fallbackNamespace := ""
 			needsKubeDefaultNamespace := strings.TrimSpace(runtimeConfig.Namespace) == "" &&
 				strings.TrimSpace(environment.Metadata.Namespace) == ""
+			// Two namespace-fallback paths share the same goal — derive the
+			// kubeconfig default — but only the apply path needs a live
+			// client. --dry-run resolves the namespace through the
+			// purpose-built resolver so it never dials the cluster.
 			if !dryRun {
 				kubeClient, err = commandContext.kubeClientFactory(kubeConfig)
 				if err != nil {
@@ -107,7 +116,7 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringP("file", "f", "", "Developer config file")
+	cmd.Flags().StringP("file", "f", "", "Developer environment file")
 	cmd.Flags().Bool("dry-run", false, "Render the manifest without applying it")
 	cmd.Flags().Bool("wait", false, "Wait for the CardanoNetwork to become ready")
 	cmd.Flags().Duration("timeout", 10*time.Minute, "Maximum time to wait for readiness")

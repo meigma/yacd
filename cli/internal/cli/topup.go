@@ -1,14 +1,8 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -17,8 +11,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const faucetAuthTokenKey = "token"
-
+// newTopUpCommand wires the `yacd topup NAME` subcommand. The command
+// flow is: resolve the target faucet URL (preferring the cluster-published
+// endpoint unless --faucet-url overrides it), gate token transmission
+// through validateFaucetURLTrust, fetch the auth token from the published
+// Secret, then POST to the faucet.
 func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "topup NAME",
@@ -72,6 +69,9 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			if network.Status.Faucet == nil || strings.TrimSpace(network.Status.Faucet.AuthSecretName) == "" {
 				return fmt.Errorf("cardanonetwork %s/%s does not publish a faucet auth Secret", namespace, args[0])
 			}
+			// Security-relevant default: when the user did not pass
+			// --faucet-url, target the URL the cluster published. The
+			// override path below is what triggers the trust gate.
 			if faucetURL == "" {
 				faucetURL = statusFaucetURL
 			}
@@ -131,6 +131,10 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 	return cmd
 }
 
+// requireFaucetReady rejects a CardanoNetwork whose status cannot be
+// trusted to publish a working faucet. It fails fast on stale status
+// (observedGeneration < generation), on a Degraded condition, and on a
+// missing or stale Ready / FaucetReady condition.
 func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) error {
 	if network.Status.ObservedGeneration != network.Generation {
 		return fmt.Errorf(
@@ -141,10 +145,10 @@ func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, 
 			network.Generation,
 		)
 	}
-	if degraded := kube.FreshCondition(network, "Degraded"); degraded != nil && degraded.Status == metav1.ConditionTrue {
+	if degraded := kube.FreshCondition(network, kube.ConditionDegraded); degraded != nil && degraded.Status == metav1.ConditionTrue {
 		return fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
 	}
-	for _, conditionType := range []string{"Ready", "FaucetReady"} {
+	for _, conditionType := range []kube.ConditionType{kube.ConditionReady, kube.ConditionFaucetReady} {
 		condition := kube.FreshCondition(network, conditionType)
 		if condition == nil {
 			return fmt.Errorf("cardanonetwork %s/%s is not faucet-ready: %s condition is missing or stale", namespace, name, conditionType)
@@ -157,145 +161,13 @@ func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, 
 	return nil
 }
 
+// publishedFaucetURL returns the faucet endpoint URL the CardanoNetwork
+// controller published in status. It errors if status does not yet publish
+// one, so callers cannot accidentally fall back to an empty target.
 func publishedFaucetURL(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (string, error) {
 	if network.Status.Endpoints == nil || network.Status.Endpoints.Faucet == nil || strings.TrimSpace(network.Status.Endpoints.Faucet.URL) == "" {
 		return "", fmt.Errorf("cardanonetwork %s/%s does not publish a faucet endpoint", namespace, name)
 	}
 
 	return strings.TrimSpace(network.Status.Endpoints.Faucet.URL), nil
-}
-
-func validateFaucetURLTrust(
-	faucetURL string,
-	statusFaucetURL string,
-	namespace string,
-	secretName string,
-	custom bool,
-	trustCustom bool,
-	allowInsecure bool,
-) error {
-	parsed, err := parseHTTPURL(faucetURL)
-	if err != nil {
-		return err
-	}
-	if !custom || sameFaucetURL(faucetURL, statusFaucetURL) || isLoopbackHost(parsed.Hostname()) {
-		return nil
-	}
-
-	secretRef := namespace + "/" + secretName
-	if !trustCustom {
-		return fmt.Errorf("refusing to send faucet auth Secret %s token to custom faucet URL host %q; pass --trust-faucet-url to allow this destination", secretRef, parsed.Host)
-	}
-	if parsed.Scheme == "http" && !allowInsecure {
-		return fmt.Errorf("refusing to send faucet auth Secret %s token to insecure custom faucet URL host %q; pass --allow-insecure-faucet-url with --trust-faucet-url to allow HTTP", secretRef, parsed.Host)
-	}
-
-	return nil
-}
-
-func parseHTTPURL(raw string) (*url.URL, error) {
-	parsed, err := url.ParseRequestURI(raw)
-	if err != nil {
-		return nil, fmt.Errorf("invalid faucet URL %q: %w", raw, err)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("invalid faucet URL %q: scheme must be http or https", raw)
-	}
-	if strings.TrimSpace(parsed.Hostname()) == "" {
-		return nil, fmt.Errorf("invalid faucet URL %q: host is required", raw)
-	}
-
-	return parsed, nil
-}
-
-func sameFaucetURL(left string, right string) bool {
-	return strings.TrimRight(strings.TrimSpace(left), "/") == strings.TrimRight(strings.TrimSpace(right), "/")
-}
-
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSpace(strings.ToLower(host))
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-type topUpHTTPPayload struct {
-	Address  string `json:"address"`
-	Lovelace int64  `json:"lovelace"`
-	Source   string `json:"source,omitempty"`
-}
-
-type topUpHTTPResult struct {
-	TxID               string `json:"txId"`
-	Source             string `json:"source"`
-	SourceAddress      string `json:"sourceAddress"`
-	DestinationAddress string `json:"destinationAddress"`
-	Lovelace           int64  `json:"lovelace"`
-}
-
-type faucetErrorResponse struct {
-	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
-func postTopUp(ctx context.Context, client httpDoer, faucetURL string, token string, payload topUpHTTPPayload) (topUpHTTPResult, error) {
-	if client == nil {
-		client = http.DefaultClient
-	}
-	if strings.TrimSpace(token) == "" {
-		return topUpHTTPResult{}, fmt.Errorf("faucet auth token is empty")
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return topUpHTTPResult{}, fmt.Errorf("marshal top-up request: %w", err)
-	}
-	endpoint := strings.TrimRight(faucetURL, "/") + "/v1/topups"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return topUpHTTPResult{}, fmt.Errorf("build top-up request: %w", err)
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-
-	response, err := client.Do(request)
-	if err != nil {
-		return topUpHTTPResult{}, fmt.Errorf("submit top-up request: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, response.Body)
-		_ = response.Body.Close()
-	}()
-
-	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return topUpHTTPResult{}, decodeFaucetError(response)
-	}
-
-	var result topUpHTTPResult
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		return topUpHTTPResult{}, fmt.Errorf("decode top-up response: %w", err)
-	}
-	if strings.TrimSpace(result.TxID) == "" {
-		return topUpHTTPResult{}, fmt.Errorf("faucet returned an empty transaction id")
-	}
-
-	return result, nil
-}
-
-func decodeFaucetError(response *http.Response) error {
-	var body faucetErrorResponse
-	if err := json.NewDecoder(io.LimitReader(response.Body, 16*1024)).Decode(&body); err == nil {
-		code := strings.TrimSpace(body.Error.Code)
-		message := strings.TrimSpace(body.Error.Message)
-		if code != "" && message != "" {
-			return fmt.Errorf("faucet top-up failed: HTTP %d: %s: %s", response.StatusCode, code, message)
-		}
-	}
-
-	return fmt.Errorf("faucet top-up failed: HTTP %d", response.StatusCode)
 }
