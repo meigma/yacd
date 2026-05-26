@@ -1,6 +1,7 @@
 package dbsync
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -73,8 +74,8 @@ func TestBuildPlanRendersIPFSGateways(t *testing.T) {
 
 func TestBuildPlanUsesRuntimeFlags(t *testing.T) {
 	spec := minimalSpec()
-	spec.Runtime.Cache = false
-	spec.Runtime.EpochTable = false
+	spec.Runtime.DisableCache = true
+	spec.Runtime.DisableEpochTable = true
 	spec.Runtime.ForceIndexes = true
 
 	plan, err := BuildPlan(spec)
@@ -83,6 +84,42 @@ func TestBuildPlanUsesRuntimeFlags(t *testing.T) {
 	assert.Contains(t, plan.Run.Args, "--disable-cache")
 	assert.Contains(t, plan.Run.Args, "--disable-epoch")
 	assert.Contains(t, plan.Run.Args, "--force-indexes")
+}
+
+func TestBuildPlanRuntimeZeroLeavesFeaturesActive(t *testing.T) {
+	spec := minimalSpec()
+	spec.Runtime = Runtime{}
+
+	plan, err := BuildPlan(spec)
+
+	require.NoError(t, err)
+	assert.NotContains(t, plan.Run.Args, "--disable-cache")
+	assert.NotContains(t, plan.Run.Args, "--disable-epoch")
+	assert.NotContains(t, plan.Run.Args, "--force-indexes")
+}
+
+func TestBuildPlanZeroInsertOptionsAppliesDefaults(t *testing.T) {
+	spec := minimalSpec()
+	spec.Insert = InsertOptions{}
+
+	plan, err := BuildPlan(spec)
+
+	require.NoError(t, err)
+	assert.Equal(t, DefaultInsertOptions(), plan.Spec.Insert)
+}
+
+func TestDefaultInsertOptionsIsRecommendedBaseline(t *testing.T) {
+	defaults := DefaultInsertOptions()
+
+	assert.Equal(t, defaultTxCBOR, defaults.TxCBOR)
+	assert.Equal(t, defaultTxOutMode, defaults.TxOut.Mode)
+	assert.True(t, defaults.Shelley.Enabled)
+	assert.True(t, defaults.MultiAsset.Enabled)
+	assert.True(t, defaults.Metadata.Enabled)
+	assert.True(t, defaults.Plutus.Enabled)
+	assert.Equal(t, insertOptionEnable, defaults.Governance)
+	assert.Equal(t, insertOptionEnable, defaults.PoolStats)
+	assert.Equal(t, insertOptionDisable, defaults.RemoveJSONBFromSchema)
 }
 
 func TestBuildPlanFingerprintIsStableAndInputSensitive(t *testing.T) {
@@ -115,7 +152,7 @@ func TestBuildPlanDatabaseIdentitySeparatesSafeRuntimeChanges(t *testing.T) {
 	require.NoError(t, err)
 
 	insertChangedSpec := minimalSpec()
-	insertChangedSpec.Insert = defaultInsertOptions()
+	insertChangedSpec.Insert = DefaultInsertOptions()
 	insertChangedSpec.Insert.TxOut.Mode = "consumed"
 	insertChanged, err := BuildPlan(insertChangedSpec)
 	require.NoError(t, err)
@@ -135,6 +172,51 @@ func TestBuildPlanDatabaseIdentitySeparatesSafeRuntimeChanges(t *testing.T) {
 	assert.NotEqual(t, base.DatabaseIdentityFingerprint, insertChanged.DatabaseIdentityFingerprint)
 	assert.Equal(t, base.DatabaseIdentityFingerprint, passwordRefChanged.DatabaseIdentityFingerprint)
 	assert.NotEqual(t, base.DatabaseIdentityFingerprint, imageChanged.DatabaseIdentityFingerprint)
+}
+
+// TestDatabaseIdentityFingerprintIsFrozenAgainstLegacyWire pins the
+// pre-refactor database identity hash for minimalSpec(). The controller
+// rejects any drift in this fingerprint as UnsupportedDatabaseIdentityChange
+// and scales the owned Deployment to zero, so changes to the wire shape would
+// brick existing CardanoDBSync resources at upgrade. If this test fails, the
+// database identity wire shape changed and existing resources will be
+// rejected as drifted; restore the wire shape rather than updating the
+// expected value.
+func TestDatabaseIdentityFingerprintIsFrozenAgainstLegacyWire(t *testing.T) {
+	plan, err := BuildPlan(minimalSpec())
+	require.NoError(t, err)
+
+	const legacyMinimalSpecHash = "2ddec468399a6c1e1b6d48af1ad40376d1016680217fc47d5a69268c1aa82400"
+	assert.Equal(t, legacyMinimalSpecHash, plan.DatabaseIdentityFingerprint.Value)
+}
+
+// TestSpecJSONShapeIsStable locks the marshaled Spec JSON keys so accidental
+// tag renames produce a visible diff in this test rather than a silent
+// fingerprint shift across every running CardanoDBSync.
+func TestSpecJSONShapeIsStable(t *testing.T) {
+	normalized, err := normalizeSpec(minimalSpec())
+	require.NoError(t, err)
+
+	raw, err := json.Marshal(normalized)
+	require.NoError(t, err)
+
+	var keys map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &keys))
+
+	for _, key := range []string{
+		"networkName",
+		"requiresNetworkMagic",
+		"networkArtifactHash",
+		"image",
+		"nodeToNode",
+		"database",
+		"runtime",
+		"storage",
+		"insert",
+		"paths",
+	} {
+		assert.Contains(t, keys, key, "Spec JSON shape must keep %q for fingerprint stability", key)
+	}
 }
 
 func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
@@ -182,7 +264,7 @@ func TestBuildPlanRejectsInvalidSpec(t *testing.T) {
 			name: "bootstrap tx out with lsm",
 			mutate: func(spec *Spec) {
 				spec.Storage.LedgerBackend = "lsm"
-				spec.Insert = defaultInsertOptions()
+				spec.Insert = DefaultInsertOptions()
 				spec.Insert.TxOut.Mode = "bootstrap"
 			},
 			wantErr: "tx_out bootstrap is not supported with lsm ledger_backend",
@@ -234,10 +316,6 @@ func minimalSpec() Spec {
 			Host:               "postgres.default.svc.cluster.local",
 			PasswordSecretName: "dbsync-postgres",
 			PasswordSecretKey:  "password",
-		},
-		Runtime: Runtime{
-			Cache:      true,
-			EpochTable: true,
 		},
 	}
 }
