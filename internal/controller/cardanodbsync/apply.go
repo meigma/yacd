@@ -424,4 +424,3 @@ func (r *CardanoDBSyncReconciler) suspendDBSyncDeploymentIfOwned(
 	current.Spec.Replicas = new(int32)
 	return r.Patch(ctx, current, client.MergeFrom(before))
 }
-

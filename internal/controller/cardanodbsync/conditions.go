@@ -116,11 +116,12 @@ func degradedCondition(status metav1.ConditionStatus, reason conditionReason, me
 	return ctrlstatus.Condition(string(conditionTypeDegraded), status, string(reason), message)
 }
 
-// readyCondition constructs a Ready condition. Aggregate Ready=True is
-// produced by [workloadsReadyCondition]; this constructor is used for the
-// non-Ready paths where the reconciler stamps a specific reason/message.
-func readyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
-	return ctrlstatus.Condition(string(conditionTypeReady), status, string(reason), message)
+// readyCondition constructs a non-Ready Ready condition. Aggregate
+// Ready=True is produced by [workloadsReadyCondition]; this constructor
+// is only used for the non-Ready paths where the reconciler stamps a
+// specific reason/message.
+func readyCondition(reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, string(reason), message)
 }
 
 // followerNodeReadyCondition constructs a FollowerNodeReady condition.

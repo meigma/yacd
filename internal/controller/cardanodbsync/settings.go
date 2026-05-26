@@ -220,7 +220,7 @@ func insertOptionsForPreset(preset yacdv1alpha1.CardanoDBSyncInsertPreset) dbsyn
 			PoolStats:        "enable",
 			JSONType:         "text",
 		}
-}
+	}
 }
 
 // featureSelection layers per-field overrides on top of a baseline

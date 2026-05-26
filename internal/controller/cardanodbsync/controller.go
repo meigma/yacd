@@ -156,6 +156,11 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	)
 }
 
+// reconcileReadyDBSync is the workload-apply leg of Reconcile, entered
+// only after the referenced CardanoNetwork has published verified
+// artifacts. It rejects requests that lack a node-to-node endpoint
+// (without that the follower-node cannot peer) before handing off to
+// reconcileWorkloads.
 func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
 	ctx context.Context,
 	log logr.Logger,
@@ -178,6 +183,11 @@ func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
 	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime)
 }
 
+// reconcileWorkloads applies (in dependency order) the managed Postgres
+// workload when spec.database.managed is set, the dbsync workload, and
+// the matching status patches. The dbsync workload apply is gated on
+// managed Postgres becoming ready first so the dbsync containers do not
+// crash-loop against an unavailable database.
 func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	ctx context.Context,
 	log logr.Logger,
@@ -261,6 +271,10 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	return ctrl.Result{}, nil
 }
 
+// reconcileManagedPostgresResources applies the managed Postgres bundle
+// and returns the resulting PostgresReady condition. The caller uses the
+// condition to decide whether to proceed with the dbsync workload apply
+// (Ready=True) or wait for Postgres to come up (Ready=False).
 func (r *CardanoDBSyncReconciler) reconcileManagedPostgresResources(
 	ctx context.Context,
 	log logr.Logger,
@@ -333,6 +347,11 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
+// validateExternalDatabaseSecret reads and validates the external Postgres
+// password Secret. The returned bool is true when the Secret resolved
+// cleanly; false when the function already published a Degraded status
+// patch (the caller should return the resulting error to controller-
+// runtime and wait for the next reconcile).
 func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -380,6 +399,10 @@ func (r *CardanoDBSyncReconciler) validateExternalDatabaseSecret(
 	return secret, true, nil
 }
 
+// cardanoDBSyncsForNetwork is the Watches mapper that enqueues every
+// CardanoDBSync that references the given CardanoNetwork. Used so a
+// CardanoNetwork status change (artifacts ready, endpoints published)
+// triggers downstream CardanoDBSync reconciles.
 func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, object client.Object) []reconcile.Request {
 	network, ok := object.(*yacdv1alpha1.CardanoNetwork)
 	if !ok {
@@ -402,6 +425,10 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, 
 	return requests
 }
 
+// cardanoDBSyncsForDatabaseSecret is the Watches mapper that enqueues
+// every CardanoDBSync whose external or managed database Secret matches
+// the given Secret. Used so a Secret rotation re-rolls the consuming
+// dbsync workload.
 func (r *CardanoDBSyncReconciler) cardanoDBSyncsForDatabaseSecret(ctx context.Context, object client.Object) []reconcile.Request {
 	secret, ok := object.(*corev1.Secret)
 	if !ok {
@@ -443,6 +470,10 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForDatabaseSecret(ctx context.Co
 	return requests
 }
 
+// liveReader is the uncached reader for reads that must observe the
+// freshest cluster state. When the Reconciler was constructed with a
+// dedicated Reader (typical for envtest), the function returns it;
+// otherwise it falls back to the cached Client.
 func (r *CardanoDBSyncReconciler) liveReader() client.Reader {
 	if r.Reader != nil {
 		return r.Reader
