@@ -15,14 +15,14 @@ const (
 )
 
 func TestRequestedStorageClass(t *testing.T) {
-	value, ok := RequestedStorageClass(map[string]string{
+	value, ok := requestedStorageClass(map[string]string{
 		testRequestedStorageClassAnnotation: testFastStorageClass,
 	}, testRequestedStorageClassAnnotation)
 
 	assert.True(t, ok)
 	assert.Equal(t, testFastStorageClass, value)
 
-	value, ok = RequestedStorageClass(nil, testRequestedStorageClassAnnotation)
+	value, ok = requestedStorageClass(nil, testRequestedStorageClassAnnotation)
 	assert.False(t, ok)
 	assert.Empty(t, value)
 }
@@ -59,11 +59,11 @@ func TestStorageClassCompatible(t *testing.T) {
 	fast := testFastStorageClass
 	slow := testSlowStorageClass
 
-	assert.True(t, StorageClassCompatible(nil, nil))
-	assert.True(t, StorageClassCompatible(&fast, nil))
-	assert.True(t, StorageClassCompatible(&fast, &fast))
-	assert.False(t, StorageClassCompatible(nil, &fast))
-	assert.False(t, StorageClassCompatible(&fast, &slow))
+	assert.True(t, storageClassCompatible(nil, nil))
+	assert.True(t, storageClassCompatible(&fast, nil))
+	assert.True(t, storageClassCompatible(&fast, &fast))
+	assert.False(t, storageClassCompatible(nil, &fast))
+	assert.False(t, storageClassCompatible(&fast, &slow))
 }
 
 func TestPersistentVolumeClaimDriftFor(t *testing.T) {
@@ -102,13 +102,13 @@ func testPVC(storage string, storageClass *string) *corev1.PersistentVolumeClaim
 }
 
 func TestAnnotationValue(t *testing.T) {
-	assert.Equal(t, testFastStorageClass, AnnotationValue(testFastStorageClass, true))
-	assert.Equal(t, "<default>", AnnotationValue("", false))
+	assert.Equal(t, testFastStorageClass, annotationValue(testFastStorageClass, true))
+	assert.Equal(t, "<default>", annotationValue("", false))
 }
 
 func TestStringPtrValue(t *testing.T) {
 	value := testFastStorageClass
 
-	assert.Equal(t, testFastStorageClass, StringPtrValue(&value))
-	assert.Equal(t, "<default>", StringPtrValue(nil))
+	assert.Equal(t, testFastStorageClass, stringPtrValue(&value))
+	assert.Equal(t, "<default>", stringPtrValue(nil))
 }

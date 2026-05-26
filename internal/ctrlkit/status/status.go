@@ -14,7 +14,9 @@ import (
 // ConditionError represents a known controller condition that should be
 // surfaced through status rather than returned as an unexpected reconcile error.
 type ConditionError struct {
-	Reason  string
+	// Reason is the stable condition reason published on the resource status.
+	Reason string
+	// Message is the user-facing description of the condition.
 	Message string
 }
 

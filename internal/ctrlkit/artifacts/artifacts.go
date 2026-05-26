@@ -14,7 +14,9 @@ import (
 
 // Contract describes the data key allowlist for a ConfigMap artifact set.
 type Contract struct {
+	// RequiredKeys lists keys that must be present in the ConfigMap data.
 	RequiredKeys []string
+	// OptionalKeys lists keys that may be present in the ConfigMap data.
 	OptionalKeys []string
 }
 

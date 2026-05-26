@@ -37,7 +37,8 @@ type OwnedObjectOptions[T client.Object] struct {
 	// mutation. It is not called for newly-created objects.
 	Validate func(current T, desired T) error
 	// Mutate copies reconciled fields from desired to current for existing
-	// objects. It is not called for newly-created objects.
+	// objects. It must preserve Kubernetes-assigned or externally-owned fields
+	// the controller does not own, and is not called for newly-created objects.
 	Mutate func(current T, desired T) error
 	// UpdateMode selects patch or full update when current changes. The zero
 	// value uses UpdateModePatch.
@@ -120,6 +121,8 @@ func ApplyOwnedObject[T client.Object](
 	return controllerutil.OperationResultUpdated, current, nil
 }
 
+// cloneObject deep-copies obj and asserts the result back to T, returning an
+// error when the runtime type does not match.
 func cloneObject[T client.Object](obj T) (T, error) {
 	cloned, ok := obj.DeepCopyObject().(T)
 	if !ok {

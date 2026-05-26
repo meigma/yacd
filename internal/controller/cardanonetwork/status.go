@@ -434,13 +434,13 @@ func (r *CardanoNetworkReconciler) primaryDeploymentContainerReadiness(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	containerName string,
-) (ctrlreadiness.DeploymentContainerResult, error) {
+) (ctrlreadiness.DeploymentReadinessState, error) {
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
 		if apierrors.IsNotFound(err) {
-			return ctrlreadiness.DeploymentContainerResult{State: ctrlreadiness.DeploymentContainerMissing}, nil
+			return ctrlreadiness.DeploymentMissing, nil
 		}
-		return ctrlreadiness.DeploymentContainerResult{}, err
+		return "", err
 	}
 
 	pods := &corev1.PodList{}
@@ -450,36 +450,36 @@ func (r *CardanoNetworkReconciler) primaryDeploymentContainerReadiness(
 		client.InNamespace(network.Namespace),
 		client.MatchingLabels(primaryWorkloadSelectorLabels(network)),
 	); err != nil {
-		return ctrlreadiness.DeploymentContainerResult{}, err
+		return "", err
 	}
 
-	return ctrlreadiness.DeploymentContainerReadiness(deployment, pods.Items, containerName), nil
+	return ctrlreadiness.DeploymentReadiness(deployment, pods.Items, containerName), nil
 }
 
 func primaryDeploymentContainerBlockedCondition(
-	readiness ctrlreadiness.DeploymentContainerResult,
+	readiness ctrlreadiness.DeploymentReadinessState,
 	unavailableMessage string,
 	containerNotReadyMessage string,
 	condition primaryDeploymentConditionFunc,
 ) *metav1.Condition {
-	switch readiness.State {
-	case ctrlreadiness.DeploymentContainerReady:
+	switch readiness {
+	case ctrlreadiness.DeploymentReady:
 		return nil
-	case ctrlreadiness.DeploymentContainerMissing:
+	case ctrlreadiness.DeploymentMissing:
 		blocked := condition(
 			metav1.ConditionFalse,
 			conditionReasonPrimaryWorkloadMissing,
 			"Primary node Deployment is missing",
 		)
 		return &blocked
-	case ctrlreadiness.DeploymentContainerStale:
+	case ctrlreadiness.DeploymentStale:
 		blocked := condition(
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
 			"Primary node Deployment has not observed the latest generation",
 		)
 		return &blocked
-	case ctrlreadiness.DeploymentContainerUnavailable:
+	case ctrlreadiness.DeploymentUnavailable:
 		blocked := condition(
 			metav1.ConditionFalse,
 			conditionReasonDeploymentProgressing,
