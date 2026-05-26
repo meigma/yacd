@@ -213,7 +213,7 @@ func validConfigMap() *corev1.ConfigMap {
 			Name: "network-artifacts",
 			Annotations: map[string]string{
 				ctrlannotations.ArtifactSchemaVersion: cardanonetworkartifacts.SchemaVersion,
-				LocalnetFingerprintAnnotation:         "fingerprint",
+				ctrlannotations.LocalnetFingerprint:   "fingerprint",
 				ctrlannotations.ArtifactDataHash:      ctrlartifacts.ComputeDataHash(data),
 			},
 		},

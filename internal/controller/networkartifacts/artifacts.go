@@ -10,9 +10,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// LocalnetFingerprintAnnotation holds the accepted localnet fingerprint.
-const LocalnetFingerprintAnnotation = "yacd.meigma.io/localnet-fingerprint"
-
 func dataContract() ctrlartifacts.Contract {
 	return ctrlartifacts.Contract{
 		RequiredKeys: cardanonetworkartifacts.RequiredKeys(),
@@ -56,7 +53,7 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 	}
 	status.SchemaVersion = cardanonetworkartifacts.SchemaVersion
 
-	if configMap.Annotations[LocalnetFingerprintAnnotation] != expectedFingerprint {
+	if configMap.Annotations[ctrlannotations.LocalnetFingerprint] != expectedFingerprint {
 		return ProducerResult{
 			Status:  status,
 			Message: "artifact ConfigMap localnet fingerprint does not match the accepted localnet",

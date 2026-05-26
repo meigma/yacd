@@ -282,62 +282,37 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	ctx context.Context,
 	desired *corev1.ConfigMap,
 ) (controllerutil.OperationResult, error) {
-	current := &corev1.ConfigMap{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	current.Data = maps.Clone(desired.Data)
-	current.BinaryData = maps.Clone(desired.BinaryData)
-
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.ConfigMap]{
+		Current:       &corev1.ConfigMap{},
+		OwnerConflict: controllerOwnerConflict,
+		Mutate:        mutateDBSyncConfigMap,
+	})
+	return result, err
 }
 
 func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	ctx context.Context,
 	desired *corev1.Secret,
 ) (controllerutil.OperationResult, error) {
-	current := &corev1.Secret{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.Secret]{
+		Current:       &corev1.Secret{},
+		OwnerConflict: controllerOwnerConflict,
+		Mutate:        mutateDBSyncPGPassSecret,
+	})
+	return result, err
+}
 
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+func mutateDBSyncConfigMap(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Data = maps.Clone(desired.Data)
+	current.BinaryData = maps.Clone(desired.BinaryData)
 
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+	return nil
+}
 
-	before := current.DeepCopy()
+func mutateDBSyncPGPassSecret(current *corev1.Secret, desired *corev1.Secret) error {
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeDBSyncOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
@@ -345,14 +320,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	current.Data = maps.Clone(desired.Data)
 	current.StringData = nil
 
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	return nil
 }
 
 func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(

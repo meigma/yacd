@@ -10,7 +10,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -81,7 +80,7 @@ const (
 
 	nodeIPCVolumeName       = "node-ipc"
 	defaultNodeStorageSize  = "10Gi"
-	localnetFingerprintAnno = ctrlnetworkartifacts.LocalnetFingerprintAnnotation
+	localnetFingerprintAnno = ctrlannotations.LocalnetFingerprint
 
 	labelAppName         = "app.kubernetes.io/name"
 	labelAppInstance     = "app.kubernetes.io/instance"

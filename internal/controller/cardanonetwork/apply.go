@@ -193,120 +193,75 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherServiceAccount(
 	ctx context.Context,
 	desired *corev1.ServiceAccount,
 ) (controllerutil.OperationResult, error) {
-	desired = desired.DeepCopy()
-	current := &corev1.ServiceAccount{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
-
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.ServiceAccount]{
+		Current:       &corev1.ServiceAccount{},
+		OwnerConflict: controllerOwnerConflict,
+		Mutate:        mutateArtifactPublisherServiceAccount,
+	})
+	return result, err
 }
 
 func (r *CardanoNetworkReconciler) applyArtifactPublisherRole(
 	ctx context.Context,
 	desired *rbacv1.Role,
 ) (controllerutil.OperationResult, error) {
-	desired = desired.DeepCopy()
-	current := &rbacv1.Role{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	before := current.DeepCopy()
-	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
-	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
-	current.OwnerReferences = desired.OwnerReferences
-	current.Rules = desired.Rules
-
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*rbacv1.Role]{
+		Current:       &rbacv1.Role{},
+		OwnerConflict: controllerOwnerConflict,
+		Mutate:        mutateArtifactPublisherRole,
+	})
+	return result, err
 }
 
 func (r *CardanoNetworkReconciler) applyArtifactPublisherRoleBinding(
 	ctx context.Context,
 	desired *rbacv1.RoleBinding,
 ) (controllerutil.OperationResult, error) {
-	desired = desired.DeepCopy()
-	current := &rbacv1.RoleBinding{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*rbacv1.RoleBinding]{
+		Current:       &rbacv1.RoleBinding{},
+		OwnerConflict: controllerOwnerConflict,
+		Validate:      validateArtifactPublisherRoleBinding,
+		Mutate:        mutateArtifactPublisherRoleBinding,
+	})
+	return result, err
+}
 
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+func mutateArtifactPublisherServiceAccount(current *corev1.ServiceAccount, desired *corev1.ServiceAccount) error {
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
 
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+	return nil
+}
+
+func mutateArtifactPublisherRole(current *rbacv1.Role, desired *rbacv1.Role) error {
+	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
+	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
+	current.OwnerReferences = desired.OwnerReferences
+	current.Rules = desired.Rules
+
+	return nil
+}
+
+func validateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *rbacv1.RoleBinding) error {
 	if !equality.Semantic.DeepEqual(current.RoleRef, desired.RoleRef) {
-		return controllerutil.OperationResultNone, unsupportedWorkloadChange(
+		return unsupportedWorkloadChange(
 			"RoleBinding %s roleRef drifted from desired value",
 			ctrlmetadata.ObjectKey(desired),
 		)
 	}
 
-	before := current.DeepCopy()
+	return nil
+}
+
+func mutateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *rbacv1.RoleBinding) error {
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
 	current.Subjects = desired.Subjects
 
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	return nil
 }
 
 func (r *CardanoNetworkReconciler) applyPrimaryService(
