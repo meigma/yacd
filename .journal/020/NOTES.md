@@ -43,3 +43,13 @@ Verification all green from the implementation worktree:
 PR #37 opened: https://github.com/meigma/yacd/pull/37 — awaiting CI/Kusari + user review. Dev stack still running per session-protocol (only stop at explicit close).
 
 Out of scope (rejected during planning): flattening ctrlkit into a single package, splitting `apply/` into a `kube/` adapter subpackage, abbreviating `PersistentVolumeClaim*` to `PVC*`, resolving `Condition()`/`NewConditionError()` naming asymmetry, file-splitting subpackages under 150 LOC. Reasoning is captured in the plan file at `/Users/josh/.claude/plans/we-re-going-to-do-fizzy-crab.md`.
+
+## 2026-05-26 09:58 — Close
+User approved with LGTM. PR #37 squash-merged as `c4974ab6f9e9feb751a2994724f115c147040571` on master; CI (CI) and Kusari Inspector both passed before merge. Local `master` fast-forwarded from `72e376c` to `c4974ab`. `refactor/ctrlkit-package` worktree and branch removed via `wt remove`. Dev stack stopped cleanly via `moon run root:dev-down` (Kind cluster and registry deleted, `.run/yacd-dev/` cleared).
+
+Noted unexpected state during cleanup: a local-only `refactor/controller-cardanonetwork` worktree at `.wt/refactor-controller-cardanonetwork` pointing to pre-merge `72e376c` master. It appeared without explanation during this session, has no remote tracking branch, and was not touched here. If the user owns this in a parallel context it can stand; if it's stale leftover from elsewhere, it can be removed in a future session.
+
+Handoff state:
+- `master` clean at `c4974ab refactor(ctrlkit): readability, surface, and naming pass (#37)`.
+- ctrlkit public surface reduced (8 helpers unexported), readiness API renamed and collapsed, godocs tightened, "YACD" mentions removed from ctrlkit godocs, `apply/doc.go` trimmed.
+- Next package in the refactor sweep is TBD; user can pick any target. The `refactor/controller-cardanonetwork` artifact may hint at intent but should be confirmed with the user.
