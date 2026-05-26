@@ -37,7 +37,8 @@ type OwnedObjectOptions[T client.Object] struct {
 	// mutation. It is not called for newly-created objects.
 	Validate func(current T, desired T) error
 	// Mutate copies reconciled fields from desired to current for existing
-	// objects. It is not called for newly-created objects.
+	// objects. It must preserve Kubernetes-assigned or externally-owned fields
+	// the controller does not own, and is not called for newly-created objects.
 	Mutate func(current T, desired T) error
 	// UpdateMode selects patch or full update when current changes. The zero
 	// value uses UpdateModePatch.

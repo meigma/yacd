@@ -13,14 +13,4 @@
 // API-defaulted desired state can be compared consistently with live state. If
 // the object is missing, that defaulted desired copy is created directly;
 // Validate and Mutate callbacks are not invoked on the create path.
-//
-// Mutation callbacks must preserve Kubernetes-assigned or externally-owned
-// fields unless the controller intentionally owns them. Validate callbacks are
-// the place to reject immutable drift such as selectors, role references,
-// storage classes, accepted fingerprints, or other bootstrap identity. Owner
-// conflicts should be mapped by callers into their status-facing error contract
-// when the controller treats such conflicts as degraded user-visible state.
-// Existing-object changes use merge patch by default; callers opt into full
-// object update with UpdateModeUpdate when a resource's API semantics require
-// it.
 package apply
