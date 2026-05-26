@@ -8,17 +8,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const (
-	OwnerConflictDesiredControllerMissing = "DesiredControllerMissing"
-	OwnerConflictCurrentControllerMissing = "CurrentControllerMissing"
-	OwnerConflictControllerMismatch       = "ControllerMismatch"
-)
-
 // OwnerConflictError reports that an existing object cannot be treated as the
 // desired controller-owned child.
 type OwnerConflictError struct {
 	Key     types.NamespacedName
-	Reason  string
 	Message string
 }
 
@@ -88,7 +81,6 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 	if desiredController == nil {
 		return ownerConflict(
 			desired,
-			OwnerConflictDesiredControllerMissing,
 			"resource %s has no desired controller owner",
 			ObjectKey(desired),
 		)
@@ -98,7 +90,6 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 	if currentController == nil {
 		return ownerConflict(
 			desired,
-			OwnerConflictCurrentControllerMissing,
 			"resource %s already exists without a controller owner",
 			ObjectKey(desired),
 		)
@@ -109,7 +100,6 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 		currentController.UID != desiredController.UID {
 		return ownerConflict(
 			desired,
-			OwnerConflictControllerMismatch,
 			"resource %s is already controlled by %s/%s",
 			ObjectKey(desired),
 			currentController.Kind,
@@ -120,10 +110,9 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 	return nil
 }
 
-func ownerConflict(obj metav1.Object, reason string, format string, args ...any) error {
+func ownerConflict(obj metav1.Object, format string, args ...any) error {
 	return &OwnerConflictError{
 		Key:     ObjectKey(obj),
-		Reason:  reason,
 		Message: fmt.Sprintf(format, args...),
 	}
 }

@@ -1,15 +1,13 @@
 package storage
 
-const RequestedStorageClassAnnotation = "yacd.meigma.io/requested-storage-class"
-
 // RequestedStorageClass returns the originally requested storage class encoded
 // on a controller-owned PVC.
-func RequestedStorageClass(annotations map[string]string) (string, bool) {
+func RequestedStorageClass(annotations map[string]string, annotationKey string) (string, bool) {
 	if annotations == nil {
 		return "", false
 	}
 
-	value, ok := annotations[RequestedStorageClassAnnotation]
+	value, ok := annotations[annotationKey]
 	return value, ok
 }
 
@@ -34,9 +32,9 @@ func (d RequestedStorageClassDrift) DesiredDisplay() string {
 
 // RequestedStorageClassDriftFor compares the controller-owned requested
 // storage class annotation on current and desired object annotations.
-func RequestedStorageClassDriftFor(current map[string]string, desired map[string]string) (RequestedStorageClassDrift, bool) {
-	currentStorageClass, currentSet := RequestedStorageClass(current)
-	desiredStorageClass, desiredSet := RequestedStorageClass(desired)
+func RequestedStorageClassDriftFor(current map[string]string, desired map[string]string, annotationKey string) (RequestedStorageClassDrift, bool) {
+	currentStorageClass, currentSet := RequestedStorageClass(current, annotationKey)
+	desiredStorageClass, desiredSet := RequestedStorageClass(desired, annotationKey)
 	drift := RequestedStorageClassDrift{
 		Current:    currentStorageClass,
 		CurrentSet: currentSet,

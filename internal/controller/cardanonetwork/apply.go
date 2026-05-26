@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
@@ -32,33 +33,39 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	ctx context.Context,
 	desired *corev1.PersistentVolumeClaim,
 ) (controllerutil.OperationResult, error) {
-	current := &corev1.PersistentVolumeClaim{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired.DeepCopy()); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.PersistentVolumeClaim]{
+		Current:       &corev1.PersistentVolumeClaim{},
+		OwnerConflict: controllerOwnerConflict,
+		Validate:      validatePrimaryPersistentVolumeClaim,
+		Mutate:        mutatePrimaryPersistentVolumeClaim,
+		UpdateMode:    ctrlapply.UpdateModeUpdate,
+	})
+	return result, err
+}
 
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
+	ctx context.Context,
+	desired *appsv1.Deployment,
+) (controllerutil.OperationResult, error) {
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*appsv1.Deployment]{
+		Current:       &appsv1.Deployment{},
+		Default:       func(desired *appsv1.Deployment) error { return r.defaultObject(desired) },
+		OwnerConflict: controllerOwnerConflict,
+		Validate:      validatePrimaryDeployment,
+		Mutate:        mutatePrimaryDeployment,
+	})
+	return result, err
+}
 
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
+func validatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
 	if err := validateLocalnetFingerprint(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
+		return err
 	}
-
 	if err := validateRequestedStorageClass(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
+		return err
 	}
-
 	if !ctrlstorage.StorageClassCompatible(current.Spec.StorageClassName, desired.Spec.StorageClassName) {
-		return controllerutil.OperationResultNone, unsupportedStorageChange(
+		return unsupportedStorageChange(
 			"PVC %s storageClassName cannot be changed from %s to %s",
 			ctrlmetadata.ObjectKey(desired),
 			ctrlstorage.StringPtrValue(current.Spec.StorageClassName),
@@ -66,7 +73,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 		)
 	}
 	if !reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) {
-		return controllerutil.OperationResultNone, unsupportedStorageChange(
+		return unsupportedStorageChange(
 			"PVC %s accessModes drifted from desired value",
 			ctrlmetadata.ObjectKey(desired),
 		)
@@ -75,7 +82,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	currentStorage := current.Spec.Resources.Requests[corev1.ResourceStorage]
 	desiredStorage := desired.Spec.Resources.Requests[corev1.ResourceStorage]
 	if currentStorage.Cmp(desiredStorage) > 0 {
-		return controllerutil.OperationResultNone, unsupportedStorageChange(
+		return unsupportedStorageChange(
 			"PVC %s storage cannot be decreased from %s to %s",
 			ctrlmetadata.ObjectKey(desired),
 			currentStorage.String(),
@@ -83,7 +90,13 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 		)
 	}
 
-	before := current.DeepCopy()
+	return nil
+}
+
+func mutatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
+	currentStorage := current.Spec.Resources.Requests[corev1.ResourceStorage]
+	desiredStorage := desired.Spec.Resources.Requests[corev1.ResourceStorage]
+
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
@@ -94,50 +107,21 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 		current.Spec.Resources.Requests[corev1.ResourceStorage] = desiredStorage
 	}
 
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Update(ctx, current); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	return nil
 }
 
-func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
-	ctx context.Context,
-	desired *appsv1.Deployment,
-) (controllerutil.OperationResult, error) {
-	desired = desired.DeepCopy()
-	if err := r.defaultObject(desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	current := &appsv1.Deployment{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
+func validatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deployment) error {
 	if !equality.Semantic.DeepEqual(current.Spec.Selector, desired.Spec.Selector) {
-		return controllerutil.OperationResultNone, unsupportedWorkloadChange(
+		return unsupportedWorkloadChange(
 			"Deployment %s selector drifted from desired value",
 			ctrlmetadata.ObjectKey(desired),
 		)
 	}
 
-	before := current.DeepCopy()
+	return nil
+}
+
+func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deployment) error {
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = mergeOwnedAnnotations(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
@@ -153,14 +137,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	current.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
 	current.Spec.Template.Spec.Volumes = desired.Spec.Template.Spec.Volumes
 
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	return nil
 }
 
 func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
@@ -336,29 +313,16 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	ctx context.Context,
 	desired *corev1.Service,
 ) (controllerutil.OperationResult, error) {
-	desired = desired.DeepCopy()
-	if err := r.defaultObject(desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
+	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.Service]{
+		Current:       &corev1.Service{},
+		Default:       func(desired *corev1.Service) error { return r.defaultObject(desired) },
+		OwnerConflict: controllerOwnerConflict,
+		Mutate:        mutatePrimaryService,
+	})
+	return result, err
+}
 
-	current := &corev1.Service{}
-	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, err
-		}
-
-		return controllerutil.OperationResultCreated, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	before := current.DeepCopy()
+func mutatePrimaryService(current *corev1.Service, desired *corev1.Service) error {
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
@@ -367,14 +331,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	current.Spec.Ports = desired.Spec.Ports
 	current.Spec.ExternalName = desired.Spec.ExternalName
 
-	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return controllerutil.OperationResultUpdated, nil
+	return nil
 }
 
 func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
@@ -702,13 +659,17 @@ func mergeOwnedAnnotations(current map[string]string, desired map[string]string)
 		current,
 		desired,
 		localnetFingerprintAnno,
-		ctrlstorage.RequestedStorageClassAnnotation,
+		ctrlannotations.RequestedStorageClass,
 		networkArtifactsConfigMapUIDAnno,
 	)
 }
 
 func resourceConflict(format string, args ...any) unsupportedApplyError {
 	return ctrlapply.Unsupported(conditionReasonResourceConflict, format, args...)
+}
+
+func controllerOwnerConflict(err error) error {
+	return resourceConflict("%s", err.Error())
 }
 
 func unsupportedStorageChange(format string, args ...any) unsupportedApplyError {
@@ -729,7 +690,7 @@ func missingLocalnetFingerprint(format string, args ...any) unsupportedApplyErro
 
 func validateControllerOwner(current metav1.Object, desired metav1.Object) error {
 	if err := ctrlmetadata.ValidateControllerOwner(current, desired); err != nil {
-		return resourceConflict("%s", err.Error())
+		return controllerOwnerConflict(err)
 	}
 
 	return nil
@@ -769,7 +730,7 @@ func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired 
 }
 
 func validateRequestedStorageClass(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	drift, changed := ctrlstorage.RequestedStorageClassDriftFor(current.Annotations, desired.Annotations)
+	drift, changed := ctrlstorage.RequestedStorageClassDriftFor(current.Annotations, desired.Annotations, ctrlannotations.RequestedStorageClass)
 	if !changed {
 		return nil
 	}

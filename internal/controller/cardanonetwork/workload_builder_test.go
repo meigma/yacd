@@ -7,8 +7,8 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
-	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -527,7 +527,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		deployment.Spec.Template.Annotations[localnetFingerprintAnno],
 		persistentVolumeClaim.Annotations[localnetFingerprintAnno],
 	)
-	assert.NotContains(t, persistentVolumeClaim.Annotations, ctrlstorage.RequestedStorageClassAnnotation)
+	assert.NotContains(t, persistentVolumeClaim.Annotations, ctrlannotations.RequestedStorageClass)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.Equal(t, "devnet-artifact-publisher", deployment.Spec.Template.Spec.ServiceAccountName)
@@ -927,7 +927,7 @@ func TestPrimaryWorkloadBuilderAppliesNodeOverrides(t *testing.T) {
 	assert.Zero(t, storage.Cmp(resource.MustParse("20Gi")))
 	require.NotNil(t, resources.PersistentVolumeClaim.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *resources.PersistentVolumeClaim.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[ctrlstorage.RequestedStorageClassAnnotation])
+	assert.Equal(t, testStorageClassName, resources.PersistentVolumeClaim.Annotations[ctrlannotations.RequestedStorageClass])
 }
 
 func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {

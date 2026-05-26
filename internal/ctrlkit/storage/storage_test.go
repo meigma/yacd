@@ -6,23 +6,26 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const testRequestedStorageClassAnnotation = "testing.example/requested-storage-class"
+
 func TestRequestedStorageClass(t *testing.T) {
 	value, ok := RequestedStorageClass(map[string]string{
-		RequestedStorageClassAnnotation: "fast",
-	})
+		testRequestedStorageClassAnnotation: "fast",
+	}, testRequestedStorageClassAnnotation)
 
 	assert.True(t, ok)
 	assert.Equal(t, "fast", value)
 
-	value, ok = RequestedStorageClass(nil)
+	value, ok = RequestedStorageClass(nil, testRequestedStorageClassAnnotation)
 	assert.False(t, ok)
 	assert.Empty(t, value)
 }
 
 func TestRequestedStorageClassDriftFor(t *testing.T) {
 	drift, changed := RequestedStorageClassDriftFor(
-		map[string]string{RequestedStorageClassAnnotation: "slow"},
-		map[string]string{RequestedStorageClassAnnotation: "fast"},
+		map[string]string{testRequestedStorageClassAnnotation: "slow"},
+		map[string]string{testRequestedStorageClassAnnotation: "fast"},
+		testRequestedStorageClassAnnotation,
 	)
 
 	assert.True(t, changed)
@@ -33,14 +36,15 @@ func TestRequestedStorageClassDriftFor(t *testing.T) {
 	assert.Equal(t, "slow", drift.CurrentDisplay())
 	assert.Equal(t, "fast", drift.DesiredDisplay())
 
-	drift, changed = RequestedStorageClassDriftFor(nil, map[string]string{RequestedStorageClassAnnotation: "fast"})
+	drift, changed = RequestedStorageClassDriftFor(nil, map[string]string{testRequestedStorageClassAnnotation: "fast"}, testRequestedStorageClassAnnotation)
 	assert.True(t, changed)
 	assert.Equal(t, "<default>", drift.CurrentDisplay())
 	assert.Equal(t, "fast", drift.DesiredDisplay())
 
 	_, changed = RequestedStorageClassDriftFor(
-		map[string]string{RequestedStorageClassAnnotation: "fast"},
-		map[string]string{RequestedStorageClassAnnotation: "fast"},
+		map[string]string{testRequestedStorageClassAnnotation: "fast"},
+		map[string]string{testRequestedStorageClassAnnotation: "fast"},
+		testRequestedStorageClassAnnotation,
 	)
 	assert.False(t, changed)
 }

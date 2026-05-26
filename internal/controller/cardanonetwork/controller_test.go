@@ -8,9 +8,9 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
-	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -1302,7 +1302,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassDrift(t *testing.T)
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlstorage.RequestedStorageClassAnnotation])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlannotations.RequestedStorageClass])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1329,7 +1329,7 @@ func TestCardanoNetworkReconcilerReconcileRejectsStorageClassRemoval(t *testing.
 	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, testStorageClassName, *pvc.Spec.StorageClassName)
-	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlstorage.RequestedStorageClassAnnotation])
+	assert.Equal(t, testStorageClassName, pvc.Annotations[ctrlannotations.RequestedStorageClass])
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
@@ -1352,7 +1352,7 @@ func TestCardanoNetworkReconcilerReconcileToleratesDefaultedStorageClass(t *test
 	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
 	require.NotNil(t, pvc.Spec.StorageClassName)
 	assert.Equal(t, defaultStorageClassName, *pvc.Spec.StorageClassName)
-	assert.NotContains(t, pvc.Annotations, ctrlstorage.RequestedStorageClassAnnotation)
+	assert.NotContains(t, pvc.Annotations, ctrlannotations.RequestedStorageClass)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 

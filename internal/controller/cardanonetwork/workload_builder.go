@@ -9,9 +9,9 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
-	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -1215,7 +1215,7 @@ func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan
 		localnetFingerprintAnno: plan.Fingerprint.Value,
 	}
 	if network.Spec.Node.Storage != nil && network.Spec.Node.Storage.StorageClassName != nil {
-		annotations[ctrlstorage.RequestedStorageClassAnnotation] = *network.Spec.Node.Storage.StorageClassName
+		annotations[ctrlannotations.RequestedStorageClass] = *network.Spec.Node.Storage.StorageClassName
 	}
 
 	return annotations

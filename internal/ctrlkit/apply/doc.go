@@ -1,2 +1,3 @@
-// Package apply contains small shared reconciliation error helpers.
+// Package apply contains shared reconciliation apply mechanics and error
+// helpers.
 package apply

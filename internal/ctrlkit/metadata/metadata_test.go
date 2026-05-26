@@ -69,7 +69,7 @@ func TestValidateControllerOwner(t *testing.T) {
 		Name:      "child",
 		Namespace: "testing",
 		OwnerReferences: []metav1.OwnerReference{
-			ownerReference("yacd.meigma.io/v1alpha1", "CardanoNetwork", "network", "uid-1"),
+			ownerReference("testing.example/v1", "Parent", "parent", "uid-1"),
 		},
 	}}
 	desired := current.DeepCopy()
@@ -82,7 +82,6 @@ func TestValidateControllerOwnerConflicts(t *testing.T) {
 		name        string
 		current     *corev1.ConfigMap
 		desired     *corev1.ConfigMap
-		wantReason  string
 		wantMessage string
 	}{
 		{
@@ -95,14 +94,12 @@ func TestValidateControllerOwnerConflicts(t *testing.T) {
 				},
 			}},
 			desired:     &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: "testing"}},
-			wantReason:  OwnerConflictDesiredControllerMissing,
 			wantMessage: "resource testing/child has no desired controller owner",
 		},
 		{
 			name:        "current has no controller owner",
 			current:     &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "child", Namespace: "testing"}},
 			desired:     desiredWithOwner("child", "testing", "v1", "ConfigMap", "parent", "uid-1"),
-			wantReason:  OwnerConflictCurrentControllerMissing,
 			wantMessage: "resource testing/child already exists without a controller owner",
 		},
 		{
@@ -115,7 +112,6 @@ func TestValidateControllerOwnerConflicts(t *testing.T) {
 				},
 			}},
 			desired:     desiredWithOwner("child", "testing", "v1", "ConfigMap", "parent", "uid-1"),
-			wantReason:  OwnerConflictControllerMismatch,
 			wantMessage: "resource testing/child is already controlled by ConfigMap/other",
 		},
 	}
@@ -126,7 +122,6 @@ func TestValidateControllerOwnerConflicts(t *testing.T) {
 
 			var conflict *OwnerConflictError
 			require.True(t, errors.As(err, &conflict))
-			assert.Equal(t, tt.wantReason, conflict.Reason)
 			assert.Equal(t, tt.wantMessage, conflict.Error())
 		})
 	}
