@@ -1,4 +1,3 @@
-// Package cardanonetwork contains the CardanoNetwork controller.
 package cardanonetwork
 
 import (
@@ -180,6 +179,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	return ctrl.Result{}, nil
 }
 
+// primaryWorkloadApplyResults captures the per-resource OperationResult
+// returned by each apply* call so the reconciler can decide whether the
+// run produced cluster mutations (and therefore whether to log at info or
+// debug). NetworkArtifactsConfigMapObject also carries the live ConfigMap
+// for the Deployment-annotation stamping step.
 type primaryWorkloadApplyResults struct {
 	NetworkArtifactsConfigMap       controllerutil.OperationResult
 	NetworkArtifactsConfigMapObject *corev1.ConfigMap
@@ -195,6 +199,9 @@ type primaryWorkloadApplyResults struct {
 	FaucetAuthSecret                controllerutil.OperationResult
 }
 
+// unchanged reports whether every owned child was already in the desired
+// state. Used to demote the reconcile log line to debug level when nothing
+// actually changed.
 func (r primaryWorkloadApplyResults) unchanged() bool {
 	return r.NetworkArtifactsConfigMap == controllerutil.OperationResultNone &&
 		r.ArtifactPublisherServiceAccount == controllerutil.OperationResultNone &&
@@ -209,6 +216,13 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 		r.FaucetAuthSecret == controllerutil.OperationResultNone
 }
 
+// applyPrimaryWorkloadResources applies the primary workload bundle in
+// dependency order: the artifact ConfigMap is created first because its UID
+// is stamped onto the Deployment pod-template annotations; RBAC follows so
+// the init container's ServiceAccount can patch the ConfigMap; PVC and
+// faucet auth Secret are created before the Deployment so its volumes can
+// mount; the Deployment itself rolls last; finally the optional Services
+// are reconciled or deleted to match the spec.
 func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -279,6 +293,10 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	return results, err
 }
 
+// applyOrDeletePrimaryChainAPIService applies the desired chain API Service
+// when the corresponding sidecar is enabled, or deletes the live Service
+// (using the caller's per-sidecar delete helper) when the sidecar is
+// disabled. This keeps the optional-Service flip-flop in one shape.
 func (r *CardanoNetworkReconciler) applyOrDeletePrimaryChainAPIService(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -292,6 +310,10 @@ func (r *CardanoNetworkReconciler) applyOrDeletePrimaryChainAPIService(
 	return deleteFn(ctx, network)
 }
 
+// handlePrimaryWorkloadApplyError funnels typed status condition errors
+// from any apply step into a Degraded status patch and faucet revocation.
+// Untyped errors are returned unchanged so the controller-runtime loop
+// reschedules with its default backoff.
 func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
