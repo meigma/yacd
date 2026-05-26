@@ -1,0 +1,14 @@
+template: testify
+formatter: goimports
+dir: cli/internal/mocks
+filename: '{{.InterfaceName | snakecase}}.go'
+pkgname: mocks
+structname: '{{.InterfaceName}}'
+force-file-write: true
+packages:
+  github.com/meigma/yacd/cli/internal/kube:
+    interfaces:
+      Client:
+  github.com/meigma/yacd/cli/internal/cli:
+    interfaces:
+      HTTPDoer:

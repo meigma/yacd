@@ -11,12 +11,14 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-const (
-	conditionReady    = "Ready"
-	conditionDegraded = "Degraded"
-)
+// pollInterval is the cadence at which WaitReady polls the CardanoNetwork
+// status while the deadline has not been reached.
+const pollInterval = 2 * time.Second
 
-// WaitReady polls a CardanoNetwork until it is usable or fails.
+// WaitReady polls a CardanoNetwork through the Client port until it is Ready,
+// becomes Degraded, or the deadline expires. The returned network is the
+// latest observed value, which may be useful to callers regardless of
+// outcome.
 func WaitReady(
 	ctx context.Context,
 	client Client,
@@ -24,24 +26,25 @@ func WaitReady(
 	name string,
 	timeout time.Duration,
 ) (*yacdv1alpha1.CardanoNetwork, error) {
-	var latest *yacdv1alpha1.CardanoNetwork
 	if timeout <= 0 {
 		return nil, fmt.Errorf("timeout must be greater than 0")
 	}
 
-	err := wait.PollUntilContextTimeout(ctx, 2*time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+	var latest *yacdv1alpha1.CardanoNetwork
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
 		network, err := client.GetCardanoNetwork(ctx, namespace, name)
 		if err != nil {
 			return false, err
 		}
 		latest = network
 
-		degraded := FreshCondition(network, conditionDegraded)
+		// Degraded is terminal-for-now; surface the reason/message immediately.
+		degraded := FreshCondition(network, ConditionDegraded)
 		if degraded != nil && degraded.Status == metav1.ConditionTrue {
 			return false, fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
 		}
 
-		ready := FreshCondition(network, conditionReady)
+		ready := FreshCondition(network, ConditionReady)
 		if ready != nil && ready.Status == metav1.ConditionTrue {
 			return true, nil
 		}
@@ -50,7 +53,9 @@ func WaitReady(
 	})
 	if err != nil {
 		if latest != nil {
-			ready := apimeta.FindStatusCondition(latest.Status.Conditions, conditionReady)
+			// Prefer the latest Ready condition for a precise failure message,
+			// distinguishing stale-status timeouts from true not-ready timeouts.
+			ready := apimeta.FindStatusCondition(latest.Status.Conditions, string(ConditionReady))
 			if ready != nil {
 				if ready.ObservedGeneration < latest.Generation {
 					return latest, fmt.Errorf(
@@ -68,17 +73,4 @@ func WaitReady(
 	}
 
 	return latest, nil
-}
-
-// FreshCondition returns a condition only when it observes the current generation.
-func FreshCondition(network *yacdv1alpha1.CardanoNetwork, conditionType string) *metav1.Condition {
-	condition := apimeta.FindStatusCondition(network.Status.Conditions, conditionType)
-	if condition == nil {
-		return nil
-	}
-	if condition.ObservedGeneration < network.Generation {
-		return nil
-	}
-
-	return condition
 }

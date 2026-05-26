@@ -9,6 +9,7 @@ tilt = "=0.37.3"
 ko = "=0.18.1"
 kind = "=0.31.0"
 ctlptl = "=0.9.3"
+mockery = "=3.7.0"
 
 [plugins.tools]
 kubebuilder = "file://.moon/proto/kubebuilder.toml"
@@ -22,3 +23,4 @@ tilt = "file://.moon/proto/tilt.toml"
 ko = "file://.moon/proto/ko.toml"
 kind = "file://.moon/proto/kind.toml"
 ctlptl = "file://.moon/proto/ctlptl.toml"
+mockery = "file://.moon/proto/mockery.toml"

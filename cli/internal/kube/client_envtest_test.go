@@ -3,11 +3,12 @@ package kube
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,20 +24,12 @@ func TestRuntimeClientAppliesAndGetsCardanoNetwork(t *testing.T) {
 	namespace := createNamespace(t, ctx, apiClient, "cli-apply")
 
 	network := localCardanoNetwork(namespace, "devnet")
-	if err := kubeClient.ApplyCardanoNetwork(ctx, network); err != nil {
-		t.Fatalf("ApplyCardanoNetwork returned an error: %v", err)
-	}
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, network))
 
 	got, err := kubeClient.GetCardanoNetwork(ctx, namespace, "devnet")
-	if err != nil {
-		t.Fatalf("GetCardanoNetwork returned an error: %v", err)
-	}
-	if got.Spec.Local == nil {
-		t.Fatal("got nil local spec")
-	}
-	if got.Spec.Local.NetworkMagic != 42 {
-		t.Fatalf("network magic = %d, want 42", got.Spec.Local.NetworkMagic)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, got.Spec.Local)
+	assert.Equal(t, int64(42), got.Spec.Local.NetworkMagic)
 }
 
 func TestWaitReadyReturnsReadyNetwork(t *testing.T) {
@@ -45,14 +38,10 @@ func TestWaitReadyReturnsReadyNetwork(t *testing.T) {
 	namespace := createNamespace(t, ctx, apiClient, "cli-wait")
 
 	network := localCardanoNetwork(namespace, "ready")
-	if err := kubeClient.ApplyCardanoNetwork(ctx, network); err != nil {
-		t.Fatalf("ApplyCardanoNetwork returned an error: %v", err)
-	}
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, network))
 
 	current := &yacdv1alpha1.CardanoNetwork{}
-	if err := apiClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: "ready"}, current); err != nil {
-		t.Fatalf("get applied network: %v", err)
-	}
+	require.NoError(t, apiClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: "ready"}, current))
 	current.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Ready",
@@ -63,17 +52,11 @@ func TestWaitReadyReturnsReadyNetwork(t *testing.T) {
 			LastTransitionTime: metav1.Now(),
 		},
 	}
-	if err := apiClient.Status().Update(ctx, current); err != nil {
-		t.Fatalf("update status: %v", err)
-	}
+	require.NoError(t, apiClient.Status().Update(ctx, current))
 
 	got, err := WaitReady(ctx, kubeClient, namespace, "ready", 5*time.Second)
-	if err != nil {
-		t.Fatalf("WaitReady returned an error: %v", err)
-	}
-	if got.Name != "ready" {
-		t.Fatalf("ready network name = %q, want ready", got.Name)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "ready", got.Name)
 }
 
 func TestRuntimeClientGetsSecretValue(t *testing.T) {
@@ -90,17 +73,11 @@ func TestRuntimeClientGetsSecretValue(t *testing.T) {
 			"token": []byte("super-secret-token-which-is-long-enough"),
 		},
 	}
-	if err := apiClient.Create(ctx, secret); err != nil {
-		t.Fatalf("create secret: %v", err)
-	}
+	require.NoError(t, apiClient.Create(ctx, secret))
 
 	got, err := kubeClient.GetSecretValue(ctx, namespace, "devnet-faucet-auth", "token")
-	if err != nil {
-		t.Fatalf("GetSecretValue returned an error: %v", err)
-	}
-	if got != "super-secret-token-which-is-long-enough" {
-		t.Fatalf("secret token = %q, want configured token", got)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "super-secret-token-which-is-long-enough", got)
 }
 
 func TestWaitReadyFailsOnDegradedNetwork(t *testing.T) {
@@ -109,14 +86,10 @@ func TestWaitReadyFailsOnDegradedNetwork(t *testing.T) {
 	namespace := createNamespace(t, ctx, apiClient, "cli-degraded")
 
 	network := localCardanoNetwork(namespace, "degraded")
-	if err := kubeClient.ApplyCardanoNetwork(ctx, network); err != nil {
-		t.Fatalf("ApplyCardanoNetwork returned an error: %v", err)
-	}
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, network))
 
 	current := &yacdv1alpha1.CardanoNetwork{}
-	if err := apiClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: "degraded"}, current); err != nil {
-		t.Fatalf("get applied network: %v", err)
-	}
+	require.NoError(t, apiClient.Get(ctx, crclient.ObjectKey{Namespace: namespace, Name: "degraded"}, current))
 	current.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Degraded",
@@ -127,14 +100,10 @@ func TestWaitReadyFailsOnDegradedNetwork(t *testing.T) {
 			LastTransitionTime: metav1.Now(),
 		},
 	}
-	if err := apiClient.Status().Update(ctx, current); err != nil {
-		t.Fatalf("update status: %v", err)
-	}
+	require.NoError(t, apiClient.Status().Update(ctx, current))
 
 	_, err := WaitReady(ctx, kubeClient, namespace, "degraded", 5*time.Second)
-	if err == nil {
-		t.Fatal("WaitReady succeeded, want degraded error")
-	}
+	require.Error(t, err)
 }
 
 func TestWaitReadyIgnoresStaleReadyGeneration(t *testing.T) {
@@ -154,12 +123,9 @@ func TestWaitReadyIgnoresStaleReadyGeneration(t *testing.T) {
 	}
 
 	_, err := WaitReady(context.Background(), &staticClient{network: network}, "cli-stale", "ready", 10*time.Millisecond)
-	if err == nil {
-		t.Fatal("WaitReady succeeded, want stale generation error")
-	}
-	if got := err.Error(); !strings.Contains(got, "observed generation 1") || !strings.Contains(got, "current generation 2") {
-		t.Fatalf("error = %q, want stale generation details", got)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "observed generation 1")
+	assert.Contains(t, err.Error(), "current generation 2")
 }
 
 func TestWaitReadyTimesOutCleanly(t *testing.T) {
@@ -178,44 +144,31 @@ func TestWaitReadyTimesOutCleanly(t *testing.T) {
 	}
 
 	_, err := WaitReady(context.Background(), &staticClient{network: network}, "cli-timeout", "pending", 10*time.Millisecond)
-	if err == nil {
-		t.Fatal("WaitReady succeeded, want timeout error")
-	}
-	if got := err.Error(); !strings.Contains(got, "did not become ready") || !strings.Contains(got, "Reconciling") {
-		t.Fatalf("error = %q, want clean timeout status", got)
-	}
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did not become ready")
+	assert.Contains(t, err.Error(), "Reconciling")
 }
 
-func newEnvtestClient(t *testing.T) (*runtimeClient, crclient.Client) {
+func newEnvtestClient(t *testing.T) (*Adapter, crclient.Client) {
 	t.Helper()
 
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
 	}
 	cfg, err := testEnv.Start()
-	if err != nil {
-		t.Fatalf("start envtest: %v", err)
-	}
+	require.NoError(t, err, "start envtest")
 	t.Cleanup(func() {
-		if err := testEnv.Stop(); err != nil {
-			t.Fatalf("stop envtest: %v", err)
-		}
+		assert.NoError(t, testEnv.Stop(), "stop envtest")
 	})
 
 	scheme := runtime.NewScheme()
-	if err := clientgoscheme.AddToScheme(scheme); err != nil {
-		t.Fatalf("add client-go scheme: %v", err)
-	}
-	if err := yacdv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add yacd scheme: %v", err)
-	}
+	require.NoError(t, clientgoscheme.AddToScheme(scheme), "add client-go scheme")
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme), "add yacd scheme")
 
 	apiClient, err := crclient.New(cfg, crclient.Options{Scheme: scheme})
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
+	require.NoError(t, err, "create client")
 
-	return &runtimeClient{client: apiClient, namespace: "default"}, apiClient
+	return &Adapter{client: apiClient, namespace: "default"}, apiClient
 }
 
 func createNamespace(t *testing.T, ctx context.Context, apiClient crclient.Client, name string) string {
@@ -224,9 +177,7 @@ func createNamespace(t *testing.T, ctx context.Context, apiClient crclient.Clien
 	namespace := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 	}
-	if err := apiClient.Create(ctx, namespace); err != nil {
-		t.Fatalf("create namespace: %v", err)
-	}
+	require.NoError(t, apiClient.Create(ctx, namespace), "create namespace")
 
 	return name
 }
@@ -267,6 +218,10 @@ func localCardanoNetwork(namespace string, name string) *yacdv1alpha1.CardanoNet
 	}
 }
 
+// staticClient is a hand-rolled Client used by the pure WaitReady tests in
+// this file. It cannot be replaced by a generated mock because the tests
+// exercise the polling loop directly without setting up per-call
+// expectations; the mock would error on the duplicate get.
 type staticClient struct {
 	network *yacdv1alpha1.CardanoNetwork
 }

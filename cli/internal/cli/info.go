@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -11,6 +10,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// newInfoCommand wires the `yacd info NAME` subcommand. The command
+// fetches the named CardanoNetwork, projects it into an infoOutput, and
+// renders either JSON (when --json is set) or the human-readable text
+// shape implemented in info_print.go.
 func newInfoCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "info NAME",
@@ -60,6 +63,10 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 	return cmd
 }
 
+// infoOutput is the JSON projection of CardanoNetwork status the info
+// command emits. Field names are stable across releases; the Conditions
+// slice is always present (possibly empty) so JSON consumers can iterate
+// without a nil-check.
 type infoOutput struct {
 	Name               string            `json:"name"`
 	Namespace          string            `json:"namespace"`
@@ -70,6 +77,7 @@ type infoOutput struct {
 	Conditions         []conditionOutput `json:"conditions"`
 }
 
+// networkOutput projects the CardanoNetwork.Status.Network sub-status.
 type networkOutput struct {
 	Mode                string `json:"mode,omitempty"`
 	LocalnetFingerprint string `json:"localnetFingerprint,omitempty"`
@@ -78,6 +86,8 @@ type networkOutput struct {
 	Era                 string `json:"era,omitempty"`
 }
 
+// endpointsOutput projects the published service endpoints. Each pointer
+// is nil when the corresponding service has not yet been published.
 type endpointsOutput struct {
 	NodeToNode *endpointOutput `json:"nodeToNode,omitempty"`
 	Ogmios     *endpointOutput `json:"ogmios,omitempty"`
@@ -85,16 +95,20 @@ type endpointsOutput struct {
 	Faucet     *endpointOutput `json:"faucet,omitempty"`
 }
 
+// endpointOutput projects a single ServiceEndpointStatus.
 type endpointOutput struct {
 	ServiceName string `json:"serviceName,omitempty"`
 	Port        int32  `json:"port,omitempty"`
 	URL         string `json:"url,omitempty"`
 }
 
+// faucetOutput projects the optional faucet status sub-resource.
 type faucetOutput struct {
 	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
+// conditionOutput projects a single metav1.Condition with the timestamp
+// formatted as RFC3339 for JSON stability.
 type conditionOutput struct {
 	Type               string `json:"type"`
 	Status             string `json:"status"`
@@ -104,6 +118,10 @@ type conditionOutput struct {
 	LastTransitionTime string `json:"lastTransitionTime,omitempty"`
 }
 
+// newInfo projects a CardanoNetwork into the JSON-shaped infoOutput. The
+// projection drops nil sub-statuses rather than emitting empty objects, so
+// JSON consumers can distinguish "not yet published" from "explicitly
+// empty".
 func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 	info := infoOutput{
 		Name:               network.Name,
@@ -149,6 +167,8 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 	return info
 }
 
+// endpointInfo projects a single ServiceEndpointStatus or returns nil when
+// the endpoint has not yet been published.
 func endpointInfo(endpoint *yacdv1alpha1.ServiceEndpointStatus) *endpointOutput {
 	if endpoint == nil {
 		return nil
@@ -159,159 +179,4 @@ func endpointInfo(endpoint *yacdv1alpha1.ServiceEndpointStatus) *endpointOutput 
 		Port:        endpoint.Port,
 		URL:         endpoint.URL,
 	}
-}
-
-func printInfo(out io.Writer, info infoOutput) error {
-	if err := printInfoHeader(out, info); err != nil {
-		return err
-	}
-	if err := printNetworkInfo(out, info.Network); err != nil {
-		return err
-	}
-	if err := printConditionsInfo(out, info.Conditions); err != nil {
-		return err
-	}
-	if err := printEndpointsInfo(out, info.Endpoints); err != nil {
-		return err
-	}
-	if err := printFaucetInfo(out, info.Faucet); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func printInfoHeader(out io.Writer, info infoOutput) error {
-	if _, err := fmt.Fprintf(out, "Name: %s\nNamespace: %s\n", info.Name, info.Namespace); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-	if info.ObservedGeneration != 0 {
-		if _, err := fmt.Fprintf(out, "Observed generation: %d\n", info.ObservedGeneration); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func printNetworkInfo(out io.Writer, network networkOutput) error {
-	if network.Mode != "" || network.LocalnetFingerprint != "" || network.NetworkMagic != nil || network.Profile != "" || network.Era != "" {
-		if _, err := fmt.Fprintln(out, "\nNetwork:"); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-		if network.Mode != "" {
-			if _, err := fmt.Fprintf(out, "  Mode: %s\n", network.Mode); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if network.LocalnetFingerprint != "" {
-			if _, err := fmt.Fprintf(out, "  Localnet fingerprint: %s\n", network.LocalnetFingerprint); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if network.NetworkMagic != nil {
-			if _, err := fmt.Fprintf(out, "  Network magic: %d\n", *network.NetworkMagic); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if network.Profile != "" {
-			if _, err := fmt.Fprintf(out, "  Profile: %s\n", network.Profile); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if network.Era != "" {
-			if _, err := fmt.Fprintf(out, "  Era: %s\n", network.Era); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-	}
-
-	return nil
-}
-
-func printConditionsInfo(out io.Writer, conditions []conditionOutput) error {
-	if _, err := fmt.Fprintln(out, "\nConditions:"); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-	if len(conditions) == 0 {
-		if _, err := fmt.Fprintln(out, "  None"); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-	}
-	for _, condition := range conditions {
-		if _, err := fmt.Fprintf(out, "  %s: %s", condition.Type, condition.Status); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-		if condition.Reason != "" {
-			if _, err := fmt.Fprintf(out, " (%s)", condition.Reason); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if condition.Message != "" {
-			if _, err := fmt.Fprintf(out, " - %s", condition.Message); err != nil {
-				return fmt.Errorf("write info: %w", err)
-			}
-		}
-		if _, err := fmt.Fprintln(out); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func printEndpointsInfo(out io.Writer, endpoints endpointsOutput) error {
-	if _, err := fmt.Fprintln(out, "\nEndpoints:"); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-	if err := printEndpointInfo(out, "node-to-node", endpoints.NodeToNode); err != nil {
-		return err
-	}
-	if err := printEndpointInfo(out, "ogmios", endpoints.Ogmios); err != nil {
-		return err
-	}
-	if err := printEndpointInfo(out, "kupo", endpoints.Kupo); err != nil {
-		return err
-	}
-	if err := printEndpointInfo(out, "faucet", endpoints.Faucet); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func printFaucetInfo(out io.Writer, faucet *faucetOutput) error {
-	if faucet == nil || faucet.AuthSecretName == "" {
-		return nil
-	}
-	if _, err := fmt.Fprintln(out, "\nFaucet:"); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-	if _, err := fmt.Fprintf(out, "  Auth Secret: %s\n", faucet.AuthSecretName); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-
-	return nil
-}
-
-func printEndpointInfo(out io.Writer, name string, endpoint *endpointOutput) error {
-	if endpoint == nil {
-		if _, err := fmt.Fprintf(out, "  %s: unavailable\n", name); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-		return nil
-	}
-	if _, err := fmt.Fprintf(out, "  %s: %s", name, endpoint.URL); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-	if endpoint.ServiceName != "" {
-		if _, err := fmt.Fprintf(out, " (service %s, port %d)", endpoint.ServiceName, endpoint.Port); err != nil {
-			return fmt.Errorf("write info: %w", err)
-		}
-	}
-	if _, err := fmt.Fprintln(out); err != nil {
-		return fmt.Errorf("write info: %w", err)
-	}
-
-	return nil
 }
