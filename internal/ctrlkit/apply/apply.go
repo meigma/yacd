@@ -32,7 +32,8 @@ func Unsupported(reason string, format string, args ...any) UnsupportedError {
 	}
 }
 
-// UpdateMode selects how a changed object is persisted.
+// UpdateMode selects how a changed object is persisted. The zero value uses
+// UpdateModePatch.
 type UpdateMode string
 
 const (
@@ -47,21 +48,27 @@ const (
 type OwnedObjectOptions[T client.Object] struct {
 	// Current is the empty object instance used for the live read.
 	Current T
-	// Default mutates desired before the object is read or created.
+	// Default mutates a deep copy of desired before the object is read or
+	// created.
 	Default func(desired T) error
 	// OwnerConflict maps a generic owner conflict into the caller's status
 	// error contract.
 	OwnerConflict func(error) error
-	// Validate runs after owner validation and before mutation.
+	// Validate runs for existing objects after owner validation and before
+	// mutation. It is not called for newly-created objects.
 	Validate func(current T, desired T) error
-	// Mutate copies reconciled fields from desired to current.
+	// Mutate copies reconciled fields from desired to current for existing
+	// objects. It is not called for newly-created objects.
 	Mutate func(current T, desired T) error
-	// UpdateMode selects patch or full update when current changes.
+	// UpdateMode selects patch or full update when current changes. The zero
+	// value uses UpdateModePatch.
 	UpdateMode UpdateMode
 }
 
 // ApplyOwnedObject reconciles the common create/read/owner-check/mutate/persist
-// skeleton for controller-owned child objects.
+// skeleton for controller-owned child objects. Missing objects are created from
+// the defaulted desired copy directly; Validate and Mutate only run when an
+// existing object is found and has the expected controller owner.
 func ApplyOwnedObject[T client.Object](
 	ctx context.Context,
 	c client.Client,

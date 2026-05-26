@@ -113,6 +113,11 @@ func ConsumerStatus(status *yacdv1alpha1.CardanoNetworkArtifactsStatus) Consumer
 			Message: "Referenced CardanoNetwork artifact status is incomplete",
 		}
 	}
+	if status.SchemaVersion != cardanonetworkartifacts.SchemaVersion {
+		return ConsumerStatusResult{
+			Message: "Referenced CardanoNetwork artifact schema version is unsupported",
+		}
+	}
 
 	return ConsumerStatusResult{
 		Ready:         true,
@@ -146,6 +151,11 @@ func ConsumerConfigMap(
 		return ConsumerConfigMapResult{
 			Pending: true,
 			Message: "Referenced CardanoNetwork artifact ConfigMap is deleting",
+		}
+	}
+	if status.SchemaVersion != cardanonetworkartifacts.SchemaVersion {
+		return ConsumerConfigMapResult{
+			Message: "Referenced CardanoNetwork artifact schema version is unsupported",
 		}
 	}
 	if configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] != status.SchemaVersion ||

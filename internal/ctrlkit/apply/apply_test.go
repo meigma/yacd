@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -41,8 +42,16 @@ func TestApplyOwnedObjectCreatesMissingObject(t *testing.T) {
 
 	result, current, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
 		Current: &corev1.ConfigMap{},
+		Default: func(desired *corev1.ConfigMap) error {
+			desired.Annotations = map[string]string{"defaulted": "true"}
+			return nil
+		},
+		Validate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			t.Fatal("Validate must not run for newly-created objects")
+			return nil
+		},
 		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
-			current.Data = desired.Data
+			t.Fatal("Mutate must not run for newly-created objects")
 			return nil
 		},
 	})
@@ -50,10 +59,12 @@ func TestApplyOwnedObjectCreatesMissingObject(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, controllerutil.OperationResultCreated, result)
 	assert.Equal(t, map[string]string{"key": "desired"}, current.Data)
+	assert.Equal(t, map[string]string{"defaulted": "true"}, current.Annotations)
 
 	stored := &corev1.ConfigMap{}
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "child", Namespace: "testing"}, stored))
 	assert.Equal(t, map[string]string{"key": "desired"}, stored.Data)
+	assert.Equal(t, map[string]string{"defaulted": "true"}, stored.Annotations)
 }
 
 func TestApplyOwnedObjectPatchesChangedObject(t *testing.T) {
@@ -78,6 +89,73 @@ func TestApplyOwnedObjectPatchesChangedObject(t *testing.T) {
 	stored := &corev1.ConfigMap{}
 	require.NoError(t, c.Get(ctx, client.ObjectKey{Name: "child", Namespace: "testing"}, stored))
 	assert.Equal(t, map[string]string{"key": "desired"}, stored.Data)
+}
+
+func TestApplyOwnedObjectDefaultsToPatchUpdateMode(t *testing.T) {
+	ctx := context.Background()
+	current := ownedConfigMap(t)
+	current.Data = map[string]string{"key": "old"}
+
+	var patchCalls int
+	var updateCalls int
+	c := newApplyTestClientWithInterceptor(t, []client.Object{current}, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patchCalls++
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			updateCalls++
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+	desired := ownedConfigMap(t)
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			current.Data = desired.Data
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, controllerutil.OperationResultUpdated, result)
+	assert.Equal(t, 1, patchCalls)
+	assert.Zero(t, updateCalls)
+}
+
+func TestApplyOwnedObjectUsesUpdateModeUpdate(t *testing.T) {
+	ctx := context.Background()
+	current := ownedConfigMap(t)
+	current.Data = map[string]string{"key": "old"}
+
+	var patchCalls int
+	var updateCalls int
+	c := newApplyTestClientWithInterceptor(t, []client.Object{current}, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patchCalls++
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			updateCalls++
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+	desired := ownedConfigMap(t)
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current:    &corev1.ConfigMap{},
+		UpdateMode: UpdateModeUpdate,
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			current.Data = desired.Data
+			return nil
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, controllerutil.OperationResultUpdated, result)
+	assert.Zero(t, patchCalls)
+	assert.Equal(t, 1, updateCalls)
 }
 
 func TestApplyOwnedObjectReturnsNoneWhenUnchanged(t *testing.T) {
@@ -127,6 +205,19 @@ func newApplyTestClient(t *testing.T, objects ...client.Object) client.Client {
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objects...).
+		Build()
+}
+
+func newApplyTestClientWithInterceptor(t *testing.T, objects []client.Object, funcs interceptor.Funcs) client.Client {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objects...).
+		WithInterceptorFuncs(funcs).
 		Build()
 }
 

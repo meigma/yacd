@@ -127,6 +127,16 @@ func TestConsumerStatusRejectsIncompleteStatus(t *testing.T) {
 	)
 }
 
+func TestConsumerStatusRejectsUnsupportedSchemaVersion(t *testing.T) {
+	status := validConfigMapStatus()
+	status.SchemaVersion = "v2"
+
+	result := ConsumerStatus(&status)
+
+	assert.False(t, result.Ready)
+	assert.Equal(t, "Referenced CardanoNetwork artifact schema version is unsupported", result.Message)
+}
+
 func TestConsumerConfigMap(t *testing.T) {
 	result := ConsumerConfigMap(validConfigMap(), validConfigMapStatus())
 
@@ -180,6 +190,19 @@ func TestConsumerConfigMapRejectsMetadataMismatch(t *testing.T) {
 	assert.False(t, result.Ready)
 	assert.False(t, result.Pending)
 	assert.Equal(t, "Referenced CardanoNetwork artifact ConfigMap metadata does not match status", result.Message)
+}
+
+func TestConsumerConfigMapRejectsUnsupportedSchemaVersion(t *testing.T) {
+	configMap := validConfigMap()
+	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = "v2"
+	status := validConfigMapStatus()
+	status.SchemaVersion = "v2"
+
+	result := ConsumerConfigMap(configMap, status)
+
+	assert.False(t, result.Ready)
+	assert.False(t, result.Pending)
+	assert.Equal(t, "Referenced CardanoNetwork artifact schema version is unsupported", result.Message)
 }
 
 func TestConsumerConfigMapRejectsInvalidData(t *testing.T) {

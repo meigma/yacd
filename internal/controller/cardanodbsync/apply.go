@@ -98,7 +98,7 @@ func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
 	if err != nil {
 		return results, err
 	}
-	results.MetricsService, err = r.applyDBSyncMetricsService(ctx, resources.MetricsService)
+	results.MetricsService, err = r.applyDBSyncService(ctx, resources.MetricsService)
 
 	return results, err
 }
@@ -114,7 +114,7 @@ func (r *CardanoDBSyncReconciler) applyManagedPostgresResources(
 	if err != nil {
 		return results, err
 	}
-	results.Service, err = r.applyDBSyncMetricsService(ctx, resources.Service)
+	results.Service, err = r.applyDBSyncService(ctx, resources.Service)
 	if err != nil {
 		return results, err
 	}
@@ -429,7 +429,7 @@ func mutateDBSyncDeployment(current *appsv1.Deployment, desired *appsv1.Deployme
 	return nil
 }
 
-func (r *CardanoDBSyncReconciler) applyDBSyncMetricsService(
+func (r *CardanoDBSyncReconciler) applyDBSyncService(
 	ctx context.Context,
 	desired *corev1.Service,
 ) (controllerutil.OperationResult, error) {
