@@ -20,9 +20,13 @@ func RequestedStorageClass(annotations map[string]string, annotationKey string) 
 // RequestedStorageClassDrift reports a change to the controller-owned
 // requested storage class annotation.
 type RequestedStorageClassDrift struct {
-	Current    string
+	// Current is the requested storage class on the existing object.
+	Current string
+	// CurrentSet is true when the existing object carries the annotation.
 	CurrentSet bool
-	Desired    string
+	// Desired is the requested storage class on the desired object.
+	Desired string
+	// DesiredSet is true when the desired object carries the annotation.
 	DesiredSet bool
 }
 
@@ -49,8 +53,11 @@ const (
 // PersistentVolumeClaimDrift describes the first PVC drift detected by
 // PersistentVolumeClaimDriftFor.
 type PersistentVolumeClaimDrift struct {
-	Reason  PersistentVolumeClaimDriftReason
+	// Reason classifies the immutable or unsupported drift.
+	Reason PersistentVolumeClaimDriftReason
+	// Current is the existing object's value for the drifted field.
 	Current string
+	// Desired is the desired object's value for the drifted field.
 	Desired string
 }
 
@@ -79,9 +86,9 @@ func RequestedStorageClassDriftFor(current map[string]string, desired map[string
 	return drift, currentSet != desiredSet || currentStorageClass != desiredStorageClass
 }
 
-// PersistentVolumeClaimDriftFor compares the shared immutable PVC fields YACD
-// controllers preserve after creation. Storage expansion is allowed; shrinking
-// is reported as drift.
+// PersistentVolumeClaimDriftFor compares the shared immutable PVC fields a
+// controller preserves on owned children after creation. Storage expansion is
+// allowed; shrinking is reported as drift.
 func PersistentVolumeClaimDriftFor(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim, annotationKey string) (PersistentVolumeClaimDrift, bool) {
 	if drift, changed := RequestedStorageClassDriftFor(current.Annotations, desired.Annotations, annotationKey); changed {
 		return PersistentVolumeClaimDrift{

@@ -89,6 +89,8 @@ func ShortHash(value string) string {
 	return hex.EncodeToString(sum[:])[:ShortHashLength]
 }
 
+// truncateHashSuffix clips suffix to maxHashedSuffixLength while preserving a
+// valid DNS-label trailing character.
 func truncateHashSuffix(suffix string) string {
 	if len(suffix) <= maxHashedSuffixLength {
 		return suffix
@@ -102,6 +104,8 @@ func truncateHashSuffix(suffix string) string {
 	return truncated
 }
 
+// sanitizeDNSLabel lowercases value and replaces characters outside the DNS
+// label alphabet with '-', trimming leading and trailing dashes.
 func sanitizeDNSLabel(value string) string {
 	var builder strings.Builder
 	builder.Grow(len(value))
@@ -116,6 +120,8 @@ func sanitizeDNSLabel(value string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
+// sanitizeLabelValue replaces characters outside the Kubernetes label-value
+// alphabet with '-', trimming leading and trailing punctuation.
 func sanitizeLabelValue(value string) string {
 	var builder strings.Builder
 	builder.Grow(len(value))

@@ -11,7 +11,9 @@ import (
 // OwnerConflictError reports that an existing object cannot be treated as the
 // desired controller-owned child.
 type OwnerConflictError struct {
-	Key     types.NamespacedName
+	// Key is the namespaced name of the conflicting object.
+	Key types.NamespacedName
+	// Message is the user-facing description of the conflict.
 	Message string
 }
 
@@ -120,6 +122,8 @@ func ValidateControllerOwner(current metav1.Object, desired metav1.Object) error
 	return nil
 }
 
+// ownerConflict builds an OwnerConflictError keyed by obj with a formatted
+// message.
 func ownerConflict(obj metav1.Object, format string, args ...any) error {
 	return &OwnerConflictError{
 		Key:     ObjectKey(obj),

@@ -120,6 +120,8 @@ func ApplyOwnedObject[T client.Object](
 	return controllerutil.OperationResultUpdated, current, nil
 }
 
+// cloneObject deep-copies obj and asserts the result back to T, returning an
+// error when the runtime type does not match.
 func cloneObject[T client.Object](obj T) (T, error) {
 	cloned, ok := obj.DeepCopyObject().(T)
 	if !ok {

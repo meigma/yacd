@@ -52,8 +52,8 @@ func MutateDeployment(current *appsv1.Deployment, desired *appsv1.Deployment, me
 	}
 }
 
-// MutateService reconciles the owned fields common to YACD ClusterIP Services
-// while preserving Kubernetes-assigned cluster IP fields.
+// MutateService reconciles the owned fields common to controller-owned
+// ClusterIP Services while preserving Kubernetes-assigned cluster IP fields.
 func MutateService(current *corev1.Service, desired *corev1.Service, mergeAnnotations AnnotationMerger) {
 	MutateObjectMetadata(current, desired, mergeAnnotations)
 	current.Spec.Type = desired.Spec.Type

@@ -45,6 +45,7 @@ func DeploymentAvailable(deployment *appsv1.Deployment) bool {
 		return false
 	}
 
+	// Treat unset Replicas as 1, matching apps/v1 Deployment defaulting.
 	desiredReplicas := int32(1)
 	if deployment.Spec.Replicas != nil {
 		desiredReplicas = *deployment.Spec.Replicas
