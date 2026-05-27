@@ -70,6 +70,12 @@ func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deploym
 		current.Containers = desired.Containers
 		current.Volumes = desired.Volumes
 	})
+	if _, desiredDBSyncLabel := desired.Spec.Template.Labels[labelDBSync]; !desiredDBSyncLabel && current.Spec.Template.Labels != nil {
+		delete(current.Spec.Template.Labels, labelDBSync)
+		if len(current.Spec.Template.Labels) == 0 {
+			current.Spec.Template.Labels = nil
+		}
+	}
 
 	return nil
 }

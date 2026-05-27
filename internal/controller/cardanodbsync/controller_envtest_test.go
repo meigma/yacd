@@ -226,7 +226,7 @@ func TestCardanoDBSyncControllerManagerReconcilesPrimarySidecarPlacementPeers(t 
 	first.Namespace = namespace.Name
 	require.NoError(t, apiClient.Create(ctx, first))
 
-	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonUnsupportedSpec)
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
 
 	second := primarySidecarCardanoDBSync(localCardanoDBSync("second", "shared-network"))
 	second.Namespace = namespace.Name
@@ -240,7 +240,7 @@ func TestCardanoDBSyncControllerManagerReconcilesPrimarySidecarPlacementPeers(t 
 	currentSecond.Spec.NetworkRef.Name = "other-network"
 	require.NoError(t, apiClient.Update(ctx, currentSecond))
 
-	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonUnsupportedSpec)
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
 }
 
 func assertManagedPostgresSecretAndChildWatches(

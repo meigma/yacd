@@ -125,7 +125,7 @@ fits for hosted clusters.
 
 ## Heavy IPC Services And Follower Nodes
 
-Heavy services that need raw node IPC should usually get a dedicated follower
+Heavy services that need raw node IPC should default to a dedicated follower
 node colocated with the service, rather than mutating the primary node Pod.
 
 For example, a db-sync CRD can own a StatefulSet containing:
@@ -139,13 +139,20 @@ The follower node connects to the primary environment's bootstrap node over
 normal node-to-node TCP. db-sync consumes the follower's local Unix socket.
 
 This costs more CPU, memory, storage, and startup time, but it preserves clean
-controller ownership:
+controller ownership and remains the default db-sync placement:
 
 - adding db-sync does not restart the primary node
 - the db-sync controller owns its workload, PVCs, database wiring, config, and
   status
 - the primary environment only needs to publish enough information for
   dependent controllers to configure follower nodes
+
+`primarySidecar` is an explicit exception for cases where duplicate node cost
+is worse than sharing the primary socket. In that mode, CardanoDBSync still
+owns its database, config, state, metrics, and status, but CardanoNetwork
+composes the db-sync sidecar into the primary Deployment. Enabling or changing
+that attachment rolls the primary Deployment, trading workload isolation for a
+single node copy and direct socket access.
 
 This pattern should be opt-in for heavyweight services, not automatic for every
 helper.

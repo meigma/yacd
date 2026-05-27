@@ -10,6 +10,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,6 +22,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -395,6 +397,215 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 
 	require.Eventually(t, func() bool {
 		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	skipNameValidation := true
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	require.NoError(t, (&CardanoNetworkReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+	require.NoError(t, (&ctrldbsync.CardanoDBSyncReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cardanonetwork-dbsync-envtest"}}
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	network := localCardanoNetwork("sidecar-network")
+	network.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, network))
+
+	deploymentKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, deploymentKey, &appsv1.Deployment{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
+	artifactKey := client.ObjectKey{Namespace: network.Namespace, Name: networkArtifactsConfigMapName(network)}
+	require.Eventually(t, func() bool {
+		configMap := &corev1.ConfigMap{}
+		return apiClient.Get(ctx, artifactKey, configMap) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+	artifactConfigMap := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, artifactKey, artifactConfigMap))
+	if artifactConfigMap.Annotations == nil {
+		artifactConfigMap.Annotations = map[string]string{}
+	}
+	artifactConfigMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
+	artifactConfigMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
+	artifactConfigMap.Data = testNetworkArtifactsData()
+	require.NoError(t, apiClient.Update(ctx, artifactConfigMap))
+
+	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork))
+	currentNetwork.Status.ObservedGeneration = currentNetwork.Generation
+	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+		NetworkConfigMapName: artifactConfigMap.Name,
+		SchemaVersion:        networkartifacts.SchemaVersion,
+		DataHash:             testNetworkArtifactsDataHash,
+	}
+	currentNetwork.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
+		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryWorkloadName(network),
+			Port:        network.Spec.Node.Port,
+			URL:         "tcp://sidecar-network-node.cardanonetwork-dbsync-envtest.svc.cluster.local:3001",
+		},
+		Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryOgmiosServiceName(network),
+			Port:        defaultOgmiosPort,
+			URL:         "ws://sidecar-network-ogmios.cardanonetwork-dbsync-envtest.svc.cluster.local:1337",
+		},
+	}
+	currentNetwork.Status.Conditions = []metav1.Condition{{
+		Type:               string(conditionTypeArtifactsReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(conditionReasonArtifactsReady),
+		Message:            "artifacts are ready",
+		ObservedGeneration: currentNetwork.Generation,
+		LastTransitionTime: metav1.Now(),
+	}}
+	require.NoError(t, apiClient.Status().Update(ctx, currentNetwork))
+
+	first := readyPrimarySidecarDBSync("first", network)
+	first.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, primarySidecarExternalSecret(first)))
+	require.NoError(t, apiClient.Create(ctx, first))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(first), current); err != nil {
+			return false
+		}
+		sidecarMaterialReady := apimeta.FindStatusCondition(current.Status.Conditions, "SidecarMaterialReady")
+		return current.Status.ObservedGeneration == current.Generation &&
+			current.Status.Placement != nil &&
+			current.Status.Placement.PrimarySidecar != nil &&
+			sidecarMaterialReady != nil &&
+			sidecarMaterialReady.Status == metav1.ConditionTrue
+	}, 10*time.Second, 100*time.Millisecond)
+
+	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
+	currentFirst := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
+	requireDeploymentAnnotationEventually(t, ctx, apiClient, deploymentKey, dbSyncSidecarRevisionAnno, currentFirst.Status.Placement.PrimarySidecar.Revision)
+
+	currentFirst.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	require.NoError(t, apiClient.Status().Update(ctx, currentFirst))
+	requireDeploymentAnnotationEventually(t, ctx, apiClient, deploymentKey, dbSyncSidecarRevisionAnno, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+
+	require.Eventually(t, func() bool {
+		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	second := readyPrimarySidecarDBSync("second", network)
+	second.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, primarySidecarExternalSecret(second)))
+	require.NoError(t, apiClient.Create(ctx, second))
+
+	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", false)
+
+	require.NoError(t, apiClient.Delete(ctx, second))
+	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
+}
+
+func primarySidecarExternalSecret(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      dbSync.Spec.Database.External.PasswordSecretRef.Name,
+			Namespace: dbSync.Namespace,
+		},
+		Data: map[string][]byte{
+			dbSync.Spec.Database.External.PasswordSecretRef.Key: []byte("secret"),
+		},
+	}
+}
+
+func requireDeploymentContainerEventually(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	deploymentKey client.ObjectKey,
+	containerName string,
+	wantPresent bool,
+) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		deployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, deployment); err != nil {
+			return false
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name == containerName {
+				return wantPresent
+			}
+		}
+		return !wantPresent
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func requireDeploymentAnnotationEventually(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	deploymentKey client.ObjectKey,
+	annotation string,
+	value string,
+) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		deployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, deployment); err != nil {
+			return false
+		}
+
+		return deployment.Spec.Template.Annotations[annotation] == value
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

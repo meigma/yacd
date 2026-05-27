@@ -426,6 +426,7 @@ type CardanoNetworkStatus struct {
 	//
 	// Expected condition types include:
 	// - "Ready": the network is usable through its published endpoints
+	// - "DBSyncAttachmentReady": the primary-sidecar db-sync attachment is not blocking the primary Pod
 	// - "NodeReady": the primary node container is running
 	// - "ArtifactsReady": the non-secret network artifact bundle is published
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node

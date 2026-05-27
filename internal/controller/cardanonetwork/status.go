@@ -38,7 +38,13 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	faucetService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
 	networkArtifactsConfigMap *corev1.ConfigMap,
+	dbSyncAttached bool,
+	dbSyncAttachmentCondition metav1.Condition,
 ) (metav1.Condition, error) {
+	dbSyncAttachmentReady, err := r.primaryDBSyncAttachmentReadyCondition(ctx, network, dbSyncAttached, dbSyncAttachmentCondition)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
 	nodeReady, err := r.primaryNodeReadyCondition(ctx, network)
 	if err != nil {
 		return metav1.Condition{}, err
@@ -73,12 +79,13 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 			conditionMessageArtifactsReady,
 		)
 	}
-	ready := readyCondition(nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, kupoService != nil, faucetService != nil)
+	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
 	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
+		dbSyncAttachmentReady,
 		nodeReady,
 		ogmiosReady,
 		kupoReady,

@@ -8,6 +8,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	"github.com/meigma/yacd/internal/cardano/primarypod"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
@@ -18,9 +19,9 @@ import (
 // hence the package-private const block instead of inlined string literals.
 const (
 	// cardano-node container.
-	cardanoNodeContainerName = "cardano-node"
+	cardanoNodeContainerName = primarypod.CardanoNodeContainerName
 	cardanoNodeCommand       = "cardano-node"
-	cardanoNodePortName      = "node-to-node"
+	cardanoNodePortName      = primarypod.PortNameNodeToNode
 	cardanoNodeSocketDir     = "/ipc"
 	cardanoNodeSocketPath    = "/ipc/node.socket"
 	cardanoNodeDatabaseDir   = "/state/db"
@@ -29,13 +30,13 @@ const (
 	// ogmios sidecar.
 	ogmiosContainerName = "ogmios"
 	ogmiosCommand       = "/bin/ogmios"
-	ogmiosPortName      = "ogmios"
+	ogmiosPortName      = primarypod.PortNameOgmios
 	ogmiosHostAddress   = "0.0.0.0"
 	ogmiosHealthPath    = "/health"
 
 	// kupo sidecar.
 	kupoContainerName     = "kupo"
-	kupoPortName          = "kupo"
+	kupoPortName          = primarypod.PortNameKupo
 	kupoHostAddress       = "0.0.0.0"
 	kupoOgmiosHostAddress = "127.0.0.1"
 	kupoWorkDir           = "/kupo"
@@ -43,7 +44,7 @@ const (
 
 	// faucet sidecar.
 	faucetContainerName     = "faucet"
-	faucetPortName          = "faucet"
+	faucetPortName          = primarypod.PortNameFaucet
 	faucetHostAddress       = "0.0.0.0"
 	faucetChainHostAddress  = "127.0.0.1"
 	faucetAuthTokenMountDir = "/var/run/yacd-faucet"

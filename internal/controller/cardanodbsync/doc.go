@@ -9,14 +9,17 @@
 // reconciliation:
 //
 //   - builder.go, settings.go, validate.go, containers.go, resources.go,
-//     postgres_identity.go: pure builders. Given a CardanoDBSync spec and
-//     resolved dependencies they produce desired Kubernetes objects and the
-//     managed-Postgres identity fingerprint in memory; they never touch the
-//     API server, time, or the file system. The managed-Postgres password
-//     generator in database.go is the only crypto/rand caller.
+//     postgres_identity.go, placement.go, primary_sidecar.go, and
+//     primary_sidecar_status.go: pure builders. Given a CardanoDBSync spec
+//     and resolved dependencies they produce desired Kubernetes objects,
+//     status contracts, attachment fragments, and the managed-Postgres
+//     identity fingerprint in memory; they never touch the API server, time,
+//     or the file system. The managed-Postgres password generator in
+//     database.go is the only crypto/rand caller.
 //   - controller.go, apply.go, callbacks.go, status.go, readiness.go,
-//     database.go, runtime_probe.go: side-effecting reconciler. Reads from
-//     and writes to the cluster, runs Postgres and Ogmios probes, and
+//     database.go, placement_handoff.go, and runtime_probe.go:
+//     side-effecting reconciler. Reads from and writes to the cluster, runs
+//     Postgres and Ogmios probes, checks placement handoff state, and
 //     publishes status.
 //
 // Owned-child apply is routed through ctrlkit/apply.ApplyOwnedObject with
@@ -26,13 +29,15 @@
 // is reconciled inline in database.go.
 //
 // Status conditions follow the standard Progressing / Degraded / Ready
-// shape with per-component {FollowerNode,DBSync,Postgres}Ready and a
-// dedicated Synced condition for chain-sync progress. Condition
-// type/reason/message strings are package-private typed constants in
-// conditions.go.
+// shape with per-component {FollowerNode,NodeSocket,DBSync,Postgres}Ready,
+// SidecarMaterialReady, and a dedicated Synced condition for chain-sync
+// progress. Condition type/reason/message strings are package-private typed
+// constants in conditions.go.
 //
-// The dbsync workload is one Deployment with two long-running containers
-// (the follower cardano-node and cardano-db-sync). The managed Postgres
-// workload is a separate Deployment owned by the same CardanoDBSync; it
-// exists only when spec.database.managed is set.
+// The default dbsync workload is one Deployment with two long-running
+// containers (the follower cardano-node and cardano-db-sync). In
+// primarySidecar placement, CardanoDBSync owns only db-sync material while
+// CardanoNetwork composes the db-sync sidecar into its primary Deployment.
+// The managed Postgres workload is a separate Deployment owned by the same
+// CardanoDBSync; it exists only when spec.database.managed is set.
 package cardanodbsync

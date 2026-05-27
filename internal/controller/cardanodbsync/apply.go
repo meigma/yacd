@@ -43,6 +43,15 @@ type managedPostgresApplyResults struct {
 	Deployment            controllerutil.OperationResult
 }
 
+// primarySidecarDBSyncApplyResults captures CardanoDBSync-owned resource
+// applies for primarySidecar placement.
+type primarySidecarDBSyncApplyResults struct {
+	ConfigMap             controllerutil.OperationResult
+	PGPassSecret          controllerutil.OperationResult
+	PersistentVolumeClaim controllerutil.OperationResult
+	MetricsService        controllerutil.OperationResult
+}
+
 // unchanged reports whether every owned child was already in the desired
 // state. Used to demote the reconcile log line to debug level when nothing
 // actually changed.
@@ -61,6 +70,15 @@ func (r managedPostgresApplyResults) unchanged() bool {
 	return r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
 		r.Service == controllerutil.OperationResultNone &&
 		r.Deployment == controllerutil.OperationResultNone
+}
+
+// unchanged reports whether the primarySidecar material bundle was already in
+// the desired state.
+func (r primarySidecarDBSyncApplyResults) unchanged() bool {
+	return r.ConfigMap == controllerutil.OperationResultNone &&
+		r.PGPassSecret == controllerutil.OperationResultNone &&
+		r.PersistentVolumeClaim == controllerutil.OperationResultNone &&
+		r.MetricsService == controllerutil.OperationResultNone
 }
 
 // applyDBSyncWorkloadResources applies the dbsync workload bundle in
@@ -91,6 +109,32 @@ func (r *CardanoDBSyncReconciler) applyDBSyncWorkloadResources(
 		return results, err
 	}
 	results.Deployment, err = r.applyDBSyncDeployment(ctx, resources.Deployment)
+	if err != nil {
+		return results, err
+	}
+	results.MetricsService, err = r.applyDBSyncService(ctx, resources.MetricsService)
+
+	return results, err
+}
+
+// applyPrimarySidecarDBSyncResources applies the CardanoDBSync-owned material
+// that the CardanoNetwork primary Pod will mount.
+func (r *CardanoDBSyncReconciler) applyPrimarySidecarDBSyncResources(
+	ctx context.Context,
+	resources *primarySidecarDBSyncResources,
+) (primarySidecarDBSyncApplyResults, error) {
+	var results primarySidecarDBSyncApplyResults
+	var err error
+
+	results.ConfigMap, err = r.applyDBSyncConfigMap(ctx, resources.ConfigMap)
+	if err != nil {
+		return results, err
+	}
+	results.PGPassSecret, err = r.applyDBSyncPGPassSecret(ctx, resources.PGPassSecret)
+	if err != nil {
+		return results, err
+	}
+	results.PersistentVolumeClaim, err = r.applyDBSyncPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
 	if err != nil {
 		return results, err
 	}

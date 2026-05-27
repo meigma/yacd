@@ -19,13 +19,15 @@ type conditionReason string
 
 // Condition types used on CardanoDBSync.Status.Conditions.
 const (
-	conditionTypeProgressing       conditionType = "Progressing"
-	conditionTypeDegraded          conditionType = "Degraded"
-	conditionTypeReady             conditionType = "Ready"
-	conditionTypeFollowerNodeReady conditionType = "FollowerNodeReady"
-	conditionTypePostgresReady     conditionType = "PostgresReady"
-	conditionTypeDBSyncReady       conditionType = "DBSyncReady"
-	conditionTypeSynced            conditionType = "Synced"
+	conditionTypeProgressing          conditionType = "Progressing"
+	conditionTypeDegraded             conditionType = "Degraded"
+	conditionTypeReady                conditionType = "Ready"
+	conditionTypeFollowerNodeReady    conditionType = "FollowerNodeReady"
+	conditionTypeNodeSocketReady      conditionType = "NodeSocketReady"
+	conditionTypeSidecarMaterialReady conditionType = "SidecarMaterialReady"
+	conditionTypePostgresReady        conditionType = "PostgresReady"
+	conditionTypeDBSyncReady          conditionType = "DBSyncReady"
+	conditionTypeSynced               conditionType = "Synced"
 )
 
 // Shared condition reasons used across multiple condition types.
@@ -39,6 +41,9 @@ const (
 	conditionReasonResourceConflict                  conditionReason = "ResourceConflict"
 	conditionReasonWorkloadMissing                   conditionReason = "WorkloadMissing"
 	conditionReasonDeploymentProgressing             conditionReason = "DeploymentProgressing"
+	conditionReasonDedicatedFollowerPlacement        conditionReason = "DedicatedFollowerPlacement"
+	conditionReasonPrimarySidecarPlacement           conditionReason = "PrimarySidecarPlacement"
+	conditionReasonPlacementTransitionPending        conditionReason = "PlacementTransitionPending"
 )
 
 // Dependency-resolution condition reasons (raised before workloads apply).
@@ -58,6 +63,7 @@ const (
 // Per-component readiness and runtime-probe condition reasons.
 const (
 	conditionReasonFollowerNodeReady     conditionReason = "FollowerNodeReady"
+	conditionReasonNodeSocketReady       conditionReason = "NodeSocketReady"
 	conditionReasonDBSyncReady           conditionReason = "DBSyncReady"
 	conditionReasonPostgresReady         conditionReason = "PostgresReady"
 	conditionReasonPostgresUnavailable   conditionReason = "PostgresUnavailable"
@@ -76,8 +82,12 @@ const (
 	conditionMessageManagedPostgresApplied     = "Managed Postgres resources are applied"
 	conditionMessageDependenciesConverging     = "CardanoDBSync dependencies are still converging"
 	conditionMessageReady                      = "CardanoDBSync is ready"
+	conditionMessageSidecarMaterialReady       = "Primary-sidecar material is ready"
+	conditionMessageSidecarMaterialNotReady    = "Primary-sidecar material is not attachable"
+	conditionMessageSidecarMaterialNotUsed     = "Primary-sidecar material is not used by dedicatedFollower placement"
 	conditionMessageFollowerNodeReady          = "Follower node container is ready"
 	conditionMessageFollowerNodeNotReady       = "Follower node container is not ready"
+	conditionMessageNodeSocketNotUsed          = "Primary node socket is not used by dedicatedFollower placement"
 	conditionMessageDBSyncContainerReady       = "db-sync container is ready"
 	conditionMessageDBSyncContainerNotReady    = "db-sync container is not ready"
 	conditionMessagePostgresReady              = "Postgres is reachable and db-sync progress query succeeded"
@@ -129,6 +139,16 @@ func followerNodeReadyCondition(status metav1.ConditionStatus, reason conditionR
 	return ctrlstatus.Condition(string(conditionTypeFollowerNodeReady), status, string(reason), message)
 }
 
+// nodeSocketReadyCondition constructs a NodeSocketReady condition.
+func nodeSocketReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeNodeSocketReady), status, string(reason), message)
+}
+
+// sidecarMaterialReadyCondition constructs a SidecarMaterialReady condition.
+func sidecarMaterialReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeSidecarMaterialReady), status, string(reason), message)
+}
+
 // postgresReadyCondition constructs a PostgresReady condition.
 func postgresReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
 	return ctrlstatus.Condition(string(conditionTypePostgresReady), status, string(reason), message)
@@ -148,12 +168,12 @@ func syncedCondition(status metav1.ConditionStatus, reason conditionReason, mess
 // into a single Ready condition. The dependencies are: follower node ready,
 // db-sync container ready, Postgres reachable, and synced within the lag
 // threshold.
-func workloadsReadyCondition(followerNodeReady metav1.Condition, dbSyncReady metav1.Condition, postgresReady metav1.Condition, synced metav1.Condition) metav1.Condition {
+func workloadsReadyCondition(nodeAccessReady metav1.Condition, dbSyncReady metav1.Condition, postgresReady metav1.Condition, synced metav1.Condition) metav1.Condition {
 	return ctrlstatus.AggregateReady(
 		string(conditionTypeReady),
 		string(conditionReasonReady),
 		conditionMessageReady,
-		followerNodeReady,
+		nodeAccessReady,
 		postgresReady,
 		dbSyncReady,
 		synced,

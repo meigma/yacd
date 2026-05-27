@@ -9,6 +9,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/assert"
@@ -29,7 +30,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-const wrongManagedByLabelValue = "wrong"
+const (
+	wrongManagedByLabelValue  = "wrong"
+	testDBSyncSidecarRevision = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+)
 
 var testNetworkArtifactsDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
@@ -176,6 +180,258 @@ func TestCardanoNetworkReconcilerReconcileLeavesFaucetDisabledByDefault(t *testi
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Faucet)
 	assert.Nil(t, current.Status.Faucet)
+}
+
+func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSync(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Artifacts)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "dbsync", deployment.Spec.Template.Labels[labelDBSync])
+	assert.Equal(t, testDBSyncSidecarRevision, deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno])
+
+	initContainer := requireContainerNamed(t, deployment.Spec.Template.Spec.InitContainers, "dbsync-pgpass-setup")
+	assert.Equal(t, dbSync.Spec.Image, initContainer.Image)
+	container := requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	assert.Equal(t, dbSync.Spec.Image, container.Image)
+	assert.Contains(t, container.Args, "--socket-path")
+	assert.Contains(t, container.Args, "/ipc/node.socket")
+	assert.Contains(t, container.VolumeMounts, corev1.VolumeMount{Name: nodeIPCVolumeName, MountPath: "/ipc"})
+	configVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "dbsync-config")
+	require.NotNil(t, configVolume.ConfigMap)
+	assert.Equal(t, "dbsync-config", configVolume.ConfigMap.Name)
+	stateVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "dbsync-state")
+	require.NotNil(t, stateVolume.PersistentVolumeClaim)
+	assert.Equal(t, "dbsync-state", stateVolume.PersistentVolumeClaim.ClaimName)
+	pgpassVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "dbsync-pgpass-secret")
+	require.NotNil(t, pgpassVolume.Secret)
+	assert.Equal(t, "dbsync-pgpass", pgpassVolume.Secret.SecretName)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "follower-state")
+
+	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	currentDBSync := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(dbSync), currentDBSync))
+	currentDBSync.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	require.NoError(t, reconciler.Status().Update(ctx, currentDBSync))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "sha256:2222222222222222222222222222222222222222222222222222222222222222", deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno])
+}
+
+func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentReadyWhenSidecarContainerReady(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, ctrldbsync.PrimarySidecarContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionTrue, conditionReasonDBSyncAttachmentReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
+}
+
+func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentBlockerBeforeNodeAvailability(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentObserved(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentPending)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentPending)
+	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDBSyncAttachmentPending)
+}
+
+func TestCardanoNetworkReconcilerReconcileKeepsDBSyncAttachmentReadySeparateFromNode(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	markPrimaryDeploymentObserved(t, ctx, reconciler, deployment)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, ctrldbsync.PrimarySidecarContainerName)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionTrue, conditionReasonDBSyncAttachmentReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+}
+
+func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenMultipleClaimsExist(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	first := readyPrimarySidecarDBSync("first", network)
+	second := readyPrimarySidecarDBSync("second", network)
+	reconciler := newTestReconciler(t, network, first, second)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
+}
+
+func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenStatusContractIsNotAttachable(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*yacdv1alpha1.CardanoDBSync)
+	}{
+		{
+			name: "stale observed generation",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.ObservedGeneration = 0
+			},
+		},
+		{
+			name: "missing material condition",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Conditions = nil
+			},
+		},
+		{
+			name: "material condition false",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Conditions[0].Status = metav1.ConditionFalse
+			},
+		},
+		{
+			name: "missing placement",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement = nil
+			},
+		},
+		{
+			name: "missing revision",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.Revision = ""
+			},
+		},
+		{
+			name: "missing configmap name",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.Resources.ConfigMapName = ""
+			},
+		},
+		{
+			name: "missing pgpass secret name",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.Resources.PGPassSecretName = ""
+			},
+		},
+		{
+			name: "missing state pvc name",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.Resources.StatePVCName = ""
+			},
+		},
+		{
+			name: "missing metrics service name",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.Resources.MetricsServiceName = ""
+			},
+		},
+		{
+			name: "wrong network",
+			mutate: func(dbSync *yacdv1alpha1.CardanoDBSync) {
+				dbSync.Status.Placement.PrimarySidecar.NetworkName = "other-network"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			network := readyLocalCardanoNetwork()
+			dbSync := readyPrimarySidecarDBSync("dbsync", network)
+			tt.mutate(dbSync)
+			reconciler := newTestReconciler(t, network, dbSync)
+			storeNetworkStatus(t, ctx, reconciler, network)
+
+			_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+			require.NoError(t, err)
+			deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+			assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+			assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
+			assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentPending)
+		})
+	}
+}
+
+func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenArtifactConfigMapNameMissing(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	network.Status.Artifacts.NetworkConfigMapName = ""
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentPending)
+}
+
+func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncOnPortConflict(t *testing.T) {
+	ctx := context.Background()
+	network := readyLocalCardanoNetwork()
+	enableFaucet(network)
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 }
 
 func TestCardanoNetworkReconcilerReconcilePublishesVerifiedNetworkArtifacts(t *testing.T) {
@@ -342,6 +598,7 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentNotRequested)
 	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionTrue, conditionReasonNodeReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady)
@@ -1822,6 +2079,96 @@ func enableFaucet(network *yacdv1alpha1.CardanoNetwork) {
 	}
 }
 
+func readyLocalCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
+	network := localCardanoNetwork("primary-dbsync")
+	network.Status.ObservedGeneration = network.Generation
+	network.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+		NetworkConfigMapName: networkArtifactsConfigMapName(network),
+		SchemaVersion:        networkartifacts.SchemaVersion,
+		DataHash:             testNetworkArtifactsDataHash,
+	}
+	network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
+		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryWorkloadName(network),
+			Port:        network.Spec.Node.Port,
+			URL:         fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", primaryWorkloadName(network), network.Namespace, network.Spec.Node.Port),
+		},
+		Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryOgmiosServiceName(network),
+			Port:        defaultOgmiosPort,
+			URL:         fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", primaryOgmiosServiceName(network), network.Namespace, defaultOgmiosPort),
+		},
+	}
+	network.Status.Conditions = []metav1.Condition{{
+		Type:               string(conditionTypeArtifactsReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(conditionReasonArtifactsReady),
+		Message:            "Network artifacts are ready",
+		ObservedGeneration: network.Generation,
+		LastTransitionTime: metav1.Now(),
+	}}
+
+	return network
+}
+
+func readyPrimarySidecarDBSync(name string, network *yacdv1alpha1.CardanoNetwork) *yacdv1alpha1.CardanoDBSync {
+	return &yacdv1alpha1.CardanoDBSync{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  network.Namespace,
+			UID:        types.UID(name + "-uid"),
+			Generation: 1,
+		},
+		Spec: yacdv1alpha1.CardanoDBSyncSpec{
+			NetworkRef: yacdv1alpha1.CardanoDBSyncNetworkReference{Name: network.Name},
+			Image:      "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0",
+			Placement: &yacdv1alpha1.CardanoDBSyncPlacementSpec{
+				Mode: yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar,
+			},
+			Database: yacdv1alpha1.CardanoDBSyncDatabaseSpec{
+				External: &yacdv1alpha1.CardanoDBSyncExternalDatabaseSpec{
+					Host:     "postgres.default.svc.cluster.local",
+					Port:     5432,
+					Database: "cexplorer",
+					User:     "postgres",
+					PasswordSecretRef: yacdv1alpha1.CardanoDBSyncSecretKeyReference{
+						Name: name + "-postgres",
+						Key:  "password",
+					},
+					SSLMode: yacdv1alpha1.CardanoDBSyncPostgresSSLModeDisable,
+				},
+			},
+			Config: yacdv1alpha1.CardanoDBSyncConfigSpec{
+				LedgerBackend: yacdv1alpha1.CardanoDBSyncLedgerBackendLSM,
+			},
+		},
+		Status: yacdv1alpha1.CardanoDBSyncStatus{
+			ObservedGeneration: 1,
+			Placement: &yacdv1alpha1.CardanoDBSyncPlacementStatus{
+				Mode: yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar,
+				PrimarySidecar: &yacdv1alpha1.CardanoDBSyncPrimarySidecarStatus{
+					NetworkName: network.Name,
+					Revision:    testDBSyncSidecarRevision,
+					Resources: yacdv1alpha1.CardanoDBSyncPrimarySidecarResourcesStatus{
+						ConfigMapName:      name + "-config",
+						PGPassSecretName:   name + "-pgpass",
+						StatePVCName:       name + "-state",
+						MetricsServiceName: name + "-metrics",
+					},
+				},
+			},
+			Conditions: []metav1.Condition{{
+				Type:               "SidecarMaterialReady",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ReconcileSucceeded",
+				Message:            "Primary-sidecar material is ready",
+				ObservedGeneration: 1,
+				LastTransitionTime: metav1.Now(),
+			}},
+		},
+	}
+}
+
 // newTestReconciler returns a CardanoNetworkReconciler backed by a fake client.
 func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkReconciler {
 	t.Helper()
@@ -1834,8 +2181,12 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkRe
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{}, &corev1.Pod{})
-	builder.WithObjects(objects...)
+		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &yacdv1alpha1.CardanoDBSync{}, &appsv1.Deployment{}, &corev1.Pod{})
+	objectCopies := make([]client.Object, 0, len(objects))
+	for _, object := range objects {
+		objectCopies = append(objectCopies, object.DeepCopyObject().(client.Object))
+	}
+	builder.WithObjects(objectCopies...)
 	fakeClient := builder.Build()
 
 	return &CardanoNetworkReconciler{
@@ -1857,6 +2208,20 @@ func requireNetwork(
 	require.NoError(t, reconciler.Get(ctx, reconcileRequestFor(network).NamespacedName, current))
 
 	return current
+}
+
+func storeNetworkStatus(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	current := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, reconciler.Get(ctx, reconcileRequestFor(network).NamespacedName, current))
+	current.Status = network.Status
+	require.NoError(t, reconciler.Status().Update(ctx, current))
 }
 
 func requireAcceptedLocalnetFingerprint(
@@ -2084,6 +2449,21 @@ func publishNetworkArtifacts(
 	return configMap
 }
 
+func publishArtifactsAndAttachDBSyncSidecar(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	publishNetworkArtifacts(t, ctx, reconciler, network)
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+}
+
 func testNetworkArtifactsData() map[string]string {
 	return map[string]string{
 		networkartifacts.ConfigurationKey:   "test configuration.yaml",
@@ -2136,6 +2516,32 @@ func markPrimaryDeploymentAvailable(
 			Status:             corev1.ConditionTrue,
 			Reason:             "MinimumReplicasAvailable",
 			Message:            "Deployment has minimum availability.",
+			LastUpdateTime:     metav1.Now(),
+			LastTransitionTime: metav1.Now(),
+		},
+	}
+	require.NoError(t, reconciler.Status().Update(ctx, deployment))
+}
+
+func markPrimaryDeploymentObserved(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	deployment *appsv1.Deployment,
+) {
+	t.Helper()
+
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 0
+	deployment.Status.AvailableReplicas = 0
+	deployment.Status.Conditions = []appsv1.DeploymentCondition{
+		{
+			Type:               appsv1.DeploymentAvailable,
+			Status:             corev1.ConditionFalse,
+			Reason:             "MinimumReplicasUnavailable",
+			Message:            "Deployment does not have minimum availability.",
 			LastUpdateTime:     metav1.Now(),
 			LastTransitionTime: metav1.Now(),
 		},
@@ -2315,6 +2721,30 @@ func assertNoContainerNamed(t *testing.T, containers []corev1.Container, name st
 	for _, container := range containers {
 		assert.NotEqual(t, name, container.Name)
 	}
+}
+
+func requireContainerNamed(t *testing.T, containers []corev1.Container, name string) corev1.Container {
+	t.Helper()
+
+	for _, container := range containers {
+		if container.Name == name {
+			return container
+		}
+	}
+	require.Failf(t, "missing container", "expected container %s", name)
+	return corev1.Container{}
+}
+
+func requireVolumeNamed(t *testing.T, volumes []corev1.Volume, name string) corev1.Volume {
+	t.Helper()
+
+	for _, volume := range volumes {
+		if volume.Name == name {
+			return volume
+		}
+	}
+	require.Failf(t, "missing volume", "expected volume %s", name)
+	return corev1.Volume{}
 }
 
 func assertNoVolumeNamed(t *testing.T, volumes []corev1.Volume, name string) {

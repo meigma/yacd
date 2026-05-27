@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"fmt"
+	"maps"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
@@ -58,7 +59,13 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if faucet.enabled {
 		containers = append(containers, b.faucetContainer(faucet, ogmios, kupo))
 	}
+	if b.dbSyncAttachment != nil {
+		containers = append(containers, b.dbSyncAttachment.Container)
+	}
 	initContainers := []corev1.Container{initContainer}
+	if b.dbSyncAttachment != nil {
+		initContainers = append(initContainers, b.dbSyncAttachment.InitContainer)
+	}
 	if faucet.enabled {
 		initContainers = append(initContainers, b.faucetSourceAddressInitContainer(plan))
 	}
@@ -119,6 +126,17 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			},
 		})
 	}
+	if b.dbSyncAttachment != nil {
+		volumes = append(volumes, b.dbSyncAttachment.Volumes...)
+	}
+	templateLabels := primaryWorkloadSelectorLabels(network)
+	templateAnnotations := map[string]string{
+		localnetFingerprintAnno: plan.Fingerprint.Value,
+	}
+	if b.dbSyncAttachment != nil {
+		maps.Copy(templateLabels, b.dbSyncAttachment.PodLabels)
+		maps.Copy(templateAnnotations, b.dbSyncAttachment.PodAnnotations)
+	}
 
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -136,10 +154,8 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: selectorLabels,
-					Annotations: map[string]string{
-						localnetFingerprintAnno: plan.Fingerprint.Value,
-					},
+					Labels:      templateLabels,
+					Annotations: templateAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					// Pod-level token automount is off; only the artifact

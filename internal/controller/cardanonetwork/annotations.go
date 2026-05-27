@@ -17,6 +17,8 @@ const (
 	// stamps this so a recovered (delete-then-create) ConfigMap rolls the
 	// primary Pod through the standard Deployment hash-change path.
 	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
+
+	dbSyncSidecarRevisionAnno = ctrlannotations.DBSyncSidecarRevision
 )
 
 // cardanoNetworkOwnedAnnotations enumerates every annotation key this
@@ -30,6 +32,7 @@ var cardanoNetworkOwnedAnnotations = []string{
 	localnetFingerprintAnno,
 	ctrlannotations.RequestedStorageClass,
 	networkArtifactsConfigMapUIDAnno,
+	dbSyncSidecarRevisionAnno,
 }
 
 // mergeOwnedAnnotations preserves the cardanonetwork-owned annotation set

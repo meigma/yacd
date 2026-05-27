@@ -10,14 +10,12 @@ import (
 
 const (
 	conditionReasonPlacementConflict conditionReason = "PlacementConflict"
-
-	conditionMessagePrimarySidecarUnsupported = "primarySidecar placement is accepted by the API, but runtime attachment is not implemented yet"
 )
 
 // reconcilePlacement gates CardanoDBSync reconciliation on the effective
 // placement mode. Dedicated-follower placement preserves the existing runtime
-// path; primary-sidecar placement is surfaced as planned-but-not-implemented
-// unless multiple same-network sidecar claims conflict.
+// path; primary-sidecar placement proceeds only when exactly one non-deleting
+// same-network sidecar claim exists.
 func (r *CardanoDBSyncReconciler) reconcilePlacement(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -39,12 +37,7 @@ func (r *CardanoDBSyncReconciler) reconcilePlacement(
 			)
 		}
 
-		return false, r.patchWorkloadApplyBlockedStatus(
-			ctx,
-			dbSync,
-			conditionReasonUnsupportedSpec,
-			conditionMessagePrimarySidecarUnsupported,
-		)
+		return true, nil
 	default:
 		return false, r.patchWorkloadApplyBlockedStatus(
 			ctx,
@@ -87,6 +80,8 @@ func (r *CardanoDBSyncReconciler) primarySidecarClaims(
 	return claims, nil
 }
 
+// effectivePlacementMode returns the defaulted placement mode for a
+// CardanoDBSync resource.
 func effectivePlacementMode(dbSync *yacdv1alpha1.CardanoDBSync) yacdv1alpha1.CardanoDBSyncPlacementMode {
 	if dbSync == nil || dbSync.Spec.Placement == nil || dbSync.Spec.Placement.Mode == "" {
 		return yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower
@@ -95,6 +90,8 @@ func effectivePlacementMode(dbSync *yacdv1alpha1.CardanoDBSync) yacdv1alpha1.Car
 	return dbSync.Spec.Placement.Mode
 }
 
+// placementConflictMessage returns the user-facing condition message for
+// multiple primarySidecar claims on the same CardanoNetwork.
 func placementConflictMessage(networkName string) string {
 	return fmt.Sprintf("CardanoNetwork %q has multiple primarySidecar CardanoDBSync claims; exactly one primary-sidecar claim is allowed", networkName)
 }

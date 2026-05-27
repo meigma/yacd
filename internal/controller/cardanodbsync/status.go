@@ -42,6 +42,8 @@ func (r *CardanoDBSyncReconciler) patchDependencyUnavailableStatus(
 		progressingCondition(metav1.ConditionFalse, reason, message),
 		readyCondition(reason, message),
 		followerNodeReadyCondition(metav1.ConditionFalse, reason, message),
+		nodeSocketReadyCondition(metav1.ConditionFalse, reason, message),
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, reason, conditionMessageSidecarMaterialNotReady),
 		postgresReadyCondition(metav1.ConditionFalse, reason, message),
 		dbSyncReadyCondition(metav1.ConditionFalse, reason, message),
 		syncedCondition(metav1.ConditionFalse, reason, message),
@@ -66,6 +68,8 @@ func (r *CardanoDBSyncReconciler) patchDependencyWaitingStatus(
 		progressingCondition(metav1.ConditionTrue, reason, message),
 		readyCondition(reason, message),
 		followerNodeReadyCondition(metav1.ConditionFalse, reason, message),
+		nodeSocketReadyCondition(metav1.ConditionFalse, reason, message),
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, reason, conditionMessageSidecarMaterialNotReady),
 		postgresReadyCondition(metav1.ConditionFalse, reason, message),
 		dbSyncReadyCondition(metav1.ConditionFalse, reason, message),
 		syncedCondition(metav1.ConditionFalse, reason, message),
@@ -132,6 +136,7 @@ func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 	}
 	ready := workloadsReadyCondition(followerNodeReady, dbSyncReady, postgresReady, synced)
 	progressing := progressingForReadyCondition(ready)
+	nodeSocketReady := nodeSocketReadyCondition(metav1.ConditionFalse, conditionReasonDedicatedFollowerPlacement, conditionMessageNodeSocketNotUsed)
 
 	err = r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
 		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
@@ -140,11 +145,14 @@ func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 		}
 		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
 		status.Sync = syncStatus
+		status.Placement = placementStatus(dbSync)
 	},
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessageWorkloadsApplied),
 		progressing,
 		ready,
 		followerNodeReady,
+		nodeSocketReady,
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, conditionReasonDedicatedFollowerPlacement, conditionMessageSidecarMaterialNotUsed),
 		postgresReady,
 		dbSyncReady,
 		synced,
@@ -179,6 +187,7 @@ func (r *CardanoDBSyncReconciler) patchManagedPostgresAppliedStatus(
 
 	synced := syncedCondition(metav1.ConditionFalse, conditionReasonSyncNotProbed, conditionMessageSyncNotProbed)
 	postgresReason := conditionReason(postgresReady.Reason)
+	nodeSocketReady := nodeSocketReadyCondition(metav1.ConditionFalse, conditionReasonDedicatedFollowerPlacement, conditionMessageNodeSocketNotUsed)
 	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
 		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
 			Postgres: databaseRuntime.PostgresEndpoint,
@@ -186,14 +195,162 @@ func (r *CardanoDBSyncReconciler) patchManagedPostgresAppliedStatus(
 		}
 		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
 		status.Sync = nil
+		status.Placement = placementStatus(dbSync)
 	},
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessageManagedPostgresApplied),
 		progressingCondition(metav1.ConditionTrue, postgresReason, postgresReady.Message),
 		readyCondition(postgresReason, postgresReady.Message),
 		followerNodeReady,
+		nodeSocketReady,
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, conditionReasonDedicatedFollowerPlacement, conditionMessageSidecarMaterialNotUsed),
 		postgresReady,
 		dbSyncReady,
 		synced,
+	)
+}
+
+// patchPrimarySidecarResourcesAppliedStatus computes readiness for the
+// attached primary-sidecar runtime, publishes the sidecar material status
+// contract, runs runtime probes, and writes the aggregate status patch.
+func (r *CardanoDBSyncReconciler) patchPrimarySidecarResourcesAppliedStatus(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	resources *primarySidecarDBSyncResources,
+	databaseRuntime databaseRuntime,
+	acceptedIdentityFingerprint string,
+) (metav1.Condition, bool, error) {
+	placement, err := primarySidecarPlacementStatus(dbSync, network, resources)
+	if err != nil {
+		return metav1.Condition{}, false, err
+	}
+
+	nodeSocketReady, err := r.primaryNodeSocketReadyCondition(ctx, network)
+	if err != nil {
+		return metav1.Condition{}, false, err
+	}
+	dbSyncReady, err := r.primarySidecarDBSyncReadyCondition(ctx, network)
+	if err != nil {
+		return metav1.Condition{}, false, err
+	}
+
+	target := dbSyncRuntimeProbeTarget{
+		Database:       databaseRuntime.Database,
+		PasswordSecret: databaseRuntime.PasswordSecret,
+		OgmiosURL:      ogmiosEndpointURL(network),
+	}
+	var (
+		probed        bool
+		syncStatus    *yacdv1alpha1.CardanoDBSyncProgressStatus
+		postgresReady metav1.Condition
+		synced        = syncedCondition(metav1.ConditionFalse, conditionReasonRuntimeProbesPending, conditionMessageSyncProbedPending)
+	)
+	if nodeSocketReady.Status == metav1.ConditionTrue && dbSyncReady.Status == metav1.ConditionTrue {
+		probeResult, err := r.runtimeProber().Probe(ctx, target)
+		if err != nil {
+			return metav1.Condition{}, false, err
+		}
+		probed = true
+		syncStatus = probeResult.Sync
+		postgresReady = probeResult.PostgresReady
+		synced = probeResult.Synced
+	} else {
+		probeResult, err := r.runtimeProber().ProbePostgres(ctx, target)
+		if err != nil {
+			return metav1.Condition{}, false, err
+		}
+		probed = true
+		syncStatus = probeResult.Sync
+		postgresReady = probeResult.PostgresReady
+		if probeResult.PostgresReady.Status != metav1.ConditionTrue ||
+			probeResult.Synced.Reason == string(conditionReasonPostgresSchemaPending) {
+			synced = probeResult.Synced
+		}
+	}
+	ready := workloadsReadyCondition(nodeSocketReady, dbSyncReady, postgresReady, synced)
+	progressing := progressingForReadyCondition(ready)
+	followerNodeReady := followerNodeReadyCondition(metav1.ConditionFalse, conditionReasonPrimarySidecarPlacement, conditionMessageDedicatedFollowerNotUsed)
+
+	err = r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
+		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
+			Postgres: databaseRuntime.PostgresEndpoint,
+			Metrics:  serviceEndpointFor(resources.MetricsService, "http", "/metrics"),
+		}
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		status.Sync = syncStatus
+		status.Placement = placement
+	},
+		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimarySidecarResourcesApplied),
+		progressing,
+		ready,
+		followerNodeReady,
+		nodeSocketReady,
+		sidecarMaterialReadyCondition(metav1.ConditionTrue, conditionReasonReconcileSucceeded, conditionMessageSidecarMaterialReady),
+		postgresReady,
+		dbSyncReady,
+		synced,
+	)
+	return ready, probed, err
+}
+
+// patchPrimarySidecarManagedPostgresAppliedStatus writes the intermediate
+// primarySidecar status while managed Postgres exists but is not ready enough
+// for db-sync material attachment.
+func (r *CardanoDBSyncReconciler) patchPrimarySidecarManagedPostgresAppliedStatus(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	databaseRuntime databaseRuntime,
+	postgresReady metav1.Condition,
+	acceptedIdentityFingerprint string,
+) error {
+	metricsEndpoint, err := r.currentDBSyncMetricsEndpoint(ctx, dbSync)
+	if err != nil {
+		return err
+	}
+
+	synced := syncedCondition(metav1.ConditionFalse, conditionReasonSyncNotProbed, conditionMessageSyncNotProbed)
+	postgresReason := conditionReason(postgresReady.Reason)
+	followerNodeReady := followerNodeReadyCondition(metav1.ConditionFalse, conditionReasonPrimarySidecarPlacement, conditionMessageDedicatedFollowerNotUsed)
+	nodeSocketReady := nodeSocketReadyCondition(metav1.ConditionFalse, conditionReasonDeploymentProgressing, conditionMessageNodeSocketNotReady)
+	dbSyncReady := dbSyncReadyCondition(metav1.ConditionFalse, conditionReasonDeploymentProgressing, conditionMessageDBSyncContainerNotReady)
+	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
+		status.Endpoints = &yacdv1alpha1.CardanoDBSyncEndpointsStatus{
+			Postgres: databaseRuntime.PostgresEndpoint,
+			Metrics:  metricsEndpoint,
+		}
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		status.Sync = nil
+		status.Placement = placementStatus(dbSync)
+	},
+		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessageManagedPostgresApplied),
+		progressingCondition(metav1.ConditionTrue, postgresReason, postgresReady.Message),
+		readyCondition(postgresReason, postgresReady.Message),
+		followerNodeReady,
+		nodeSocketReady,
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, postgresReason, conditionMessageSidecarMaterialNotReady),
+		postgresReady,
+		dbSyncReady,
+		synced,
+	)
+}
+
+// patchPlacementTransitionWaitingStatus reports a safe placement handoff wait
+// while the previous runtime path drains.
+func (r *CardanoDBSyncReconciler) patchPlacementTransitionWaitingStatus(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	message string,
+) error {
+	return r.patchStatusConditions(ctx, dbSync,
+		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, message),
+		progressingCondition(metav1.ConditionTrue, conditionReasonPlacementTransitionPending, message),
+		readyCondition(conditionReasonPlacementTransitionPending, message),
+		followerNodeReadyCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, message),
+		nodeSocketReadyCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, message),
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, conditionMessageSidecarMaterialNotReady),
+		postgresReadyCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, message),
+		dbSyncReadyCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, message),
+		syncedCondition(metav1.ConditionFalse, conditionReasonPlacementTransitionPending, message),
 	)
 }
 
@@ -215,6 +372,8 @@ func (r *CardanoDBSyncReconciler) patchWorkloadApplyBlockedStatus(
 		progressingCondition(metav1.ConditionFalse, reason, message),
 		readyCondition(reason, message),
 		followerNodeReadyCondition(metav1.ConditionFalse, reason, message),
+		nodeSocketReadyCondition(metav1.ConditionFalse, reason, message),
+		sidecarMaterialReadyCondition(metav1.ConditionFalse, reason, conditionMessageSidecarMaterialNotReady),
 		postgresReadyCondition(metav1.ConditionFalse, reason, message),
 		dbSyncReadyCondition(metav1.ConditionFalse, reason, message),
 		syncedCondition(metav1.ConditionFalse, reason, message),
@@ -240,6 +399,7 @@ func (r *CardanoDBSyncReconciler) patchStatusConditions(
 		status.Endpoints = nil
 		status.Sync = nil
 		status.Database = databaseStatus(acceptedIdentityFingerprint, generatedAuthSecretName)
+		status.Placement = placementStatus(dbSync)
 	}, conditions...)
 }
 

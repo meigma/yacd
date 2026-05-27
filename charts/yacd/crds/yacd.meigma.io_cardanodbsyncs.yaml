@@ -670,9 +670,11 @@ spec:
                   Expected condition types include:
                   - "Ready": db-sync is usable through its published database endpoint
                   - "FollowerNodeReady": the colocated follower node is running
+                  - "NodeSocketReady": the node socket used by db-sync is reachable
+                  - "SidecarMaterialReady": primary-sidecar mounted material is attachable
                   - "PostgresReady": Postgres is running and accepting local connections
                   - "DBSyncReady": the db-sync process is running
-                  - "Synced": db-sync has caught up to the follower node
+                  - "Synced": db-sync has caught up to the node tip
                   - "Progressing": the resource is being created or updated
                   - "Degraded": the resource failed to reach or maintain desired state
 
@@ -793,6 +795,55 @@ spec:
                   controller.
                 format: int64
                 type: integer
+              placement:
+                description: |-
+                  placement reports the effective placement mode and, when attachable,
+                  the primary-sidecar material contract consumed by CardanoNetwork.
+                properties:
+                  mode:
+                    description: mode is the effective placement mode for this reconcile.
+                    enum:
+                    - dedicatedFollower
+                    - primarySidecar
+                    type: string
+                  primarySidecar:
+                    description: |-
+                      primarySidecar publishes the attachable material contract when
+                      SidecarMaterialReady=True.
+                    properties:
+                      networkName:
+                        description: |-
+                          networkName is the referenced CardanoNetwork name this sidecar material
+                          is valid for.
+                        type: string
+                      resources:
+                        description: |-
+                          resources names the CardanoDBSync-owned resources mounted by the primary
+                          Pod sidecar.
+                        properties:
+                          configMapName:
+                            description: configMapName is the db-sync configuration
+                              ConfigMap name.
+                            type: string
+                          metricsServiceName:
+                            description: metricsServiceName is the db-sync metrics
+                              Service name.
+                            type: string
+                          pgpassSecretName:
+                            description: pgpassSecretName is the db-sync pgpass Secret
+                              name.
+                            type: string
+                          statePVCName:
+                            description: statePVCName is the db-sync state PVC name.
+                            type: string
+                        type: object
+                      revision:
+                        description: |-
+                          revision is an opaque sha256 rollout revision over all sidecar-mounted
+                          material.
+                        type: string
+                    type: object
+                type: object
               sync:
                 description: sync reports db-sync indexing progress.
                 properties:

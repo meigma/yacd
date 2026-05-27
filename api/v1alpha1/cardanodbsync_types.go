@@ -86,8 +86,7 @@ const (
 	// CardanoDBSync controller.
 	CardanoDBSyncPlacementModeDedicatedFollower CardanoDBSyncPlacementMode = "dedicatedFollower"
 	// CardanoDBSyncPlacementModePrimarySidecar requests db-sync placement in
-	// the referenced CardanoNetwork primary node Pod. The runtime attachment is
-	// implemented by later slices.
+	// the referenced CardanoNetwork primary node Pod.
 	CardanoDBSyncPlacementModePrimarySidecar CardanoDBSyncPlacementMode = "primarySidecar"
 )
 
@@ -522,14 +521,21 @@ type CardanoDBSyncStatus struct {
 	// +optional
 	Sync *CardanoDBSyncProgressStatus `json:"sync,omitempty"`
 
+	// placement reports the effective placement mode and, when attachable,
+	// the primary-sidecar material contract consumed by CardanoNetwork.
+	// +optional
+	Placement *CardanoDBSyncPlacementStatus `json:"placement,omitempty"`
+
 	// conditions represent the current state of the CardanoDBSync resource.
 	//
 	// Expected condition types include:
 	// - "Ready": db-sync is usable through its published database endpoint
 	// - "FollowerNodeReady": the colocated follower node is running
+	// - "NodeSocketReady": the node socket used by db-sync is reachable
+	// - "SidecarMaterialReady": primary-sidecar mounted material is attachable
 	// - "PostgresReady": Postgres is running and accepting local connections
 	// - "DBSyncReady": the db-sync process is running
-	// - "Synced": db-sync has caught up to the follower node
+	// - "Synced": db-sync has caught up to the node tip
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain desired state
 	//
@@ -538,6 +544,57 @@ type CardanoDBSyncStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// CardanoDBSyncPlacementStatus reports the effective db-sync placement.
+type CardanoDBSyncPlacementStatus struct {
+	// mode is the effective placement mode for this reconcile.
+	// +optional
+	Mode CardanoDBSyncPlacementMode `json:"mode,omitempty"`
+
+	// primarySidecar publishes the attachable material contract when
+	// SidecarMaterialReady=True.
+	// +optional
+	PrimarySidecar *CardanoDBSyncPrimarySidecarStatus `json:"primarySidecar,omitempty"`
+}
+
+// CardanoDBSyncPrimarySidecarStatus reports the primary-sidecar attachment
+// contract consumed by CardanoNetwork.
+type CardanoDBSyncPrimarySidecarStatus struct {
+	// networkName is the referenced CardanoNetwork name this sidecar material
+	// is valid for.
+	// +optional
+	NetworkName string `json:"networkName,omitempty"`
+
+	// revision is an opaque sha256 rollout revision over all sidecar-mounted
+	// material.
+	// +optional
+	Revision string `json:"revision,omitempty"`
+
+	// resources names the CardanoDBSync-owned resources mounted by the primary
+	// Pod sidecar.
+	// +optional
+	Resources CardanoDBSyncPrimarySidecarResourcesStatus `json:"resources,omitempty"`
+}
+
+// CardanoDBSyncPrimarySidecarResourcesStatus reports the DB Sync-owned
+// resource names CardanoNetwork may mount into the primary Pod.
+type CardanoDBSyncPrimarySidecarResourcesStatus struct {
+	// configMapName is the db-sync configuration ConfigMap name.
+	// +optional
+	ConfigMapName string `json:"configMapName,omitempty"`
+
+	// pgpassSecretName is the db-sync pgpass Secret name.
+	// +optional
+	PGPassSecretName string `json:"pgpassSecretName,omitempty"`
+
+	// statePVCName is the db-sync state PVC name.
+	// +optional
+	StatePVCName string `json:"statePVCName,omitempty"`
+
+	// metricsServiceName is the db-sync metrics Service name.
+	// +optional
+	MetricsServiceName string `json:"metricsServiceName,omitempty"`
 }
 
 // CardanoDBSyncEndpointsStatus reports discovered Service endpoints.

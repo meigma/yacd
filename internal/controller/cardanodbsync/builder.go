@@ -78,6 +78,25 @@ type dbSyncWorkloadResources struct {
 	Plan dbsync.Plan
 }
 
+// primarySidecarDBSyncResources is the desired-state bundle CardanoDBSync
+// owns when db-sync is attached to the CardanoNetwork primary Pod. It omits
+// the follower PVC and dedicated dbsync Deployment; CardanoNetwork consumes
+// these mounted resources when composing the primary Deployment.
+type primarySidecarDBSyncResources struct {
+	// ConfigMap holds the rendered db-sync configuration and topology mounted
+	// into the primary Pod.
+	ConfigMap *corev1.ConfigMap
+	// PGPassSecret holds the rendered libpq pgpass file consumed by the
+	// pgpass init container.
+	PGPassSecret *corev1.Secret
+	// PersistentVolumeClaim is the durable state PVC for the db-sync sidecar.
+	PersistentVolumeClaim *corev1.PersistentVolumeClaim
+	// MetricsService fronts the db-sync sidecar's Prometheus metrics endpoint.
+	MetricsService *corev1.Service
+	// Plan is the dbsync planner output the builder used to render the bundle.
+	Plan dbsync.Plan
+}
+
 // dbSyncWorkloadBuilder converts a CardanoDBSync spec, the referenced
 // CardanoNetwork, the network artifacts ConfigMap, and the database
 // password Secret into the desired dbsync workload resources. The builder
@@ -154,7 +173,7 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 		return nil, fmt.Errorf("scheme is required")
 	}
 
-	spec, err := b.planSpec(dbSync, network, database)
+	spec, err := dbSyncPlanSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
 	}
@@ -199,11 +218,84 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 	}, nil
 }
 
-// planSpec translates the CardanoDBSync spec, the referenced CardanoNetwork
-// status, and the resolved dbsync.Database into the dbsync planner input.
-// It rejects empty image references and missing network endpoints up front
-// so the planner does not have to recheck them.
-func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, database dbsync.Database) (dbsync.Spec, error) {
+// BuildPrimarySidecarForDatabase renders the CardanoDBSync-owned resources
+// for primarySidecar placement. The order of operations is:
+//
+//  1. validate that the referenced CardanoNetwork can host db-sync as a
+//     primary sidecar
+//  2. translate the CardanoDBSync spec into a dbsync.Spec the planner accepts
+//     (dbSyncPlanSpec)
+//  3. compute the dbsync plan (config YAML, topology, fingerprints)
+//  4. assemble the ConfigMap, state PVC, pgpass Secret, and metrics Service
+//
+// CardanoNetwork consumes these resources through CardanoDBSync status when it
+// composes the primary Pod; this builder does not render a Deployment.
+func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	networkArtifacts *corev1.ConfigMap,
+	databaseSecret *corev1.Secret,
+	database dbsync.Database,
+) (*primarySidecarDBSyncResources, error) {
+	if dbSync == nil {
+		return nil, fmt.Errorf("cardanodbsync is required")
+	}
+	if network == nil {
+		return nil, fmt.Errorf("cardanonetwork is required")
+	}
+	if networkArtifacts == nil {
+		return nil, fmt.Errorf("network artifacts ConfigMap is required")
+	}
+	if databaseSecret == nil {
+		return nil, fmt.Errorf("database credential Secret is required")
+	}
+	if b.scheme == nil {
+		return nil, fmt.Errorf("scheme is required")
+	}
+	if err := ValidatePrimarySidecarLocalNetwork(dbSync, network); err != nil {
+		return nil, err
+	}
+
+	spec, err := dbSyncPlanSpec(dbSync, network, database)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := dbsync.BuildPlan(spec)
+	if err != nil {
+		return nil, unsupportedSpec("build db-sync plan: %v", err)
+	}
+
+	configMap, err := b.configMap(dbSync, network, plan)
+	if err != nil {
+		return nil, err
+	}
+	persistentVolumeClaim, err := b.persistentVolumeClaim(dbSync, plan)
+	if err != nil {
+		return nil, err
+	}
+	pgPassSecret, err := b.pgPassSecret(dbSync, databaseSecret, plan)
+	if err != nil {
+		return nil, err
+	}
+	service, err := b.metricsServiceForSelector(dbSync, plan, primarySidecarMetricsSelectorLabels(dbSync, network))
+	if err != nil {
+		return nil, err
+	}
+
+	return &primarySidecarDBSyncResources{
+		ConfigMap:             configMap,
+		PGPassSecret:          pgPassSecret,
+		PersistentVolumeClaim: persistentVolumeClaim,
+		MetricsService:        service,
+		Plan:                  plan,
+	}, nil
+}
+
+// dbSyncPlanSpec translates the CardanoDBSync spec, the referenced
+// CardanoNetwork status, and the resolved dbsync.Database into the dbsync
+// planner input. It rejects empty image references and missing network
+// endpoints up front so the planner does not have to recheck them.
+func dbSyncPlanSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, database dbsync.Database) (dbsync.Spec, error) {
 	if network.Status.Endpoints == nil || network.Status.Endpoints.NodeToNode == nil {
 		return dbsync.Spec{}, unsupportedSpec("node-to-node endpoint is required")
 	}
@@ -217,11 +309,15 @@ func (b dbSyncWorkloadBuilder) planSpec(dbSync *yacdv1alpha1.CardanoDBSync, netw
 	if nodeVersion == "" && (dbSync.Spec.FollowerNode == nil || dbSync.Spec.FollowerNode.Image == nil) {
 		return dbsync.Spec{}, unsupportedSpec("network node version is required to derive follower node image")
 	}
+	networkArtifactHash := ""
+	if network.Status.Artifacts != nil {
+		networkArtifactHash = network.Status.Artifacts.DataHash
+	}
 
 	return dbsync.Spec{
 		NetworkName:          network.Name,
 		RequiresNetworkMagic: true,
-		NetworkArtifactHash:  network.Status.Artifacts.DataHash,
+		NetworkArtifactHash:  networkArtifactHash,
 		Image:                strings.TrimSpace(dbSync.Spec.Image),
 		NodeToNode: dbsync.NodeToNode{
 			Host: fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace),
