@@ -50,9 +50,10 @@ func registerControllers(mgr manager.Manager, options managerOptions) error {
 	}
 
 	err = (&cardanodbsync.CardanoDBSyncReconciler{
-		Client: mgr.GetClient(),
-		Reader: mgr.GetAPIReader(),
-		Scheme: mgr.GetScheme(),
+		Client:                     mgr.GetClient(),
+		Reader:                     mgr.GetAPIReader(),
+		Scheme:                     mgr.GetScheme(),
+		DefaultCardanoTestnetImage: options.DefaultCardanoTestnetImage,
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err

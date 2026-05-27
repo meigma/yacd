@@ -86,6 +86,14 @@ type dbSyncWorkloadResources struct {
 type dbSyncWorkloadBuilder struct {
 	// scheme is required to set controller references on owned children.
 	scheme *runtime.Scheme
+
+	// defaultCardanoTestnetImage is the Reconciler-injected override for
+	// the follower-node container image. When non-empty it replaces the
+	// computed "<repo>:<networkNodeVersion>-<revision>" reference. The
+	// local dev stack's docker-built image flows in through here so
+	// CardanoDBSync picks up publisher changes the published
+	// cardano-testnet tag does not yet contain.
+	defaultCardanoTestnetImage string
 }
 
 // Build renders the dbsync workload resources for the external-database

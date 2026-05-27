@@ -49,6 +49,11 @@ type CardanoDBSyncReconciler struct {
 	// owned child resources.
 	Scheme *runtime.Scheme
 
+	// DefaultCardanoTestnetImage overrides the follower-node container
+	// image. Empty leaves the built-in
+	// "<repo>:<networkNodeVersion>-<revision>" formula in place.
+	DefaultCardanoTestnetImage string
+
 	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.
 	runtimeProberOverride runtimeProber
 }
@@ -196,7 +201,10 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	configMap *corev1.ConfigMap,
 	databaseRuntime databaseRuntime,
 ) (ctrl.Result, error) {
-	builder := dbSyncWorkloadBuilder{scheme: r.Scheme}
+	builder := dbSyncWorkloadBuilder{
+		scheme:                     r.Scheme,
+		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+	}
 	var postgresResources *managedPostgresResources
 	if databaseRuntime.Mode == databaseModeManaged {
 		var err error

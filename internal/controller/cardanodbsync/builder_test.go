@@ -476,6 +476,23 @@ func newDBSyncWorkloadBuilder(t *testing.T) dbSyncWorkloadBuilder {
 	return dbSyncWorkloadBuilder{scheme: scheme}
 }
 
+// TestFollowerNodeImageHonorsInjectedOverride verifies the
+// Reconciler-injected defaultCardanoTestnetImage replaces the legacy
+// "<repo>:<networkNodeVersion>-<revision>" reference on the follower-node
+// container so the local dev stack picks up post-release publisher
+// changes that the published cardano-testnet tag does not yet contain.
+func TestFollowerNodeImageHonorsInjectedOverride(t *testing.T) {
+	const override = "ghcr.io/meigma/yacd/cardano-testnet:tilt"
+
+	builder := newDBSyncWorkloadBuilder(t)
+	builder.defaultCardanoTestnetImage = override
+
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+
+	assert.Equal(t, override, builder.followerNodeImage(dbSync, network))
+}
+
 func requireContainer(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Container {
 	t.Helper()
 
