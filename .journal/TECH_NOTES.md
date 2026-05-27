@@ -69,8 +69,10 @@
   `status.placement.primarySidecar` only when `SidecarMaterialReady=True`, while
   CardanoNetwork is the only controller that composes the primary Pod from that
   status contract. Multiple primary-sidecar claims for one CardanoNetwork attach
-  none and report `PlacementConflict`; placement flips wait for the old db-sync
-  Pods/sidecar to disappear before starting the new path.
+  none and report `PlacementConflict`. Once db-sync state accepts a placement,
+  later `primarySidecar` <-> `dedicatedFollower` changes are rejected with
+  `UnsupportedDatabaseIdentityChange`; the old pod-drain handoff guards remain
+  to prevent duplicate processes during pre-acceptance and cleanup paths.
 - `CardanoNetwork` publishes `DBSyncAttachmentReady` only to explain primary Pod
   impact from an attached/requested db-sync sidecar. Detailed DB Sync health
   remains on `CardanoDBSync`. Shared primary Pod names, selector labels, port
