@@ -39,10 +39,11 @@ func mustRegisterControllers(mgr manager.Manager, options managerOptions) {
 // manager.
 func registerControllers(mgr manager.Manager, options managerOptions) error {
 	err := (&cardanonetwork.CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		DefaultFaucetImage: options.DefaultFaucetImage,
+		Client:                     mgr.GetClient(),
+		Reader:                     mgr.GetAPIReader(),
+		Scheme:                     mgr.GetScheme(),
+		DefaultFaucetImage:         options.DefaultFaucetImage,
+		DefaultCardanoTestnetImage: options.DefaultCardanoTestnetImage,
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err

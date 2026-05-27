@@ -60,7 +60,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	}
 	initContainers := []corev1.Container{initContainer}
 	if faucet.enabled {
-		initContainers = append(initContainers, faucetSourceAddressInitContainer(plan))
+		initContainers = append(initContainers, b.faucetSourceAddressInitContainer(plan))
 	}
 	volumes := []corev1.Volume{
 		{

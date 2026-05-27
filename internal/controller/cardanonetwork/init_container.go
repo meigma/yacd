@@ -55,7 +55,7 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(network *yacdv1alpha
 
 	return corev1.Container{
 		Name:            localnetCreateEnvInitContainerName,
-		Image:           cardanoTestnetImage(toolVersion),
+		Image:           b.cardanoTestnetImage(toolVersion),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{localnetCreateEnvCommand},
 		Args:            args,
@@ -98,7 +98,7 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(network *yacdv1alpha
 	}, nil
 }
 
-func faucetSourceAddressInitContainer(plan localnet.Plan) corev1.Container {
+func (b primaryWorkloadBuilder) faucetSourceAddressInitContainer(plan localnet.Plan) corev1.Container {
 	toolVersion := strings.TrimSpace(plan.Spec.Tool.Version)
 	script := fmt.Sprintf(`for dir in %s/utxo[1-9]*; do
   [ -d "$dir" ] || continue
@@ -114,7 +114,7 @@ done`,
 
 	return corev1.Container{
 		Name:            faucetSourceAddressInitContainerName,
-		Image:           cardanoTestnetImage(toolVersion),
+		Image:           b.cardanoTestnetImage(toolVersion),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{faucetSourceAddressCommand},
 		Args:            []string{"-eu", "-c", script},
@@ -142,7 +142,19 @@ done`,
 	}
 }
 
-func cardanoTestnetImage(toolVersion string) string {
+// cardanoTestnetImage returns the cardano-testnet container image reference
+// used for the create-env init container, the faucet source-address init
+// container, and the default cardano-node container. The
+// Reconciler-injected defaultCardanoTestnetImage takes precedence so the
+// local dev stack can substitute a freshly built tools image when the
+// published cardano-testnet tag is behind the publisher code that depends
+// on it (e.g. db-sync genesis hash enrichment). With no injected override,
+// the built-in formula reproduces the legacy "<repo>:<toolVersion>-<revision>"
+// reference.
+func (b primaryWorkloadBuilder) cardanoTestnetImage(toolVersion string) string {
+	if override := strings.TrimSpace(b.defaultCardanoTestnetImage); override != "" {
+		return override
+	}
 	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, toolVersion, cardanoTestnetImageRevision)
 }
 

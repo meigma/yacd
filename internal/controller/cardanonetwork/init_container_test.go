@@ -57,6 +57,31 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	assertRestrictedContainerSecurityContext(t, container.SecurityContext)
 }
 
+// TestCardanoTestnetImageHonorsInjectedOverride verifies the Reconciler-
+// injected defaultCardanoTestnetImage replaces the legacy
+// "<repo>:<toolVersion>-<revision>" reference on the create-env init
+// container, the faucet source-address init container, and the default
+// cardano-node container. This is the seam the local dev stack uses when
+// the published cardano-testnet tag is behind publisher changes
+// CardanoDBSync depends on.
+func TestCardanoTestnetImageHonorsInjectedOverride(t *testing.T) {
+	const override = "ghcr.io/meigma/yacd/cardano-testnet:tilt"
+
+	plan := testLocalnetPlan(t)
+	network := localCardanoNetwork("devnet")
+	builder := newTestPrimaryWorkloadBuilder(t)
+	builder.defaultCardanoTestnetImage = override
+
+	initContainer, err := builder.cardanoTestnetInitContainer(network, plan)
+	require.NoError(t, err)
+	assert.Equal(t, override, initContainer.Image)
+
+	addressInitContainer := builder.faucetSourceAddressInitContainer(plan)
+	assert.Equal(t, override, addressInitContainer.Image)
+
+	assert.Equal(t, override, builder.cardanoNodeImage(network))
+}
+
 // TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips verifies the
 // idempotency manifest is carried as compact JSON in the container environment.
 func TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips(t *testing.T) {

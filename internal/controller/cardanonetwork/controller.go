@@ -48,6 +48,13 @@ type CardanoNetworkReconciler struct {
 	// DefaultFaucetImage is the image used for faucet sidecars when the
 	// CardanoNetwork spec does not provide an override.
 	DefaultFaucetImage string
+
+	// DefaultCardanoTestnetImage overrides the cardano-testnet container
+	// image used for the create-env init container, the faucet
+	// source-address init container, and (when spec.node.image is unset)
+	// the primary cardano-node container. Empty leaves the built-in
+	// "<repo>:<toolVersion>-<revision>" formula in place.
+	DefaultCardanoTestnetImage string
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
@@ -80,8 +87,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	resources, err := (primaryWorkloadBuilder{
-		scheme:             r.Scheme,
-		defaultFaucetImage: r.DefaultFaucetImage,
+		scheme:                     r.Scheme,
+		defaultFaucetImage:         r.DefaultFaucetImage,
+		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
 	}).Build(network)
 	if err != nil {
 		var unsupportedSpec unsupportedSpecError

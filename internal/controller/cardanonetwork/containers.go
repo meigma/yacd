@@ -57,13 +57,15 @@ const (
 
 // cardanoNodeImage returns the resolved cardano-node container image
 // reference. The spec override takes precedence; otherwise the
-// cardano-testnet image carries cardano-node at the requested version.
+// cardano-testnet image carries cardano-node at the requested version
+// (subject to the Reconciler-injected defaultCardanoTestnetImage override
+// that lets the local dev stack substitute a freshly built tools image).
 func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNetwork) string {
 	if network.Spec.Node.Image != nil {
 		return strings.TrimSpace(*network.Spec.Node.Image)
 	}
 
-	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, strings.TrimSpace(network.Spec.Node.Version), cardanoTestnetImageRevision)
+	return b.cardanoTestnetImage(strings.TrimSpace(network.Spec.Node.Version))
 }
 
 // cardanoNodeContainer builds the primary cardano-node container. The args

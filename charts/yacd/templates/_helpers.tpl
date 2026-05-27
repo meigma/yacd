@@ -110,6 +110,25 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+yacd.cardanoTestnetImage renders the optional cardano-testnet image
+override passed to the manager via --default-cardano-testnet-image. The
+helper intentionally returns the empty string when no repository is set so
+the deployment template can omit the flag entirely and let the operator
+fall back to its built-in versioned reference.
+*/}}
+{{- define "yacd.cardanoTestnetImage" -}}
+{{- with .Values.cardanoTestnet.image.repository -}}
+{{- if $.Values.cardanoTestnet.image.digest -}}
+{{- printf "%s@%s" . $.Values.cardanoTestnet.image.digest -}}
+{{- else if $.Values.cardanoTestnet.image.tag -}}
+{{- printf "%s:%s" . $.Values.cardanoTestnet.image.tag -}}
+{{- else -}}
+{{- . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "yacd.validateValues" -}}
 {{- $reservedLabels := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/managed-by" "app.kubernetes.io/version" "helm.sh/chart" "control-plane" -}}
 {{- range $source, $labels := dict "commonLabels" .Values.commonLabels "podLabels" .Values.podLabels -}}
