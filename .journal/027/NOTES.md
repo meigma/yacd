@@ -30,3 +30,9 @@ Plan:
 Goal for the checkpoint: Start implementation of slice 1 in an isolated Worktrunk worktree.
 Current state of the world: Created `feat/public-preview-network` at `/Users/josh/code/meigma/yacd/.wt/feat-public-preview-network` from `master`. Ran `moon run root:dev-up` from that worktree; it completed successfully, leaving Tilt running at `http://localhost:10350/` with logs under `.run/yacd-dev/tilt.log`.
 Plan: Implement the public preview planner/runtime path, keep the dev stack running through validation, and record later test/smoke results here.
+
+## 2026-05-27 16:29 — Slice 1 implemented
+Goal for the checkpoint: Record the implementation and proof for public preview CardanoNetwork support.
+Current state of the world: Committed `e53c14b` on `feat/public-preview-network` (`feat(cardanonetwork): support public preview nodes`). The implementation adds an embedded official preview profile planner, renders public preview as a passive node plus Ogmios with no localnet init/pool credentials, publishes mode-neutral network artifacts/status, rejects public faucet/Kupo and unsupported profiles, and adds `examples/public-preview/yacd.yaml`.
+Verification: `moon run root:generate`, `moon run root:test`, `moon run root:check`, `git diff --check`, and `git diff --cached --check` passed. Runtime smoke against the active Kind/Tilt stack passed with `go run ./cli/cmd/yacd deploy -f examples/public-preview/yacd.yaml --wait --timeout 10m`; observed `mode=public`, `profile=preview`, `networkMagic=2`, ready node/Ogmios conditions, verified artifacts, and published node/Ogmios endpoints. The temporary `yacd-smoke` namespace was deleted afterward; the dev stack remains running for the session.
+Plan: Use this branch for review or follow-up slice 1 polish. Public db-sync, preprod/mainnet/custom profiles, snapshots/Mithril, and mainnet sizing remain out of scope for this slice.
