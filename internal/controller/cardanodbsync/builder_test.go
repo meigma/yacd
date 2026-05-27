@@ -39,6 +39,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, "dbsync-dbsync-metrics", resources.MetricsService.Name)
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
 	assert.Equal(t, testNetworkArtifactDataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: ready-network")
 	assert.Contains(t, resources.ConfigMap.Data[followerTopologyFileName], `"address": "ready-network-node.default.svc.cluster.local"`)
@@ -46,9 +47,11 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Equal(t, "10Gi", storage.String())
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.PersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.PersistentVolumeClaim.Annotations[dbSyncPlacementModeAnno])
 	followerStorage := resources.FollowerPersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Equal(t, "10Gi", followerStorage.String())
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.FollowerPersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.FollowerPersistentVolumeClaim.Annotations[dbSyncPlacementModeAnno])
 	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
 
 	deployment := resources.Deployment
@@ -86,9 +89,11 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.NotContains(t, dbSyncContainer.Args, "--state-dir")
 	assert.Equal(t, resources.Plan.Fingerprint.Value, deployment.Spec.Template.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), deployment.Spec.Template.Annotations[dbSyncPlacementModeAnno])
 	assert.Equal(t, testNetworkArtifactDataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.PGPassSecret.Annotations[dbSyncPlacementModeAnno])
 
 	assert.Equal(t, "/configuration/pgpass", requireEnvVar(t, dbSyncContainer, "PGPASSFILE").Value)
 	assert.Empty(t, envVarValue(dbSyncContainer, "PGPASSWORD"))
@@ -105,6 +110,33 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, dbSyncStateMountDir, requireVolumeMount(t, dbSyncContainer, dbSyncStateVolumeName).MountPath)
 	assert.Equal(t, int32(8080), resources.MetricsService.Spec.Ports[0].Port)
 	assert.Equal(t, dbSyncWorkloadSelectorLabels(dbSync), resources.MetricsService.Spec.Selector)
+}
+
+func TestDBSyncWorkloadBuilderBuildsPrimarySidecarMaterial(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
+	network := readyCardanoNetwork("ready-network")
+	secret := externalDatabaseSecretFor(dbSync)
+	expectedPGPass := "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n"
+
+	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, artifactConfigMapFor(network), secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
+
+	require.NoError(t, err)
+	require.NotNil(t, resources.Plan)
+	assert.Equal(t, "dbsync-dbsync-config", resources.ConfigMap.Name)
+	assert.Equal(t, "dbsync-dbsync-pgpass", resources.PGPassSecret.Name)
+	assert.Equal(t, "dbsync-dbsync-state", resources.PersistentVolumeClaim.Name)
+	assert.Equal(t, "dbsync-dbsync-metrics", resources.MetricsService.Name)
+	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
+	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
+	assert.Equal(t, testNetworkArtifactDataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.PersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.PersistentVolumeClaim.Annotations[dbSyncPlacementModeAnno])
+	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
+	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.PGPassSecret.Annotations[dbSyncPlacementModeAnno])
+	assert.Equal(t, primarySidecarMetricsSelectorLabels(dbSync, network), resources.MetricsService.Spec.Selector)
 }
 
 func TestDBSyncWorkloadBuilderBuildsManagedPostgresResources(t *testing.T) {

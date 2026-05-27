@@ -53,7 +53,7 @@ func (r *CardanoDBSyncReconciler) primarySidecarDBSyncGone(
 		if !apierrors.IsNotFound(err) {
 			return false, err
 		}
-	} else if podSpecHasContainer(deployment.Spec.Template.Spec, dbSyncContainerName) {
+	} else if podSpecHasDBSyncContainer(deployment.Spec.Template.Spec) {
 		return false, nil
 	}
 
@@ -67,7 +67,7 @@ func (r *CardanoDBSyncReconciler) primarySidecarDBSyncGone(
 		return false, err
 	}
 	for i := range pods.Items {
-		if !podTerminal(&pods.Items[i]) && podSpecHasContainer(pods.Items[i].Spec, dbSyncContainerName) {
+		if !podTerminal(&pods.Items[i]) && podSpecHasDBSyncContainer(pods.Items[i].Spec) {
 			return false, nil
 		}
 	}
@@ -75,11 +75,11 @@ func (r *CardanoDBSyncReconciler) primarySidecarDBSyncGone(
 	return true, nil
 }
 
-// podSpecHasContainer reports whether the PodSpec contains a container with
-// the supplied name.
-func podSpecHasContainer(spec corev1.PodSpec, containerName string) bool {
+// podSpecHasDBSyncContainer reports whether the PodSpec contains the db-sync
+// container.
+func podSpecHasDBSyncContainer(spec corev1.PodSpec) bool {
 	for _, container := range spec.Containers {
-		if container.Name == containerName {
+		if container.Name == dbSyncContainerName {
 			return true
 		}
 	}

@@ -143,7 +143,7 @@ func (r *CardanoDBSyncReconciler) patchWorkloadsAppliedStatus(
 			Postgres: databaseRuntime.PostgresEndpoint,
 			Metrics:  serviceEndpointFor(metricsService, "http", "/metrics"),
 		}
-		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName, effectivePlacementMode(dbSync))
 		status.Sync = syncStatus
 		status.Placement = placementStatus(dbSync)
 	},
@@ -193,7 +193,8 @@ func (r *CardanoDBSyncReconciler) patchManagedPostgresAppliedStatus(
 			Postgres: databaseRuntime.PostgresEndpoint,
 			Metrics:  metricsEndpoint,
 		}
-		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		_, _, acceptedPlacementMode := databaseStatusValues(status.Database)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName, acceptedPlacementMode)
 		status.Sync = nil
 		status.Placement = placementStatus(dbSync)
 	},
@@ -276,7 +277,7 @@ func (r *CardanoDBSyncReconciler) patchPrimarySidecarResourcesAppliedStatus(
 			Postgres: databaseRuntime.PostgresEndpoint,
 			Metrics:  serviceEndpointFor(resources.MetricsService, "http", "/metrics"),
 		}
-		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName, effectivePlacementMode(dbSync))
 		status.Sync = syncStatus
 		status.Placement = placement
 	},
@@ -318,7 +319,8 @@ func (r *CardanoDBSyncReconciler) patchPrimarySidecarManagedPostgresAppliedStatu
 			Postgres: databaseRuntime.PostgresEndpoint,
 			Metrics:  metricsEndpoint,
 		}
-		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName)
+		_, _, acceptedPlacementMode := databaseStatusValues(status.Database)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, databaseRuntime.GeneratedAuthSecretName, acceptedPlacementMode)
 		status.Sync = nil
 		status.Placement = placementStatus(dbSync)
 	},
@@ -390,15 +392,10 @@ func (r *CardanoDBSyncReconciler) patchStatusConditions(
 	conditions ...metav1.Condition,
 ) error {
 	return r.patchStatus(ctx, dbSync, func(status *yacdv1alpha1.CardanoDBSyncStatus) {
-		acceptedIdentityFingerprint := ""
-		generatedAuthSecretName := ""
-		if status.Database != nil {
-			acceptedIdentityFingerprint = status.Database.AcceptedIdentityFingerprint
-			generatedAuthSecretName = status.Database.AuthSecretName
-		}
+		acceptedIdentityFingerprint, generatedAuthSecretName, acceptedPlacementMode := databaseStatusValues(status.Database)
 		status.Endpoints = nil
 		status.Sync = nil
-		status.Database = databaseStatus(acceptedIdentityFingerprint, generatedAuthSecretName)
+		status.Database = databaseStatus(acceptedIdentityFingerprint, generatedAuthSecretName, acceptedPlacementMode)
 		status.Placement = placementStatus(dbSync)
 	}, conditions...)
 }
@@ -412,7 +409,12 @@ func (r *CardanoDBSyncReconciler) patchStatus(
 	mutate func(*yacdv1alpha1.CardanoDBSyncStatus),
 	conditions ...metav1.Condition,
 ) error {
-	original := dbSync.DeepCopy()
+	live := &yacdv1alpha1.CardanoDBSync{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(dbSync), live); err != nil {
+		return err
+	}
+	original := live
+	dbSync.ResourceVersion = live.ResourceVersion
 	dbSync.Status.ObservedGeneration = dbSync.Generation
 	if mutate != nil {
 		mutate(&dbSync.Status)
@@ -478,16 +480,30 @@ func postgresEndpointFor(database dbsync.Database, serviceName string) *yacdv1al
 	}
 }
 
-// databaseStatus builds the CardanoDBSyncDatabaseStatus payload, returning
-// nil when neither field has a value. Used by every status patcher to
-// preserve the accepted identity fingerprint across reconciles.
-func databaseStatus(acceptedIdentityFingerprint string, generatedAuthSecretName string) *yacdv1alpha1.CardanoDBSyncDatabaseStatus {
-	if acceptedIdentityFingerprint == "" && generatedAuthSecretName == "" {
+// databaseStatusValues returns the current database-status fields that status
+// patchers preserve across partial updates.
+func databaseStatusValues(status *yacdv1alpha1.CardanoDBSyncDatabaseStatus) (string, string, yacdv1alpha1.CardanoDBSyncPlacementMode) {
+	if status == nil {
+		return "", "", ""
+	}
+
+	return status.AcceptedIdentityFingerprint, status.AuthSecretName, status.AcceptedPlacementMode
+}
+
+// databaseStatus builds the CardanoDBSyncDatabaseStatus payload, returning nil
+// when no database status field has a value.
+func databaseStatus(
+	acceptedIdentityFingerprint string,
+	generatedAuthSecretName string,
+	acceptedPlacementMode yacdv1alpha1.CardanoDBSyncPlacementMode,
+) *yacdv1alpha1.CardanoDBSyncDatabaseStatus {
+	if acceptedIdentityFingerprint == "" && generatedAuthSecretName == "" && acceptedPlacementMode == "" {
 		return nil
 	}
 
 	return &yacdv1alpha1.CardanoDBSyncDatabaseStatus{
 		AcceptedIdentityFingerprint: acceptedIdentityFingerprint,
+		AcceptedPlacementMode:       acceptedPlacementMode,
 		AuthSecretName:              generatedAuthSecretName,
 	}
 }

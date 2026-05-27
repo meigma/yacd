@@ -195,16 +195,56 @@ func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 	if acceptedFingerprint == "" || acceptedFingerprint == desiredFingerprint {
 		if acceptedFingerprint != "" &&
 			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "") {
-			dbSync.Status.Database = databaseStatus(acceptedFingerprint, dbSyncDatabaseAuthSecretName(dbSync))
+			_, authSecretName, acceptedPlacementMode := databaseStatusValues(dbSync.Status.Database)
+			dbSync.Status.Database = databaseStatus(acceptedFingerprint, authSecretName, acceptedPlacementMode)
 		}
 		return nil
 	}
 	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "" {
-		dbSync.Status.Database = databaseStatus(acceptedFingerprint, dbSyncDatabaseAuthSecretName(dbSync))
+		_, authSecretName, acceptedPlacementMode := databaseStatusValues(dbSync.Status.Database)
+		dbSync.Status.Database = databaseStatus(acceptedFingerprint, authSecretName, acceptedPlacementMode)
 	}
 
 	return unsupportedDatabaseIdentityChange(
 		"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database",
+	)
+}
+
+// validateAcceptedDBSyncPlacementMode rejects a workload apply when dbsync has
+// already accepted state in a different placement mode. Placement controls the
+// node socket source, so moving an initialized database between primarySidecar
+// and dedicatedFollower is not safe without an explicit recreate or migration.
+func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncPlacementMode(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	desiredMode yacdv1alpha1.CardanoDBSyncPlacementMode,
+) error {
+	if desiredMode == "" {
+		return unsupportedSpec("db-sync placement mode is required")
+	}
+
+	acceptedMode, err := r.currentAcceptedDBSyncPlacementMode(ctx, dbSync, network)
+	if err != nil {
+		return err
+	}
+	if acceptedMode == "" || acceptedMode == desiredMode {
+		if acceptedMode != "" &&
+			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedPlacementMode == "") {
+			acceptedIdentityFingerprint, authSecretName, _ := databaseStatusValues(dbSync.Status.Database)
+			dbSync.Status.Database = databaseStatus(acceptedIdentityFingerprint, authSecretName, acceptedMode)
+		}
+		return nil
+	}
+	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedPlacementMode == "" {
+		acceptedIdentityFingerprint, authSecretName, _ := databaseStatusValues(dbSync.Status.Database)
+		dbSync.Status.Database = databaseStatus(acceptedIdentityFingerprint, authSecretName, acceptedMode)
+	}
+
+	return unsupportedDatabaseIdentityChange(
+		"CardanoDBSync placement changed from accepted placement %q to %q; delete and recreate the CardanoDBSync with a fresh or compatible database",
+		acceptedMode,
+		desiredMode,
 	)
 }
 
@@ -224,15 +264,37 @@ func (r *CardanoDBSyncReconciler) currentAcceptedDBSyncDatabaseIdentity(
 	return r.acceptedDBSyncDatabaseIdentityFromPVC(ctx, dbSync)
 }
 
-// dbSyncDatabaseAuthSecretName returns the previously-stamped auth Secret
-// name from CardanoDBSync status. Empty when no managed-Postgres apply has
-// ever stamped one.
-func dbSyncDatabaseAuthSecretName(dbSync *yacdv1alpha1.CardanoDBSync) string {
-	if dbSync.Status.Database == nil {
-		return ""
+// currentAcceptedDBSyncPlacementMode returns the placement mode already
+// accepted by this CardanoDBSync. It prefers explicit new status/annotation
+// state, then falls back to legacy workload-shape inference only when a
+// database identity has already been accepted.
+func (r *CardanoDBSyncReconciler) currentAcceptedDBSyncPlacementMode(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+) (yacdv1alpha1.CardanoDBSyncPlacementMode, error) {
+	if dbSync.Status.Database != nil && dbSync.Status.Database.AcceptedPlacementMode != "" {
+		return dbSync.Status.Database.AcceptedPlacementMode, nil
 	}
 
-	return dbSync.Status.Database.AuthSecretName
+	pvcMode, pvcAcceptedIdentity, err := r.acceptedDBSyncPlacementModeFromPVC(ctx, dbSync)
+	if err != nil {
+		return "", err
+	}
+	if pvcMode != "" {
+		return pvcMode, nil
+	}
+	if dbSync.Status.Database == nil &&
+		!pvcAcceptedIdentity {
+		return "", nil
+	}
+	if dbSync.Status.Database != nil &&
+		dbSync.Status.Database.AcceptedIdentityFingerprint == "" &&
+		!pvcAcceptedIdentity {
+		return "", nil
+	}
+
+	return r.inferAcceptedDBSyncPlacementMode(ctx, dbSync, network)
 }
 
 // acceptedDBSyncDatabaseIdentityFromPVC reads the accepted identity
@@ -254,6 +316,99 @@ func (r *CardanoDBSyncReconciler) acceptedDBSyncDatabaseIdentityFromPVC(
 	}
 
 	return pvc.Annotations[dbSyncDatabaseIdentityAnno], nil
+}
+
+// acceptedDBSyncPlacementModeFromPVC reads the accepted placement annotation
+// from the dbsync state PVC. The boolean reports whether the same PVC carries
+// an accepted database identity, which lets legacy resources infer placement
+// without locking pre-acceptance resources.
+func (r *CardanoDBSyncReconciler) acceptedDBSyncPlacementModeFromPVC(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (yacdv1alpha1.CardanoDBSyncPlacementMode, bool, error) {
+	pvc := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, pvc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if !controlledBy(pvc, dbSync) {
+		return "", false, nil
+	}
+
+	return yacdv1alpha1.CardanoDBSyncPlacementMode(pvc.Annotations[dbSyncPlacementModeAnno]),
+		pvc.Annotations[dbSyncDatabaseIdentityAnno] != "",
+		nil
+}
+
+func (r *CardanoDBSyncReconciler) inferAcceptedDBSyncPlacementMode(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+) (yacdv1alpha1.CardanoDBSyncPlacementMode, error) {
+	primarySidecarPresent, err := r.primarySidecarDBSyncPresent(ctx, dbSync, network)
+	if err != nil {
+		return "", err
+	}
+	if primarySidecarPresent {
+		return yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, nil
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, deployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", err
+		}
+	} else if controlledBy(deployment, dbSync) {
+		return yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower, nil
+	}
+
+	if dbSync.Status.Placement != nil && dbSync.Status.Placement.Mode != "" {
+		return dbSync.Status.Placement.Mode, nil
+	}
+
+	return "", nil
+}
+
+func (r *CardanoDBSyncReconciler) primarySidecarDBSyncPresent(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+) (bool, error) {
+	if network == nil {
+		return false, nil
+	}
+	expectedDBSyncLabel := primarySidecarPodSelectorLabels(dbSync)[labelDBSync]
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryNetworkDeploymentName(network)}, deployment); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, err
+		}
+	} else if deployment.Spec.Template.Labels[labelDBSync] == expectedDBSyncLabel &&
+		podSpecHasDBSyncContainer(deployment.Spec.Template.Spec) {
+		return true, nil
+	}
+
+	pods := &corev1.PodList{}
+	if err := r.liveReader().List(
+		ctx,
+		pods,
+		client.InNamespace(network.Namespace),
+		client.MatchingLabels(primaryNetworkSelectorLabels(network)),
+	); err != nil {
+		return false, err
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Labels[labelDBSync] == expectedDBSyncLabel &&
+			!podTerminal(pod) &&
+			podSpecHasDBSyncContainer(pod.Spec) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // validateAcceptedManagedPostgresIdentity rejects a managed-Postgres apply

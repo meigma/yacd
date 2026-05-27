@@ -746,6 +746,15 @@ spec:
                       this resource accepted. Changing it requires deleting and recreating the
                       CardanoDBSync with a fresh or compatible external database.
                     type: string
+                  acceptedPlacementMode:
+                    description: |-
+                      acceptedPlacementMode is the placement mode accepted for the current
+                      db-sync state. Changing it requires deleting and recreating the
+                      CardanoDBSync with a fresh or compatible database.
+                    enum:
+                    - dedicatedFollower
+                    - primarySidecar
+                    type: string
                   authSecretName:
                     description: |-
                       authSecretName is the same-namespace Secret containing generated
