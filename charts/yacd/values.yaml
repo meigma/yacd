@@ -12,6 +12,19 @@ faucet:
     tag: ""
     digest: ""
 
+# cardanoTestnet.image overrides the cardano-testnet tools image used for
+# the create-env init container, the faucet source-address init container,
+# and (when CardanoNetwork.spec.node.image is unset) the primary
+# cardano-node container. Leave repository empty to let the operator use
+# its built-in ghcr.io/meigma/yacd/cardano-testnet:<nodeVersion>-yacd.N
+# reference. Override when running pre-release publisher changes that the
+# published cardano-testnet tag does not yet contain.
+cardanoTestnet:
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

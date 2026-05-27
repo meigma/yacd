@@ -2,6 +2,7 @@ EXPECTED_CONTEXT = 'kind-yacd-dev'
 NAMESPACE = 'yacd-system'
 IMAGE = 'ghcr.io/meigma/yacd'
 FAUCET_IMAGE = 'ghcr.io/meigma/yacd/faucet'
+CARDANO_TESTNET_IMAGE = 'ghcr.io/meigma/yacd/cardano-testnet'
 CHART = 'charts/yacd'
 
 allow_k8s_contexts(EXPECTED_CONTEXT)
@@ -31,6 +32,17 @@ local_resource(
     deps=['services/faucet', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build-faucet.sh'],
 )
 
+# Build the cardano-testnet tools image from local source so the operator
+# uses a publisher that includes post-release changes db-sync depends on
+# (notably the genesis hash enrichment added in PR #31). The published
+# yacd.N tag is rebuilt on release-please cuts; this resource keeps the dev
+# loop unblocked between cuts.
+local_resource(
+    name='cardano-testnet-image',
+    cmd='EXPECTED_REF=%s:tilt ./.dev/build-cardano-testnet.sh && kind load docker-image --name yacd-dev %s:tilt' % (CARDANO_TESTNET_IMAGE, CARDANO_TESTNET_IMAGE),
+    deps=['containers/cardano-testnet', '.dev/build-cardano-testnet.sh'],
+)
+
 k8s_yaml(helm(
     CHART,
     name='yacd',
@@ -41,6 +53,8 @@ k8s_yaml(helm(
         'image.pullPolicy=IfNotPresent',
         'faucet.image.repository=%s' % FAUCET_IMAGE,
         'faucet.image.tag=tilt',
+        'cardanoTestnet.image.repository=%s' % CARDANO_TESTNET_IMAGE,
+        'cardanoTestnet.image.tag=tilt',
         'leaderElection.enabled=false',
         'manager.logLevel=debug',
     ],
@@ -49,5 +63,5 @@ k8s_yaml(helm(
 k8s_resource(
     workload='yacd-controller-manager',
     new_name='controller',
-    resource_deps=['faucet-image'],
+    resource_deps=['faucet-image', 'cardano-testnet-image'],
 )

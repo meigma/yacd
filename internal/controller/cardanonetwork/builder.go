@@ -44,6 +44,16 @@ type primaryWorkloadBuilder struct {
 	// ko-built image flows in through here; see defaults.go for the final
 	// fallback constant.
 	defaultFaucetImage string
+
+	// defaultCardanoTestnetImage is the Reconciler-injected override for
+	// the cardano-testnet container image. When non-empty it replaces the
+	// computed "<repo>:<toolVersion>-<revision>" reference used by the
+	// create-env init container, the faucet source-address init
+	// container, and the default cardano-node container. The local dev
+	// stack's docker-built image flows in through here so manual testing
+	// picks up post-release publisher changes that the published
+	// cardano-testnet tag does not yet contain.
+	defaultCardanoTestnetImage string
 }
 
 // Build composes the desired primary workload resources for the given

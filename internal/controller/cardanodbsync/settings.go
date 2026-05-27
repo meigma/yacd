@@ -290,10 +290,17 @@ func storageSizeFrom(storage *yacdv1alpha1.CardanoDBSyncStorageSpec, fallback st
 
 // followerNodeImage resolves the follower-node container image. A spec
 // override wins; otherwise the image is composed from the network's
-// cardano-node version and the package's YACD packaging revision.
+// cardano-node version and the package's YACD packaging revision. The
+// Reconciler-injected defaultCardanoTestnetImage overrides the composed
+// reference when set, letting the local dev stack substitute a freshly
+// built tools image.
 func (b dbSyncWorkloadBuilder) followerNodeImage(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork) string {
 	if dbSync.Spec.FollowerNode != nil && dbSync.Spec.FollowerNode.Image != nil {
 		return strings.TrimSpace(*dbSync.Spec.FollowerNode.Image)
+	}
+
+	if override := strings.TrimSpace(b.defaultCardanoTestnetImage); override != "" {
+		return override
 	}
 
 	return fmt.Sprintf("%s:%s-%s", defaultFollowerNodeImageRepository, strings.TrimSpace(network.Spec.Node.Version), defaultFollowerNodeImageRevision)
