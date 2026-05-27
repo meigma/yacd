@@ -33,7 +33,9 @@ const (
 const (
 	conditionReasonReconcileSucceeded           conditionReason = "ReconcileSucceeded"
 	conditionReasonUnsupportedSpec              conditionReason = "UnsupportedSpec"
+	conditionReasonUnsupportedNetworkChange     conditionReason = "UnsupportedNetworkChange"
 	conditionReasonUnsupportedLocalnetChange    conditionReason = "UnsupportedLocalnetChange"
+	conditionReasonMissingNetworkFingerprint    conditionReason = "MissingNetworkFingerprint"
 	conditionReasonMissingLocalnetFingerprint   conditionReason = "MissingLocalnetFingerprint"
 	conditionReasonUnsupportedStorageChange     conditionReason = "UnsupportedStorageChange"
 	conditionReasonUnsupportedWorkloadChange    conditionReason = "UnsupportedWorkloadChange"

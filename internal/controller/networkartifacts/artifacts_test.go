@@ -60,7 +60,7 @@ func TestProducerConfigMapValidationOrder(t *testing.T) {
 			name:        "fingerprint mismatch",
 			configMap:   validConfigMap(),
 			fingerprint: "other",
-			message:     "artifact ConfigMap localnet fingerprint does not match the accepted localnet",
+			message:     "artifact ConfigMap network fingerprint does not match the accepted network",
 		},
 		{
 			name: "hash not published",
@@ -102,6 +102,15 @@ func TestProducerConfigMapNeedsRecovery(t *testing.T) {
 	configMap := validConfigMap()
 	delete(configMap.Data, cardanonetworkartifacts.ConfigurationKey)
 	assert.True(t, ProducerConfigMapNeedsRecovery(configMap, "fingerprint"))
+}
+
+func TestProducerConfigMapFallsBackToLocalnetFingerprint(t *testing.T) {
+	configMap := validConfigMap()
+	delete(configMap.Annotations, ctrlannotations.NetworkFingerprint)
+
+	result := ProducerConfigMap(configMap, "fingerprint")
+
+	assert.True(t, result.Ready)
 }
 
 func TestConsumerStatus(t *testing.T) {
@@ -236,6 +245,7 @@ func validConfigMap() *corev1.ConfigMap {
 			Name: "network-artifacts",
 			Annotations: map[string]string{
 				ctrlannotations.ArtifactSchemaVersion: cardanonetworkartifacts.SchemaVersion,
+				ctrlannotations.NetworkFingerprint:    "fingerprint",
 				ctrlannotations.LocalnetFingerprint:   "fingerprint",
 				ctrlannotations.ArtifactDataHash:      ctrlartifacts.ComputeDataHash(data),
 			},

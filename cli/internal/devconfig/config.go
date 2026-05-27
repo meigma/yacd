@@ -106,9 +106,8 @@ func Load(r io.Reader) (*Environment, error) {
 }
 
 // Validate checks the document envelope before rendering Kubernetes objects.
-// It accepts only the local-mode network shape that the phase-4 CLI
-// supports; other modes are rejected here so the rendering pipeline can
-// assume a narrow input.
+// It accepts the supported developer network shapes and rejects future API
+// shapes here so the rendering pipeline can assume a narrow input.
 func (e Environment) Validate() error {
 	if strings.TrimSpace(e.APIVersion) != APIVersion {
 		return fmt.Errorf("apiVersion must be %q", APIVersion)
@@ -119,17 +118,36 @@ func (e Environment) Validate() error {
 	if strings.TrimSpace(e.Metadata.Name) == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	if e.Spec.Network.Mode != yacdv1alpha1.CardanoNetworkModeLocal {
-		return fmt.Errorf("spec.network.mode must be %q for phase 4 developer configs", yacdv1alpha1.CardanoNetworkModeLocal)
-	}
 	if strings.TrimSpace(e.Spec.Network.Node.Version) == "" {
 		return fmt.Errorf("spec.network.node.version is required")
 	}
 	if e.Spec.Network.Node.Port <= 0 {
 		return fmt.Errorf("spec.network.node.port must be greater than 0")
 	}
-	if e.Spec.Network.Local == nil {
-		return fmt.Errorf("spec.network.local is required")
+
+	switch e.Spec.Network.Mode {
+	case yacdv1alpha1.CardanoNetworkModeLocal:
+		if e.Spec.Network.Local == nil {
+			return fmt.Errorf("spec.network.local is required")
+		}
+		if e.Spec.Network.Public != nil {
+			return fmt.Errorf("spec.network.public is not supported with local mode")
+		}
+	case yacdv1alpha1.CardanoNetworkModePublic:
+		if e.Spec.Network.Public == nil {
+			return fmt.Errorf("spec.network.public is required")
+		}
+		if e.Spec.Network.Local != nil {
+			return fmt.Errorf("spec.network.local is not supported with public mode")
+		}
+		if e.Spec.Network.Public.Profile != yacdv1alpha1.PublicNetworkProfilePreview {
+			return fmt.Errorf("spec.network.public.profile must be %q for public developer configs", yacdv1alpha1.PublicNetworkProfilePreview)
+		}
+		if e.Spec.Network.Public.ConfigSource != nil {
+			return fmt.Errorf("spec.network.public.configSource is not supported")
+		}
+	default:
+		return fmt.Errorf("spec.network.mode must be %q or %q", yacdv1alpha1.CardanoNetworkModeLocal, yacdv1alpha1.CardanoNetworkModePublic)
 	}
 
 	return nil
@@ -156,11 +174,20 @@ func validateExplicitFields(data []byte, environment Environment) error {
 		{"spec", "network", "mode"},
 		{"spec", "network", "node", "version"},
 		{"spec", "network", "node", "port"},
-		{"spec", "network", "local", "networkMagic"},
-		{"spec", "network", "local", "era"},
-		{"spec", "network", "local", "timing", "slotLength"},
-		{"spec", "network", "local", "timing", "epochLength"},
-		{"spec", "network", "local", "topology", "pools", "count"},
+	}
+	switch environment.Spec.Network.Mode {
+	case yacdv1alpha1.CardanoNetworkModeLocal:
+		requiredPaths = append(requiredPaths,
+			[]string{"spec", "network", "local", "networkMagic"},
+			[]string{"spec", "network", "local", "era"},
+			[]string{"spec", "network", "local", "timing", "slotLength"},
+			[]string{"spec", "network", "local", "timing", "epochLength"},
+			[]string{"spec", "network", "local", "topology", "pools", "count"},
+		)
+	case yacdv1alpha1.CardanoNetworkModePublic:
+		requiredPaths = append(requiredPaths,
+			[]string{"spec", "network", "public", "profile"},
+		)
 	}
 	if environment.Spec.Network.Node.Storage != nil {
 		requiredPaths = append(requiredPaths, []string{"spec", "network", "node", "storage", "size"})

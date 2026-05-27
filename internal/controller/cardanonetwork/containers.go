@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/localnet"
 	"github.com/meigma/yacd/internal/cardano/primarypod"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -73,24 +72,48 @@ func (b primaryWorkloadBuilder) cardanoNodeImage(network *yacdv1alpha1.CardanoNe
 // thread the localnet plan's generated paths through cardano-node's CLI;
 // volume mounts attach the persistent state directory and the node IPC
 // EmptyDir shared with the ogmios sidecar.
-func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) corev1.Container {
+func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) corev1.Container {
+	args := []string{
+		"run",
+		"--config", plan.ConfigFile,
+		"--topology", plan.TopologyFile,
+		"--database-path", cardanoNodeDatabaseDir,
+		"--socket-path", cardanoNodeSocketPath,
+		"--host-addr", cardanoNodeHostAddress,
+		"--port", strconv.Itoa(int(network.Spec.Node.Port)),
+	}
+	if plan.isLocal() {
+		args = append(args,
+			"--shelley-kes-key", path.Join(plan.Localnet.Layout.EnvDir, "pools-keys", "pool1", "kes.skey"),
+			"--shelley-vrf-key", path.Join(plan.Localnet.Layout.EnvDir, "pools-keys", "pool1", "vrf.skey"),
+			"--shelley-operational-certificate", path.Join(plan.Localnet.Layout.EnvDir, "pools-keys", "pool1", "opcert.cert"),
+		)
+	}
+
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      localnetStateVolumeName,
+			MountPath: plan.StateDir,
+		},
+		{
+			Name:      nodeIPCVolumeName,
+			MountPath: cardanoNodeSocketDir,
+		},
+	}
+	if plan.isPublic() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      publicProfileVolumeName,
+			MountPath: plan.ProfileDir,
+			ReadOnly:  true,
+		})
+	}
+
 	container := corev1.Container{
 		Name:            cardanoNodeContainerName,
 		Image:           b.cardanoNodeImage(network),
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{cardanoNodeCommand},
-		Args: []string{
-			"run",
-			"--config", plan.Layout.ConfigFile,
-			"--topology", path.Join(plan.Layout.EnvDir, "node-data", "node1", "topology.json"),
-			"--database-path", cardanoNodeDatabaseDir,
-			"--socket-path", cardanoNodeSocketPath,
-			"--host-addr", cardanoNodeHostAddress,
-			"--port", strconv.Itoa(int(network.Spec.Node.Port)),
-			"--shelley-kes-key", path.Join(plan.Layout.EnvDir, "pools-keys", "pool1", "kes.skey"),
-			"--shelley-vrf-key", path.Join(plan.Layout.EnvDir, "pools-keys", "pool1", "vrf.skey"),
-			"--shelley-operational-certificate", path.Join(plan.Layout.EnvDir, "pools-keys", "pool1", "opcert.cert"),
-		},
+		Args:            args,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          cardanoNodePortName,
@@ -98,16 +121,7 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      localnetStateVolumeName,
-				MountPath: plan.Layout.StateDir,
-			},
-			{
-				Name:      nodeIPCVolumeName,
-				MountPath: cardanoNodeSocketDir,
-			},
-		},
+		VolumeMounts: volumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: new(false),
 			Capabilities: &corev1.Capabilities{
@@ -128,6 +142,9 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 	if network.Spec.Node.Resources != nil {
 		container.Resources = *network.Spec.Node.Resources.DeepCopy()
 	}
+	if plan.isPublic() {
+		container.WorkingDir = plan.ProfileDir
+	}
 
 	return container
 }
@@ -135,7 +152,27 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 // ogmiosContainer builds the optional ogmios sidecar. It speaks to
 // cardano-node through the shared IPC socket and reads node config through
 // the shared state mount (read-only).
-func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan localnet.Plan) corev1.Container {
+func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan primaryNetworkPlan) corev1.Container {
+	volumeMounts := make([]corev1.VolumeMount, 0, 3)
+	if plan.isLocal() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      localnetStateVolumeName,
+			MountPath: plan.StateDir,
+			ReadOnly:  true,
+		})
+	}
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      nodeIPCVolumeName,
+		MountPath: cardanoNodeSocketDir,
+	})
+	if plan.isPublic() {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      publicProfileVolumeName,
+			MountPath: plan.ProfileDir,
+			ReadOnly:  true,
+		})
+	}
+
 	container := corev1.Container{
 		Name:            ogmiosContainerName,
 		Image:           settings.image,
@@ -143,7 +180,7 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 		Command:         []string{ogmiosCommand},
 		Args: []string{
 			"--node-socket", cardanoNodeSocketPath,
-			"--node-config", plan.Layout.ConfigFile,
+			"--node-config", plan.ConfigFile,
 			"--host", ogmiosHostAddress,
 			"--port", strconv.Itoa(int(settings.port)),
 		},
@@ -157,17 +194,7 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 		StartupProbe:   ogmiosHealthProbe(settings.port, 5, 2, 60),
 		LivenessProbe:  ogmiosHealthProbe(settings.port, 10, 5, 12),
 		ReadinessProbe: ogmiosHealthProbe(settings.port, 5, 2, 3),
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      localnetStateVolumeName,
-				MountPath: plan.Layout.StateDir,
-				ReadOnly:  true,
-			},
-			{
-				Name:      nodeIPCVolumeName,
-				MountPath: cardanoNodeSocketDir,
-			},
-		},
+		VolumeMounts:   volumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: new(false),
 			Capabilities: &corev1.Capabilities{
@@ -186,6 +213,9 @@ func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan lo
 	}
 	if settings.resources != nil {
 		container.Resources = *settings.resources.DeepCopy()
+	}
+	if plan.isPublic() {
+		container.WorkingDir = plan.ProfileDir
 	}
 
 	return container

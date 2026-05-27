@@ -18,10 +18,15 @@ func TestKeys(t *testing.T) {
 		AlonzoGenesisKey,
 		ConwayGenesisKey,
 		PrimaryTopologyKey,
-		PlanManifestKey,
 		ConnectionKey,
 	}, RequiredKeys())
-	assert.Equal(t, []string{DijkstraGenesisKey}, OptionalKeys())
+	assert.Equal(t, []string{
+		DijkstraGenesisKey,
+		PlanManifestKey,
+		PublicProfileManifestKey,
+		CheckpointsKey,
+		PeerSnapshotKey,
+	}, OptionalKeys())
 }
 
 func TestKeysReturnCopies(t *testing.T) {

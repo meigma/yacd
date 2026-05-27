@@ -97,7 +97,7 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	// foreign data keys, or otherwise fails verification. Delete it and let
 	// the next reconcile recreate; the new UID rolls the Deployment so the
 	// init publisher can republish.
-	if artifactConfigMapNeedsRecovery(current, desired.Annotations[localnetFingerprintAnno]) {
+	if artifactConfigMapNeedsRecovery(current, desired.Annotations[networkFingerprintAnno]) {
 		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
 			return controllerutil.OperationResultNone, nil, err
 		}
@@ -109,6 +109,10 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
+	if len(desired.Data) > 0 {
+		current.Data = desired.Data
+		current.BinaryData = nil
+	}
 
 	if equality.Semantic.DeepEqual(before, current) {
 		return controllerutil.OperationResultNone, current, nil

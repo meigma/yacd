@@ -851,6 +851,12 @@ spec:
                     - local
                     - public
                     type: string
+                  networkFingerprint:
+                    description: |-
+                      networkFingerprint is the accepted fingerprint for the resolved network
+                      profile, independent of whether the network is local or public. Changing
+                      it requires deleting and recreating the CardanoNetwork.
+                    type: string
                   networkMagic:
                     description: networkMagic is the resolved Cardano network magic.
                     format: int64

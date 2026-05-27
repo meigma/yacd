@@ -50,11 +50,25 @@ func unsupportedWorkloadChange(format string, args ...any) statusConditionError 
 	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedWorkloadChange), format, args...)
 }
 
+// unsupportedNetworkChange reports that the accepted mode-neutral network
+// fingerprint has changed after CardanoNetwork acceptance. The CR must be
+// deleted and recreated to change network parameters.
+func unsupportedNetworkChange(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedNetworkChange), format, args...)
+}
+
 // unsupportedLocalnetChange reports that the accepted localnet fingerprint
 // has changed after CardanoNetwork acceptance. The CR must be deleted and
 // recreated to change localnet parameters.
 func unsupportedLocalnetChange(format string, args ...any) statusConditionError {
 	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedLocalnetChange), format, args...)
+}
+
+// missingNetworkFingerprint reports that the primary node PVC has lost the
+// mode-neutral network fingerprint annotation. The CR must be deleted and
+// recreated to recover.
+func missingNetworkFingerprint(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(string(conditionReasonMissingNetworkFingerprint), format, args...)
 }
 
 // missingLocalnetFingerprint reports that the primary node PVC has lost the

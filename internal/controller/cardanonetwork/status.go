@@ -21,7 +21,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	network *yacdv1alpha1.CardanoNetwork,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, "", nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, primaryNetworkPlan{}, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -31,7 +31,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
-	localnetFingerprint string,
+	networkPlan primaryNetworkPlan,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
@@ -64,7 +64,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 
 	// Project the artifact ConfigMap verification result into both a status
 	// payload (Status.Artifacts) and a ready/pending condition.
-	artifactResult := ctrlnetworkartifacts.ProducerConfigMap(networkArtifactsConfigMap, localnetFingerprint)
+	artifactResult := ctrlnetworkartifacts.ProducerConfigMap(networkArtifactsConfigMap, networkPlan.Fingerprint)
 	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
 	artifactsReady := artifactsReadyCondition(
 		metav1.ConditionFalse,
@@ -81,7 +81,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	}
 	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, localnetFingerprint, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -104,7 +104,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
-	localnetFingerprint string,
+	networkPlan primaryNetworkPlan,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
@@ -116,8 +116,8 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 ) error {
 	original := network.DeepCopy()
 	network.Status.ObservedGeneration = network.Generation
-	if localnetFingerprint != "" {
-		setLocalnetIdentityStatus(network, localnetFingerprint)
+	if networkPlan.Fingerprint != "" {
+		setNetworkIdentityStatus(network, networkPlan)
 	}
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
@@ -161,24 +161,30 @@ func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
 	network.Status.Artifacts = nil
 }
 
-// setLocalnetIdentityStatus stamps the accepted localnet identity onto
+// setNetworkIdentityStatus stamps the accepted network identity onto
 // CardanoNetwork status. Used as the acceptance gate for the
-// validateAcceptedLocalnetFingerprint check on subsequent reconciles.
-func setLocalnetIdentityStatus(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) {
+// validateAcceptedNetworkFingerprint check on subsequent reconciles.
+func setNetworkIdentityStatus(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) {
 	if network.Status.Network == nil {
 		network.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{}
 	}
 
-	network.Status.Network.Mode = network.Spec.Mode
-	network.Status.Network.LocalnetFingerprint = localnetFingerprint
-	if network.Spec.Local == nil {
-		return
+	network.Status.Network.Mode = plan.Mode
+	network.Status.Network.LocalnetFingerprint = plan.localnetFingerprint()
+	network.Status.Network.NetworkFingerprint = plan.Fingerprint
+	network.Status.Network.Profile = nil
+	if plan.Profile != nil {
+		profile := *plan.Profile
+		network.Status.Network.Profile = &profile
 	}
 
-	networkMagic := network.Spec.Local.NetworkMagic
+	networkMagic := plan.NetworkMagic
 	network.Status.Network.NetworkMagic = &networkMagic
-	era := network.Spec.Local.Era
-	network.Status.Network.Era = &era
+	network.Status.Network.Era = nil
+	if plan.Era != nil {
+		era := *plan.Era
+		network.Status.Network.Era = &era
+	}
 }
 
 // setEndpointStatus publishes the in-cluster endpoint URLs for the primary

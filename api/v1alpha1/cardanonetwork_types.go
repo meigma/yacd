@@ -454,6 +454,12 @@ type CardanoNetworkIdentityStatus struct {
 	// +optional
 	LocalnetFingerprint string `json:"localnetFingerprint,omitempty"`
 
+	// networkFingerprint is the accepted fingerprint for the resolved network
+	// profile, independent of whether the network is local or public. Changing
+	// it requires deleting and recreating the CardanoNetwork.
+	// +optional
+	NetworkFingerprint string `json:"networkFingerprint,omitempty"`
+
 	// networkMagic is the resolved Cardano network magic.
 	// +optional
 	NetworkMagic *int64 `json:"networkMagic,omitempty"`

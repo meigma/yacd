@@ -10,6 +10,9 @@ const (
 	// LocalnetFingerprint holds the accepted localnet identity fingerprint.
 	LocalnetFingerprint = "yacd.meigma.io/localnet-fingerprint"
 
+	// NetworkFingerprint holds the accepted mode-neutral network identity fingerprint.
+	NetworkFingerprint = "yacd.meigma.io/network-fingerprint"
+
 	// DBSyncSidecarRevision holds the opaque revision for db-sync sidecar
 	// material consumed by a CardanoNetwork primary Pod.
 	DBSyncSidecarRevision = "yacd.meigma.io/dbsync-sidecar-revision"

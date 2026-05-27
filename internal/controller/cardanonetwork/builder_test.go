@@ -7,7 +7,9 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -353,11 +355,69 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "ogmios v6.14.* is not supported with cardano-node 10.1.4",
 		},
 		{
-			name: "public mode",
+			name: "missing public spec",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
 			},
-			wantErr: `mode "public" is not supported`,
+			wantErr: "public spec is required",
+		},
+		{
+			name: "public mode with local spec",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfilePreview,
+				}
+			},
+			wantErr: "local spec is not supported with public mode",
+		},
+		{
+			name: "unsupported public preprod profile",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfilePreprod,
+				}
+			},
+			wantErr: `public profile "preprod" is not supported`,
+		},
+		{
+			name: "public custom config source",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfileCustom,
+					ConfigSource: &yacdv1alpha1.NetworkConfigSource{
+						ConfigMapRef: &corev1.LocalObjectReference{Name: "custom"},
+					},
+				}
+			},
+			wantErr: "public configSource is not supported",
+		},
+		{
+			name: "public faucet",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				*network = *publicPreviewCardanoNetwork("public-faucet")
+				enableFaucet(network)
+			},
+			wantErr: "faucet is not supported for public networks",
+		},
+		{
+			name: "public kupo",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				*network = *publicPreviewCardanoNetwork("public-kupo")
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    defaultKupoPort,
+					},
+				}
+			},
+			wantErr: "kupo is not supported for public preview networks",
 		},
 		{
 			name: "missing local spec",
@@ -820,6 +880,98 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assertRestrictedContainerSecurityContext(t, ogmiosContainer.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, kupoContainer.SecurityContext)
 	assertRestrictedContainerSecurityContext(t, faucetContainer.SecurityContext)
+}
+
+func TestPrimaryWorkloadBuilderBuildsPublicPreviewWorkload(t *testing.T) {
+	network := publicPreviewCardanoNetwork("preview")
+
+	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
+	require.NoError(t, err)
+
+	assert.Equal(t, yacdv1alpha1.CardanoNetworkModePublic, resources.NetworkPlan.Mode)
+	require.NotNil(t, resources.NetworkPlan.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfilePreview, *resources.NetworkPlan.Profile)
+	assert.Equal(t, int64(2), resources.NetworkPlan.NetworkMagic)
+	assert.Equal(t, "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29", resources.NetworkPlan.Fingerprint)
+	assert.Nil(t, resources.ArtifactPublisherServiceAccount)
+	assert.Nil(t, resources.ArtifactPublisherRole)
+	assert.Nil(t, resources.ArtifactPublisherRoleBinding)
+	assert.NotNil(t, resources.OgmiosService)
+	assert.Nil(t, resources.KupoService)
+	assert.Nil(t, resources.FaucetService)
+	assert.Nil(t, resources.FaucetAuthSecret)
+
+	deployment := resources.Deployment
+	assert.Equal(t, "preview-node", deployment.Name)
+	assert.Empty(t, deployment.Spec.Template.Spec.ServiceAccountName)
+	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
+	assert.Equal(t, resources.NetworkPlan.Fingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
+	assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
+	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+
+	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
+	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
+	assert.Equal(t, "/profile", nodeContainer.WorkingDir)
+	assert.Equal(t, []string{
+		"run",
+		"--config", "/profile/configuration.yaml",
+		"--topology", "/profile/primary-topology.json",
+		"--database-path", "/state/db",
+		"--socket-path", "/ipc/node.socket",
+		"--host-addr", "0.0.0.0",
+		"--port", "3001",
+	}, nodeContainer.Args)
+	assert.NotContains(t, nodeContainer.Args, "--shelley-kes-key")
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state"},
+		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
+		{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
+	}, nodeContainer.VolumeMounts)
+
+	ogmiosContainer := deployment.Spec.Template.Spec.Containers[1]
+	assert.Equal(t, ogmiosContainerName, ogmiosContainer.Name)
+	assert.Equal(t, "/profile", ogmiosContainer.WorkingDir)
+	assert.Equal(t, []string{
+		"--node-socket", "/ipc/node.socket",
+		"--node-config", "/profile/configuration.yaml",
+		"--host", "0.0.0.0",
+		"--port", "1337",
+	}, ogmiosContainer.Args)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: nodeIPCVolumeName, MountPath: "/ipc"},
+		{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
+	}, ogmiosContainer.VolumeMounts)
+
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 3)
+	publicProfileVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
+	require.NotNil(t, publicProfileVolume.ConfigMap)
+	assert.Equal(t, "preview-network-artifacts", publicProfileVolume.ConfigMap.Name)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, artifactPublisherTokenVolumeName)
+
+	configMap := resources.NetworkArtifactsConfigMap
+	assert.Equal(t, resources.NetworkPlan.Fingerprint, configMap.Annotations[networkFingerprintAnno])
+	assert.NotContains(t, configMap.Annotations, localnetFingerprintAnno)
+	assert.Equal(t, networkartifacts.SchemaVersion, configMap.Annotations[ctrlannotations.ArtifactSchemaVersion])
+	assert.Equal(t, ctrlartifacts.ComputeDataHash(configMap.Data), configMap.Annotations[ctrlannotations.ArtifactDataHash])
+	for _, key := range []string{
+		networkartifacts.ConfigurationKey,
+		networkartifacts.ByronGenesisKey,
+		networkartifacts.ShelleyGenesisKey,
+		networkartifacts.AlonzoGenesisKey,
+		networkartifacts.ConwayGenesisKey,
+		networkartifacts.PrimaryTopologyKey,
+		networkartifacts.CheckpointsKey,
+		networkartifacts.PeerSnapshotKey,
+		networkartifacts.PublicProfileManifestKey,
+		networkartifacts.ConnectionKey,
+	} {
+		assert.NotEmpty(t, configMap.Data[key], "artifact %s", key)
+	}
+
+	assert.Equal(t, resources.NetworkPlan.Fingerprint, resources.PersistentVolumeClaim.Annotations[networkFingerprintAnno])
+	assert.NotContains(t, resources.PersistentVolumeClaim.Annotations, localnetFingerprintAnno)
 }
 
 func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {

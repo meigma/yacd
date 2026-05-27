@@ -53,10 +53,10 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 	}
 	status.SchemaVersion = cardanonetworkartifacts.SchemaVersion
 
-	if configMap.Annotations[ctrlannotations.LocalnetFingerprint] != expectedFingerprint {
+	if artifactNetworkFingerprint(configMap) != expectedFingerprint {
 		return ProducerResult{
 			Status:  status,
-			Message: "artifact ConfigMap localnet fingerprint does not match the accepted localnet",
+			Message: "artifact ConfigMap network fingerprint does not match the accepted network",
 		}
 	}
 
@@ -80,6 +80,16 @@ func ProducerConfigMap(configMap *corev1.ConfigMap, expectedFingerprint string) 
 		Status: status,
 		Ready:  true,
 	}
+}
+
+func artifactNetworkFingerprint(configMap *corev1.ConfigMap) string {
+	if configMap == nil {
+		return ""
+	}
+	if fingerprint := strings.TrimSpace(configMap.Annotations[ctrlannotations.NetworkFingerprint]); fingerprint != "" {
+		return fingerprint
+	}
+	return strings.TrimSpace(configMap.Annotations[ctrlannotations.LocalnetFingerprint])
 }
 
 // ProducerConfigMapNeedsRecovery returns true when a producer-owned ConfigMap

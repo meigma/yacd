@@ -102,17 +102,22 @@ func validateOgmiosCompatibility(nodeVersion string, settings ogmiosSettings) er
 	)
 }
 
-// acceptedLocalnetFingerprintChanged reports whether the CardanoNetwork's
-// accepted localnet fingerprint differs from a freshly computed one.
+// acceptedNetworkFingerprintChanged reports whether the CardanoNetwork's
+// accepted network fingerprint differs from a freshly computed one.
 //
 // When this returns true, builder validation skips the ogmios/node
 // compatibility check because the CR is going to be rejected as
-// UnsupportedLocalnetChange anyway and we want the reconciler to surface
+// UnsupportedNetworkChange anyway and we want the reconciler to surface
 // that specific error rather than the (less actionable) compatibility error.
-func acceptedLocalnetFingerprintChanged(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) bool {
-	return network.Status.Network != nil &&
-		network.Status.Network.LocalnetFingerprint != "" &&
-		network.Status.Network.LocalnetFingerprint != localnetFingerprint
+func acceptedNetworkFingerprintChanged(network *yacdv1alpha1.CardanoNetwork, networkFingerprint string) bool {
+	if network.Status.Network == nil {
+		return false
+	}
+	if network.Status.Network.NetworkFingerprint != "" {
+		return network.Status.Network.NetworkFingerprint != networkFingerprint
+	}
+	return network.Status.Network.LocalnetFingerprint != "" &&
+		network.Status.Network.LocalnetFingerprint != networkFingerprint
 }
 
 // ogmiosCompatibilityKey extracts the major.minor key (e.g. "v6.14") from
