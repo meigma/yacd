@@ -254,3 +254,33 @@
   `golang.org/x/tools/go/packages` passes to `go list`; without the
   workaround mockery (and any other x/tools-based generator) errors
   with `malformed import path "{{context.GOARCH}}"`.
+- The `cardano-testnet` tools image has an override seam for the
+  primary cardano-node, create-env init, faucet source-address init,
+  and CardanoDBSync follower-node containers. The manager flag
+  `--default-cardano-testnet-image` (chart value
+  `cardanoTestnet.image.{repository,tag,digest}`) overrides the
+  computed `<repo>:<toolVersion>-<revision>` reference on all four
+  containers in both controllers. Empty leaves the built-in
+  `yacd.N` revision in place. The dev stack uses this seam to rebuild
+  the tools image from local source through `.dev/build-cardano-testnet.sh`
+  and load it as `:tilt`. Use this whenever the published cardano-testnet
+  tag lags publisher code downstream controllers depend on (notably
+  PR #31's `EnrichGenesisHashes`, which is required by db-sync but was
+  not published in `yacd.4`).
+- Faucet auth Secret repair is governed by
+  `faucetSecretRepairRequeueAfter = 10 * time.Minute` in
+  `internal/controller/cardanonetwork/controller.go`. The controller
+  does not watch Secrets directly (avoiding list RBAC), so externally
+  deleted faucet auth Secrets are only repaired on the next periodic
+  requeue. Practical recovery for the dev loop is to restart the
+  manager pod; the regenerated Secret carries a new token, which
+  silently invalidates any previously cached topup credentials.
+- `revokePrimaryFaucetExposure` (`internal/controller/cardanonetwork/delete.go`)
+  is invoked on the `UnsupportedSpec` rejection path
+  (`controller.go:93`) and tears down the faucet Service, faucet auth
+  Secret, and the faucet container/init-container/volumes from the
+  live primary Deployment. This is intentional security behavior: when
+  the controller cannot validate the spec, it refuses to leave a
+  published auth token in flight. Disabling `kupo` while `faucet` is
+  enabled is the most common path that triggers this; the clean
+  cascade is to disable both in a single patch.

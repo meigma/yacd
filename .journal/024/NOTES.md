@@ -1,6 +1,6 @@
 ---
 id: 024
-title: TBD
+title: Post-refactor manual functional test pass
 started: 2026-05-26
 ---
 
@@ -23,3 +23,33 @@ Current state of the world:
   start `moon run root:dev-up` from the implementation worktree once one is
   created for this session's actual work, per `.session.md`.
 Plan: wait for the user's actual request before priming further.
+
+## 2026-05-26 18:39 — Close
+Session complete. All ten manual functional test phases passed. One
+real bug surfaced and was fixed mid-pass: the published
+`cardano-testnet:11.0.1-yacd.4` tools image lags PR #31's
+`EnrichGenesisHashes`, breaking CardanoDBSync on `moon run root:dev-up`
+because db-sync requires `ByronGenesisHash` keys that the published
+publisher doesn't write. Fixed by plumbing `--default-cardano-testnet-image`
+through the manager flag, chart value, and Tilt's
+`cardano-testnet-image` `local_resource` (two commits: one for
+cardanonetwork, one for cardanodbsync; same PR because they share the
+plumbing). CI green; PR #42 merged as squash commit `f5bbfbb`. Master
+fast-forwarded; `test/post-refactor-validation` worktree and branch
+removed; dev stack stopped via `moon run root:dev-down`.
+
+Phase 3 produced one observation worth surfacing: disabling `kupo`
+while `faucet` is enabled is rejected as `UnsupportedSpec` AND the
+controller calls `revokePrimaryFaucetExposure` to tear down the
+faucet Service/auth Secret/sidecar container. Intentional security
+behavior per `controller.go:93` + `delete.go:124-138`; documented in
+TECH_NOTES.md for future agents.
+
+Open threads worth picking up later: cut `cardano-testnet/v11.0.1-yacd.5`
+so the published image catches up to PR #31; revisit the 10-minute
+faucet auth Secret repair latency if external Secret deletion becomes
+an operational concern; consider re-ordering CardanoDBSync's
+resolve-database vs. resolve-network so the managed Postgres auth
+Secret isn't pre-created when the network reference is missing.
+
+PRs merged: #42 (https://github.com/meigma/yacd/pull/42).
