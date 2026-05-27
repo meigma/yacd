@@ -63,6 +63,20 @@
   connectivity, sets `Synced=True` only within the package-local lag threshold,
   and sets aggregate `Ready=True` only when follower node, db-sync container,
   Postgres, and sync status are all ready.
+- `CardanoDBSync.spec.placement.mode` defaults to `dedicatedFollower`. The
+  local-network-only `primarySidecar` mode is a real runtime path: DB Sync owns
+  database/config/pgpass/state/metrics/status and publishes
+  `status.placement.primarySidecar` only when `SidecarMaterialReady=True`, while
+  CardanoNetwork is the only controller that composes the primary Pod from that
+  status contract. Multiple primary-sidecar claims for one CardanoNetwork attach
+  none and report `PlacementConflict`; placement flips wait for the old db-sync
+  Pods/sidecar to disappear before starting the new path.
+- `CardanoNetwork` publishes `DBSyncAttachmentReady` only to explain primary Pod
+  impact from an attached/requested db-sync sidecar. Detailed DB Sync health
+  remains on `CardanoDBSync`. Shared primary Pod names, selector labels, port
+  defaults, port names, and port ownership rules live in
+  `internal/cardano/primarypod`; do not duplicate that vocabulary inside either
+  controller.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
