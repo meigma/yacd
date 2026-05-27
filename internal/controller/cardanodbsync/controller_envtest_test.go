@@ -16,6 +16,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -41,6 +42,7 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
+		Controller:             cardanoDBSyncEnvtestControllerOptions(),
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: "0",
 	})
@@ -212,6 +214,35 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
 }
 
+func TestCardanoDBSyncControllerManagerReconcilesPrimarySidecarPlacementPeers(t *testing.T) {
+	ctx := context.Background()
+	apiClient := startCardanoDBSyncTestManager(t, ctx)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanodbsync-placement-envtest"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	first := primarySidecarCardanoDBSync(localCardanoDBSync("first", "shared-network"))
+	first.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, first))
+
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
+
+	second := primarySidecarCardanoDBSync(localCardanoDBSync("second", "shared-network"))
+	second.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, second))
+
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonPlacementConflict)
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(second), conditionReasonPlacementConflict)
+
+	currentSecond := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(second), currentSecond))
+	currentSecond.Spec.NetworkRef.Name = "other-network"
+	require.NoError(t, apiClient.Update(ctx, currentSecond))
+
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
+}
+
 func assertManagedPostgresSecretAndChildWatches(
 	t *testing.T,
 	ctx context.Context,
@@ -267,6 +298,82 @@ func assertManagedPostgresSecretAndChildWatches(
 			return false
 		}
 		return len(current.Spec.Ports) == 1 && current.Spec.Ports[0].Port == managedPostgresPort
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func startCardanoDBSyncTestManager(t *testing.T, ctx context.Context) client.Client {
+	t.Helper()
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Controller:             cardanoDBSyncEnvtestControllerOptions(),
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	require.NoError(t, (&CardanoDBSyncReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+
+	managerCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(managerCtx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(managerCtx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+	return apiClient
+}
+
+func cardanoDBSyncEnvtestControllerOptions() config.Controller {
+	skipNameValidation := true
+	return config.Controller{SkipNameValidation: &skipNameValidation}
+}
+
+func requireDBSyncDegradedReasonEventually(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	key client.ObjectKey,
+	reason conditionReason,
+) {
+	t.Helper()
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, key, current); err != nil {
+			return false
+		}
+		condition := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+		return current.Status.ObservedGeneration == current.Generation &&
+			condition != nil &&
+			condition.Status == metav1.ConditionTrue &&
+			condition.Reason == string(reason)
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

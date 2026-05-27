@@ -2,7 +2,7 @@ package cardanonetwork
 
 import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
+	"github.com/meigma/yacd/internal/cardano/primarypod"
 )
 
 // Label key strategy.
@@ -33,20 +33,21 @@ import (
 // labelAppName value tracks the workload role. Do not invent a new instance
 // or role key when extending the topology.
 const (
-	labelAppName        = "app.kubernetes.io/name"
-	labelAppInstance    = "app.kubernetes.io/instance"
-	labelAppComponent   = "app.kubernetes.io/component"
-	labelAppManagedBy   = "app.kubernetes.io/managed-by"
-	labelCardanoNetwork = "yacd.meigma.io/cardanonetwork"
-	labelCardanoRole    = "yacd.meigma.io/role"
+	labelAppName        = primarypod.LabelAppName
+	labelAppInstance    = primarypod.LabelAppInstance
+	labelAppComponent   = primarypod.LabelAppComponent
+	labelAppManagedBy   = primarypod.LabelAppManagedBy
+	labelCardanoNetwork = primarypod.LabelCardanoNetwork
+	labelCardanoRole    = primarypod.LabelCardanoRole
+	labelDBSync         = "yacd.meigma.io/cardanodbsync"
 
 	// labelPrimaryNodeName is the labelAppName value for primary node
 	// workloads.
-	labelPrimaryNodeName = "cardano-node"
+	labelPrimaryNodeName = primarypod.LabelPrimaryNodeName
 
 	// labelPrimaryRole is the labelAppComponent and labelCardanoRole value for
 	// the primary node workload.
-	labelPrimaryRole = "primary-node"
+	labelPrimaryRole = primarypod.LabelPrimaryRole
 )
 
 // primaryWorkloadSelectorLabels returns the label set used for both the
@@ -54,15 +55,7 @@ const (
 // It must remain stable for the life of a CardanoNetwork because Kubernetes
 // rejects selector drift on Deployments.
 func primaryWorkloadSelectorLabels(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	instance := ctrlnames.LabelValue(network.Name)
-
-	return map[string]string{
-		labelAppName:        labelPrimaryNodeName,
-		labelAppInstance:    instance,
-		labelAppComponent:   labelPrimaryRole,
-		labelCardanoNetwork: instance,
-		labelCardanoRole:    labelPrimaryRole,
-	}
+	return primarypod.SelectorLabels(network)
 }
 
 // primaryWorkloadLabels returns the full label set applied to every primary

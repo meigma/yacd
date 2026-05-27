@@ -25,6 +25,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	artifactConfigMap.UID = types.UID("artifact-uid")
 	secret := externalDatabaseSecretFor(dbSync)
 	secret.ResourceVersion = "7"
+	expectedPGPass := "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n"
 
 	resources, err := builder.Build(dbSync, network, artifactConfigMap, secret)
 
@@ -48,7 +49,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	followerStorage := resources.FollowerPersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Equal(t, "10Gi", followerStorage.String())
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.FollowerPersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
-	assert.Equal(t, "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
+	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
 
 	deployment := resources.Deployment
 	assert.Equal(t, appsv1.RecreateDeploymentStrategyType, deployment.Spec.Strategy.Type)
@@ -86,7 +87,8 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, deployment.Spec.Template.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, testNetworkArtifactDataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
-	assert.Equal(t, "7", deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
 
 	assert.Equal(t, "/configuration/pgpass", requireEnvVar(t, dbSyncContainer, "PGPASSFILE").Value)
 	assert.Empty(t, envVarValue(dbSyncContainer, "PGPASSWORD"))
@@ -170,14 +172,41 @@ func TestDBSyncWorkloadBuilderBuildsDBSyncWorkloadForManagedPostgres(t *testing.
 	authSecret.Data = map[string][]byte{
 		managedPostgresPasswordKey: []byte("managed-secret"),
 	}
+	expectedPGPass := "dbsync-postgres.default.svc.cluster.local:5432:cexplorer:postgres:managed-secret\n"
 
 	resources, err := builder.BuildForDatabase(dbSync, network, artifactConfigMapFor(network), authSecret, dbSyncDatabaseFromManaged(dbSync, authSecret.Name))
 
 	require.NoError(t, err)
-	assert.Equal(t, "dbsync-postgres.default.svc.cluster.local:5432:cexplorer:postgres:managed-secret\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
+	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
 	assert.Equal(t, "dbsync-postgres.default.svc.cluster.local", requireEnvVar(t, requireContainer(t, resources.Deployment, dbSyncContainerName), "PGHOST").Value)
 	assert.Equal(t, "disable", requireEnvVar(t, requireContainer(t, resources.Deployment, dbSyncContainerName), "PGSSLMODE").Value)
-	assert.Equal(t, "12", resources.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+}
+
+func TestDBSyncWorkloadBuilderCredentialFingerprintTracksPGPassMaterial(t *testing.T) {
+	builder := newDBSyncWorkloadBuilder(t)
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	artifactConfigMap := artifactConfigMapFor(network)
+	secret := externalDatabaseSecretFor(dbSync)
+	secret.ResourceVersion = "7"
+
+	base, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	require.NoError(t, err)
+	baseFingerprint := base.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
+	require.NotEmpty(t, baseFingerprint)
+
+	secret.ResourceVersion = "8"
+	metadataOnly, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	require.NoError(t, err)
+	assert.Equal(t, baseFingerprint, metadataOnly.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, baseFingerprint, metadataOnly.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
+
+	secret.Data[externalDatabasePasswordKey(dbSync.Spec.Database.External)] = []byte("rotated-secret")
+	rotated, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	require.NoError(t, err)
+	assert.NotEqual(t, baseFingerprint, rotated.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
+	assert.Equal(t, rotated.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno], rotated.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
 }
 
 func TestDBSyncWorkloadBuilderFingerprintChangesWithRuntimeConfig(t *testing.T) {

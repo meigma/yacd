@@ -59,6 +59,7 @@ type CardanoNetworkReconciler struct {
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanodbsyncs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
@@ -86,10 +87,16 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
+	dbSyncAttachment, err := r.primaryDBSyncAttachment(ctx, network)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	resources, err := (primaryWorkloadBuilder{
 		scheme:                     r.Scheme,
 		defaultFaucetImage:         r.DefaultFaucetImage,
 		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+		dbSyncAttachment:           dbSyncAttachment.Attachment,
 	}).Build(network)
 	if err != nil {
 		var unsupportedSpec unsupportedSpecError
@@ -101,10 +108,19 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
 			return ctrl.Result{}, revokeErr
 		}
+		dbSyncAttachmentCondition := dbSyncAttachment.statusCondition()
+		if dbSyncAttachment.Attachment != nil {
+			dbSyncAttachmentCondition = dbSyncAttachmentReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonUnsupportedSpec,
+				conditionMessagePrimaryWorkloadUnsupported,
+			)
+		}
 		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, string(conditionReasonUnsupportedSpec), conditionMessagePrimaryWorkloadUnsupported),
+			dbSyncAttachmentCondition,
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -119,15 +135,15 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	localnetFingerprint := resources.Deployment.Spec.Template.Annotations[localnetFingerprintAnno]
 	if err := validateAcceptedLocalnetFingerprint(network, localnetFingerprint); err != nil {
-		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
 	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources)
 	if err != nil {
-		return r.handlePrimaryWorkloadApplyError(ctx, network, err)
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject)
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -177,7 +193,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"localnetFingerprint", localnetFingerprint)
 
-	if ready.Status != metav1.ConditionTrue && ready.Reason == string(conditionReasonDeploymentProgressing) {
+	if ready.Status != metav1.ConditionTrue &&
+		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
+			ready.Reason == string(conditionReasonDBSyncAttachmentPending)) {
 		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, nil
 	}
 	if resources.FaucetAuthSecret != nil {
@@ -325,6 +343,8 @@ func (r *CardanoNetworkReconciler) applyOrDeletePrimaryChainAPIService(
 func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
+	dbSyncAttached bool,
+	dbSyncAttachmentCondition metav1.Condition,
 	err error,
 ) (ctrl.Result, error) {
 	var conditionErr statusConditionError
@@ -339,10 +359,21 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	// plain string); cast to conditionReason once and reuse for the condition
 	// builders below.
 	reason := conditionReason(conditionErr.Reason)
+	dbSyncAttachment := dbSyncAttachmentReadyCondition(
+		metav1.ConditionFalse,
+		conditionReasonDBSyncAttachmentNotRequested,
+		conditionMessageDBSyncAttachmentNotRequested,
+	)
+	if dbSyncAttached {
+		dbSyncAttachment = dbSyncAttachmentReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message)
+	} else if dbSyncAttachmentCondition.Type != "" {
+		dbSyncAttachment = dbSyncAttachmentCondition
+	}
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
 		degradedCondition(metav1.ConditionTrue, reason, conditionErr.Message),
 		progressingCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
+		dbSyncAttachment,
 		nodeReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		ogmiosReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		kupoReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
@@ -365,6 +396,7 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).

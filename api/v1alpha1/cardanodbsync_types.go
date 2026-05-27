@@ -75,7 +75,23 @@ const (
 	CardanoDBSyncJSONTypeDisable CardanoDBSyncJSONType = "disable"
 )
 
+// CardanoDBSyncPlacementMode selects where db-sync consumes its local node
+// socket.
+// +kubebuilder:validation:Enum=dedicatedFollower;primarySidecar
+type CardanoDBSyncPlacementMode string
+
+const (
+	// CardanoDBSyncPlacementModeDedicatedFollower keeps the existing
+	// two-container workload with a colocated follower node owned by the
+	// CardanoDBSync controller.
+	CardanoDBSyncPlacementModeDedicatedFollower CardanoDBSyncPlacementMode = "dedicatedFollower"
+	// CardanoDBSyncPlacementModePrimarySidecar requests db-sync placement in
+	// the referenced CardanoNetwork primary node Pod.
+	CardanoDBSyncPlacementModePrimarySidecar CardanoDBSyncPlacementMode = "primarySidecar"
+)
+
 // CardanoDBSyncSpec defines the desired db-sync supporting service.
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || self.placement.mode != 'primarySidecar' || !has(self.followerNode)",message="followerNode cannot be set when placement.mode is primarySidecar"
 type CardanoDBSyncSpec struct {
 	// networkRef references the same-namespace CardanoNetwork that db-sync
 	// indexes.
@@ -90,6 +106,12 @@ type CardanoDBSyncSpec struct {
 	// resources configures the db-sync container resources.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// placement selects where db-sync runs relative to the referenced network.
+	// When omitted, the controller preserves the existing dedicated follower
+	// workload behavior.
+	// +optional
+	Placement *CardanoDBSyncPlacementSpec `json:"placement,omitempty"`
 
 	// followerNode configures the dedicated follower node colocated with
 	// db-sync for local node socket access.
@@ -109,6 +131,15 @@ type CardanoDBSyncSpec struct {
 	// configuration file.
 	// +optional
 	Config CardanoDBSyncConfigSpec `json:"config,omitempty"`
+}
+
+// CardanoDBSyncPlacementSpec configures db-sync workload placement.
+type CardanoDBSyncPlacementSpec struct {
+	// mode selects whether db-sync uses a dedicated follower node or asks the
+	// referenced CardanoNetwork primary Pod to host it as a sidecar.
+	// +kubebuilder:default=dedicatedFollower
+	// +required
+	Mode CardanoDBSyncPlacementMode `json:"mode"`
 }
 
 // CardanoDBSyncFollowerNodeSpec configures the follower node owned by db-sync.
@@ -490,14 +521,21 @@ type CardanoDBSyncStatus struct {
 	// +optional
 	Sync *CardanoDBSyncProgressStatus `json:"sync,omitempty"`
 
+	// placement reports the effective placement mode and, when attachable,
+	// the primary-sidecar material contract consumed by CardanoNetwork.
+	// +optional
+	Placement *CardanoDBSyncPlacementStatus `json:"placement,omitempty"`
+
 	// conditions represent the current state of the CardanoDBSync resource.
 	//
 	// Expected condition types include:
 	// - "Ready": db-sync is usable through its published database endpoint
 	// - "FollowerNodeReady": the colocated follower node is running
+	// - "NodeSocketReady": the node socket used by db-sync is reachable
+	// - "SidecarMaterialReady": primary-sidecar mounted material is attachable
 	// - "PostgresReady": Postgres is running and accepting local connections
 	// - "DBSyncReady": the db-sync process is running
-	// - "Synced": db-sync has caught up to the follower node
+	// - "Synced": db-sync has caught up to the node tip
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain desired state
 	//
@@ -506,6 +544,57 @@ type CardanoDBSyncStatus struct {
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// CardanoDBSyncPlacementStatus reports the effective db-sync placement.
+type CardanoDBSyncPlacementStatus struct {
+	// mode is the effective placement mode for this reconcile.
+	// +optional
+	Mode CardanoDBSyncPlacementMode `json:"mode,omitempty"`
+
+	// primarySidecar publishes the attachable material contract when
+	// SidecarMaterialReady=True.
+	// +optional
+	PrimarySidecar *CardanoDBSyncPrimarySidecarStatus `json:"primarySidecar,omitempty"`
+}
+
+// CardanoDBSyncPrimarySidecarStatus reports the primary-sidecar attachment
+// contract consumed by CardanoNetwork.
+type CardanoDBSyncPrimarySidecarStatus struct {
+	// networkName is the referenced CardanoNetwork name this sidecar material
+	// is valid for.
+	// +optional
+	NetworkName string `json:"networkName,omitempty"`
+
+	// revision is an opaque sha256 rollout revision over all sidecar-mounted
+	// material.
+	// +optional
+	Revision string `json:"revision,omitempty"`
+
+	// resources names the CardanoDBSync-owned resources mounted by the primary
+	// Pod sidecar.
+	// +optional
+	Resources CardanoDBSyncPrimarySidecarResourcesStatus `json:"resources,omitempty"`
+}
+
+// CardanoDBSyncPrimarySidecarResourcesStatus reports the DB Sync-owned
+// resource names CardanoNetwork may mount into the primary Pod.
+type CardanoDBSyncPrimarySidecarResourcesStatus struct {
+	// configMapName is the db-sync configuration ConfigMap name.
+	// +optional
+	ConfigMapName string `json:"configMapName,omitempty"`
+
+	// pgpassSecretName is the db-sync pgpass Secret name.
+	// +optional
+	PGPassSecretName string `json:"pgpassSecretName,omitempty"`
+
+	// statePVCName is the db-sync state PVC name.
+	// +optional
+	StatePVCName string `json:"statePVCName,omitempty"`
+
+	// metricsServiceName is the db-sync metrics Service name.
+	// +optional
+	MetricsServiceName string `json:"metricsServiceName,omitempty"`
 }
 
 // CardanoDBSyncEndpointsStatus reports discovered Service endpoints.

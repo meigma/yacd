@@ -1,6 +1,8 @@
 package cardanodbsync
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -159,7 +161,7 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 			Annotations: map[string]string{
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
-				dbSyncSecretVersionAnno:    databaseSecret.ResourceVersion,
+				dbSyncSecretVersionAnno:    pgPassMaterialFingerprint(pgPass),
 			},
 		},
 		Type: corev1.SecretTypeOpaque,
@@ -172,6 +174,12 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 	}
 
 	return secret, nil
+}
+
+func pgPassMaterialFingerprint(pgPass string) string {
+	sum := sha256.Sum256([]byte(pgPass))
+
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // pgPassFile renders the libpq pgpass file content from the plan database
@@ -227,6 +235,10 @@ func (b dbSyncWorkloadBuilder) deployment(
 ) (*appsv1.Deployment, error) {
 	selectorLabels := dbSyncWorkloadSelectorLabels(dbSync)
 	labels := dbSyncWorkloadLabels(dbSync)
+	pgPass, err := pgPassFile(plan, databaseSecret)
+	if err != nil {
+		return nil, err
+	}
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dbSyncWorkloadName(dbSync),
@@ -246,7 +258,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 						dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 						dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 						dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
-						dbSyncSecretVersionAnno:    databaseSecret.ResourceVersion,
+						dbSyncSecretVersionAnno:    pgPassMaterialFingerprint(pgPass),
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -342,6 +354,14 @@ func (b dbSyncWorkloadBuilder) deployment(
 // metricsService builds the ClusterIP Service that fronts the db-sync
 // container's Prometheus metrics endpoint.
 func (b dbSyncWorkloadBuilder) metricsService(dbSync *yacdv1alpha1.CardanoDBSync, plan dbsync.Plan) (*corev1.Service, error) {
+	return b.metricsServiceForSelector(dbSync, plan, dbSyncWorkloadSelectorLabels(dbSync))
+}
+
+func (b dbSyncWorkloadBuilder) metricsServiceForSelector(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	plan dbsync.Plan,
+	selector map[string]string,
+) (*corev1.Service, error) {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dbSyncMetricsServiceName(dbSync),
@@ -350,7 +370,7 @@ func (b dbSyncWorkloadBuilder) metricsService(dbSync *yacdv1alpha1.CardanoDBSync
 		},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
-			Selector: dbSyncWorkloadSelectorLabels(dbSync),
+			Selector: selector,
 			Ports: []corev1.ServicePort{{
 				Name:       dbSyncMetricsPortName,
 				Protocol:   corev1.ProtocolTCP,

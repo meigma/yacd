@@ -4,20 +4,15 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/primarypod"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
-)
-
-const (
-	// primaryNodeNameSuffix is the suffix appended to the CardanoNetwork name
-	// for the primary node Deployment and matching Service.
-	primaryNodeNameSuffix = "node"
 )
 
 // primaryWorkloadName returns the DNS-label name of the primary node
 // Deployment and its node-to-node Service. Both share a name because the
 // Service selects the Deployment's Pods directly.
 func primaryWorkloadName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, primaryNodeNameSuffix)
+	return primarypod.WorkloadName(network)
 }
 
 // primaryNodeStatePVCName returns the DNS-label name of the PVC that backs the

@@ -14,9 +14,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -84,6 +86,21 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if !dbSync.DeletionTimestamp.IsZero() {
 		log.V(1).Info("CardanoDBSync is deleting; skipping reconcile")
 		return ctrl.Result{}, nil
+	}
+
+	placementReady, err := r.reconcilePlacement(ctx, dbSync)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !placementReady {
+		return ctrl.Result{}, nil
+	}
+
+	if effectivePlacementMode(dbSync) == yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar {
+		ok, err := r.preflightPrimarySidecarNetwork(ctx, dbSync)
+		if err != nil || !ok {
+			return ctrl.Result{}, err
+		}
 	}
 
 	databaseRuntime, ok, err := r.resolveDatabase(ctx, dbSync)
@@ -161,6 +178,36 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	)
 }
 
+// preflightPrimarySidecarNetwork validates primarySidecar-only CardanoNetwork
+// constraints before database or DB Sync-owned material is applied.
+func (r *CardanoDBSyncReconciler) preflightPrimarySidecarNetwork(
+	ctx context.Context,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) (bool, error) {
+	network := &yacdv1alpha1.CardanoNetwork{}
+	networkKey := client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSync.Spec.NetworkRef.Name}
+	if err := r.Get(ctx, networkKey, network); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+				conditionReasonNetworkUnavailable,
+				"Referenced CardanoNetwork does not exist",
+			)
+		}
+		return false, err
+	}
+	if !network.DeletionTimestamp.IsZero() {
+		return false, r.patchDependencyUnavailableStatus(ctx, dbSync,
+			conditionReasonNetworkUnavailable,
+			"Referenced CardanoNetwork is deleting",
+		)
+	}
+	if err := ValidatePrimarySidecarLocalNetwork(dbSync, network); err != nil {
+		return false, r.patchWorkloadApplyBlockedStatus(ctx, dbSync, conditionReasonUnsupportedSpec, err.Error())
+	}
+
+	return true, nil
+}
+
 // reconcileReadyDBSync is the workload-apply leg of Reconcile, entered
 // only after the referenced CardanoNetwork has published verified
 // artifacts. It rejects requests that lack a node-to-node endpoint
@@ -215,6 +262,21 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 		if err := r.validateAcceptedManagedPostgresIdentity(ctx, dbSync, postgresResources.IdentityFingerprint); err != nil {
 			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 		}
+	}
+
+	if effectivePlacementMode(dbSync) == yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar {
+		return r.reconcilePrimarySidecarWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime, builder, postgresResources)
+	}
+
+	sidecarGone, err := r.primarySidecarDBSyncGone(ctx, network)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !sidecarGone {
+		if err := r.patchPlacementTransitionWaitingStatus(ctx, dbSync, conditionMessageWaitingForPrimarySidecar); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
 	}
 
 	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
@@ -279,6 +341,90 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	return ctrl.Result{}, nil
 }
 
+// reconcilePrimarySidecarWorkloads applies the DB Sync-owned material for
+// primarySidecar placement after suspending any owned dedicated Deployment and
+// waiting for its Pods to terminate.
+func (r *CardanoDBSyncReconciler) reconcilePrimarySidecarWorkloads(
+	ctx context.Context,
+	log logr.Logger,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	network *yacdv1alpha1.CardanoNetwork,
+	configMap *corev1.ConfigMap,
+	databaseRuntime databaseRuntime,
+	builder dbSyncWorkloadBuilder,
+	postgresResources *managedPostgresResources,
+) (ctrl.Result, error) {
+	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.suspendDBSyncDeploymentIfOwned(ctx, dbSync); err != nil {
+		return ctrl.Result{}, err
+	}
+	dedicatedPodsGone, err := r.dedicatedDBSyncPodsGone(ctx, dbSync)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !dedicatedPodsGone {
+		if err := r.patchPlacementTransitionWaitingStatus(ctx, dbSync, conditionMessageWaitingForDedicatedPods); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+	}
+	if databaseRuntime.Mode == databaseModeManaged {
+		ready, err := r.reconcileManagedPostgresResources(ctx, log, dbSync, postgresResources)
+		if err != nil {
+			return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+		}
+		if ready.Status != metav1.ConditionTrue {
+			acceptedIdentity, err := r.currentAcceptedDBSyncDatabaseIdentity(ctx, dbSync)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := r.patchPrimarySidecarManagedPostgresAppliedStatus(ctx, dbSync, databaseRuntime, ready, acceptedIdentity); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+		}
+	}
+
+	applyResults, err := r.applyPrimarySidecarDBSyncResources(ctx, resources)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+
+	resultLog := log
+	if applyResults.unchanged() {
+		resultLog = log.V(1)
+	}
+	resultLog.Info("Applied CardanoDBSync primary-sidecar resources",
+		"configMap", client.ObjectKeyFromObject(resources.ConfigMap),
+		"configMapOperation", applyResults.ConfigMap,
+		"pgPassSecret", client.ObjectKeyFromObject(resources.PGPassSecret),
+		"pgPassSecretOperation", applyResults.PGPassSecret,
+		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
+		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
+		"metricsService", client.ObjectKeyFromObject(resources.MetricsService),
+		"metricsServiceOperation", applyResults.MetricsService,
+		"planFingerprint", resources.Plan.Fingerprint.Value)
+
+	ready, probed, err := r.patchPrimarySidecarResourcesAppliedStatus(ctx, dbSync, network, resources, databaseRuntime, resources.Plan.DatabaseIdentityFingerprint.Value)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if probed {
+		return ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, nil
+	}
+	if ready.Status != metav1.ConditionTrue && ready.Reason == string(conditionReasonDeploymentProgressing) {
+		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
+	}
+
+	return ctrl.Result{}, nil
+}
+
 // reconcileManagedPostgresResources applies the managed Postgres bundle
 // and returns the resulting PostgresReady condition. The caller uses the
 // condition to decide whether to proceed with the dbsync workload apply
@@ -311,13 +457,7 @@ func (r *CardanoDBSyncReconciler) reconcileManagedPostgresResources(
 
 // SetupWithManager sets up the CardanoDBSync controller with the manager.
 func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncNetworkRefNameField, func(object client.Object) []string {
-		dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
-		if !ok || dbSync.Spec.NetworkRef.Name == "" {
-			return nil
-		}
-		return []string{dbSync.Spec.NetworkRef.Name}
-	}); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncNetworkRefNameField, cardanoDBSyncNetworkRefIndexer); err != nil {
 		return err
 	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncExternalDatabaseSecretNameField, func(object client.Object) []string {
@@ -344,6 +484,7 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&yacdv1alpha1.CardanoDBSync{}, r.placementPeerEventHandler()).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForDatabaseSecret)).
 		Owns(&appsv1.Deployment{}).
@@ -353,6 +494,74 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
+}
+
+// placementPeerEventHandler enqueues peer primary-sidecar claims when a
+// CardanoDBSync claim is created, deleted, or materially changes. The primary
+// object watch already enqueues the changed object itself; this handler exists
+// so same-network peers can enter or leave PlacementConflict promptly.
+func (r *CardanoDBSyncReconciler) placementPeerEventHandler() handler.EventHandler {
+	return handler.Funcs{
+		CreateFunc: func(ctx context.Context, event event.CreateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			r.enqueuePlacementPeersForObject(ctx, queue, event.Object)
+		},
+		UpdateFunc: func(ctx context.Context, event event.UpdateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			if event.ObjectOld != nil && event.ObjectNew != nil &&
+				event.ObjectOld.GetGeneration() == event.ObjectNew.GetGeneration() {
+				return
+			}
+
+			r.enqueuePlacementPeersForObject(ctx, queue, event.ObjectOld)
+			r.enqueuePlacementPeersForObject(ctx, queue, event.ObjectNew)
+		},
+		DeleteFunc: func(ctx context.Context, event event.DeleteEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			r.enqueuePlacementPeersForObject(ctx, queue, event.Object)
+		},
+	}
+}
+
+// enqueuePlacementPeersForObject requeues primarySidecar peers for the
+// CardanoNetwork referenced by the supplied CardanoDBSync object.
+func (r *CardanoDBSyncReconciler) enqueuePlacementPeersForObject(
+	ctx context.Context,
+	queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+	object client.Object,
+) {
+	dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+	if !ok || effectivePlacementMode(dbSync) != yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar {
+		return
+	}
+
+	r.enqueuePrimarySidecarPeers(ctx, queue, dbSync.Namespace, dbSync.Spec.NetworkRef.Name)
+}
+
+// enqueuePrimarySidecarPeers lists and enqueues primarySidecar claims for the
+// given CardanoNetwork reference.
+func (r *CardanoDBSyncReconciler) enqueuePrimarySidecarPeers(
+	ctx context.Context,
+	queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+	namespace string,
+	networkName string,
+) {
+	claims, err := r.primarySidecarClaims(ctx, namespace, networkName)
+	if err != nil {
+		logf.FromContext(ctx).Error(err, "Unable to list primary-sidecar CardanoDBSync placement peers", "namespace", namespace, "network", networkName)
+		return
+	}
+
+	for i := range claims {
+		queue.Add(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&claims[i])})
+	}
+}
+
+// cardanoDBSyncNetworkRefIndexer indexes CardanoDBSync resources by
+// spec.networkRef.name for CardanoNetwork watch fan-out.
+func cardanoDBSyncNetworkRefIndexer(object client.Object) []string {
+	dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+	if !ok || dbSync.Spec.NetworkRef.Name == "" {
+		return nil
+	}
+	return []string{dbSync.Spec.NetworkRef.Name}
 }
 
 // validateExternalDatabaseSecret reads and validates the external Postgres

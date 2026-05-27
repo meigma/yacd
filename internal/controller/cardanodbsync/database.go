@@ -46,11 +46,10 @@ type databaseRuntime struct {
 	Database dbsync.Database
 	// PasswordSecret is the live Secret carrying the libpq password.
 	PasswordSecret *corev1.Secret
-	// CredentialVersion is the version string stamped onto Pod-template
-	// annotations and identity fingerprints. For managed Postgres it is
-	// the password fingerprint (so a rotated password rolls identity);
-	// for external Postgres it is empty (the caller uses the Secret
-	// ResourceVersion directly).
+	// CredentialVersion is the managed-Postgres password fingerprint used
+	// by managed database identity checks and Postgres Pod-template
+	// annotations. It is empty for external Postgres because the db-sync
+	// workload hashes the rendered pgpass material directly.
 	CredentialVersion string
 	// PostgresEndpoint is the Service endpoint payload published into
 	// CardanoDBSync.Status.Endpoints.Postgres.
@@ -109,8 +108,8 @@ func (r *CardanoDBSyncReconciler) resolveExternalDatabase(
 // workloadPasswordSecret returns the password Secret the builder embeds
 // into the pgpass Secret. For managed Postgres with a controller-managed
 // password, the returned Secret carries the password fingerprint as its
-// ResourceVersion so a password rotation rolls the dbsync Pod through
-// the standard Deployment hash-change path.
+// ResourceVersion for compatibility with code paths that still inspect the
+// Secret version; db-sync rollout now uses the rendered pgpass fingerprint.
 func (runtime databaseRuntime) workloadPasswordSecret() *corev1.Secret {
 	if runtime.PasswordSecret == nil {
 		return nil

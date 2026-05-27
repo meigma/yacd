@@ -177,6 +177,25 @@ func TestPodContainerReady(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "nil pod",
+			pod:  nil,
+			want: false,
+		},
+		{
+			name: "not running pod",
+			pod: &corev1.Pod{Status: corev1.PodStatus{
+				Phase: corev1.PodPending,
+				ContainerStatuses: []corev1.ContainerStatus{
+					{
+						Name:  "node",
+						Ready: true,
+						State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+					},
+				},
+			}},
+			want: false,
+		},
+		{
 			name: "terminating pod",
 			pod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{DeletionTimestamp: &now},
@@ -221,7 +240,7 @@ func TestPodContainerReady(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, podContainerReady(tt.pod, "node"))
+			assert.Equal(t, tt.want, PodContainerReady(tt.pod, "node"))
 		})
 	}
 }

@@ -1,6 +1,7 @@
 package cardanonetwork
 
 import (
+	"github.com/meigma/yacd/internal/cardano/primarypod"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,7 +27,7 @@ const (
 
 	// defaultOgmiosPort is the ogmios container port used when the
 	// CardanoNetwork spec does not specify one.
-	defaultOgmiosPort = 1337
+	defaultOgmiosPort = primarypod.DefaultOgmiosPort
 
 	// ogmiosServiceURLType is the scheme published on the ogmios endpoint
 	// status. ogmios speaks WebSocket.
@@ -38,7 +39,7 @@ const (
 
 	// defaultKupoPort is the kupo container port used when the CardanoNetwork
 	// spec does not specify one.
-	defaultKupoPort = 1442
+	defaultKupoPort = primarypod.DefaultKupoPort
 
 	// defaultKupoSince is the chain checkpoint kupo starts indexing from.
 	defaultKupoSince = "origin"
@@ -68,7 +69,7 @@ const (
 
 	// defaultFaucetPort is the faucet HTTP port used when the CardanoNetwork
 	// spec does not specify one.
-	defaultFaucetPort = 8080
+	defaultFaucetPort = primarypod.DefaultFaucetPort
 
 	// defaultFaucetSource is the default UTXO source name for faucet top-ups.
 	defaultFaucetSource = "utxo1"

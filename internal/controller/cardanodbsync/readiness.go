@@ -4,6 +4,7 @@ import (
 	"context"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/internal/cardano/primarypod"
 	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -75,6 +76,64 @@ func (r *CardanoDBSyncReconciler) managedPostgresReadyCondition(
 		conditionMessageManagedPostgresStale,
 		conditionMessageManagedPostgresUnavailable,
 		conditionMessageManagedPostgresNotReady,
+	), nil
+}
+
+// primaryNodeSocketReadyCondition checks whether the primary cardano-node
+// container is ready to provide the local socket used by a db-sync sidecar.
+func (r *CardanoDBSyncReconciler) primaryNodeSocketReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (metav1.Condition, error) {
+	readiness, err := r.deploymentContainerReadiness(
+		ctx,
+		network.Namespace,
+		primaryNetworkDeploymentName(network),
+		primaryNetworkSelectorLabels(network),
+		primarypod.CardanoNodeContainerName,
+	)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+
+	return deploymentContainerCondition(
+		readiness,
+		nodeSocketReadyCondition,
+		conditionReasonNodeSocketReady,
+		conditionMessageNodeSocketReady,
+		conditionMessagePrimaryDeploymentMissing,
+		conditionMessagePrimaryDeploymentStale,
+		conditionMessagePrimaryDeploymentBusy,
+		conditionMessageNodeSocketNotReady,
+	), nil
+}
+
+// primarySidecarDBSyncReadyCondition checks whether the attached db-sync
+// sidecar container is ready in the CardanoNetwork primary Pod.
+func (r *CardanoDBSyncReconciler) primarySidecarDBSyncReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (metav1.Condition, error) {
+	readiness, err := r.deploymentContainerReadiness(
+		ctx,
+		network.Namespace,
+		primaryNetworkDeploymentName(network),
+		primaryNetworkSelectorLabels(network),
+		dbSyncContainerName,
+	)
+	if err != nil {
+		return metav1.Condition{}, err
+	}
+
+	return deploymentContainerCondition(
+		readiness,
+		dbSyncReadyCondition,
+		conditionReasonDBSyncReady,
+		conditionMessageDBSyncContainerReady,
+		conditionMessagePrimaryDeploymentMissing,
+		conditionMessagePrimaryDeploymentStale,
+		conditionMessagePrimaryDeploymentBusy,
+		conditionMessageDBSyncContainerNotReady,
 	), nil
 }
 

@@ -6,6 +6,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -28,6 +29,7 @@ type primaryWorkloadResources struct {
 	KupoService                     *corev1.Service
 	FaucetService                   *corev1.Service
 	FaucetAuthSecret                *corev1.Secret
+	DBSyncAttached                  bool
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork spec into the desired
@@ -54,6 +56,8 @@ type primaryWorkloadBuilder struct {
 	// picks up post-release publisher changes that the published
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
+
+	dbSyncAttachment *ctrldbsync.PrimarySidecarAttachment
 }
 
 // Build composes the desired primary workload resources for the given
@@ -196,6 +200,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		KupoService:                     kupoService,
 		FaucetService:                   faucetService,
 		FaucetAuthSecret:                faucetAuthSecret,
+		DBSyncAttached:                  b.dbSyncAttachment != nil,
 	}, nil
 }
 

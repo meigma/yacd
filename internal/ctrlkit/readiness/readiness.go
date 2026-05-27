@@ -75,7 +75,7 @@ func DeploymentReadiness(
 		return DeploymentUnavailable
 	}
 	for i := range pods {
-		if podContainerReady(&pods[i], containerName) {
+		if PodContainerReady(&pods[i], containerName) {
 			return DeploymentReady
 		}
 	}
@@ -83,9 +83,9 @@ func DeploymentReadiness(
 	return ContainerNotReady
 }
 
-// podContainerReady returns true only for a running, non-deleting Pod whose
+// PodContainerReady returns true only for a running, non-deleting Pod whose
 // named container is Ready and currently running.
-func podContainerReady(pod *corev1.Pod, containerName string) bool {
+func PodContainerReady(pod *corev1.Pod, containerName string) bool {
 	if pod == nil || pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning {
 		return false
 	}

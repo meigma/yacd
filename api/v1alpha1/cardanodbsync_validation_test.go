@@ -110,6 +110,38 @@ func TestCardanoDBSyncDatabaseValidation(t *testing.T) {
 		assert.False(t, found)
 	})
 
+	t.Run("accepts explicit dedicated follower placement", func(t *testing.T) {
+		object := validCardanoDBSyncValidationObject(namespace.Name, "dedicated-placement")
+		require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+			"mode": string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower),
+		}, "spec", "placement"))
+		require.NoError(t, apiClient.Create(ctx, object))
+
+		current := cardanoDBSyncValidationObject()
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(object), current))
+
+		mode, found, err := unstructured.NestedString(current.Object, "spec", "placement", "mode")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), mode)
+	})
+
+	t.Run("accepts primary sidecar placement without follower node", func(t *testing.T) {
+		object := validCardanoDBSyncValidationObject(namespace.Name, "primary-sidecar-placement")
+		require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+			"mode": string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar),
+		}, "spec", "placement"))
+		require.NoError(t, apiClient.Create(ctx, object))
+
+		current := cardanoDBSyncValidationObject()
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(object), current))
+
+		mode, found, err := unstructured.NestedString(current.Object, "spec", "placement", "mode")
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), mode)
+	})
+
 	t.Run("accepts storage class overrides without storage size", func(t *testing.T) {
 		object := validCardanoDBSyncValidationObject(namespace.Name, "storage-class-only")
 		require.NoError(t, unstructured.SetNestedField(object.Object, "fast-state", "spec", "stateStorage", "storageClassName"))
@@ -211,6 +243,25 @@ func TestCardanoDBSyncDatabaseValidation(t *testing.T) {
 			name: "rejects invalid external database ssl mode",
 			mutate: func(t *testing.T, object *unstructured.Unstructured) {
 				require.NoError(t, unstructured.SetNestedField(object.Object, "prefer", "spec", "database", "external", "sslMode"))
+			},
+		},
+		{
+			name: "rejects invalid placement mode",
+			mutate: func(t *testing.T, object *unstructured.Unstructured) {
+				require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+					"mode": "sharedSocket",
+				}, "spec", "placement"))
+			},
+		},
+		{
+			name: "rejects primary sidecar placement with follower node",
+			mutate: func(t *testing.T, object *unstructured.Unstructured) {
+				require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+					"mode": string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar),
+				}, "spec", "placement"))
+				require.NoError(t, unstructured.SetNestedField(object.Object, map[string]any{
+					"image": "ghcr.io/intersectmbo/cardano-node:11.0.1",
+				}, "spec", "followerNode"))
 			},
 		},
 	}

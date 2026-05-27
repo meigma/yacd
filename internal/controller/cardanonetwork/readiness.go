@@ -4,6 +4,7 @@ import (
 	"context"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	ctrlreadiness "github.com/meigma/yacd/internal/ctrlkit/readiness"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -193,6 +194,71 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 		containerNotReadyMessage: "Faucet sidecar is not ready",
 		preReadinessCheck:        r.faucetAuthSecretReady,
 	})
+}
+
+// primaryDBSyncAttachmentReadyCondition computes only the primary Pod impact
+// of an attached db-sync sidecar. Detailed db-sync health remains on the
+// CardanoDBSync resource.
+func (r *CardanoNetworkReconciler) primaryDBSyncAttachmentReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	attached bool,
+	notAttachedCondition metav1.Condition,
+) (metav1.Condition, error) {
+	if !attached {
+		if notAttachedCondition.Type != "" {
+			return notAttachedCondition, nil
+		}
+		return dbSyncAttachmentReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDBSyncAttachmentNotRequested,
+			conditionMessageDBSyncAttachmentNotRequested,
+		), nil
+	}
+
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return dbSyncAttachmentReadyCondition(
+				metav1.ConditionFalse,
+				conditionReasonPrimaryWorkloadMissing,
+				"Primary node Deployment is missing",
+			), nil
+		}
+		return metav1.Condition{}, err
+	}
+	if deployment.Status.ObservedGeneration != deployment.Generation {
+		return dbSyncAttachmentReadyCondition(
+			metav1.ConditionFalse,
+			conditionReasonDeploymentProgressing,
+			"Primary node Deployment has not observed the latest generation",
+		), nil
+	}
+
+	pods := &corev1.PodList{}
+	if err := r.liveReader().List(
+		ctx,
+		pods,
+		client.InNamespace(network.Namespace),
+		client.MatchingLabels(primaryWorkloadSelectorLabels(network)),
+	); err != nil {
+		return metav1.Condition{}, err
+	}
+	for i := range pods.Items {
+		if ctrlreadiness.PodContainerReady(&pods.Items[i], ctrldbsync.PrimarySidecarContainerName) {
+			return dbSyncAttachmentReadyCondition(
+				metav1.ConditionTrue,
+				conditionReasonDBSyncAttachmentReady,
+				conditionMessageDBSyncAttachmentReady,
+			), nil
+		}
+	}
+
+	return dbSyncAttachmentReadyCondition(
+		metav1.ConditionFalse,
+		conditionReasonDBSyncAttachmentPending,
+		conditionMessageDBSyncAttachmentNotReady,
+	), nil
 }
 
 // faucetAuthSecretReady is the faucet's preReadinessCheck. It reads the
