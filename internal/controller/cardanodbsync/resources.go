@@ -32,6 +32,7 @@ func (b dbSyncWorkloadBuilder) configMap(dbSync *yacdv1alpha1.CardanoDBSync, net
 			Annotations: map[string]string{
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
+				dbSyncPlacementModeAnno:    string(effectivePlacementMode(dbSync)),
 				dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
 			},
 		},
@@ -67,6 +68,7 @@ func (b dbSyncWorkloadBuilder) persistentVolumeClaim(dbSync *yacdv1alpha1.Cardan
 		pvc.Annotations = map[string]string{}
 	}
 	pvc.Annotations[dbSyncDatabaseIdentityAnno] = plan.DatabaseIdentityFingerprint.Value
+	pvc.Annotations[dbSyncPlacementModeAnno] = string(effectivePlacementMode(dbSync))
 
 	return pvc, nil
 }
@@ -97,6 +99,7 @@ func (b dbSyncWorkloadBuilder) followerPersistentVolumeClaim(dbSync *yacdv1alpha
 		pvc.Annotations = map[string]string{}
 	}
 	pvc.Annotations[dbSyncDatabaseIdentityAnno] = plan.DatabaseIdentityFingerprint.Value
+	pvc.Annotations[dbSyncPlacementModeAnno] = string(effectivePlacementMode(dbSync))
 
 	return pvc, nil
 }
@@ -161,6 +164,7 @@ func (b dbSyncWorkloadBuilder) pgPassSecret(
 			Annotations: map[string]string{
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
+				dbSyncPlacementModeAnno:    string(effectivePlacementMode(dbSync)),
 				dbSyncSecretVersionAnno:    pgPassMaterialFingerprint(pgPass),
 			},
 		},
@@ -257,6 +261,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 					Annotations: map[string]string{
 						dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 						dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
+						dbSyncPlacementModeAnno:    string(effectivePlacementMode(dbSync)),
 						dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
 						dbSyncSecretVersionAnno:    pgPassMaterialFingerprint(pgPass),
 					},

@@ -616,6 +616,13 @@ type CardanoDBSyncDatabaseStatus struct {
 	// +optional
 	AcceptedIdentityFingerprint string `json:"acceptedIdentityFingerprint,omitempty"`
 
+	// acceptedPlacementMode is the placement mode accepted for the current
+	// db-sync state. Changing it requires deleting and recreating the
+	// CardanoDBSync with a fresh or compatible database.
+	// +kubebuilder:validation:Enum=dedicatedFollower;primarySidecar
+	// +optional
+	AcceptedPlacementMode CardanoDBSyncPlacementMode `json:"acceptedPlacementMode,omitempty"`
+
 	// authSecretName is the same-namespace Secret containing generated
 	// database credentials when the user did not provide authSecretRef.
 	// +optional

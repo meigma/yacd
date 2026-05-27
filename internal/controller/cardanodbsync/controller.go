@@ -268,6 +268,17 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 		return r.reconcilePrimarySidecarWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime, builder, postgresResources)
 	}
 
+	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
+	if err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.validateAcceptedDBSyncPlacementMode(ctx, dbSync, network, yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower); err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+
 	sidecarGone, err := r.primarySidecarDBSyncGone(ctx, network)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -277,14 +288,6 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: dbSyncWorkloadReadinessRequeueAfter}, nil
-	}
-
-	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
-	if err != nil {
-		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
-	}
-	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
-		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	if databaseRuntime.Mode == databaseModeManaged {
 		ready, err := r.reconcileManagedPostgresResources(ctx, log, dbSync, postgresResources)
@@ -359,6 +362,9 @@ func (r *CardanoDBSyncReconciler) reconcilePrimarySidecarWorkloads(
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	if err := r.validateAcceptedDBSyncDatabaseIdentity(ctx, dbSync, resources.Plan.DatabaseIdentityFingerprint.Value); err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+	if err := r.validateAcceptedDBSyncPlacementMode(ctx, dbSync, network, yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar); err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 	if err := r.suspendDBSyncDeploymentIfOwned(ctx, dbSync); err != nil {

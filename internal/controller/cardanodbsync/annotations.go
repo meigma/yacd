@@ -17,6 +17,11 @@ const (
 	// Drift between accepted and desired is a hard error.
 	dbSyncDatabaseIdentityAnno = "yacd.meigma.io/dbsync-database-identity"
 
+	// dbSyncPlacementModeAnno is the annotation key carrying the accepted
+	// dbsync placement mode on dbsync state material and workload templates.
+	// Drift between accepted and desired is a hard error once state exists.
+	dbSyncPlacementModeAnno = "yacd.meigma.io/dbsync-placement-mode"
+
 	// dbSyncSecretVersionAnno is the annotation key carrying a SHA-256
 	// fingerprint of the rendered pgpass material consumed by the dbsync
 	// workload. Credential material changes roll the Pod through the
@@ -56,6 +61,7 @@ const (
 var cardanoDBSyncOwnedAnnotations = []string{
 	dbSyncPlanFingerprintAnno,
 	dbSyncDatabaseIdentityAnno,
+	dbSyncPlacementModeAnno,
 	dbSyncSecretVersionAnno,
 	dbSyncArtifactDataHashAnno,
 	managedPostgresIdentityAnno,

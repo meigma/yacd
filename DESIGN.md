@@ -152,7 +152,10 @@ is worse than sharing the primary socket. In that mode, CardanoDBSync still
 owns its database, config, state, metrics, and status, but CardanoNetwork
 composes the db-sync sidecar into the primary Deployment. Enabling or changing
 that attachment rolls the primary Deployment, trading workload isolation for a
-single node copy and direct socket access.
+single node copy and direct socket access. Once db-sync state has accepted a
+placement mode, changing between `primarySidecar` and `dedicatedFollower`
+requires recreating the CardanoDBSync with fresh or intentionally compatible
+database state.
 
 This pattern should be opt-in for heavyweight services, not automatic for every
 helper.
