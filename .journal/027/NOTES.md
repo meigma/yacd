@@ -25,3 +25,8 @@ Plan:
 2. Slice 2: Curated preprod/mainnet profiles plus custom profile source. Extend profile resolution to all three public profiles and then ConfigMap/Secret-backed custom bundles, with profile/artifact fingerprint immutability on the primary PVC so profile drift degrades instead of silently mutating live chain state.
 3. Slice 3: Public db-sync dedicated follower. Teach CardanoDBSync to consume public profile artifacts, set the right `NetworkName` and `RequiresNetworkMagic` values, keep `primarySidecar` local-only for now, and validate the dedicated follower path against a public profile.
 4. Slice 4: Practical mainnet support. Add the operational pieces that make mainnet usable rather than merely accepted by the API: realistic storage/resource defaults, explicit mainnet warnings or opt-ins if needed, and a bootstrap/snapshot path such as Mithril before claiming mainnet is a good developer experience.
+
+## 2026-05-27 16:02 — Implementation worktree ready
+Goal for the checkpoint: Start implementation of slice 1 in an isolated Worktrunk worktree.
+Current state of the world: Created `feat/public-preview-network` at `/Users/josh/code/meigma/yacd/.wt/feat-public-preview-network` from `master`. Ran `moon run root:dev-up` from that worktree; it completed successfully, leaving Tilt running at `http://localhost:10350/` with logs under `.run/yacd-dev/tilt.log`.
+Plan: Implement the public preview planner/runtime path, keep the dev stack running through validation, and record later test/smoke results here.
