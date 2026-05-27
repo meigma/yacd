@@ -557,6 +557,24 @@ spec:
                 required:
                 - name
                 type: object
+              placement:
+                description: |-
+                  placement selects where db-sync runs relative to the referenced network.
+                  When omitted, the controller preserves the existing dedicated follower
+                  workload behavior.
+                properties:
+                  mode:
+                    default: dedicatedFollower
+                    description: |-
+                      mode selects whether db-sync uses a dedicated follower node or asks the
+                      referenced CardanoNetwork primary Pod to host it as a sidecar.
+                    enum:
+                    - dedicatedFollower
+                    - primarySidecar
+                    type: string
+                required:
+                - mode
+                type: object
               resources:
                 description: resources configures the db-sync container resources.
                 properties:
@@ -638,6 +656,10 @@ spec:
             - image
             - networkRef
             type: object
+            x-kubernetes-validations:
+            - message: followerNode cannot be set when placement.mode is primarySidecar
+              rule: '!has(self.placement) || self.placement.mode != ''primarySidecar''
+                || !has(self.followerNode)'
           status:
             description: status defines the observed state of CardanoDBSync.
             properties:

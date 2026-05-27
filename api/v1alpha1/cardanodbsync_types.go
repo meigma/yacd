@@ -75,7 +75,24 @@ const (
 	CardanoDBSyncJSONTypeDisable CardanoDBSyncJSONType = "disable"
 )
 
+// CardanoDBSyncPlacementMode selects where db-sync consumes its local node
+// socket.
+// +kubebuilder:validation:Enum=dedicatedFollower;primarySidecar
+type CardanoDBSyncPlacementMode string
+
+const (
+	// CardanoDBSyncPlacementModeDedicatedFollower keeps the existing
+	// two-container workload with a colocated follower node owned by the
+	// CardanoDBSync controller.
+	CardanoDBSyncPlacementModeDedicatedFollower CardanoDBSyncPlacementMode = "dedicatedFollower"
+	// CardanoDBSyncPlacementModePrimarySidecar requests db-sync placement in
+	// the referenced CardanoNetwork primary node Pod. The runtime attachment is
+	// implemented by later slices.
+	CardanoDBSyncPlacementModePrimarySidecar CardanoDBSyncPlacementMode = "primarySidecar"
+)
+
 // CardanoDBSyncSpec defines the desired db-sync supporting service.
+// +kubebuilder:validation:XValidation:rule="!has(self.placement) || self.placement.mode != 'primarySidecar' || !has(self.followerNode)",message="followerNode cannot be set when placement.mode is primarySidecar"
 type CardanoDBSyncSpec struct {
 	// networkRef references the same-namespace CardanoNetwork that db-sync
 	// indexes.
@@ -90,6 +107,12 @@ type CardanoDBSyncSpec struct {
 	// resources configures the db-sync container resources.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// placement selects where db-sync runs relative to the referenced network.
+	// When omitted, the controller preserves the existing dedicated follower
+	// workload behavior.
+	// +optional
+	Placement *CardanoDBSyncPlacementSpec `json:"placement,omitempty"`
 
 	// followerNode configures the dedicated follower node colocated with
 	// db-sync for local node socket access.
@@ -109,6 +132,15 @@ type CardanoDBSyncSpec struct {
 	// configuration file.
 	// +optional
 	Config CardanoDBSyncConfigSpec `json:"config,omitempty"`
+}
+
+// CardanoDBSyncPlacementSpec configures db-sync workload placement.
+type CardanoDBSyncPlacementSpec struct {
+	// mode selects whether db-sync uses a dedicated follower node or asks the
+	// referenced CardanoNetwork primary Pod to host it as a sidecar.
+	// +kubebuilder:default=dedicatedFollower
+	// +required
+	Mode CardanoDBSyncPlacementMode `json:"mode"`
 }
 
 // CardanoDBSyncFollowerNodeSpec configures the follower node owned by db-sync.

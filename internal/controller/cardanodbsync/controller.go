@@ -14,9 +14,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -83,6 +85,14 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	if !dbSync.DeletionTimestamp.IsZero() {
 		log.V(1).Info("CardanoDBSync is deleting; skipping reconcile")
+		return ctrl.Result{}, nil
+	}
+
+	placementReady, err := r.reconcilePlacement(ctx, dbSync)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !placementReady {
 		return ctrl.Result{}, nil
 	}
 
@@ -311,13 +321,7 @@ func (r *CardanoDBSyncReconciler) reconcileManagedPostgresResources(
 
 // SetupWithManager sets up the CardanoDBSync controller with the manager.
 func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncNetworkRefNameField, func(object client.Object) []string {
-		dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
-		if !ok || dbSync.Spec.NetworkRef.Name == "" {
-			return nil
-		}
-		return []string{dbSync.Spec.NetworkRef.Name}
-	}); err != nil {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncNetworkRefNameField, cardanoDBSyncNetworkRefIndexer); err != nil {
 		return err
 	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncExternalDatabaseSecretNameField, func(object client.Object) []string {
@@ -344,6 +348,7 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		Watches(&yacdv1alpha1.CardanoDBSync{}, r.placementPeerEventHandler()).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForDatabaseSecret)).
 		Owns(&appsv1.Deployment{}).
@@ -353,6 +358,68 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
+}
+
+// placementPeerEventHandler enqueues peer primary-sidecar claims when a
+// CardanoDBSync claim is created, deleted, or materially changes. The primary
+// object watch already enqueues the changed object itself; this handler exists
+// so same-network peers can enter or leave PlacementConflict promptly.
+func (r *CardanoDBSyncReconciler) placementPeerEventHandler() handler.EventHandler {
+	return handler.Funcs{
+		CreateFunc: func(ctx context.Context, event event.CreateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			r.enqueuePlacementPeersForObject(ctx, queue, event.Object)
+		},
+		UpdateFunc: func(ctx context.Context, event event.UpdateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			if event.ObjectOld != nil && event.ObjectNew != nil &&
+				event.ObjectOld.GetGeneration() == event.ObjectNew.GetGeneration() {
+				return
+			}
+
+			r.enqueuePlacementPeersForObject(ctx, queue, event.ObjectOld)
+			r.enqueuePlacementPeersForObject(ctx, queue, event.ObjectNew)
+		},
+		DeleteFunc: func(ctx context.Context, event event.DeleteEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
+			r.enqueuePlacementPeersForObject(ctx, queue, event.Object)
+		},
+	}
+}
+
+func (r *CardanoDBSyncReconciler) enqueuePlacementPeersForObject(
+	ctx context.Context,
+	queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+	object client.Object,
+) {
+	dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+	if !ok || effectivePlacementMode(dbSync) != yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar {
+		return
+	}
+
+	r.enqueuePrimarySidecarPeers(ctx, queue, dbSync.Namespace, dbSync.Spec.NetworkRef.Name)
+}
+
+func (r *CardanoDBSyncReconciler) enqueuePrimarySidecarPeers(
+	ctx context.Context,
+	queue workqueue.TypedRateLimitingInterface[reconcile.Request],
+	namespace string,
+	networkName string,
+) {
+	claims, err := r.primarySidecarClaims(ctx, namespace, networkName)
+	if err != nil {
+		logf.FromContext(ctx).Error(err, "Unable to list primary-sidecar CardanoDBSync placement peers", "namespace", namespace, "network", networkName)
+		return
+	}
+
+	for i := range claims {
+		queue.Add(reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&claims[i])})
+	}
+}
+
+func cardanoDBSyncNetworkRefIndexer(object client.Object) []string {
+	dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
+	if !ok || dbSync.Spec.NetworkRef.Name == "" {
+		return nil
+	}
+	return []string{dbSync.Spec.NetworkRef.Name}
 }
 
 // validateExternalDatabaseSecret reads and validates the external Postgres
