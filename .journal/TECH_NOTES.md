@@ -78,6 +78,16 @@
   preview, preprod, and custom public profiles. Public mainnet db-sync remains
   rejected until a follower-node Mithril bootstrap or public mainnet
   `primarySidecar` sizing/bootstrap slice is implemented.
+- Public mainnet db-sync should likely start as `primarySidecar` plus managed
+  Postgres db-sync snapshot restore, not as a dedicated follower. Upstream
+  db-sync snapshots restore both PostgreSQL and db-sync ledger state via
+  `postgresql-setup.sh --restore-snapshot`; they are schema/version and
+  architecture sensitive, so restore metadata must become part of YACD's
+  accepted database identity. As of session 028, official mainnet 13.7 snapshots
+  were about 79GB compressed before expanded Postgres data, db-sync state,
+  scratch space, and growth, so the current 10Gi db-sync/Postgres defaults are
+  not mainnet-safe. Re-check current upstream release and snapshot details
+  before implementing.
 - `CardanoNetwork` publishes `DBSyncAttachmentReady` only to explain primary Pod
   impact from an attached/requested db-sync sidecar. Detailed DB Sync health
   remains on `CardanoDBSync`. Shared primary Pod names, selector labels, port

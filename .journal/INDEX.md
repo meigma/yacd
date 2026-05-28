@@ -28,3 +28,4 @@
 | 025 | 2026-05-27 | CardanoDBSync placement and primary sidecar | complete | Added placement-aware CardanoDBSync support, including local-network primary-sidecar runtime composition through CardanoNetwork and safe handoff/conflict semantics, merged as PR #45. |
 | 026 | 2026-05-27 | Primary sidecar manual functional testing | complete | Manually validated primary-sidecar behavior, found the accepted-state sidecar-to-dedicated failure, and merged PR #46 to reject unsafe placement handoffs. |
 | 027 | 2026-05-27 | Public CardanoNetwork profiles and mainnet bootstrap | complete | Added public preview/preprod/mainnet/custom CardanoNetwork support, public db-sync dedicated followers, mainnet Mithril bootstrap gates, and merged PR #47. |
+| 028 | 2026-05-27 | Public db-sync primary sidecar | complete | Enabled public non-mainnet db-sync primary-sidecar placement, proved it against preview, assessed the mainnet restore gap, and merged PR #48. |
