@@ -280,3 +280,54 @@ Three non-findings worth recording:
 Category-B fix theme: **align all three accepted-identity validation paths around the PVC annotation as the source of truth.** The pattern already exists in the codebase (B3's backfill, B4's PVC-annotated check that works) — B1's brick and B2's UX-trap both vanish when their respective validate functions fall through to the PVC annotation. The B6 fix is independent: surface PVC API errors as typed `statusConditionError`s on the CR.
 
 Pause for user review before starting Category C (Owned-child tampering: replicas=0, ownerReference strip, foreign-owned same-name child, SA edit, hand-edit non-mutated fields). Dev stack left running.
+
+## 2026-05-28 12:32 — C1+C2+C3 UX-GAP cluster (silent override pattern)
+Adversarial tests C1, C2, C3 from the synthesized list, combined into one agent run against a single local CardanoNetwork `c123-net` (Ready in ~20s) to save redundant network startup. Skipped C4 as redundant with the already-confirmed A3 BUG-B (sustained sidecar persistence would just re-confirm "no operator-side backoff").
+
+**C1 (kubectl scale --replicas=0):** Mutate restored `spec.replicas` to 1 in <1s (faster than the 1s sampler could observe the 0). Owned-resource watch fired within ~10-300ms of the user write. Pod rollout took ~11s back to availableReplicas=1, with Ready briefly flipping False (reason DeploymentProgressing) then True. Generation went 1→3 (user patch +1, Mutate +1). The brand-new Pod that came up after the scale-down had the correct replica spec because the restore beat the kubelet's pod creation. Verdict: UX-GAP only — Mutate works perfectly; there's just no signal to the user that their `kubectl scale` was reverted.
+
+**C2 (kubectl set serviceaccount default):** Mutate restored `spec.template.spec.serviceAccountName` to `c123-net-artifact-publisher` in <1s. The new Pod that came up after the SA-change-triggered rollout had the correct SA — no Pod ever ran with the wrong SA token (BUG-B not realized). Same ~11s rollout. Verdict: UX-GAP only — silent override.
+
+**C3 (kubectl patch svc selector):** API server ACCEPTED the patch (Service selector is mutable). Mutate restored `spec.selector` in <1s via `MutateService` (`internal/ctrlkit/resources/resources.go:57-63`, `maps.Clone(desired.Spec.Selector)`). The EndpointSlice controller never observed the selector flip — all 30 1s samples showed 1 endpoint address, no blackout. CR conditions stayed Ready=True throughout. Verdict: NOT-A-BUG with UX-GAP caveat — restore was too fast for any in-cluster traffic to notice, but the user gets no signal their selector edit was reverted.
+
+**Cross-test observation: the silent-override UX gap is consistent across all three field types and matches B5's same finding on `kubectl set image`.** When the operator wins a restore race, nothing in `kubectl describe cardanonetwork` or in events tells the user their `kubectl` write was undone. For a curated dev-environment operator the contract is fine (operator wins) but the visibility gap is real for a maintainer trying to figure out why their patch had no effect. Worth considering a Warning-level event or a transient condition reason like `OwnedSpecOverridden` — not promoted to a TEST_REPORT entry yet because it spans multiple tests and lacks a sharp single-mitigation surface; will revisit at end-of-category.
+
+Evidence under `.run/break-pass/c123/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:38 — C5 NOT-A-BUG: sharp overlay/replace/passthrough boundary, no accumulation
+Adversarial test C5 from the synthesized list: inject user-owned fields of various types into the live primary Deployment, force a CR spec bump to drive a fresh reconcile, repeat to test for accumulation.
+
+The agent confirmed three field-handling categories with sharp boundaries (codified in `internal/controller/cardanonetwork/callbacks.go::mutatePrimaryDeployment` and `internal/ctrlkit/resources/resources.go::MutateDeployment`):
+
+1. **Overlay (user keys persist, operator-desired keys win on conflict):** Deployment + pod-template labels and annotations via `OverlayStringMap`. The user can stamp arbitrary metadata that survives every reconcile.
+2. **Replace (wholesale overwrite):** `Containers`, `InitContainers`, `Volumes`, `SecurityContext`, `ServiceAccountName`, `AutomountServiceAccountToken`. Both JSON-patch-appended containers (`c5-user-sidecar` main container, `c5-user-init` init container) were stripped within ~5s. The "extra container shadowing operator container" BUG-A is structurally impossible on this surface.
+3. **Passthrough (not touched at all):** `Tolerations`, `ImagePullSecrets`, `HostAliases`, `NodeSelector`, `Affinity`, `TopologySpreadConstraints`, `PriorityClassName`. The mutator never reads or writes these, so user values stay verbatim. Pure pass-through with no merge, so accumulation across many reconciles is structurally impossible — confirmed by 5 rapid `spec.node.port` toggles producing identical list counts to a single injection.
+
+The boundary persists across spec-change-driven reconciles (C5b confirmed all 7 metadata/passthrough fields survived a port bump while both injected containers got stripped again). No CR-condition or event signal that user-injected containers were stripped, but the Mutate semantics are stable.
+
+UX observation (not promoted, same flavor as B5/C1/C2/C3): the user cannot tell from the CR spec/status which Deployment-level customizations will survive — knowing the overlay/replace/passthrough split requires reading the operator code. For a curated dev environment this is acceptable; documenting it in the chart README would help operators avoid wasted edits.
+
+Evidence under `.run/break-pass/c5/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:40 — Category C synthesis (pause for user review)
+Four tests run (C1, C2, C3, C5); C4 skipped as redundant with A3 (sustained sidecar persistence of CM corruption would re-confirm "no operator-side backoff" already documented).
+
+| Test | Theory | Verdict | Severity |
+|------|--------|---------|----------|
+| C1 | Manual replicas=0 on primary Deploy | UX-GAP (silent override) | low |
+| C2 | kubectl set serviceaccount on primary Deploy | UX-GAP (silent override) | low |
+| C3 | Patch primary Service selector | NOT-A-BUG + UX-GAP caveat | — |
+| C4 | Artifact CM sustained corruption | (skipped — redundant with A3 BUG-B) | — |
+| C5 | User-injected fields persistence | NOT-A-BUG | — |
+
+**Zero new TEST_REPORT entries from Category C.** All restore-race tests came back NOT-A-BUG (Mutate restores within <1s, faster than 1s sampling can observe; Endpoints never observably empty; no wrong-image/wrong-SA Pod ever runs).
+
+**Cross-cutting UX finding (B5 + C1 + C2 + C3 + C5):** When the operator wins a restore race or silently strips user-appended fields, there is no user-facing signal (no event, no transient condition, no log line accessible to non-platform users). This is internally consistent with the operator's "I own these fields" contract but unfriendly to a maintainer who runs `kubectl scale` / `set image` / `set serviceaccount` / `patch svc selector` / JSON-appends a sidecar and then sees `Ready=True` with no indication their edit was reverted.
+
+Two ways to address this if you ever want to:
+- **Per-restore Warning event** on the affected object: `OwnedFieldRestored field=spec.replicas user_value=0 restored_value=1`. Cheap, visible in `kubectl describe`, no noise on the steady-state.
+- **Chart README "what's user-customizable" docs** listing the three field categories — overlay (labels/annotations), replace (containers/volumes/SA/SecurityContext), passthrough (tolerations/affinity/imagePullSecrets/etc.) — so operators know which Deployment-level edits will stick.
+
+Not promoting this to a TEST_REPORT.md section yet because it's a UX/docs pattern across many tests rather than a single concrete failure. If you want it formalized as an entry, I can add it as a "Cross-cutting findings" section at the bottom of TEST_REPORT.md.
+
+Pause for user review before starting Category D (Owned-child deletion & ownership leaks: D1 faucet auth Secret deletion, D2 PVC stuck Terminating via foreign finalizer, D3 owner-reference strip, D4 artifact publisher RBAC deletion, D5 foreign-owned same-name child, D6 managed Postgres auth Secret delete, D7 no-finalizer cascade data loss). Dev stack left running.
