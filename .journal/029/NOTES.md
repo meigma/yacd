@@ -530,3 +530,105 @@ Four non-findings:
 The three messages are correct but don't tell the user the remediation. A small unification — "add this CR as the controller owner of `<name>` (e.g. by patching `metadata.ownerReferences`), or delete the conflicting object" — would help in all three cases. Not promoted to TEST_REPORT.md yet because the underlying behavior is correct; only the message would change.
 
 Pause for user review before starting Category E (External dependencies — E1 custom-profile Secret with `binaryData` only, E2 external Postgres Secret finalizer, E3 CardanoNetwork delete with DBSync still referencing, E4 same-name network recreate with new UID, E5 external Postgres key removal). Dev stack left running.
+
+## 2026-05-28 13:45 — E1 NOT-A-BUG (UX-GAP): Secret binaryData premise is impossible
+Adversarial test E1 from the synthesized list: load a custom-profile bundle via Secret with all keys under `binaryData`. **The Kubernetes API server rejects Secrets with a top-level `binaryData` field — it only exists on ConfigMaps.** The synthesis's literal premise is structurally impossible for Secrets.
+
+The agent ran the functionally equivalent worst case: an `Opaque` Secret with `data: {}`. Controller rejected within 1s with `Degraded=True / UnsupportedSpec` and message *"public custom profile bundle is empty"*. No owned resources created. Recovery via Secret update with proper `data` keys was immediate via the `customProfileSecretEventHandler` Watch.
+
+UX-GAP: the message names neither the Secret, the missing keys, nor (more importantly) the bad-field placement. A user who actually placed keys under `stringData` instead of `data` (the realistic mistake) gets the same "empty bundle" message. The agent suggested a more specific check: when `Data` is empty but `BinaryData`/equivalent has entries, emit `"required keys %v are not present in .data (binaryData/stringData entries are not consulted)"`.
+
+The agent caught a real follow-up: `publicCustomProfileConfigMapBundle` at `public_profile_source.go:64` ALSO reads only `configMap.Data` and ignores `configMap.BinaryData`. ConfigMaps do have a real `binaryData` field, so the analogous test on a ConfigMap is exploitable. Ran E1b immediately.
+
+## 2026-05-28 13:48 — E1b NOT-A-BUG (UX-GAP): defense-in-depth catches binaryData on ConfigMap
+Follow-up test for the ConfigMap analog of E1. The agent confirmed:
+- `publicCustomProfileConfigMapBundle` does read only `Data` (synthesis claim correct).
+- BUT the downstream `customArtifacts()` in `internal/cardano/publicnet/plan.go:312` defensively rejects `len(bundle.Files) == 0` with `"public custom profile bundle is empty"`.
+- Result: Degraded=True / UnsupportedSpec within 1s. No owned resources. Recovery via watch was immediate when keys moved to `data`.
+
+Same UX-GAP as E1: a user with all 6 required keys *visibly present* under `binaryData` sees the "empty bundle" message and is confused — `kubectl get cm` contradicts the operator's report. The defense-in-depth at the planner layer is correct (BUG-A and BUG-B both ruled out: no degenerate workload was ever rendered) but the diagnostics could be more specific.
+
+Both E1 and E1b are NOT-A-BUG, recorded here for completeness. Not promoted to TEST_REPORT.md.
+
+Evidence under `.run/break-pass/e1/` and `.run/break-pass/e1b/`. Namespaces cleanly torn down.
+
+## 2026-05-28 13:57 — E2 NOT-A-BUG: DeletionTimestamp honored, owned pgpass not scrubbed (hardening note)
+Adversarial test E2 from the synthesized list: add a foreign finalizer to the external Postgres password Secret, delete it (it enters Terminating with DeletionTimestamp set but the object is still gettable), and check whether `validateExternalDatabaseSecret` honors the DeletionTimestamp.
+
+Setup: local CardanoNetwork + CardanoDBSync `e2-dbsync` with external Postgres pointed at unreachable `127.0.0.1:5432`. Secret `pg-external-pass` with `data.password=real-baseline-password`. Baseline: PostgresReady=False/PostgresUnavailable (connection refused), Degraded=False/ReconcileSucceeded. The owned `e2-dbsync-dbsync-pgpass` Secret was rendered with the baseline password.
+
+E2a (add finalizer + delete): within ~5s Degraded=True with reason `ExternalDatabaseSecretMissing` and message *"External Postgres password Secret is deleting"*. The Terminating Secret's password was NOT reused downstream — operator log shows `pgPassSecretOperation: unchanged` across reconciles, no fresh re-render of the pgpass. `validateExternalDatabaseSecret` at `controller.go:616-621` correctly checks `!secret.DeletionTimestamp.IsZero()`.
+
+E2b (remove finalizer, Secret truly deletes): Degraded stays True; reason stays `ExternalDatabaseSecretMissing`, message updates from "is deleting" to *"External Postgres password Secret does not exist"*. Clean transition.
+
+Hardening observation (not promoted to TEST_REPORT.md): the controller-owned `e2-dbsync-dbsync-pgpass` Secret persists with the baseline password throughout. This is conventional Kubernetes operator behavior (don't tear down child workloads on dependency unavailability) and the data isn't being newly consumed (the Deployment is still running its existing Pod which crashloops against unreachable Postgres). But a future scenario where the user changes the external password and then accidentally deletes the new Secret could result in the operator's child pgpass holding a stale password the user thought was rotated away. Worth a security-review consideration: should `applyDBSyncPGPassSecret` scrub the owned pgpass when the upstream external Secret is missing/Terminating/invalid, or maintain it untouched? Default Kubernetes pattern is "untouched"; YACD's posture is the same. Flagging the choice rather than calling it a bug.
+
+## 2026-05-28 14:00 — E5 UX-GAP: external Secret key removal detected fast but message is too vague
+Adversarial test E5 from the synthesized list: remove the `password` key from the live external Postgres Secret via JSON patch, observe Degraded behavior and recovery.
+
+E5a (remove password key): within ~5s Degraded=True with reason `ExternalDatabaseSecretInvalid` and message *"External Postgres password Secret does not contain the configured key"*. The detection works correctly — this is via the `len(secret.Data[passwordKey]) == 0` check inside `validateExternalDatabaseSecret`. But the message does not name (a) which Secret it consulted (`pg-external-pass`), nor (b) which key was expected (`password`). A user inspecting `kubectl describe cardanodbsync` sees a vague complaint and has to consult the CR spec to figure out what key they were supposed to have. Same pattern as the E1/E1b "bundle is empty" message.
+
+E5b (restore key): within ~5s Degraded back to False/ReconcileSucceeded. Recovery is clean and not sticky.
+
+UX-GAP not promoted to TEST_REPORT.md — the underlying detection is correct, recovery is clean, and the message-clarity issue is consistent with the cross-cutting Category-A/B "messages don't include identifiers" theme already noted (G6 in the synthesis list specifically called this out for the related `UnsupportedDatabaseIdentityChange`).
+
+Evidence under `.run/break-pass/e2e5/`. Namespace cleanly torn down.
+
+## 2026-05-28 14:10 — E3 NOT-A-BUG: network delete leaves DBSync orphan-but-correct
+Adversarial test E3 from the synthesized list: delete the CardanoNetwork while a CardanoDBSync still references it.
+
+Setup: local network + DBSync `e3-dbsync` with managed Postgres against `e3-net`. PostgresReady=True in ~6s. Baseline acceptedIdentityFingerprint set.
+
+E3a: network deleted in <5s. DBSync conditions flipped to `Degraded=True/NetworkUnavailable, Ready=False/NetworkUnavailable` within 5s with message *"Referenced CardanoNetwork does not exist"*. Stable through 60s. The CardanoNetwork's owned children (its Deployment, Service, Ogmios/Kupo Services, network-artifacts CM, primary PVC, artifact-publisher RBAC) all GC'd correctly. The CardanoDBSync's owned children (managed Postgres Deployment 1/1 Running, db-sync Deployment scaled to 0, three PVCs totaling 14Gi, ConfigMap, two Secrets) ALL persisted — their ownerReferences point at the still-living CardanoDBSync, not the deleted network. This is the correct controller-runtime ownership chain.
+
+E3b inventory: 9 surviving owned children attributed to `e3-dbsync`, 14Gi of PVCs holding storage indefinitely until the user deletes the DBSync separately.
+
+NOT-A-BUG because the design contract is met: dependency unavailable → patch status, don't tear down workloads. The DBSync controller's early `patchDependencyUnavailableStatus` return at `controller.go:117-130` is intentional. Minor UX observation (not promoted): no condition or message mentions the 14Gi of dormant storage, so a user reading only `kubectl describe cardanodbsync` won't realize they need to act to free that storage. A trailing note in the `NetworkUnavailable` message like "owned managed Postgres workloads remain provisioned; delete this CardanoDBSync to release the storage" would help. Same UX pattern as D7's "no warning that delete = data loss" finding.
+
+## 2026-05-28 14:13 — E4 NOT-A-BUG (architecturally elegant): same-name network recreate is safely rejected via artifact-hash identity binding
+Adversarial test E4 from the synthesized list: after E3 leaves the DBSync orphaned with NetworkUnavailable, recreate the network with the same name + same spec. The fingerprint computation over spec is deterministic, so the new network produces the same `networkFingerprint`. Does the DBSync silently consume the new network's artifacts?
+
+Critical observation from the agent's read of the fingerprint code: `databaseIdentityFingerprint` in `internal/cardano/dbsync/fingerprint.go:96-117` hashes `spec.NetworkArtifactHash` — which is the network's artifact `dataHash`, NOT its `networkFingerprint`. The `dataHash` is computed over the *actual generated artifact content*, which includes freshly-minted localnet keys/genesis seeds per init run. Result: a same-spec recreate produces a *different* artifact `dataHash` even though the `networkFingerprint` is identical.
+
+Observed: baseline artifact dataHash `sha256:fe4a55...`, post-recreate artifact dataHash `sha256:f7fed4...`. The recomputed DB identity diverges from the previously accepted identity. `validateAcceptedDBSyncDatabaseIdentity` at `controller.go:288` fails closed within seconds (and before the new network even reaches Ready=True, because the controller can compute the new database identity from any reachable artifact state). DBSync went `Degraded=True/UnsupportedDatabaseIdentityChange` with message *"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database"*. acceptedIdentityFingerprint NOT overwritten — controller correctly refuses.
+
+This is architecturally elegant. The identity binding is replay-resistant *without* needing UID tracking on the network reference, because the high-entropy artifact content hash already provides cryptographic continuity. A malicious actor would need to control artifact generation deterministically (e.g., by supplying a malicious operator image that produces colliding keys) — not just replay a spec.
+
+NOT-A-BUG. The condition message reflects the safe-by-default refusal. The user gets a clear signal that the network recreation invalidates their DBSync state.
+
+Security note worth keeping for future TECH_NOTES: the localnet artifacts publisher in `internal/controller/cardanonetwork` generates fresh keys per init container run, which is what makes the network rebirth detectable here. If a future change shifted to deterministic key generation (e.g., for repeatable testing), this E4 protection would weaken — the artifact hash would also become deterministic, and same-spec network reuse would silently continue the DBSync. Worth a comment near `dataHash` to document the dependency.
+
+Evidence under `.run/break-pass/e3e4/`. Namespace cleanly torn down.
+
+## 2026-05-28 14:15 — Category E synthesis (pause for user review)
+Six tests run (5 from synthesis + 1 follow-up E1b that the E1 agent identified as the actually-exploitable analog):
+
+| Test | Theory | Verdict | Severity |
+|------|--------|---------|----------|
+| E1 | Custom-profile Secret with binaryData | NOT-A-BUG (synthesis premise impossible for Secrets) | — |
+| E1b | Custom-profile ConfigMap with binaryData (follow-up) | NOT-A-BUG (empty-bundle defense-in-depth catches it) | — |
+| E2 | External Postgres password Secret finalizer + delete | NOT-A-BUG (DeletionTimestamp honored) | — |
+| E3 | CardanoNetwork delete while DBSync references it | NOT-A-BUG (clean NetworkUnavailable; orphans by design) | — |
+| E4 | Same-name network recreate with new UID | NOT-A-BUG (artifact dataHash binding catches it) | — |
+| E5 | External Postgres key removal | UX-GAP (message doesn't name Secret or key) | low |
+
+**Zero new TEST_REPORT entries from Category E.** All five synthesized tests came back NOT-A-BUG; E1b confirms the related ConfigMap concern is also defended.
+
+Three architectural strengths revealed:
+
+1. **E4: artifact-hash identity binding is replay-resistant.** The DBSync's accepted database identity transitively binds to the network's artifact `dataHash` (high-entropy generated content) rather than the spec-derived `networkFingerprint`. Same-spec network rebirth produces a different dataHash → DBSync correctly refuses to silently continue. This was a structural concern in the synthesis (★ at 🟡 medium); the result raises confidence in the architecture.
+
+2. **E2: DeletionTimestamp is honored on the external dependency path** at `validateExternalDatabaseSecret` (`controller.go:616-621`). The asymmetry the synthesis hinted at (managed-path checks DeletionTimestamp, external-path doesn't) does not exist — both paths check it.
+
+3. **E1+E1b: defense-in-depth at the planner layer.** Even though the bundle readers ignore `binaryData`, the `customArtifacts()` empty-bundle check at the planner layer catches the case before any owned resources get rendered. Both ConfigMap and Secret paths are covered.
+
+Three cross-cutting UX issues consistent with prior categories:
+- E1/E1b: *"public custom profile bundle is empty"* doesn't name the source or which keys were missing.
+- E5: *"External Postgres password Secret does not contain the configured key"* doesn't name the Secret (`pg-external-pass`) or the key (`password`).
+- E3: `NetworkUnavailable` message doesn't mention the orphan storage the user should clean up.
+
+All three are "message-clarity" improvements rather than functional bugs — collected here for future polish.
+
+One hardening observation from E2 (not a bug): when the upstream external Secret is missing/Terminating/invalid, the controller-owned `<dbsync>-pgpass` Secret persists with the previously-validated password. Conventional Kubernetes operator behavior (don't tear down workloads on dep unavailability), but worth a security-review consideration: should the controller scrub the rendered pgpass when the upstream becomes invalid? Default Kubernetes pattern is "untouched"; YACD's posture matches. Flagging the choice rather than calling it a bug.
+
+Pause for user review before starting Category F (Runtime / cluster lifecycle — F1 Mithril init container with non-mithril image, F2 non-existent node image, F3 invalid Mithril snapshot digest, F4 missing StorageClass, F5 faucet revoke/re-enable race, F6 operator pod kill mid-apply). Dev stack left running.
