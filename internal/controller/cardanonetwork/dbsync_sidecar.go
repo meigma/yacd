@@ -78,7 +78,7 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 			),
 		}, nil
 	}
-	if err := ctrldbsync.ValidatePrimarySidecarLocalNetwork(&claim, network); err != nil {
+	if err := ctrldbsync.ValidatePrimarySidecarNetwork(&claim, network); err != nil {
 		logf.FromContext(ctx).V(1).Info("Skipping unsupported CardanoDBSync primary-sidecar attachment", "cardanodbsync", client.ObjectKeyFromObject(&claim), "error", err.Error())
 		return primaryDBSyncAttachmentResult{
 			Condition: dbSyncAttachmentReadyCondition(

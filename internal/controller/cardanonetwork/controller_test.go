@@ -426,6 +426,25 @@ func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSync(t *testin
 	assert.Equal(t, "sha256:2222222222222222222222222222222222222222222222222222222222222222", deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno])
 }
 
+func TestCardanoNetworkReconcilerReconcileAttachesPublicPrimarySidecarDBSync(t *testing.T) {
+	ctx := context.Background()
+	network := readyPublicPreviewCardanoNetwork()
+	dbSync := readyPrimarySidecarDBSync("dbsync", network)
+	reconciler := newTestReconciler(t, network, dbSync)
+	storeNetworkStatus(t, ctx, reconciler, network)
+	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Artifacts)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "dbsync", deployment.Spec.Template.Labels[labelDBSync])
+	assert.Equal(t, testDBSyncSidecarRevision, deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno])
+	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "follower-state")
+}
+
 func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentReadyWhenSidecarContainerReady(t *testing.T) {
 	ctx := context.Background()
 	network := readyLocalCardanoNetwork()
@@ -2390,6 +2409,49 @@ func enableFaucet(network *yacdv1alpha1.CardanoNetwork) {
 func readyLocalCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
 	network := localCardanoNetwork("primary-dbsync")
 	network.Status.ObservedGeneration = network.Generation
+	network.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+		NetworkConfigMapName: networkArtifactsConfigMapName(network),
+		SchemaVersion:        networkartifacts.SchemaVersion,
+		DataHash:             testNetworkArtifactsDataHash,
+	}
+	network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
+		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryWorkloadName(network),
+			Port:        network.Spec.Node.Port,
+			URL:         fmt.Sprintf("tcp://%s.%s.svc.cluster.local:%d", primaryWorkloadName(network), network.Namespace, network.Spec.Node.Port),
+		},
+		Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryOgmiosServiceName(network),
+			Port:        defaultOgmiosPort,
+			URL:         fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", primaryOgmiosServiceName(network), network.Namespace, defaultOgmiosPort),
+		},
+	}
+	network.Status.Conditions = []metav1.Condition{{
+		Type:               string(conditionTypeArtifactsReady),
+		Status:             metav1.ConditionTrue,
+		Reason:             string(conditionReasonArtifactsReady),
+		Message:            "Network artifacts are ready",
+		ObservedGeneration: network.Generation,
+		LastTransitionTime: metav1.Now(),
+	}}
+
+	return network
+}
+
+func readyPublicPreviewCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
+	network := publicPreviewCardanoNetwork("public-primary-dbsync")
+	network.Generation = 1
+	networkMagic := int64(2)
+	profile := yacdv1alpha1.PublicNetworkProfilePreview
+	era := yacdv1alpha1.CardanoEraConway
+	network.Status.ObservedGeneration = network.Generation
+	network.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{
+		Mode:               yacdv1alpha1.CardanoNetworkModePublic,
+		Profile:            &profile,
+		NetworkMagic:       &networkMagic,
+		NetworkFingerprint: "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29",
+		Era:                &era,
+	}
 	network.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
 		NetworkConfigMapName: networkArtifactsConfigMapName(network),
 		SchemaVersion:        networkartifacts.SchemaVersion,
