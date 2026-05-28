@@ -363,17 +363,37 @@ refuse silent drift.
 
 These are the main questions surfaced by this draft.
 
-1. Should restore be modeled on each component CR (`CardanoNetwork.restore`,
-   `CardanoDBSync.restore`) or as one developer-facing restore stanza that the
-   CLI projects into multiple CRs?
-2. Should `latest` be accepted in long-lived CRD specs, or should the CLI
-   resolve `latest` into immutable IDs before apply?
-3. What is the minimum node snapshot format for YACD-native local networks:
-   tarred node DB plus generated artifacts, or full PVC-level archive?
-4. Which Secrets belong in a YACD-native snapshot, and which should be
-   regenerated on restore?
-5. Does a restored localnet preserve pool/KES material exactly, or does YACD
-   need a controlled key-rotation/regeneration story?
+### Answered
+
+1. Restore is modeled on each component CR as the authoritative operator
+   contract. `CardanoNetwork.spec.restore` owns primary node restore behavior,
+   while `CardanoDBSync.spec.restore` owns db-sync and managed Postgres restore
+   behavior. The CLI and developer config may expose a single ergonomic restore
+   stanza and compile it into component-specific restore specs.
+2. Moving aliases such as `latest` are accepted only at the CLI and
+   developer-config layer. Before apply, the CLI resolves them to immutable
+   snapshot IDs, artifact URLs, and checksums. Component CR restore specs must
+   be immutable and reproducible; the operator should reject moving aliases in
+   `spec.restore`.
+3. YACD-native node snapshots use a logical archive: the full cardano-node
+   database directory plus generated network artifacts and YACD metadata. The
+   format must preserve exact node DB contents, but it should not default to a
+   full PVC-level archive that captures incidental filesystem or storage-driver
+   details. Full PVC archive can remain an implementation detail or later
+   backup mode.
+4. YACD-native snapshots include only secrets required for chain/database
+   continuity by default, such as localnet block-production material and
+   managed Postgres credentials tied to restored state. Operational tokens and
+   service access secrets are regenerated unless an explicit full-clone option
+   is added later. Snapshot encryption is out of scope for the first pass and
+   should be treated as a future hardening layer.
+5. Restored localnets preserve pool, KES, VRF, opcert, and other
+   block-production material exactly. First-pass restore is checkpoint
+   restoration, not key rotation or chain reconstitution. Controlled key
+   regeneration is deferred to a later, explicit migration feature.
+
+### Pending
+
 6. What accepted-state keys should be stamped for node restore and db-sync
    restore?
 7. Should restore require fresh PVCs only, or should there be an explicit

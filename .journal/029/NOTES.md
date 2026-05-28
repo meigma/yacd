@@ -20,3 +20,17 @@ Design leaning: make a small standardized YACD snapshot manifest the common cont
 
 ## 2026-05-28 07:53 — Snapshot design draft
 Created `.journal/SNAPSHOT_DESIGN.md` as the first proposal draft. The document uses the agreed outline: introduction, manifest specification, YACD-native snapshotting create/consume, public snapshot consumption, and open design questions. It recommends a CLI-produced manifest as the common contract, supports both self-contained YACD bundles and external public artifacts, and keeps the CRD restore surface small.
+
+## 2026-05-28 07:38 — Session refocus: break-the-operator manual pass
+Pivot for the rest of session 029. The user redirected from snapshot design to a focused adversarial manual test pass against the operator on the local Kind/Tilt stack. Scope:
+- Goal: get the operator into "unexpected" states — infinite reconcile loops, changes that silently break the underlying node/db-sync, or unrecoverable error conditions. Explicitly out of scope: legitimate declared error states where the controller correctly says "I am failing because <X>" through events/status conditions.
+- Bonus angle: evaluate whether legitimate error states are sufficiently observable — does status/events let a user reasonably infer what is wrong?
+- Constraint: no CLI in this pass. All probing is via direct CRD edits or Kubernetes API manipulation (kubectl, raw resource mutations, child resource tampering).
+- Approach the user asked for:
+  1. Build a firm operator-architecture mental model.
+  2. Spawn parallel subagents to theorize ways the operator could be broken.
+  3. Synthesize, dedupe, and present a final candidate list for review before turning it into a test plan.
+Cleanup: an erroneously created `.journal/030/` was removed; session 029 stays open and absorbs this work. Erroneous start commit `526aad3` remains in the journal history for accuracy; this NOTES entry records the pivot.
+
+## 2026-05-28 07:38 — Erroneous session 030 cleanup
+Removed `.journal/030/` from disk. The earlier `docs(journal): start session 030` push (`526aad3`) is preserved in history rather than rewritten — the next journal commit records the cleanup and refocus instead.
