@@ -2,9 +2,11 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/devconfig"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/render"
@@ -33,6 +35,7 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 			}
 			timeout := commandContext.viper.GetDuration("timeout")
 			dryRun := commandContext.viper.GetBool("dry-run")
+			allowMainnet := commandContext.viper.GetBool("allow-mainnet")
 			waitReady := commandContext.viper.GetBool("wait")
 			if waitReady && timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0 when --wait is set")
@@ -40,6 +43,9 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 
 			environment, err := devconfig.LoadFile(file)
 			if err != nil {
+				return err
+			}
+			if err := rejectMainnetApplyWithoutAllow(environment.Spec.Network, allowMainnet, dryRun); err != nil {
 				return err
 			}
 
@@ -72,6 +78,9 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 
 			network, err := render.CardanoNetwork(environment, render.Namespace(runtimeConfig.Namespace, environment.Metadata.Namespace, fallbackNamespace))
 			if err != nil {
+				return err
+			}
+			if err := warnMainnetDryRun(commandContext.err, network, allowMainnet, dryRun); err != nil {
 				return err
 			}
 
@@ -118,8 +127,39 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 
 	cmd.Flags().StringP("file", "f", "", "Developer environment file")
 	cmd.Flags().Bool("dry-run", false, "Render the manifest without applying it")
+	cmd.Flags().Bool("allow-mainnet", false, "Allow applying a mainnet CardanoNetwork")
 	cmd.Flags().Bool("wait", false, "Wait for the CardanoNetwork to become ready")
 	cmd.Flags().Duration("timeout", 10*time.Minute, "Maximum time to wait for readiness")
 
 	return cmd
+}
+
+func isMainnetNetwork(network *yacdv1alpha1.CardanoNetwork) bool {
+	return network != nil &&
+		network.Spec.Mode == yacdv1alpha1.CardanoNetworkModePublic &&
+		network.Spec.Public != nil &&
+		network.Spec.Public.Profile == yacdv1alpha1.PublicNetworkProfileMainnet
+}
+
+func isMainnetSpec(spec yacdv1alpha1.CardanoNetworkSpec) bool {
+	return spec.Mode == yacdv1alpha1.CardanoNetworkModePublic &&
+		spec.Public != nil &&
+		spec.Public.Profile == yacdv1alpha1.PublicNetworkProfileMainnet
+}
+
+func rejectMainnetApplyWithoutAllow(spec yacdv1alpha1.CardanoNetworkSpec, allowMainnet bool, dryRun bool) error {
+	if !isMainnetSpec(spec) || allowMainnet || dryRun {
+		return nil
+	}
+	return fmt.Errorf("mainnet deployments require --allow-mainnet because they create large persistent volumes and bootstrap from Mithril")
+}
+
+func warnMainnetDryRun(w io.Writer, network *yacdv1alpha1.CardanoNetwork, allowMainnet bool, dryRun bool) error {
+	if !dryRun || allowMainnet || !isMainnetNetwork(network) {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "Warning: rendering mainnet CardanoNetwork %s/%s without --allow-mainnet; dry run only, no resources applied.\n", network.Namespace, network.Name); err != nil {
+		return fmt.Errorf("write mainnet dry-run warning: %w", err)
+	}
+	return nil
 }

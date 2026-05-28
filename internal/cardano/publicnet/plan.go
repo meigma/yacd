@@ -23,6 +23,10 @@ const (
 
 	operationsBookNodeRelease = "11.0.1"
 	customProfileSource       = "custom"
+
+	defaultMithrilClientImage       = "ghcr.io/input-output-hk/mithril-client:main-2478748"
+	defaultMithrilSnapshot          = "latest"
+	releaseMainnetMithrilAggregator = "https://aggregator.release-mainnet.api.mithril.network/aggregator"
 )
 
 //go:embed profiles/preview/* profiles/preprod/* profiles/mainnet/*
@@ -40,6 +44,11 @@ var requiredProfileFiles = []profileFile{
 var optionalProfileFiles = []profileFile{
 	{artifactKey: networkartifacts.CheckpointsKey, assetPath: "checkpoints.json", connectionKey: "checkpoints"},
 	{artifactKey: networkartifacts.PeerSnapshotKey, assetPath: "peer-snapshot.json", connectionKey: "peerSnapshot"},
+}
+
+var mithrilProfileFiles = []profileFile{
+	{artifactKey: networkartifacts.MithrilGenesisKey, assetPath: "mithril-genesis.vkey", connectionKey: "mithrilGenesisVerificationKey"},
+	{artifactKey: networkartifacts.MithrilAncillaryKey, assetPath: "mithril-ancillary.vkey", connectionKey: "mithrilAncillaryVerificationKey"},
 }
 
 var curatedProfiles = map[string]profileDefinition{
@@ -64,7 +73,12 @@ var curatedProfiles = map[string]profileDefinition{
 		assetDir:              mainnetProfileName,
 		source:                "https://book.play.dev.cardano.org/environments/mainnet/",
 		compatibleNodeRelease: operationsBookNodeRelease,
-		optionalFiles:         optionalProfileFiles,
+		optionalFiles:         append(optionalProfileFiles, mithrilProfileFiles...),
+		mithril: &mithrilDefinition{
+			aggregatorEndpoint:               releaseMainnetMithrilAggregator,
+			genesisVerificationKeyArtifact:   networkartifacts.MithrilGenesisKey,
+			ancillaryVerificationKeyArtifact: networkartifacts.MithrilAncillaryKey,
+		},
 	},
 }
 
@@ -74,6 +88,13 @@ type profileDefinition struct {
 	source                string
 	compatibleNodeRelease string
 	optionalFiles         []profileFile
+	mithril               *mithrilDefinition
+}
+
+type mithrilDefinition struct {
+	aggregatorEndpoint               string
+	genesisVerificationKeyArtifact   string
+	ancillaryVerificationKeyArtifact string
 }
 
 type nodeConfig struct {
@@ -99,8 +120,13 @@ func BuildPlan(spec Spec) (Plan, error) {
 	spec.Profile = profile
 	spec.Paths.ProfileDir = profileDir
 
+	if err := validateBootstrapProfile(profile, spec.Bootstrap); err != nil {
+		return Plan{}, err
+	}
+
 	var artifacts map[string]string
 	var files []profileFile
+	var definition profileDefinition
 	source := customProfileSource
 	compatibleNodeRelease := ""
 	if profile == customProfileName {
@@ -115,7 +141,8 @@ func BuildPlan(spec Spec) (Plan, error) {
 		if spec.Custom != nil {
 			return Plan{}, fmt.Errorf("public configSource is supported only for custom profiles")
 		}
-		definition, ok := curatedProfiles[profile]
+		var ok bool
+		definition, ok = curatedProfiles[profile]
 		if !ok {
 			return Plan{}, fmt.Errorf("public profile %q is not supported", profile)
 		}
@@ -125,6 +152,11 @@ func BuildPlan(spec Spec) (Plan, error) {
 		}
 		source = definition.source
 		compatibleNodeRelease = definition.compatibleNodeRelease
+	}
+
+	mithril, err := buildMithrilPlan(profile, spec.Bootstrap, definition, artifacts)
+	if err != nil {
+		return Plan{}, err
 	}
 
 	networkMagic, err := parseNetworkMagic(profile, artifacts[networkartifacts.ShelleyGenesisKey])
@@ -183,6 +215,7 @@ func BuildPlan(spec Spec) (Plan, error) {
 		Fingerprint:          fingerprint,
 		Manifest:             manifest,
 		Artifacts:            artifacts,
+		Mithril:              mithril,
 	}, nil
 }
 
@@ -208,6 +241,58 @@ func normalizeProfileDir(profileDir string) (string, error) {
 		return "", fmt.Errorf("public profile mount dir must be an absolute path")
 	}
 	return profileDir, nil
+}
+
+func validateBootstrapProfile(profile string, bootstrap *BootstrapSpec) error {
+	hasMithril := bootstrap != nil && bootstrap.Mithril != nil
+	switch profile {
+	case mainnetProfileName:
+		if !hasMithril {
+			return fmt.Errorf("public mainnet profile requires mithril bootstrap")
+		}
+	case previewProfileName, preprodProfileName, customProfileName:
+		if bootstrap != nil {
+			return fmt.Errorf("public bootstrap is supported only for mainnet")
+		}
+	}
+	return nil
+}
+
+func buildMithrilPlan(profile string, bootstrap *BootstrapSpec, definition profileDefinition, artifacts map[string]string) (*MithrilPlan, error) {
+	if profile != mainnetProfileName || bootstrap == nil || bootstrap.Mithril == nil {
+		return nil, nil
+	}
+	if definition.mithril == nil {
+		return nil, fmt.Errorf("public profile %q does not define mithril bootstrap data", profile)
+	}
+
+	image := strings.TrimSpace(bootstrap.Mithril.Image)
+	if image == "" {
+		image = defaultMithrilClientImage
+	}
+	snapshot := strings.TrimSpace(bootstrap.Mithril.Snapshot)
+	if snapshot == "" {
+		snapshot = defaultMithrilSnapshot
+	}
+	genesisKey := strings.TrimSpace(artifacts[definition.mithril.genesisVerificationKeyArtifact])
+	if genesisKey == "" {
+		return nil, fmt.Errorf("public profile %q mithril genesis verification key is missing", profile)
+	}
+	ancillaryKey := strings.TrimSpace(artifacts[definition.mithril.ancillaryVerificationKeyArtifact])
+	if ancillaryKey == "" {
+		return nil, fmt.Errorf("public profile %q mithril ancillary verification key is missing", profile)
+	}
+
+	bootstrap.Mithril.Image = image
+	bootstrap.Mithril.Snapshot = snapshot
+
+	return &MithrilPlan{
+		Image:                    image,
+		Snapshot:                 snapshot,
+		AggregatorEndpoint:       definition.mithril.aggregatorEndpoint,
+		GenesisVerificationKey:   genesisKey,
+		AncillaryVerificationKey: ancillaryKey,
+	}, nil
 }
 
 func loadCuratedArtifacts(definition profileDefinition) (map[string]string, []profileFile, error) {

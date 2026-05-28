@@ -402,6 +402,48 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "public configSource is supported only for custom profiles",
 		},
 		{
+			name: "public mainnet without mithril bootstrap",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfileMainnet,
+				}
+			},
+			wantErr: "public mainnet profile requires spec.public.bootstrap.mithril",
+		},
+		{
+			name: "public preview with bootstrap",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfilePreview,
+					Bootstrap: &yacdv1alpha1.PublicNetworkBootstrapSpec{
+						Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+					},
+				}
+			},
+			wantErr: "public bootstrap is supported only for mainnet",
+		},
+		{
+			name: "public mainnet storage below minimum",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
+				network.Spec.Local = nil
+				network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+					Size: resource.MustParse("299Gi"),
+				}
+				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
+					Profile: yacdv1alpha1.PublicNetworkProfileMainnet,
+					Bootstrap: &yacdv1alpha1.PublicNetworkBootstrapSpec{
+						Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+					},
+				}
+			},
+			wantErr: "public mainnet node storage must be at least 300Gi",
+		},
+		{
 			name: "public faucet",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				*network = *publicPreviewCardanoNetwork("public-faucet")
@@ -895,6 +937,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 		wantRequiresMagic    bool
 		wantFingerprint      string
 		wantMissingArtifacts []string
+		mithrilBootstrap     bool
 	}{
 		{
 			name:              "preview",
@@ -915,6 +958,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			profile:           yacdv1alpha1.PublicNetworkProfileMainnet,
 			wantNetworkMagic:  764824073,
 			wantRequiresMagic: false,
+			mithrilBootstrap:  true,
 		},
 		{
 			name:              "custom",
@@ -934,6 +978,11 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 					ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
 				}
 				builder.publicCustomBundle = tc.customBundle
+			}
+			if tc.mithrilBootstrap {
+				network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
+					Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+				}
 			}
 
 			resources, err := builder.Build(network)
@@ -963,7 +1012,28 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 			assert.Equal(t, resources.NetworkPlan.Fingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
 			assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
-			assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
+			if tc.mithrilBootstrap {
+				require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+				mithril := deployment.Spec.Template.Spec.InitContainers[0]
+				assert.Equal(t, mithrilBootstrapInitContainerName, mithril.Name)
+				assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", mithril.Image)
+				assert.Equal(t, []string{mithrilBootstrapCommand}, mithril.Command)
+				assert.Contains(t, strings.Join(mithril.Args, " "), "mithril-client cardano-db download")
+				assert.Contains(t, strings.Join(mithril.Args, " "), "--include-ancillary")
+				assert.Contains(t, strings.Join(mithril.Args, " "), `--download-dir "${download_dir}"`)
+				assert.Contains(t, strings.Join(mithril.Args, " "), `mv "${candidate_db}" "${target_db}"`)
+				assert.Equal(t, []corev1.VolumeMount{
+					{Name: localnetStateVolumeName, MountPath: "/state"},
+					{Name: mithrilTmpVolumeName, MountPath: "/tmp"},
+				}, mithril.VolumeMounts)
+				mithrilEnv := envMap(mithril)
+				assert.Equal(t, "https://aggregator.release-mainnet.api.mithril.network/aggregator", mithrilEnv[mithrilAggregatorEndpointEnvName])
+				assert.Equal(t, "latest", mithrilEnv[mithrilSnapshotEnvName])
+				assert.NotEmpty(t, mithrilEnv[mithrilGenesisVerificationKeyEnvName])
+				assert.NotEmpty(t, mithrilEnv[mithrilAncillaryVerificationKeyEnvName])
+			} else {
+				assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
+			}
 			require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
 
 			nodeContainer := deployment.Spec.Template.Spec.Containers[0]
@@ -984,6 +1054,11 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 				{Name: nodeIPCVolumeName, MountPath: "/ipc"},
 				{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
 			}, nodeContainer.VolumeMounts)
+			if tc.mithrilBootstrap {
+				assert.Equal(t, defaultMainnetNodeResources(), nodeContainer.Resources)
+			} else {
+				assert.Empty(t, nodeContainer.Resources)
+			}
 
 			ogmiosContainer := deployment.Spec.Template.Spec.Containers[1]
 			assert.Equal(t, ogmiosContainerName, ogmiosContainer.Name)
@@ -999,7 +1074,13 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 				{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
 			}, ogmiosContainer.VolumeMounts)
 
-			require.Len(t, deployment.Spec.Template.Spec.Volumes, 3)
+			if tc.mithrilBootstrap {
+				require.Len(t, deployment.Spec.Template.Spec.Volumes, 4)
+				require.NotNil(t, requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName).EmptyDir)
+			} else {
+				require.Len(t, deployment.Spec.Template.Spec.Volumes, 3)
+				assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName)
+			}
 			publicProfileVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
 			require.NotNil(t, publicProfileVolume.ConfigMap)
 			assert.Equal(t, tc.name+"-network-artifacts", publicProfileVolume.ConfigMap.Name)
@@ -1029,9 +1110,19 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			for _, key := range tc.wantMissingArtifacts {
 				assert.Empty(t, configMap.Data[key], "artifact %s", key)
 			}
+			if tc.mithrilBootstrap {
+				assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilGenesisKey])
+				assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilAncillaryKey])
+			}
 
 			assert.Equal(t, resources.NetworkPlan.Fingerprint, resources.PersistentVolumeClaim.Annotations[networkFingerprintAnno])
 			assert.NotContains(t, resources.PersistentVolumeClaim.Annotations, localnetFingerprintAnno)
+			storage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
+			if tc.mithrilBootstrap {
+				assert.Zero(t, storage.Cmp(resource.MustParse(defaultMainnetNodeStorageSize)))
+			} else {
+				assert.Zero(t, storage.Cmp(resource.MustParse(defaultNodeStorageSize)))
+			}
 		})
 	}
 }

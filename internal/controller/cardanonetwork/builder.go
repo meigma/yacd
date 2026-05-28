@@ -296,6 +296,12 @@ func validateSharedNetworkSpec(network *yacdv1alpha1.CardanoNetwork) error {
 	if network.Spec.Node.Port < 1 || network.Spec.Node.Port > 65535 {
 		return unsupportedSpec("node port must be between 1 and 65535")
 	}
+	if isPublicMainnet(network) && network.Spec.Node.Storage != nil {
+		minimum := resourceQuantity(minimumMainnetNodeStorageSize)
+		if network.Spec.Node.Storage.Size.Cmp(*minimum) < 0 {
+			return unsupportedSpec("public mainnet node storage must be at least %s", minimumMainnetNodeStorageSize)
+		}
+	}
 
 	return nil
 }
@@ -356,15 +362,28 @@ func (b primaryWorkloadBuilder) publicNetworkSpec(network *yacdv1alpha1.CardanoN
 	public := network.Spec.Public
 	switch public.Profile {
 	case yacdv1alpha1.PublicNetworkProfileCustom:
+		if public.Bootstrap != nil {
+			return publicnet.Spec{}, unsupportedSpec("public bootstrap is supported only for mainnet")
+		}
 		if public.ConfigSource == nil {
 			return publicnet.Spec{}, unsupportedSpec("public custom profile configSource is required")
 		}
 		if b.publicCustomBundle == nil {
 			return publicnet.Spec{}, unsupportedSpec("public custom profile source has not been resolved")
 		}
-	case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileMainnet:
+	case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod:
+		if public.Bootstrap != nil {
+			return publicnet.Spec{}, unsupportedSpec("public bootstrap is supported only for mainnet")
+		}
 		if public.ConfigSource != nil {
 			return publicnet.Spec{}, unsupportedSpec("public configSource is supported only for custom profiles")
+		}
+	case yacdv1alpha1.PublicNetworkProfileMainnet:
+		if public.ConfigSource != nil {
+			return publicnet.Spec{}, unsupportedSpec("public configSource is supported only for custom profiles")
+		}
+		if public.Bootstrap == nil || public.Bootstrap.Mithril == nil {
+			return publicnet.Spec{}, unsupportedSpec("public mainnet profile requires spec.public.bootstrap.mithril")
 		}
 	default:
 		if public.Profile == "" {
@@ -372,13 +391,34 @@ func (b primaryWorkloadBuilder) publicNetworkSpec(network *yacdv1alpha1.CardanoN
 		}
 	}
 
+	bootstrap := publicBootstrapSpec(public)
 	return publicnet.Spec{
-		Profile: string(public.Profile),
-		Custom:  b.publicCustomBundle,
+		Profile:   string(public.Profile),
+		Custom:    b.publicCustomBundle,
+		Bootstrap: bootstrap,
 		Paths: publicnet.Paths{
 			ProfileDir: publicProfileMountDir,
 		},
 	}, nil
+}
+
+func publicBootstrapSpec(public *yacdv1alpha1.PublicNetworkSpec) *publicnet.BootstrapSpec {
+	if public == nil || public.Bootstrap == nil || public.Bootstrap.Mithril == nil {
+		return nil
+	}
+	return &publicnet.BootstrapSpec{
+		Mithril: &publicnet.MithrilBootstrapSpec{
+			Image:    public.Bootstrap.Mithril.Image,
+			Snapshot: public.Bootstrap.Mithril.Snapshot,
+		},
+	}
+}
+
+func isPublicMainnet(network *yacdv1alpha1.CardanoNetwork) bool {
+	return network != nil &&
+		network.Spec.Mode == yacdv1alpha1.CardanoNetworkModePublic &&
+		network.Spec.Public != nil &&
+		network.Spec.Public.Profile == yacdv1alpha1.PublicNetworkProfileMainnet
 }
 
 func kupoExplicitlyEnabled(network *yacdv1alpha1.CardanoNetwork) bool {

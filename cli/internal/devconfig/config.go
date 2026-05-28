@@ -142,11 +142,24 @@ func (e Environment) Validate() error {
 		}
 		public := e.Spec.Network.Public
 		switch public.Profile {
-		case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileMainnet:
+		case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod:
+			if public.Bootstrap != nil {
+				return fmt.Errorf("spec.network.public.bootstrap is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
+			}
 			if public.ConfigSource != nil {
 				return fmt.Errorf("spec.network.public.configSource is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
 			}
+		case yacdv1alpha1.PublicNetworkProfileMainnet:
+			if public.ConfigSource != nil {
+				return fmt.Errorf("spec.network.public.configSource is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
+			}
+			if public.Bootstrap == nil || public.Bootstrap.Mithril == nil {
+				return fmt.Errorf("spec.network.public.bootstrap.mithril is required when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
+			}
 		case yacdv1alpha1.PublicNetworkProfileCustom:
+			if public.Bootstrap != nil {
+				return fmt.Errorf("spec.network.public.bootstrap is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
+			}
 			if public.ConfigSource == nil {
 				return fmt.Errorf("spec.network.public.configSource is required when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
 			}

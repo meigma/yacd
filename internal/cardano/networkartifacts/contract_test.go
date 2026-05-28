@@ -26,6 +26,8 @@ func TestKeys(t *testing.T) {
 		PublicProfileManifestKey,
 		CheckpointsKey,
 		PeerSnapshotKey,
+		MithrilGenesisKey,
+		MithrilAncillaryKey,
 	}, OptionalKeys())
 }
 

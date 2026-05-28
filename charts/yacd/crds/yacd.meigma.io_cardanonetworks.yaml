@@ -588,6 +588,30 @@ spec:
                   network profile. It is required when mode is public and forbidden
                   otherwise.
                 properties:
+                  bootstrap:
+                    description: |-
+                      bootstrap configures explicit public-network bootstrap behavior. This is
+                      currently required only for mainnet, where the node database is seeded
+                      from Mithril instead of syncing from genesis.
+                    properties:
+                      mithril:
+                        description: mithril enables Mithril Cardano database bootstrap.
+                        properties:
+                          image:
+                            default: ghcr.io/input-output-hk/mithril-client:main-2478748
+                            description: image is the Mithril client image used by
+                              the bootstrap init container.
+                            minLength: 1
+                            type: string
+                          snapshot:
+                            default: latest
+                            description: |-
+                              snapshot selects the Mithril Cardano database snapshot digest to
+                              download. The value "latest" selects the latest available snapshot.
+                            minLength: 1
+                            type: string
+                        type: object
+                    type: object
                   configSource:
                     description: |-
                       configSource supplies network config and genesis files for custom public
@@ -644,6 +668,10 @@ spec:
                 x-kubernetes-validations:
                 - message: configSource is required only when public.profile is custom
                   rule: 'self.profile == ''custom'' ? has(self.configSource) : !has(self.configSource)'
+                - message: bootstrap.mithril is required only when public.profile
+                    is mainnet
+                  rule: 'self.profile == ''mainnet'' ? has(self.bootstrap) && has(self.bootstrap.mithril)
+                    : !has(self.bootstrap)'
             required:
             - mode
             - node

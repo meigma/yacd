@@ -12,6 +12,22 @@ const (
 	// state volume when the CardanoNetwork spec does not override it.
 	defaultNodeStorageSize = "10Gi"
 
+	// defaultMainnetNodeStorageSize is the requested PVC size for a mainnet
+	// primary node when storage is omitted.
+	defaultMainnetNodeStorageSize = "500Gi"
+
+	// minimumMainnetNodeStorageSize is the smallest explicit mainnet primary
+	// node PVC request this slice accepts.
+	minimumMainnetNodeStorageSize = "300Gi"
+
+	// defaultMainnetNodeCPURequest is the cardano-node CPU request used for a
+	// mainnet primary node when resources are omitted.
+	defaultMainnetNodeCPURequest = "2"
+
+	// defaultMainnetNodeMemoryRequest is the cardano-node memory request used
+	// for a mainnet primary node when resources are omitted.
+	defaultMainnetNodeMemoryRequest = "24Gi"
+
 	// localnetStateDir is the durable state mount root inside the primary
 	// workload Pod. cardano-testnet, cardano-node, ogmios, and the faucet share
 	// this prefix.
@@ -112,6 +128,15 @@ func defaultKupoResources() corev1.ResourceRequirements {
 		},
 		Limits: corev1.ResourceList{
 			corev1.ResourceEphemeralStorage: resource.MustParse(defaultKupoStorageLimit),
+		},
+	}
+}
+
+func defaultMainnetNodeResources() corev1.ResourceRequirements {
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    resource.MustParse(defaultMainnetNodeCPURequest),
+			corev1.ResourceMemory: resource.MustParse(defaultMainnetNodeMemoryRequest),
 		},
 	}
 }

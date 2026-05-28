@@ -261,6 +261,7 @@ type ProtocolVersionSpec struct {
 
 // PublicNetworkSpec configures a node that joins a public or supplied network profile.
 // +kubebuilder:validation:XValidation:rule="self.profile == 'custom' ? has(self.configSource) : !has(self.configSource)",message="configSource is required only when public.profile is custom"
+// +kubebuilder:validation:XValidation:rule="self.profile == 'mainnet' ? has(self.bootstrap) && has(self.bootstrap.mithril) : !has(self.bootstrap)",message="bootstrap.mithril is required only when public.profile is mainnet"
 type PublicNetworkSpec struct {
 	// profile selects the public network profile.
 	// +required
@@ -270,6 +271,36 @@ type PublicNetworkSpec struct {
 	// profiles.
 	// +optional
 	ConfigSource *NetworkConfigSource `json:"configSource,omitempty"`
+
+	// bootstrap configures explicit public-network bootstrap behavior. This is
+	// currently required only for mainnet, where the node database is seeded
+	// from Mithril instead of syncing from genesis.
+	// +optional
+	Bootstrap *PublicNetworkBootstrapSpec `json:"bootstrap,omitempty"`
+}
+
+// PublicNetworkBootstrapSpec configures bootstrap support for public network
+// profiles that are too expensive to sync from genesis.
+type PublicNetworkBootstrapSpec struct {
+	// mithril enables Mithril Cardano database bootstrap.
+	// +optional
+	Mithril *MithrilBootstrapSpec `json:"mithril,omitempty"`
+}
+
+// MithrilBootstrapSpec configures Mithril Cardano database bootstrap.
+type MithrilBootstrapSpec struct {
+	// image is the Mithril client image used by the bootstrap init container.
+	// +kubebuilder:default="ghcr.io/input-output-hk/mithril-client:main-2478748"
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// snapshot selects the Mithril Cardano database snapshot digest to
+	// download. The value "latest" selects the latest available snapshot.
+	// +kubebuilder:default="latest"
+	// +kubebuilder:validation:MinLength=1
+	// +optional
+	Snapshot string `json:"snapshot,omitempty"`
 }
 
 // NetworkConfigSource identifies the in-cluster object that supplies custom

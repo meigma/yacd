@@ -141,6 +141,8 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 
 	if network.Spec.Node.Resources != nil {
 		container.Resources = *network.Spec.Node.Resources.DeepCopy()
+	} else if isPublicMainnet(network) {
+		container.Resources = defaultMainnetNodeResources()
 	}
 	if plan.isPublic() {
 		container.WorkingDir = plan.ProfileDir

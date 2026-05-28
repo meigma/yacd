@@ -9,6 +9,9 @@ type Spec struct {
 	// is "custom". Curated profiles must leave it nil.
 	Custom *CustomBundle
 
+	// Bootstrap carries explicit public-network bootstrap settings.
+	Bootstrap *BootstrapSpec
+
 	// Paths identifies the container filesystem locations used by the plan.
 	Paths Paths
 }
@@ -19,6 +22,21 @@ type Spec struct {
 type CustomBundle struct {
 	// Files maps custom profile source keys to UTF-8 file content.
 	Files map[string]string
+}
+
+// BootstrapSpec describes enabled public-network bootstrap mechanisms.
+type BootstrapSpec struct {
+	// Mithril enables Mithril Cardano database bootstrap.
+	Mithril *MithrilBootstrapSpec
+}
+
+// MithrilBootstrapSpec configures Mithril Cardano database bootstrap.
+type MithrilBootstrapSpec struct {
+	// Image is the Mithril client image used by the bootstrap init container.
+	Image string
+
+	// Snapshot is the Mithril Cardano database snapshot digest to download.
+	Snapshot string
 }
 
 // Paths identifies the mounted public profile directory.
@@ -53,6 +71,9 @@ type Plan struct {
 
 	// Artifacts maps network-artifact ConfigMap keys to UTF-8 file content.
 	Artifacts map[string]string
+
+	// Mithril describes the bootstrap init container inputs when enabled.
+	Mithril *MithrilPlan
 }
 
 // Layout describes stable paths used by the mounted public profile.
@@ -65,6 +86,25 @@ type Layout struct {
 
 	// TopologyFile is the mounted cardano-node topology file.
 	TopologyFile string
+}
+
+// MithrilPlan is the normalized Mithril bootstrap runtime configuration.
+type MithrilPlan struct {
+	// Image is the Mithril client image used by the bootstrap init container.
+	Image string
+
+	// Snapshot is the Mithril Cardano database snapshot digest to download.
+	Snapshot string
+
+	// AggregatorEndpoint is the Mithril aggregator API endpoint.
+	AggregatorEndpoint string
+
+	// GenesisVerificationKey is the Mithril genesis verification key.
+	GenesisVerificationKey string
+
+	// AncillaryVerificationKey verifies the ancillary Cardano database files
+	// downloaded with --include-ancillary.
+	AncillaryVerificationKey string
 }
 
 // Fingerprint identifies a normalized public profile.

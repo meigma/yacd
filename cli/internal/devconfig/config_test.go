@@ -72,6 +72,24 @@ spec:
           name: custom-profile
 `
 
+const validPublicMainnetConfig = `
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: mainnet
+  namespace: yacd-dev
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+    public:
+      profile: mainnet
+      bootstrap:
+        mithril: {}
+`
+
 func TestLoadReadsEnvironmentConfig(t *testing.T) {
 	t.Parallel()
 
@@ -98,7 +116,7 @@ func TestLoadReadsPublicEnvironmentConfig(t *testing.T) {
 		},
 		{
 			name:        "mainnet",
-			config:      strings.Replace(validPublicPreviewConfig, "name: preview", "name: mainnet", 1),
+			config:      validPublicMainnetConfig,
 			wantProfile: "mainnet",
 		},
 		{name: "custom", config: validPublicCustomConfig, wantProfile: "custom"},
@@ -193,6 +211,19 @@ func TestLoadRejectsUnsupportedPublicConfigs(t *testing.T) {
 			name:    "custom without config source",
 			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: custom", 1),
 			wantErr: "spec.network.public.configSource",
+		},
+		{
+			name:    "mainnet without bootstrap",
+			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: mainnet", 1),
+			wantErr: "spec.network.public.bootstrap.mithril",
+		},
+		{
+			name: "preview with bootstrap",
+			config: strings.Replace(validPublicPreviewConfig, "      profile: preview\n", `      profile: preview
+      bootstrap:
+        mithril: {}
+`, 1),
+			wantErr: "spec.network.public.bootstrap",
 		},
 		{
 			name: "curated config source",

@@ -20,6 +20,8 @@ const (
 	PublicProfileManifestKey = "yacd-public-profile.json"
 	CheckpointsKey           = "checkpoints.json"
 	PeerSnapshotKey          = "peer-snapshot.json"
+	MithrilGenesisKey        = "mithril-genesis.vkey"
+	MithrilAncillaryKey      = "mithril-ancillary.vkey"
 	ConnectionKey            = "connection.json"
 )
 
@@ -39,6 +41,8 @@ var optionalKeys = []string{
 	PublicProfileManifestKey,
 	CheckpointsKey,
 	PeerSnapshotKey,
+	MithrilGenesisKey,
+	MithrilAncillaryKey,
 }
 
 // RequiredKeys returns the required artifact data keys.

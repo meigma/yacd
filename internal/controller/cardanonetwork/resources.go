@@ -80,6 +80,9 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if initContainer != nil {
 		initContainers = append(initContainers, *initContainer)
 	}
+	if mithril := plan.mithrilBootstrap(); mithril != nil {
+		initContainers = append(initContainers, b.mithrilBootstrapInitContainer(*mithril))
+	}
 	if b.dbSyncAttachment != nil {
 		initContainers = append(initContainers, b.dbSyncAttachment.InitContainer)
 	}
@@ -145,6 +148,14 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	}
 	if b.dbSyncAttachment != nil {
 		volumes = append(volumes, b.dbSyncAttachment.Volumes...)
+	}
+	if plan.mithrilBootstrap() != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name: mithrilTmpVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
 	}
 	if plan.isPublic() {
 		volumes = append(volumes, publicProfileVolume(network))
@@ -395,6 +406,9 @@ func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan
 // unspecified when the spec is silent.
 func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.CardanoNetwork) corev1.PersistentVolumeClaimSpec {
 	storageSize := resource.MustParse(defaultNodeStorageSize)
+	if isPublicMainnet(network) {
+		storageSize = resource.MustParse(defaultMainnetNodeStorageSize)
+	}
 	var storageClassName *string
 	if network.Spec.Node.Storage != nil {
 		storageSize = network.Spec.Node.Storage.Size

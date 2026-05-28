@@ -221,6 +221,39 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 	assert.Nil(t, current.Status.Faucet)
 }
 
+func TestCardanoNetworkReconcilerReconcileCreatesPublicMainnetWorkload(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("mainnet-workload", yacdv1alpha1.PublicNetworkProfileMainnet)
+	network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
+		Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, mithrilBootstrapInitContainerName, deployment.Spec.Template.Spec.InitContainers[0].Name)
+	assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", deployment.Spec.Template.Spec.InitContainers[0].Image)
+	require.NotNil(t, requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName).EmptyDir)
+	nodeContainer := requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, cardanoNodeContainerName)
+	assert.Equal(t, defaultMainnetNodeResources(), nodeContainer.Resources)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse(defaultMainnetNodeStorageSize)))
+
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilGenesisKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilAncillaryKey])
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotNil(t, current.Status.Network.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileMainnet, *current.Status.Network.Profile)
+}
+
 func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkload(t *testing.T) {
 	ctx := context.Background()
 	network := publicCardanoNetwork("custom-workload", yacdv1alpha1.PublicNetworkProfileCustom)
@@ -2128,6 +2161,23 @@ func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
 			network: func() *yacdv1alpha1.CardanoNetwork {
 				network := publicPreviewCardanoNetwork("unsupported-public-faucet")
 				enableFaucet(network)
+				return network
+			}(),
+		},
+		{
+			name:    "public mainnet without mithril bootstrap",
+			network: publicCardanoNetwork("unsupported-public-mainnet", yacdv1alpha1.PublicNetworkProfileMainnet),
+		},
+		{
+			name: "public mainnet storage below minimum",
+			network: func() *yacdv1alpha1.CardanoNetwork {
+				network := publicCardanoNetwork("unsupported-mainnet-storage", yacdv1alpha1.PublicNetworkProfileMainnet)
+				network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
+					Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+				}
+				network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+					Size: resource.MustParse("299Gi"),
+				}
 				return network
 			}(),
 		},

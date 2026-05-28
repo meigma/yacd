@@ -903,7 +903,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertDegradedMessage(t, ctx, reconciler, dbSync, "public mainnet CardanoDBSync is not supported until mainnet sizing and bootstrap support are implemented")
+	assertDegradedMessage(t, ctx, reconciler, dbSync, "public mainnet CardanoDBSync is not supported until a later follower-node Mithril bootstrap or public primarySidecar slice is implemented")
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{})
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})

@@ -18,7 +18,7 @@ func validatePublicDBSyncSupport(
 		return unsupportedSpec("public CardanoDBSync is supported only with dedicatedFollower placement")
 	}
 	if connection.Profile == yacdv1alpha1.PublicNetworkProfileMainnet {
-		return unsupportedSpec("public mainnet CardanoDBSync is not supported until mainnet sizing and bootstrap support are implemented")
+		return unsupportedSpec("public mainnet CardanoDBSync is not supported until a later follower-node Mithril bootstrap or public primarySidecar slice is implemented")
 	}
 
 	return nil

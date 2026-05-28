@@ -40,6 +40,13 @@ func (p primaryNetworkPlan) isPublic() bool {
 	return p.Mode == yacdv1alpha1.CardanoNetworkModePublic
 }
 
+func (p primaryNetworkPlan) mithrilBootstrap() *publicnet.MithrilPlan {
+	if p.Public == nil {
+		return nil
+	}
+	return p.Public.Mithril
+}
+
 func (p primaryNetworkPlan) localnetFingerprint() string {
 	if p.Localnet == nil {
 		return ""

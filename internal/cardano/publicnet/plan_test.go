@@ -2,6 +2,7 @@ package publicnet
 
 import (
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
@@ -21,6 +22,7 @@ func TestBuildPlanCuratedProfiles(t *testing.T) {
 		wantOptionalArtifacts []string
 		wantMissingArtifacts  []string
 		wantPinnedFingerprint string
+		bootstrap             *BootstrapSpec
 	}{
 		{
 			profile:               previewProfileName,
@@ -56,7 +58,10 @@ func TestBuildPlanCuratedProfiles(t *testing.T) {
 			wantOptionalArtifacts: []string{
 				networkartifacts.CheckpointsKey,
 				networkartifacts.PeerSnapshotKey,
+				networkartifacts.MithrilGenesisKey,
+				networkartifacts.MithrilAncillaryKey,
 			},
+			bootstrap: &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}},
 		},
 	}
 
@@ -65,8 +70,9 @@ func TestBuildPlanCuratedProfiles(t *testing.T) {
 			t.Parallel()
 
 			plan, err := BuildPlan(Spec{
-				Profile: tc.profile,
-				Paths:   Paths{ProfileDir: "/profile"},
+				Profile:   tc.profile,
+				Bootstrap: tc.bootstrap,
+				Paths:     Paths{ProfileDir: "/profile"},
 			})
 			require.NoError(t, err)
 
@@ -102,6 +108,16 @@ func TestBuildPlanCuratedProfiles(t *testing.T) {
 			for _, key := range tc.wantMissingArtifacts {
 				assert.Empty(t, plan.Artifacts[key], "artifact %s", key)
 			}
+			if tc.profile == mainnetProfileName {
+				require.NotNil(t, plan.Mithril)
+				assert.Equal(t, defaultMithrilClientImage, plan.Mithril.Image)
+				assert.Equal(t, defaultMithrilSnapshot, plan.Mithril.Snapshot)
+				assert.Equal(t, releaseMainnetMithrilAggregator, plan.Mithril.AggregatorEndpoint)
+				assert.Equal(t, strings.TrimSpace(plan.Artifacts[networkartifacts.MithrilGenesisKey]), plan.Mithril.GenesisVerificationKey)
+				assert.Equal(t, strings.TrimSpace(plan.Artifacts[networkartifacts.MithrilAncillaryKey]), plan.Mithril.AncillaryVerificationKey)
+			} else {
+				assert.Nil(t, plan.Mithril)
+			}
 		})
 	}
 }
@@ -113,9 +129,14 @@ func TestBuildPlanFingerprintIsStableAcrossMountDirs(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			t.Parallel()
 
-			first, err := BuildPlan(Spec{Profile: profile, Paths: Paths{ProfileDir: "/profile"}})
+			spec := Spec{Profile: profile, Paths: Paths{ProfileDir: "/profile"}}
+			if profile == mainnetProfileName {
+				spec.Bootstrap = &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}}
+			}
+			first, err := BuildPlan(spec)
 			require.NoError(t, err)
-			second, err := BuildPlan(Spec{Profile: profile, Paths: Paths{ProfileDir: "/other"}})
+			spec.Paths.ProfileDir = "/other"
+			second, err := BuildPlan(spec)
 			require.NoError(t, err)
 
 			assert.Equal(t, first.Fingerprint, second.Fingerprint)
@@ -145,6 +166,25 @@ func TestBuildPlanCustomProfile(t *testing.T) {
 	assert.NotEmpty(t, plan.Artifacts[networkartifacts.PrimaryTopologyKey])
 	assert.NotEmpty(t, plan.Artifacts[networkartifacts.CheckpointsKey])
 	assert.NotEmpty(t, plan.Artifacts[networkartifacts.PeerSnapshotKey])
+}
+
+func TestBuildPlanNormalizesMainnetMithrilBootstrap(t *testing.T) {
+	t.Parallel()
+
+	plan, err := BuildPlan(Spec{
+		Profile: mainnetProfileName,
+		Bootstrap: &BootstrapSpec{
+			Mithril: &MithrilBootstrapSpec{
+				Image:    "example.com/mithril-client:test",
+				Snapshot: "abcdef",
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, plan.Mithril)
+	assert.Equal(t, "example.com/mithril-client:test", plan.Mithril.Image)
+	assert.Equal(t, "abcdef", plan.Mithril.Snapshot)
 }
 
 func TestBuildPlanRejectsUnsupportedProfiles(t *testing.T) {
@@ -177,6 +217,36 @@ func TestBuildPlanRejectsUnsupportedProfiles(t *testing.T) {
 			name:    "custom without bundle",
 			spec:    Spec{Profile: customProfileName},
 			wantErr: "public custom profile requires configSource files",
+		},
+		{
+			name:    "mainnet without mithril bootstrap",
+			spec:    Spec{Profile: mainnetProfileName},
+			wantErr: "public mainnet profile requires mithril bootstrap",
+		},
+		{
+			name: "preview with mithril bootstrap",
+			spec: Spec{
+				Profile:   previewProfileName,
+				Bootstrap: &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}},
+			},
+			wantErr: "public bootstrap is supported only for mainnet",
+		},
+		{
+			name: "preprod with mithril bootstrap",
+			spec: Spec{
+				Profile:   preprodProfileName,
+				Bootstrap: &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}},
+			},
+			wantErr: "public bootstrap is supported only for mainnet",
+		},
+		{
+			name: "custom with mithril bootstrap",
+			spec: Spec{
+				Profile:   customProfileName,
+				Custom:    customPreviewBundle(t),
+				Bootstrap: &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}},
+			},
+			wantErr: "public bootstrap is supported only for mainnet",
 		},
 		{
 			name: "custom missing required file",
