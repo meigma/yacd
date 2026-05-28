@@ -73,6 +73,12 @@
   later `primarySidecar` <-> `dedicatedFollower` changes are rejected with
   `UnsupportedDatabaseIdentityChange`; the old pod-drain handoff guards remain
   to prevent duplicate processes during pre-acceptance and cleanup paths.
+- Public `CardanoDBSync` currently supports only `dedicatedFollower` for
+  preview, preprod, and custom public profiles. Public mainnet db-sync remains
+  rejected until a later follower-node Mithril bootstrap or public
+  `primarySidecar` slice. Be precise in future notes: `primarySidecar` already
+  exists for local networks; what is missing is public-profile enablement,
+  artifact/socket validation, and combined resource sizing.
 - `CardanoNetwork` publishes `DBSyncAttachmentReady` only to explain primary Pod
   impact from an attached/requested db-sync sidecar. Detailed DB Sync health
   remains on `CardanoDBSync`. Shared primary Pod names, selector labels, port
@@ -97,6 +103,9 @@
   rendered manifest without applying, `--wait` polls readiness, and `yacd info
   NAME --json` returns a command-owned DTO with status, network identity, and
   node/Ogmios endpoints.
+- `yacd deploy` rejects real applies of developer configs with
+  `spec.network.public.profile: mainnet` unless `--allow-mainnet` is supplied.
+  `--dry-run` may render mainnet without the flag, but prints a warning.
 - The phase-4 developer config is
   `apiVersion: yacd.meigma.io/devconfig/v1alpha1`, `kind: Environment`, with
   `metadata.name`, optional `metadata.namespace`, and `spec.network` currently
@@ -113,11 +122,20 @@
   uses `spec.mode: local|public`; public networks use `profile:
   preprod|preview|mainnet|custom`, and custom public profile data is limited to
   same-namespace ConfigMap/Secret refs through `corev1.LocalObjectReference`.
-- The first runtime path is local-mode only. `primaryWorkloadBuilder` maps
-  network magic, pool count, slot/epoch timing, and node version into
-  `internal/cardano/localnet.Spec`; it rejects public mode and unsupported local
-  genesis/era/pool-default inputs until later slices implement those contracts.
-  This phase supports exactly one pool/primary node.
+- Local-mode `primaryWorkloadBuilder` maps network magic, pool count,
+  slot/epoch timing, and node version into `internal/cardano/localnet.Spec`.
+  Public-mode `primaryWorkloadBuilder` resolves `internal/cardano/publicnet`
+  profiles and renders a passive public node plus Ogmios, with public Kupo and
+  faucet still rejected. Curated public profiles are embedded for preview,
+  preprod, and mainnet; custom profiles come from same-namespace ConfigMap or
+  Secret bundles.
+- Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
+  slice. The default Mithril client image is
+  `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot
+  is `latest`, and the init container uses the release-mainnet aggregator plus
+  vendored verification keys. Mainnet primary PVC storage defaults to `500Gi`,
+  explicit mainnet storage below `300Gi` is rejected, and omitted primary node
+  resource requests default to `cpu: 2` and `memory: 24Gi`.
 - `internal/cardano/localnet` is the pure Go, Kubernetes-free boundary for
   `cardano-testnet create-env` inputs. It returns a deterministic invocation,
   expected output layout, fingerprint, and JSON-serializable manifest for later
