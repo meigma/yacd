@@ -331,3 +331,202 @@ Two ways to address this if you ever want to:
 Not promoting this to a TEST_REPORT.md section yet because it's a UX/docs pattern across many tests rather than a single concrete failure. If you want it formalized as an entry, I can add it as a "Cross-cutting findings" section at the bottom of TEST_REPORT.md.
 
 Pause for user review before starting Category D (Owned-child deletion & ownership leaks: D1 faucet auth Secret deletion, D2 PVC stuck Terminating via foreign finalizer, D3 owner-reference strip, D4 artifact publisher RBAC deletion, D5 foreign-owned same-name child, D6 managed Postgres auth Secret delete, D7 no-finalizer cascade data loss). Dev stack left running.
+
+## 2026-05-28 12:50 — D1 BUG-A + BUG-B + UX-GAP (high): faucet auth Secret deletion produces lying status + silent token invalidation
+Adversarial test D1 from the synthesized list: delete the faucet auth Secret while the faucet is enabled and Ready, observe CR conditions during the 10-min repair window, then probe the repair-time token-rotation behavior via manager restart.
+
+Setup: local CardanoNetwork `d1-net` with ogmios + kupo + faucet enabled. FaucetReady=True reached in ~20s. Baseline token captured.
+
+**D1a — Secret deletion, 90s observation:**
+- Secret stayed deleted for the full 90s window (no Secret watch; 10-min requeue not yet fired).
+- Pod's faucet container `state=running` with `startedAt` unchanged across all 13 samples. **The kubelet's already-mounted projected volume keeps serving the cached Secret file even after the API Secret is deleted, and the faucet binary holds the token in memory from container start. No restart, no CreateContainerConfigError, no MountVolume.SetupFailed.**
+- CR conditions stayed `FaucetReady=True, Ready=True` for the full 90s. Lying-status condition (verbatim): *"Faucet sidecar is available through its Service"*.
+- Time-to-honest-status: NEVER within 90s. Worst case is `faucetSecretRepairRequeueAfter = 10*time.Minute`.
+
+**D1b — Recovery via manager restart:**
+- New manager pod Ready in 11s.
+- Secret recreated within 0s of manager Ready (manager-startup reconcile is the practical fast-recovery path).
+- FaucetReady "already True" — the lying status never flipped to False, so recovery is invisible at the condition level. The CR cannot distinguish "broken and we fixed it" from "never broke."
+- **Pod restartCount=0. Same ReplicaSet, same Pod, same `startedAt`. The faucet binary still holds the original token in memory.**
+
+**D1c — Token rotation byte-comparison:**
+- Baseline token sha256: `57fa6745bf37446dbe5ffee97c9e2d978ad924422b5ac25307fcdb0be08bc0d9`
+- Regenerated token sha256: `230e0601400ae6568201d867c6d334501cd0281dc44da0bfdf7cc9647ca1bc91`
+- **Token rotated.** `createFaucetAuthSecretWithToken` generates a fresh random token on the not-found branch — no migration, no preservation, no out-of-band store. The TECH_NOTES prediction is confirmed: "silently invalidates any previously cached topup credentials."
+
+The combined failure mode: API server holds token B, running faucet pod still authenticates against token A in memory, any user holding A is silently broken. A future pod roll (node reboot, an unrelated CR spec change that bumps pod-template-hash, image upgrade, etc.) would finally swap the running token to B — at that future point, ALL pre-deletion users get auth failures with no operator-side signal that token continuity was broken in the past. The CR is `Ready=True` throughout the entire history.
+
+Severity high because (a) faucet token is the only secret control gate on the only mutating endpoint YACD currently exposes (UTxO topup), (b) silent invalidation cannot be observed from CR status, (c) recovery requires both Secret repair AND pod roll AND user re-fetch of the new token, but the operator only does the first.
+
+Code references the agent identified:
+- `internal/controller/cardanonetwork/controller.go` — `faucetSecretRepairRequeueAfter = 10 * time.Minute`
+- `internal/controller/cardanonetwork/faucet_auth.go` — `createFaucetAuthSecretWithToken`
+- The controller HAS an honest message ready (`"Faucet auth Secret is missing"` reason `PrimaryWorkloadMissing`) — it just never publishes it because the gating path is the live-read Secret check inside Reconcile, and Reconcile doesn't run during the 10-min gap.
+
+Three fixes worth considering, in increasing surgery:
+1. **Roll the Deployment whenever the faucet auth Secret is repaired** (smallest surgery, addresses the runtime-vs-API divergence). Stamp the auth Secret resourceVersion onto the pod-template annotation; whenever the controller creates a new auth Secret, the resourceVersion changes and the Deployment rolls, swapping the running faucet's in-memory token to the new one in seconds. This eliminates the silent A-vs-B divergence.
+2. **Watch faucet auth Secrets via labelled selector** to shrink the lying-status window from 10 minutes to seconds. The TECH_NOTES rationale for not watching ("avoiding list RBAC") could be addressed with a label-selector watch on `app.kubernetes.io/name=cardano-network-faucet-auth` or similar that doesn't require full Secret list/watch in the namespace.
+3. **Preserve the previous token bytes on repair** (heaviest, also out of scope for current architecture). Requires either keeping a controller-local LRU keyed by CR UID, an out-of-band store (k8s Secret in operator's own namespace), or a finalizer-based copy. Mostly addresses the historic-user-token-still-valid case but adds complexity.
+
+Option (1) is the cleanest end-to-end fix: it makes the runtime token always match the API Secret, which makes the controller's existing honest-message path correct again (any cached user token is invalid as soon as the operator repairs — the user sees auth failure at HTTP layer, not silently-broken-then-eventually-broken). Pair with (2) to shrink the gap to seconds.
+
+Evidence under `.run/break-pass/d1/`. Namespace cleanly torn down.
+
+## 2026-05-28 13:00 — D2 BUG-A + BUG-B (high): PVC stuck Terminating + silent localnet data loss on recovery
+Adversarial test D2 from the synthesized list: add a foreign finalizer to the primary node-state PVC, delete it, observe the stuck-Terminating window, then remove the foreign finalizer and observe the recovery.
+
+Setup: local CardanoNetwork `d2-net` (Ready in 21s). PVC `d2-net-node-state` with baseline localnet-fingerprint annotation.
+
+**D2a — PVC stuck Terminating (66s observation):**
+- PVC `metadata.deletionTimestamp` present for full window; finalizers `["test.example.io/never-removed", "kubernetes.io/pvc-protection"]`. Live Pod stays Running (PV still mounted, pvc-protection finalizer blocks the volume detach).
+- CR conditions: **no transition.** Ready=True, Degraded=False, NodeReady=True throughout. The CR cheerfully reports a fully healthy primary while the underlying PVC is mid-deletion.
+- Operator log: ZERO errors. The reconciler reports `persistentVolumeClaimOperation:"unchanged"` because `ApplyOwnedObject` (`internal/ctrlkit/apply/apply.go`) does not check `DeletionTimestamp`. Get returns the live (Terminating) object, owner check passes, `validatePrimaryPersistentVolumeClaim` only checks localnet-fingerprint and storage drift (also no DeletionTimestamp gate), Mutate produces no diff, "unchanged" — success.
+
+This is BUG-A. There is no detection path anywhere in the apply/readiness pipeline that looks at `DeletionTimestamp`, so the silent-lying-status window is unbounded as long as the foreign finalizer is held.
+
+**D2b — Recovery via finalizer removal (67s observation):**
+The controller's recovery code path technically works — within seconds of the PVC actually deleting, a new PVC under the same name appears via the NotFound branch of `ApplyOwnedObject`. But the downstream consequences are catastrophic:
+- The kubelet binds the EMPTY new volume into the still-existing primary Pod (`d2-net-node-6fbff4d85f-ch6t7`).
+- Container restarts don't re-run init containers. The cardano-testnet create-env init (which populates `/state` with localnet genesis material on first start) never re-runs.
+- `cardano-node` enters CrashLoopBackOff with `Yaml file not found: /state/env/configuration.yaml`. ogmios/kupo go Unhealthy.
+- The Deployment refuses to spin a replacement Pod (`1 unavailable / 0 terminating`). The new PVC sits Pending with `WaitForFirstConsumer` because the only consumer (the doomed Pod) is bound to the old PV.
+- CR conditions stuck at `Ready=False / DeploymentProgressing`, `NodeReady=False / DeploymentProgressing`, `Degraded=False / ReconcileSucceeded`. **A user reading the CR cannot distinguish "rollout in progress" from "data was permanently destroyed, manual pod delete required."**
+
+Even manually deleting the broken Pod (which I didn't probe but is the natural next user action) would only get the new PVC bound and the init container re-run — but the *original* localnet state (any wallets the user funded, any state since genesis) is gone. The localnet-fingerprint validation that exists specifically to prevent identity drift can't help because the freshly-init'd PVC carries the SAME fingerprint (the localnet plan is deterministic). Validation passes; data is gone.
+
+This is BUG-B with high severity because it crosses the contract YACD makes about PVC stability: TECH_NOTES says explicitly that "A `CardanoNetwork` localnet is stable for its lifetime" and that "Delete and recreate the CR/PVC to change localnet parameters." D2 demonstrates that an external actor with `update pvc` permission (or a buggy admission webhook that mishandles finalizers) can destroy that stability without any operator-side detection or signal.
+
+The agent identified two complementary fixes:
+1. **DeletionTimestamp gate in the apply path.** When `Get` returns a child with `DeletionTimestamp != nil`, treat it as a typed `statusConditionError` with reason `PVCBeingDeleted` and a message naming the foreign finalizer(s). This collapses BUG-A's window: the CR goes Degraded immediately on PVC deletion, the user sees an honest message, they can resolve the finalizer or accept the consequences before recovery damage. Code: `internal/ctrlkit/apply/apply.go::ApplyOwnedObject` plus per-controller callback wrapping for the conditions surface.
+2. **Pod-rotation on PVC recreation.** When the controller creates a new PVC via the NotFound branch on an OWNED PVC name (i.e., the controller previously created it and it has since vanished), it should also delete the consuming Pod so the init container re-runs and re-populates state. Code: `internal/controller/cardanonetwork/apply.go::applyPrimaryPersistentVolumeClaim` plus a paired Pod-delete in the same reconcile when `OperationResultCreated` and the previous reconcile had stamped the older PVC UID. Without this, BUG-B persists even with fix (1) — the user sees the honest message but the recovery still destroys data unless they know to manually delete the Pod.
+
+Pairing (1) + (2): the user sees Degraded explaining the issue, can choose to abandon recovery (delete and recreate the whole CR) or to proceed with managed recovery (the controller deletes the Pod, init re-runs, the localnet state is rebuilt from genesis but at least is consistent with the fingerprint). For a "stable for its lifetime" contract this is the only correct posture: either tell the truth + manage recovery, or fail loudly so the user makes the destruction decision themselves.
+
+Evidence under `.run/break-pass/d2/`. Namespace cleanly torn down.
+
+## 2026-05-28 13:08 — D3 NOT-A-BUG (small UX-GAP): ownerReference strip is detected fast and clean
+Adversarial test D3 from the synthesized list: strip the controller ownerReference from the primary Deployment via JSON patch, observe controller behavior, then delete the CR and see what survives.
+
+Setup: local CardanoNetwork `d3-net` (Ready in 20s). Baseline `ownerReferences: [CardanoNetwork/d3-net controller=true blockOwnerDeletion=true]`.
+
+D3a (strip ownerReference): within <2s the CR went `Ready=False / ResourceConflict`, `Degraded=True / ResourceConflict` with message *"resource break-d3/d3-net-node already exists without a controller owner"*. The operator did NOT try to take ownership back — `ApplyOwnedObject` correctly catches the stripped reference via `ValidateControllerOwner`, lifts it through `controllerOwnerConflict` into a `ResourceConflict` typed `statusConditionError`, and `handlePrimaryWorkloadApplyError` flips Degraded with no auto-reclaim. Pod stayed 3/3 Running. Deployment ownerReferences stayed empty — the operator does not patch them back, which is the correct posture for a GitOps-style pruning incident (auto-reclaim would silently overwrite intentional reparenting).
+
+D3b (CR delete with orphan in place): CR deleted immediately (no finalizers). Kubernetes GC walked ownerReferences and collected the network artifact ConfigMap, ServiceAccount, Role, RoleBinding, primary Service, Ogmios Service, Kupo Service. The orphan Deployment, its ReplicaSet, its Pod, and its PVC survived. The PVC entered Terminating but stuck because the orphan Pod still mounts it (same volume-in-use pattern as D2 but here intentional, not adversarial).
+
+D3c (functional probe of the orphan): orphan Deployment exists, Pod still Running, but the Service was CR-owned and GC'd. So the orphan is a leaked-workload-with-no-network-surface. Cluster-internal traffic can't reach it.
+
+UX-GAP: the message *"resource X already exists without a controller owner"* correctly identifies the resource and problem class but stops short of telling the user how to recover (restore the ownerReference via `kubectl annotate`/`patch`, delete the Deployment, or recreate the CR with a different name). For a single-tenant dev environment recovery is straightforward for anyone who knows Kubernetes GC; for a less-savvy operator a message that includes the recovery steps would shave investigation time. Not promoted to a TEST_REPORT.md entry — the safety posture is correct and the only friction is a docs/message polish.
+
+Evidence under `.run/break-pass/d3/`. Manual orphan-Deployment delete was required during cleanup (a user who hits this in practice would have the same step).
+
+## 2026-05-28 13:14 — D4 NOT-A-BUG (mild UX-GAP): artifact-publisher RBAC recreates in <1s
+Adversarial test D4 from the synthesized list: delete each of the three artifact-publisher RBAC resources (Role, RoleBinding, ServiceAccount) in sequence and observe Owns-watch recreation latency.
+
+All three sub-tests showed identical clean behavior: deletion → new resource with a fresh UID visible in <1s of sampling resolution. Operator log shows the paired `"<resource>Operation":"created"` entry in the same wall-clock second as each delete. The running primary Pod (`UID d190353e...`, 0 restarts) was correctly unaffected — its init container had already projected its token and patched the artifact ConfigMap at startup, so the RBAC churn never triggers a Pod restart. Recreation protects future Pod starts, not the current one.
+
+Same UX gap as the B5/C-cluster pattern: no condition flap, no Kubernetes Event, only the operator log notes the recreation (and even then mixes it into the omnibus "Applied CardanoNetwork primary workload" log line). Not promoted to TEST_REPORT.md — operator behavior is correct; the gap is consistent with the cross-cutting UX pattern already noted in NOTES.
+
+Evidence under `.run/break-pass/d4/`. Namespace cleanly torn down.
+
+## 2026-05-28 13:21 — D5 NOT-A-BUG (minor UX-GAP): foreign-owned same-name CM cleanly blocks reconcile, recovers via 1-min requeue
+Adversarial test D5 from the synthesized list: pre-create a foreign-owner Deployment and a ConfigMap with the YACD network-artifacts name (`d5-net-network-artifacts`) owned by it, then apply the CardanoNetwork.
+
+D5a (apply into contested namespace): CR went Degraded=True/ResourceConflict in <5s with verbatim message `"resource break-d5/d5-net-network-artifacts is already controlled by Deployment/foreign-owner"`. The artifact CM is the first step in `applyPrimaryWorkloadResources`, so the early return on conflict prevented creation of PVC, ArtifactPublisher SA/Role/RoleBinding, Deployment, Services, and the (disabled) faucet Secret. **Clean abort with no half-built artifacts.** Foreign CM was untouched.
+
+D5b (recovery via foreign-owner deletion): foreign-owner deleted → Kubernetes GC removed the foreign CM in <5s. Operator's own artifact CM appeared between sample elapsed=33 and 38, recovery clocked at ~51s after the foreign-owner delete. Reading the operator log: first reconcile attempt was at 20:30:44 with the conflict; next requeue at 20:31:44 (still conflict); next at 20:32:44 — recovery matches the `resourceConflictRequeueAfter = 1 * time.Minute` tick within sub-second resolution.
+
+Notable sub-finding: the `Owns(&corev1.ConfigMap{})` watch on the artifact CM does NOT shortcut recovery when a foreign-owned same-named CM is deleted. This is consistent with controller-runtime's `EnqueueRequestForOwner` filtering on the operator's UID — the foreign CM is owned by `foreign-owner`, not by the CardanoNetwork, so its deletion event doesn't enqueue the network CR. Worst-case recovery latency is one full requeue cycle (~60s).
+
+UX-GAP: the message names both the contested object and the foreign controller — a user can immediately `kubectl get deploy foreign-owner` to investigate — but does not explicitly suggest a remediation ("delete the conflicting object or rename the CardanoNetwork"). Not severe; the situation is self-explanatory.
+
+Not a TEST_REPORT.md entry — detection is correct, recovery is bounded, and tightening the recovery latency would require either custom event filtering on foreign CMs (out of pattern) or shrinking the 1-min interval (cost/noise tradeoff).
+
+Evidence under `.run/break-pass/d5/`. Namespace cleanly torn down.
+
+## 2026-05-28 13:34 — D6 BUG-B + UX-GAP (medium): auth-Secret recovery promise doesn't work as written
+Adversarial test D6 from the synthesized list: delete the generated `<dbsync>-postgres-auth` Secret after the managed-Postgres database identity has been accepted, observe Degraded behavior, then attempt the recovery path the controller's own message advertises (restore the Secret with the original password bytes).
+
+Setup: local CardanoNetwork + CardanoDBSync with managed Postgres. PostgresReady=True in ~11s after CardanoNetwork Ready. Baseline `acceptedIdentityFingerprint=bbeadb20…`. Saved the auth Secret's `data.password` bytes for restore.
+
+**D6a — delete the auth Secret:**
+- Controller did NOT silently regenerate (good — `ensureManagedPostgresAuthSecret` has a safety check `acceptedManagedPostgresIdentity != ""` that refuses post-acceptance regeneration). No BUG-A.
+- Within 5s: PostgresReady=False with `reason=ManagedDatabaseSecretMissing`, Degraded=True with verbatim message: *"Managed Postgres generated auth Secret break-d6d7/d6-dbsync-postgres-auth is missing after database initialization; restore the original Secret or recreate the CardanoDBSync with a fresh database"*.
+- The live Postgres Pod stayed Running with 0 restarts throughout the 60s window — pgdata holds the original password, the container's mounted credential is cached, Postgres keeps authenticating its existing connections. **Data is not lost.**
+- The dbsync follower Deployment was scaled to 0 as part of the Degraded path.
+
+**D6b — restore the auth Secret with original bytes (the controller's own advice):**
+This is where the bug appears. Three compounding problems:
+1. **The plain `kubectl apply` recreates the Secret without `ownerReferences`.** It is now an unowned same-name object.
+2. **The controller refuses to adopt it.** `validateControllerOwner` rejects the orphan. The Degraded diagnosis flips from `ManagedDatabaseSecretMissing` to `ResourceConflict` with message *"resource break-d6d7/d6-dbsync-postgres-auth already exists without a controller owner"* — same pattern as D5 (foreign-owned same-name child) and D3 (stripped ownerReference), but here the "foreign" object is one the controller itself told the user to create.
+3. **The flip doesn't happen until a generation bump.** Without an `authSecretRef` field-indexer match (the generated Secret isn't tracked by `cardanoDBSyncManagedDatabaseSecretNameField`), Secret recreation doesn't enqueue the CR. The user sees stale `ManagedDatabaseSecretMissing` until they bump spec to force reconcile — at which point the message changes and they're now told `already exists without a controller owner` instead of `missing`.
+
+Result: the user is given an instruction that doesn't work, and the diagnosis changes mid-recovery so they think their first restore made things worse. The actual recovery paths are:
+- (a) Hand-patch `ownerReferences` onto the restored Secret to point at the DBSync CR (undocumented).
+- (b) Delete-and-recreate the CR (data loss).
+
+This is BUG-B (recovery promise broken) plus a sharp UX-GAP (the message is actively misleading; the diagnosis-changes-on-its-own behavior makes troubleshooting harder).
+
+The data is NEVER actually lost — Postgres pgdata holds the original password and the Pod keeps running. The bug is entirely in the operator's adoption rule plus the messaging that doesn't reflect it.
+
+Two clean fixes worth considering:
+1. **Auto-adopt unowned same-name Secrets whose contents pass the credential identity check (preferred).** When `applyManagedPostgresAuthSecret` finds an unowned same-name Secret AND its `data.password` bytes match the accepted credential identity (the controller stamps a `managedPostgresCredentialVersion` on the owned material), set the ownerReference and proceed. This honors the controller's own "restore the original Secret" advice without requiring the user to know about Kubernetes ownership semantics.
+2. **Rewrite the message to require ownership.** Current: *"restore the original Secret or recreate the CardanoDBSync"*. Better: *"restore the auth Secret with the original password bytes AND set `metadata.ownerReferences` to point at this CardanoDBSync (UID=<uid>), or recreate the CardanoDBSync with a fresh database. The Postgres Pod is still running with the original credentials — no data has been lost yet."*
+
+Option (1) is the cleanest and matches what users expect when they read the message. Option (2) is independently shippable as a quick win even if (1) is contentious.
+
+## 2026-05-28 13:34 — D7 NOT-A-BUG (docs gap): no-finalizer cascade is fast, clean, and undocumented
+Adversarial test D7 from the synthesized list: confirm that deleting a CardanoDBSync immediately destroys all owned children (managed Postgres data, state PVC, follower PVC, auth Secret, etc.) with no graceful shutdown opportunity.
+
+Test observations (after D6b stabilized with the orphan-restored Secret):
+- CR gone in <2s of `kubectl delete cardanodbsync` (no finalizer, `deletionTimestamp` set then immediately collected).
+- All three PVCs (`d6-dbsync-postgres-state`, `d6-dbsync-dbsync-state`, `d6-dbsync-follower-state`) gone in <2s.
+- Postgres Pod yanked with no graceful-shutdown log sequence — last log was a routine checkpoint at 20:44:57, no SIGTERM `received fast shutdown request` or shutdown checkpoint, then the Pod simply vanished. The kubelet just killed the container when the ReplicaSet was GC'd while the Pod still existed.
+- CardanoNetwork (`d6-net`) and all its children (node Pod, services, ConfigMap, node PVC) untouched. Ownership graph is correctly scoped per CR.
+
+The "orphan" auth Secret that survived the delete is an artifact of D6b's restore-without-ownerReferences — not normal behavior. A normally-owned generated Secret would have been GC'd with everything else.
+
+Verdict NOT-A-BUG because this is the documented expectation: neither CRD installs a finalizer, the controller skips reconcile on `DeletionTimestamp != 0`, and Kubernetes GC handles the cascade. The behavior is correct and predictable.
+
+UX-GAP / docs-gap worth recording but not promoting to TEST_REPORT.md: the chart README, the CRD field comments, and the `yacd deploy` CLI all assume the user knows that deleting a CardanoDBSync means immediate, irrecoverable data loss with no snapshot or grace window. For a managed-Postgres deployment with real data on it, this is exactly the kind of thing a 3am operator wants warned about. A one-liner in the CRD `Reasoning` doc or chart README would close the gap — "Deleting a CardanoDBSync immediately deletes all owned PVCs (database, state, follower) without finalizers. Take a Postgres dump before deletion if you need to preserve data."
+
+Evidence under `.run/break-pass/d6d7/`. Namespace cleanly torn down.
+
+## 2026-05-28 13:38 — Category D synthesis (pause for user review)
+Seven tests run; outcomes:
+
+| Test | Theory | Verdict | Severity |
+|------|--------|---------|----------|
+| D1 | Faucet auth Secret delete → lying status | BUG-A + BUG-B + UX-GAP | **high** |
+| D2 | PVC stuck Terminating via foreign finalizer | BUG-A + BUG-B | **high** |
+| D3 | Strip ownerReference from primary Deploy | NOT-A-BUG (minor UX) | — |
+| D4 | Delete artifact-publisher RBAC (3 sub-tests) | NOT-A-BUG (mild UX) | — |
+| D5 | Foreign-owned same-name child | NOT-A-BUG (minor UX) | — |
+| D6 | Managed Postgres auth Secret delete + restore | BUG-B + UX-GAP | medium |
+| D7 | No-finalizer CR delete cascade | NOT-A-BUG (docs gap) | — |
+
+Three new TEST_REPORT entries (D1, D2, D6).
+
+**D1 — Faucet auth Secret deletion: lying status + silent token rotation (high).** The kubelet's already-mounted projected volume keeps serving the cached token in-memory and the faucet binary holds it in memory, so deletion produces zero Pod-level signal. The controller has no Secret watch, so `Ready=True` stays lying for up to the 10-min repair requeue. When repair fires, the controller generates a *fresh* random token without rolling the Deployment — so the API Secret holds token B, the running faucet uses A in memory, and any user with A is silently broken. A future pod roll at an arbitrary time swaps the running token to B, silently invalidating cached A. Fix: roll the Deployment whenever the auth Secret is created or rotated (smallest surgery, eliminates A-vs-B divergence). Pair with a labelled-selector Secret watch to shrink the lying window from 10 min to seconds.
+
+**D2 — PVC stuck Terminating + data loss on recovery (high).** Two compounding bugs. `ApplyOwnedObject` has no `DeletionTimestamp` gate, so the CR stays `Ready=True` while the live PVC is mid-deletion (BUG-A). When the foreign finalizer is removed and the PVC actually deletes, the controller's recovery path technically works (recreates on NotFound) — but the running Pod keeps the (now empty) volume mounted, the init container doesn't re-fire on container restart, cardano-node crash-loops against empty `/state`, the localnet data is permanently destroyed (BUG-B). The localnet-fingerprint validation can't help because the freshly-init'd PVC carries the same deterministic fingerprint. Fix: DeletionTimestamp gate in apply (BUG-A) + Pod-rotation on PVC recreation (BUG-B). This crosses the explicit "stable for lifetime" contract YACD makes in TECH_NOTES.
+
+**D6 — Managed Postgres auth Secret recovery doesn't work as advertised (medium).** The controller correctly refuses to silently regenerate the password after acceptance (the safety check works). But the Degraded message advertises *"restore the original Secret"* — and a plain `kubectl apply` of the original bytes does NOT recover, because the controller refuses to adopt an unowned same-name Secret (`validateControllerOwner` rejects it, diagnosis flips to `ResourceConflict`). Worse, the flip doesn't happen until the user bumps spec to force reconcile (no field-indexer on the generated Secret), so the displayed reason changes by itself, making troubleshooting confusing. Data is never actually lost — Postgres pgdata holds the original password and keeps running. Fix: auto-adopt unowned same-name auth Secrets whose `data.password` matches the accepted credential identity (`managedPostgresCredentialVersion`); update the message to match.
+
+Four non-findings:
+
+**D3** — operator correctly detects ownerReference strip in <2s, refuses to auto-reparent (correct GitOps-safe posture), surfaces `ResourceConflict` with a specific message. On CR delete the orphan persists but its Service was GC'd — leaked workload with no network surface.
+
+**D4** — Owns watches recreate all three artifact-publisher RBAC resources in <1s of deletion. Running Pod unaffected (init already published). Same silent-operator UX pattern as B5/C-cluster.
+
+**D5** — foreign-owned same-name CM cleanly blocks reconcile with a specific `ResourceConflict` message naming both the contested object and the foreign controller. Recovery is via the 1-min `resourceConflictRequeueAfter` (the `Owns` watch doesn't shortcut on foreign-CM deletion because controller-runtime's `EnqueueRequestForOwner` filters by UID).
+
+**D7** — cascade is fast (<2s), clean (CardanoNetwork untouched), and immediate (no graceful shutdown, no SIGTERM sequence in Postgres logs). This is by-design. Worth a one-liner in chart README / CRD docs warning users that CR delete = immediate data loss with no snapshot or grace window.
+
+**Cross-cutting Category-D theme:** the operator's adoption rule (`validateControllerOwner` refuses to adopt unowned same-name children) is correct for security and GitOps safety, but it surfaces as a recovery papercut in three different scenarios: D3 (user-stripped ownerRef on operator's child), D5 (foreign-owned same-name child arriving before the CR), and D6 (user-restored Secret without ownerReferences). Each surfaces a different message:
+- D3: *"resource X already exists without a controller owner"*
+- D5: *"resource X is already controlled by Y"*
+- D6: starts as `ManagedDatabaseSecretMissing`, then flips to D3's message after a generation bump.
+
+The three messages are correct but don't tell the user the remediation. A small unification — "add this CR as the controller owner of `<name>` (e.g. by patching `metadata.ownerReferences`), or delete the conflicting object" — would help in all three cases. Not promoted to TEST_REPORT.md yet because the underlying behavior is correct; only the message would change.
+
+Pause for user review before starting Category E (External dependencies — E1 custom-profile Secret with `binaryData` only, E2 external Postgres Secret finalizer, E3 CardanoNetwork delete with DBSync still referencing, E4 same-name network recreate with new UID, E5 external Postgres key removal). Dev stack left running.
