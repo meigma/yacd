@@ -147,3 +147,136 @@ Three non-findings:
 UX nits accumulated during Category A (G-list candidates): A2's `NetworkStatusStale` message has no generation delta; A4's `PlacementConflict` names neither the incumbent nor the conflicting peers. Both worth filing as message-polish later.
 
 Pause for user review before starting Category B (Identity acceptance & spec immutability). Dev stack left running for B's tests.
+
+## 2026-05-28 11:34 — Starting Category B; created TEST_REPORT.md
+User reviewed Category A and asked for `.journal/TEST_REPORT.md` as a running log of confirmed failures: one section per failing test with test description, observed failure, and suggested fixes. Seeded the file with A3 and A4 entries. NOT-A-BUG tests are deliberately not included in TEST_REPORT.md — that file is the bug log; full pass record stays here in NOTES.md. Pushed as commit `6cb9a38`.
+
+## 2026-05-28 11:42 — B1 BUG-B + BUG-A + UX-GAP: status-fingerprint forgery permanently bricks CardanoNetwork
+Adversarial test B1 from the synthesized list: forge `CardanoNetwork.status.network.networkFingerprint` (and/or `localnetFingerprint`) via the status subresource and observe whether the controller (a) restores it, (b) accepts it silently, or (c) enters an unrecoverable Degraded state.
+
+Setup: local-mode CardanoNetwork `b1-net` (Ready in 21s). Baseline fingerprints set identically on the CR `status.network.{network,localnet}Fingerprint` and on the primary node-state PVC annotations `yacd.meigma.io/{network,localnet}-fingerprint`. Three sub-tests run in sequence.
+
+**B1a — forge `status.network.networkFingerprint` only:** the forged value `deadbeef-forged-network` is silently retained for the full 30s observation window. Deployment generation unchanged. The CR continues to report `Ready=True / ReconcileSucceeded` with a *lying* status fingerprint. Root cause: `For(&CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{}))` filters out status-only updates, so no reconcile is triggered by the forgery. `setNetworkIdentityStatus` (status.go:167) only runs after a successful primary-workload apply, so the controller never overwrites the forged status. This is BUG-A (lying status) with effectively unbounded persistence — only an unrelated reconcile trigger (owned-child event, manager restart, real spec edit) would refresh the field.
+
+**B1b — forge both `networkFingerprint` and `localnetFingerprint`:** same outcome. Both forged values retained, `Ready=True`. Same root cause.
+
+**B1c — forge the PVC localnet-fingerprint annotation while status is also forged:** this is where the bomb goes off. The controller's PVC apply detects the PVC annotation drift (the live annotation does not match the desired plan's fingerprint, as expected since both have been tampered with). `validateAcceptedNetworkFingerprint` (callbacks.go:153) runs *first* and consults *only* the CR status. The status says `localnetFingerprint=cafebabe-forged-localnet`; the freshly computed plan says `localnetFingerprint=8cf50c80…`. Mismatch → reject. `Ready=False`, `Degraded=True / UnsupportedLocalnetChange`, message "delete and recreate the CardanoNetwork to change network parameters." Restoring the PVC annotation to its baseline does *not* recover the CR: the status check fires before the PVC check, the forged status still says `cafebabe…`, and `setNetworkIdentityStatus` only runs *after* a successful workload apply — which never happens because validation rejects. Spec edits to `node.port` bump generation and re-trigger reconcile, but each reconcile re-rejects on the same status check. The CR is bricked.
+
+Two sources of truth for accepted-identity, with the more easily forged one (`status.network.*` via subresource patch) acting authoritative. RBAC note: the `cardanonetworks/status` subresource patch verb is granted to the controller's own ServiceAccount per the kubebuilder marker (`+kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks/status,verbs=get;update;patch`), and is commonly granted independently to operators/admins. An admin who can edit *only* status (a posture often considered safer than spec edits) can brick the CR.
+
+UX-GAP: every condition message blames the user — "localnet inputs changed; delete and recreate to change network parameters" — when the actual cause is a forged status field that no spec change can undo. Misleading for an honest user who hits this via tooling that scrambles status (e.g., a backup/restore tool that round-trips through subresource patches).
+
+Evidence under `.run/break-pass/b1/`. Namespace cleanly torn down. Will add as TEST_REPORT.md section before moving to B2.
+
+## 2026-05-28 11:49 — B2 UX-GAP: DB identity forgery brick is technically recoverable, but message lies
+Adversarial test B2 from the synthesized list: forge `CardanoDBSync.status.database.acceptedIdentityFingerprint` via the status subresource and observe whether the controller goes Degraded, restores, or bricks the same way B1 did.
+
+Setup: local CardanoNetwork `b2-net` (Ready in ~25s), CardanoDBSync `b2-dbsync` with managed Postgres. `acceptedIdentityFingerprint` was published in ~8s (set early, well before sync starts). Baseline FP `6c25b26f…`, PostgresReady=True, Degraded=False.
+
+**B2a — forge status fingerprint to `deadbeef-forged-db-identity`:** unlike B1's quiet network controller, the DBSync controller picked up the change within ~2s and flipped to `Ready=False / Degraded=True / UnsupportedDatabaseIdentityChange`. The likely reason it re-enqueued despite `GenerationChangedPredicate` is that managed Postgres apply is constantly producing owned-child events (Deployment progressing, Pod state changes); B1's quiet local-only network had no such background churn. Forged value persisted for the full 30s observation window — controller did NOT restore from the PVC annotation that still holds the truth (per the agent's read, `pvc.metadata.annotations["yacd.meigma.io/dbsync-database-identity"]`).
+
+**B2b — spec bump (resources.limits.memory=256Mi) to force reconcile:** Degraded stayed. Generation went 1→2, observedGeneration caught up to 2. Reject message: *"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database"*. Managed Postgres Deployment generation did NOT bump (the apply path is short-circuited before workload patch). So far: bricked from the user's perspective.
+
+**B2c — recovery probe:** patched status back to baseline FP via subresource (16s no recovery because `GenerationChangedPredicate` still suppresses status-only re-enqueue), then bumped spec.resources.limits.memory=300Mi to force a real reconcile. Within 2s: Degraded=False, PostgresReady=True, observedGeneration=3. CR is fully recovered. No CR delete required.
+
+So B2 is brick-then-recover, not brick-then-stuck (B1). Two architectural differences from B1 matter: (a) the DBSync controller already stamps the accepted identity onto the PVC annotation as a separate truth source, so the cluster *has* the correct value to recover from; (b) but `validateAcceptedDBSyncDatabaseIdentity` (`internal/controller/cardanodbsync/apply.go:184-194`) trusts `status.database.acceptedIdentityFingerprint` and only falls through to the PVC annotation when status is empty. The controller has the right anchor; it just refuses to use it when status is non-empty.
+
+UX-GAP (severity-medium-but-load-bearing): the reject message tells the user to *"delete and recreate the CardanoDBSync with a fresh or compatible external database"*. The actual fix is a status patch back to the value still present on the PVC annotation, plus a benign spec bump. An honest user following the documented remediation will delete their CR and lose the managed Postgres data (and the dedicated follower-node PVC and the dbsync state PVC). The message also doesn't name which field drifted — image? db name? user? port? password key? — so even an expert user has no diagnostic signal that the divergence is in the status field rather than a real spec change.
+
+Comparison to B1: both confirm "status subresource is a privileged write path that bypasses spec validation"; B1 bricks permanently because the network controller can't escape the loop, B2 bricks user-visibly but is recoverable for someone who already knows the trick. From a user's-eyes perspective both are bug-grade; from an architecture perspective the DBSync side is closer to a fix because the PVC anchor already exists.
+
+Evidence under `.run/break-pass/b2/`. Namespace cleanly torn down.
+
+## 2026-05-28 11:58 — B3 NOT-A-BUG: PR #46 defense holds because PVC annotation backfill works
+Adversarial test B3 from the synthesized list: clear `status.database.acceptedPlacementMode` via subresource patch and immediately flip `spec.placement.mode` from `primarySidecar` to `dedicatedFollower`, replicating the session-026 failure mode the PR #46 fix was designed to prevent.
+
+Setup: local CardanoNetwork `b3-net` + CardanoDBSync `b3-dbsync` at `primarySidecar` with managed Postgres. Baseline `acceptedPlacementMode=primarySidecar` set within ~8s. Crucially, the agent inventoried owned material and found the placement-mode annotation `yacd.meigma.io/dbsync-placement-mode=primarySidecar` stamped on PVC `b3-dbsync-dbsync-state`, ConfigMap `b3-dbsync-dbsync-config`, and Secret `b3-dbsync-dbsync-pgpass`.
+
+B3-control (sanity): flip placement without clearing status. Within 2s `Degraded=True, reason=UnsupportedDatabaseIdentityChange`, message "CardanoDBSync placement changed from accepted placement 'primarySidecar' to 'dedicatedFollower'; delete and recreate the CardanoDBSync with a fresh or compatible database." Restoring spec to primarySidecar cleared Degraded within 2s. Defense works.
+
+B3a — clear status, then flip: status clear succeeded (`acceptedPlacementMode` removed from `status.database`, only `acceptedIdentityFingerprint` and `authSecretName` remained). Spec was then flipped to `dedicatedFollower`. Within 2s `status.database.acceptedPlacementMode` was **back to `primarySidecar`** and Degraded fired with the same message. The controller backfilled from `acceptedDBSyncPlacementModeFromPVC` (`internal/controller/cardanodbsync/apply.go:325`) — the PVC annotation read path that runs whenever status is empty. No follower PVC was created, no dedicated db-sync Deployment appeared, the primary-sidecar bundle stayed exactly as it was, and `acceptedIdentityFingerprint` was preserved.
+
+B3b — flip back: cleanly recovered. Same backfill pattern; database state untouched.
+
+This is a really useful finding for the *other* tests in this category. The fix the B1 and B2 entries recommend ("fall through to the PVC annotation when validating accepted identity") **already exists in the codebase for this one field** (`acceptedPlacementMode`), implemented as `currentAcceptedDBSyncPlacementMode` at apply.go:271 → `acceptedDBSyncPlacementModeFromPVC` at apply.go:325. The fix for B1 is to add an analogous `acceptedNetworkFingerprintFromPVC` and use it in `validateAcceptedNetworkFingerprint`; the fix for B2 is to add `acceptedDBSyncDatabaseIdentityFromPVC` and use it in `validateAcceptedDBSyncDatabaseIdentity`. The codebase has the right pattern; it just hasn't been generalized across all three accepted-identity fields. Sharpening B1/B2 recommendations in TEST_REPORT.md.
+
+Evidence under `.run/break-pass/b3/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:04 — B4 NOT-A-BUG: PVC-side localnet-FP tamper is cleanly detected and self-recovers
+Adversarial test B4 from the synthesized list: forge the PVC's `yacd.meigma.io/localnet-fingerprint` annotation directly (status untouched, unlike B1c which forged both) and observe detection + recovery.
+
+B4a (localnet-FP forgery on PVC, local mode): caught at `validateLocalnetFingerprint` (callbacks.go:184), Ready=False / Degraded=True / `UnsupportedLocalnetChange` within 2s. Message verbatim: *"CardanoNetwork localnet inputs changed for PVC break-b4/b4-net-node-state; delete and recreate the CardanoNetwork to change network parameters"* — names the PVC, which is enough for a user to find the drifted annotation. Generation didn't bump (the controller updates status but cannot advance through the PVC apply step).
+
+B4b (recovery): restoring the PVC annotation cleared Degraded by the very first 2s sample. The `Owns(&corev1.PersistentVolumeClaim{})` watch fires on the annotation edit, re-enqueues reconcile, validation passes, Ready=True. No spec bump required.
+
+B4d (network-FP forgery on PVC, local mode): silently overwritten by `mergeOwnedAnnotations` (annotations.go:46) during the normal PVC apply. No validation, no rejection — local mode treats localnet-FP as the canonical identity, and the network-FP annotation is derived. This is intentional and correct; a future reviewer comparing public-mode behavior should note that the network-FP annotation has different drift semantics in public mode, where it is the canonical identity (no localnet plan exists).
+
+Key takeaway for the category: this is direct evidence that PVC-based validation works correctly when wired up — Owns watch + auto-recovery on annotation restore, clean error path, message names the affected PVC. The B1 + B2 fix recommendations (fall through to PVC annotation when status is empty) are well-supported by this result. The codebase already has the pattern working for one field (B3's `acceptedPlacementMode`) and proves the pattern works correctly at the PVC level (B4); the gap is that B1 and B2's identity checks bypass the PVC anchor in favor of forgeable status.
+
+Evidence under `.run/break-pass/b4/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:11 — B5 NOT-A-BUG: image drift bounced in <2s, two side notes
+Adversarial test B5 from the synthesized list: hand-edit the managed Postgres Deployment's pod-template image via `kubectl set image` and observe whether the controller restores it before a wrong-image Pod can run against the existing data dir.
+
+B5a (postgres:16.4-alpine — major version downgrade): time-to-restore <2s. Only one ReplicaSet (`6fc9986c44`, image 17.2) ever existed; no 16.4 image was pulled. The Pod that came up after the rollover already used 17.2 because the operator's Mutate restored the template before the kubelet pulled the new image. Data-dir incompatibility scenario (BUG-B) never materialized.
+
+B5b (postgres:17.4-alpine — minor version drift): same outcome, <2s restore. The Mutate is field-blind w.r.t. image semver — it replaces `Containers` wholesale via `ctrlresources.MutateDeployment` in `internal/controller/cardanodbsync/callbacks.go::mutateDBSyncDeployment`. Either drift direction is corrected identically.
+
+B5c (adversarial label + cpu limit): cpu limit was restored in <2s (it's inside `containers[]` which is replaced wholesale). The adversarial pod-template label `adversarial=b5c` PERSISTED through the test window. Root cause: `ctrlmetadata.OverlayStringMap` is overlay-only — desired keys win on collision, but user-injected keys not in desired are preserved. This is the standard Kubernetes controller pattern (don't strip user metadata) but it does mean an outside actor with `update deployment` on the operator's namespace can stamp arbitrary labels onto the managed Postgres Pod and force a rollout. Low severity (no runtime behavior change) but a "stamp-and-force-rollout" attack surface worth knowing about.
+
+UX-GAP (not promoted, low impact): the operator silently overrides `kubectl set image` with no info-level log line or transient condition. A user attempting to apply a Postgres minor-version upgrade by `kubectl set image` would see their change disappear and have no signal that the operator is the cause. A single info-level "restored Postgres image to spec (postgres:17.2-alpine)" log line on each Mutate-driven revert would help.
+
+Evidence under `.run/break-pass/b5/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:17 — B6 BUG-A: storage expansion against non-expandable class is invisible in CR status
+Adversarial test B6 from the synthesized list: patch `spec.node.storage.size` UP on a CardanoNetwork backed by a StorageClass without `allowVolumeExpansion` (the Kind default `standard` class).
+
+Setup: local CardanoNetwork `b6-net` at 2Gi initially. Default StorageClass is `standard` with `allowVolumeExpansion=<unset>` (treated as false). Network Ready=True.
+
+B6a (2Gi → 5Gi): CR generation went 1→2 but observedGeneration stayed at 1 for the full 30s window. Live PVC `spec.resources.requests.storage` stayed 2Gi; `status.capacity.storage` unchanged. Zero events emitted on the PVC (API server rejects the resize synchronously without recording an event). **CR conditions: `Ready=True / Degraded=False`, message `"Primary node, artifact publisher, and chain API resources are applied"` — the controller did not propagate the failure to status.** The only outward signal is the generation/observedGeneration delta. The actual error appears only in operator logs at ERROR level: `persistentvolumeclaims "b6-net-node-state" is forbidden: only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize`. Logged 14 times in the first 80s under controller-runtime's exponential backoff.
+
+B6b (revert 5Gi → 2Gi): observedGeneration jumps from 1 to 3 within ~10s, forbidden errors stop, CR returns to a fully-applied state. Recovery is clean.
+
+B6c (2Gi → 3Gi): identical outcome to B6a — the rejection is not size-dependent, it's StorageClass-capability-dependent.
+
+Code (per the agent's reads): `internal/ctrlkit/storage/storage.go:78-112` `PersistentVolumeClaimDriftFor` only flags `RequestedStorageClass`, `StorageClass`, `AccessModes`, and `StorageDecrease`. Storage *expansion* is intentionally allowed through. The controller PATCHes the PVC's `spec.resources.requests.storage`, the API server returns 403 Forbidden, the error bubbles out of Reconcile as a generic error — but `Ready`/`Degraded`/conditions are never updated to reflect it.
+
+This is **BUG-A** under our bar: the operator silently swallows the failure as far as CR status is concerned while the live PVC stays at the old size. A user runs `kubectl get cardanonetwork b6-net` and sees `Ready=True`, believes the expansion worked, and walks away. Severity is **medium** because (a) recovery is clean (revert the size), (b) no data loss, but (c) the user-visible misinformation is real and the underlying Kubernetes error message is excellent and not surfaced anywhere a user typically looks.
+
+Recovery is non-destructive: revert spec storage to baseline, controller proceeds normally. This is BUG-A, not BUG-B.
+
+Fix direction: when `applyPrimaryPersistentVolumeClaim` returns a forbidden or `IsInvalid`-type API error on PVC resize, classify it as a typed `statusConditionError` (the controller already uses this pattern for other validate paths — see A4 / B1 / B2) with reason `StorageExpansionRejected` and a message that propagates the API server text. The user sees the "StorageClass must support resize" hint in `kubectl describe cardanonetwork` without needing operator-log access. The same pattern likely needs to apply to the DBSync controller's PVC apply paths (state PVC and managed Postgres PVC, both expandable in CRD spec).
+
+Evidence under `.run/break-pass/b6/`. Namespace cleanly torn down.
+
+## 2026-05-28 12:20 — Category B synthesis (pause for user review)
+Six tests run; outcomes:
+
+| Test | Theory | Verdict | Severity |
+|------|--------|---------|----------|
+| B1 | Status-FP forgery (CardanoNetwork) | BUG-B (perma-brick) + BUG-A (lying status) + UX-GAP | **high** |
+| B2 | Status-FP forgery (CardanoDBSync DB identity) | UX-GAP (brick-but-recoverable) | medium |
+| B3 | Accepted-placement-mode clear + flip | NOT-A-BUG (PVC annotation backfill works) | — |
+| B4 | PVC localnet-FP annotation tamper | NOT-A-BUG (clean detect + auto-recover) | — |
+| B5 | Managed-Postgres image drift | NOT-A-BUG (<2s Mutate restore, no wrong-image Pod) | — |
+| B6 | Storage expansion onto non-expandable StorageClass | BUG-A (silent swallow) + UX-GAP | medium |
+
+Three real findings:
+
+**B1 — Status-fingerprint forgery permanently bricks CardanoNetwork (high).** A status-subresource patch (a verb commonly granted to admins) can drive the CR into an unrecoverable Degraded state. `validateAcceptedNetworkFingerprint` reads only from status, and `GenerationChangedPredicate` filters status-only updates so the controller never overwrites the forged value. Combined with PVC annotation drift, the CR is bricked permanently absent CR delete (which loses chain state). Documented in TEST_REPORT.md with three fix options; the cleanest is to fall through to the PVC annotation as the authoritative anchor.
+
+**B2 — DB identity forgery brick is technically recoverable but message demands CR delete (medium).** Same architectural problem as B1 but the DBSync controller's owned-Postgres churn keeps reconciles firing so the user sees the Degraded immediately. Recovery is possible (status patch + spec bump) but the printed message says *"delete and recreate the CardanoDBSync with a fresh or compatible external database"* — an honest user following the documented remediation deletes the CR and loses all the managed Postgres + state PVC data. Critically, the controller already stamps the truth on the PVC annotation `yacd.meigma.io/dbsync-database-identity` and just refuses to consult it when status is non-empty.
+
+**B6 — Storage expansion failure is invisible in CR status (medium).** When the underlying StorageClass doesn't allow expansion (Kind's default), the controller PATCHes the PVC, the API server returns Forbidden with an excellent error message, but the controller doesn't propagate it to conditions. The user sees `Ready=True / Degraded=False` and believes their resize worked. The signal exists only in `observedGeneration < generation` (subtle) and operator logs (inaccessible to typical users).
+
+Three non-findings worth recording:
+
+**B3** — PR #46's defense holds because `acceptedDBSyncPlacementModeFromPVC` (`apply.go:325`) backfills from the PVC annotation when status is empty. This is the *exact pattern* B1 and B2's fixes recommend — the codebase already has the right idea for one accepted-identity field but hasn't generalized it across all three.
+
+**B4** — PVC localnet-FP annotation tamper is cleanly detected by `validateLocalnetFingerprint` and self-recovers on annotation restore via the `Owns(&corev1.PersistentVolumeClaim{})` watch. Direct evidence that PVC-anchored validation works correctly when wired up.
+
+**B5** — Mutate restores the managed Postgres image in <2s; no wrong-image Pod ever runs against the existing data dir. Two side observations: (a) user-injected pod-template labels persist via `OverlayStringMap` overlay semantics — low-severity attack surface for label stamping + forced rollout, and (b) silent image revert with no info-level log line is a minor UX gap.
+
+Category-B fix theme: **align all three accepted-identity validation paths around the PVC annotation as the source of truth.** The pattern already exists in the codebase (B3's backfill, B4's PVC-annotated check that works) — B1's brick and B2's UX-trap both vanish when their respective validate functions fall through to the PVC annotation. The B6 fix is independent: surface PVC API errors as typed `statusConditionError`s on the CR.
+
+Pause for user review before starting Category C (Owned-child tampering: replicas=0, ownerReference strip, foreign-owned same-name child, SA edit, hand-edit non-mutated fields). Dev stack left running.
