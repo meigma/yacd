@@ -11,3 +11,6 @@ Plan: stay agile and start from the recent behavior rather than designing the wh
 
 ## 2026-05-27 21:24 — Implementation worktree
 Created implementation worktree `feat/public-dbsync-primary-sidecar` at `.wt/feat-public-dbsync-primary-sidecar` and started the local dev stack with `moon run root:dev-up`. The stack reported ready; Tilt UI is on port 10350 and logs are under `.run/yacd-dev/tilt.log`.
+
+## 2026-05-27 21:36 — Public sidecar proof
+Implemented public non-mainnet `primarySidecar` support on branch `feat/public-dbsync-primary-sidecar` and committed it as `2f94569`. Validation passed with focused controller tests, `moon run root:test`, `moon run root:check`, and `git diff --check`. Manual preview functional proof in Kind/Tilt passed: `preview-smoke` reached Ready, `preview-dbsync-sidecar` reached `PostgresReady=True`, `NodeSocketReady=True`, `SidecarMaterialReady=True`, `DBSyncReady=True`, and `DBSyncAttachmentReady=True`; the primary Deployment contained `cardano-db-sync`, the dedicated db-sync Deployment and follower PVC were absent, Ogmios returned `queryNetwork/tip`, and a psql probe found `66162` block rows.

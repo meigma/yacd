@@ -63,9 +63,10 @@
   connectivity, sets `Synced=True` only within the package-local lag threshold,
   and sets aggregate `Ready=True` only when follower node, db-sync container,
   Postgres, and sync status are all ready.
-- `CardanoDBSync.spec.placement.mode` defaults to `dedicatedFollower`. The
-  local-network-only `primarySidecar` mode is a real runtime path: DB Sync owns
-  database/config/pgpass/state/metrics/status and publishes
+- `CardanoDBSync.spec.placement.mode` defaults to `dedicatedFollower`.
+  `primarySidecar` is a real runtime path for local networks and non-mainnet
+  public profiles: DB Sync owns database/config/pgpass/state/metrics/status and
+  publishes
   `status.placement.primarySidecar` only when `SidecarMaterialReady=True`, while
   CardanoNetwork is the only controller that composes the primary Pod from that
   status contract. Multiple primary-sidecar claims for one CardanoNetwork attach
@@ -73,12 +74,10 @@
   later `primarySidecar` <-> `dedicatedFollower` changes are rejected with
   `UnsupportedDatabaseIdentityChange`; the old pod-drain handoff guards remain
   to prevent duplicate processes during pre-acceptance and cleanup paths.
-- Public `CardanoDBSync` currently supports only `dedicatedFollower` for
+- Public `CardanoDBSync` supports `dedicatedFollower` and `primarySidecar` for
   preview, preprod, and custom public profiles. Public mainnet db-sync remains
-  rejected until a later follower-node Mithril bootstrap or public
-  `primarySidecar` slice. Be precise in future notes: `primarySidecar` already
-  exists for local networks; what is missing is public-profile enablement,
-  artifact/socket validation, and combined resource sizing.
+  rejected until a follower-node Mithril bootstrap or public mainnet
+  `primarySidecar` sizing/bootstrap slice is implemented.
 - `CardanoNetwork` publishes `DBSyncAttachmentReady` only to explain primary Pod
   impact from an attached/requested db-sync sidecar. Detailed DB Sync health
   remains on `CardanoDBSync`. Shared primary Pod names, selector labels, port
