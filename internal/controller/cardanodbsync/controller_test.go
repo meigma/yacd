@@ -559,12 +559,11 @@ func TestPrimarySidecarMaterialRevisionChangesWithMaterialInputs(t *testing.T) {
 	}
 }
 
-func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarForNonLocalNetwork(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnetPrimarySidecar(t *testing.T) {
 	ctx := context.Background()
-	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
-	network := readyCardanoNetwork("ready-network")
-	network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	network := readyPublicCardanoNetwork("mainnet-network", yacdv1alpha1.PublicNetworkProfileMainnet)
+	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", network.Name))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -573,9 +572,11 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarForNonLocalNetwork
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+	assertDegradedMessage(t, ctx, reconciler, dbSync, publicMainnetDBSyncUnsupportedMessage)
 	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{})
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})
 }
 
 func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarPortConflict(t *testing.T) {
@@ -903,13 +904,13 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, result)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertDegradedMessage(t, ctx, reconciler, dbSync, "public mainnet CardanoDBSync is not supported until a later follower-node Mithril bootstrap or public primarySidecar slice is implemented")
+	assertDegradedMessage(t, ctx, reconciler, dbSync, publicMainnetDBSyncUnsupportedMessage)
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{})
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})
 }
 
-func TestCardanoDBSyncReconcilerReconcileRejectsPublicPrimarySidecar(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileAppliesPublicPrimarySidecarResources(t *testing.T) {
 	ctx := context.Background()
 	network := readyPublicCardanoNetwork("preview-network", yacdv1alpha1.PublicNetworkProfilePreview)
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", network.Name))
@@ -918,10 +919,31 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPublicPrimarySidecar(t *testing.
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
-	assert.Empty(t, result)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertDegradedMessage(t, ctx, reconciler, dbSync, "primarySidecar placement is supported only for local CardanoNetwork resources")
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeFollowerNodeReady, metav1.ConditionFalse, conditionReasonPrimarySidecarPlacement)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionTrue, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonWorkloadMissing)
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, configMap))
+	assert.Contains(t, configMap.Data[dbSyncConfigFileName], "NetworkName: preview")
+	assert.Contains(t, configMap.Data[dbSyncConfigFileName], "RequiresNetworkMagic: RequiresMagic")
+	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), configMap.Annotations[dbSyncPlacementModeAnno])
+
+	metricsService := &corev1.Service{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncMetricsServiceName(dbSync)}, metricsService))
+	for key, value := range primarypod.SelectorLabels(network) {
+		assert.Equal(t, value, metricsService.Spec.Selector[key])
+	}
+	assert.Equal(t, "dbsync", metricsService.Spec.Selector[labelDBSync])
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	assertPlacementStatus(t, current, yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, true)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, current.Status.Database.AcceptedPlacementMode)
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})
 }
 
 func TestCardanoDBSyncReconcilerReconcileReportsRuntimeReadyContainers(t *testing.T) {

@@ -1,0 +1,23 @@
+apiVersion: yacd.meigma.io/v1alpha1
+kind: CardanoDBSync
+metadata:
+  name: preview-dbsync-sidecar
+  namespace: yacd-smoke
+spec:
+  networkRef:
+    name: preview-smoke
+  placement:
+    mode: primarySidecar
+  database:
+    managed:
+      parameters:
+        maxParallelMaintenanceWorkers: 0
+  config:
+    ledgerBackend: inmemory
+    runtime:
+      cache: false
+      epochTable: false
+      forceIndexes: false
+      metricsPort: 8080
+    insert:
+      preset: disable_all

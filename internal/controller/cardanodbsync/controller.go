@@ -201,7 +201,7 @@ func (r *CardanoDBSyncReconciler) preflightPrimarySidecarNetwork(
 			"Referenced CardanoNetwork is deleting",
 		)
 	}
-	if err := ValidatePrimarySidecarLocalNetwork(dbSync, network); err != nil {
+	if err := ValidatePrimarySidecarNetwork(dbSync, network); err != nil {
 		return false, r.patchWorkloadApplyBlockedStatus(ctx, dbSync, conditionReasonUnsupportedSpec, err.Error())
 	}
 

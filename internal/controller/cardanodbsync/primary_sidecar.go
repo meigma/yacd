@@ -135,7 +135,7 @@ func BuildPrimarySidecarAttachment(
 	database dbsync.Database,
 	resources PrimarySidecarAttachmentResources,
 ) (*PrimarySidecarAttachment, error) {
-	if err := ValidatePrimarySidecarLocalNetwork(dbSync, network); err != nil {
+	if err := ValidatePrimarySidecarNetwork(dbSync, network); err != nil {
 		return nil, err
 	}
 	if resources.ConfigMapName == "" {
@@ -176,17 +176,31 @@ func BuildPrimarySidecarAttachment(
 	}, nil
 }
 
-// ValidatePrimarySidecarLocalNetwork applies the primary-sidecar runtime
+// ValidatePrimarySidecarNetwork applies the primary-sidecar runtime
 // constraints that CardanoDBSync owns as the db-sync status surface.
-func ValidatePrimarySidecarLocalNetwork(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork) error {
+func ValidatePrimarySidecarNetwork(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork) error {
 	if dbSync == nil {
 		return fmt.Errorf("cardanodbsync is required")
 	}
 	if network == nil {
 		return fmt.Errorf("cardanonetwork is required")
 	}
-	if network.Spec.Mode != yacdv1alpha1.CardanoNetworkModeLocal {
-		return unsupportedSpec("primarySidecar placement is supported only for local CardanoNetwork resources")
+	switch network.Spec.Mode {
+	case yacdv1alpha1.CardanoNetworkModeLocal:
+	case yacdv1alpha1.CardanoNetworkModePublic:
+		if network.Spec.Public == nil {
+			return unsupportedSpec("primarySidecar placement for public CardanoNetwork resources requires spec.public")
+		}
+		if network.Spec.Public.Profile == yacdv1alpha1.PublicNetworkProfileMainnet {
+			return unsupportedSpec(publicMainnetDBSyncUnsupportedMessage)
+		}
+		switch network.Spec.Public.Profile {
+		case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileCustom:
+		default:
+			return unsupportedSpec("primarySidecar placement is not supported for public profile %q", network.Spec.Public.Profile)
+		}
+	default:
+		return unsupportedSpec("primarySidecar placement is supported only for local or non-mainnet public CardanoNetwork resources")
 	}
 
 	dbSyncPort := int32(0)

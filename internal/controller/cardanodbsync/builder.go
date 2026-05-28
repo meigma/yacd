@@ -258,7 +258,7 @@ func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 	if b.scheme == nil {
 		return nil, fmt.Errorf("scheme is required")
 	}
-	if err := ValidatePrimarySidecarLocalNetwork(dbSync, network); err != nil {
+	if err := ValidatePrimarySidecarNetwork(dbSync, network); err != nil {
 		return nil, err
 	}
 
