@@ -2,8 +2,11 @@ package cardanonetwork
 
 import (
 	"fmt"
+	"maps"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	cardanonetworkartifacts "github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -55,16 +58,29 @@ const (
 // container later patches with the generated network artifacts. The
 // fingerprint annotation lets downstream verification reject a ConfigMap
 // produced for a different localnet shape.
-func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.CardanoNetwork, localnetFingerprint string) (*corev1.ConfigMap, error) {
+func (b primaryWorkloadBuilder) networkArtifactsConfigMap(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (*corev1.ConfigMap, error) {
+	annotations := map[string]string{
+		networkFingerprintAnno: plan.Fingerprint,
+	}
+	if localnetFingerprint := plan.localnetFingerprint(); localnetFingerprint != "" {
+		annotations[localnetFingerprintAnno] = localnetFingerprint
+	}
+	data := map[string]string(nil)
+	if len(plan.ArtifactData) > 0 {
+		data = make(map[string]string, len(plan.ArtifactData))
+		maps.Copy(data, plan.ArtifactData)
+		annotations[ctrlannotations.ArtifactSchemaVersion] = cardanonetworkartifacts.SchemaVersion
+		annotations[ctrlannotations.ArtifactDataHash] = plan.ArtifactDataHash
+	}
+
 	configMap := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      networkArtifactsConfigMapName(network),
-			Namespace: network.Namespace,
-			Labels:    primaryWorkloadLabels(network),
-			Annotations: map[string]string{
-				localnetFingerprintAnno: localnetFingerprint,
-			},
+			Name:        networkArtifactsConfigMapName(network),
+			Namespace:   network.Namespace,
+			Labels:      primaryWorkloadLabels(network),
+			Annotations: annotations,
 		},
+		Data: data,
 	}
 	if err := controllerutil.SetControllerReference(network, configMap, b.scheme); err != nil {
 		return nil, fmt.Errorf("set network artifacts ConfigMap owner reference: %w", err)

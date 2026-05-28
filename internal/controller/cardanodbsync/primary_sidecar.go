@@ -154,7 +154,10 @@ func BuildPrimarySidecarAttachment(
 		return nil, fmt.Errorf("network artifacts ConfigMap name is required")
 	}
 
-	spec, err := dbSyncPlanSpec(dbSync, network, database)
+	// The reused container helpers are pure and do not depend on scheme or the
+	// follower-node image override.
+	builder := dbSyncWorkloadBuilder{}
+	spec, err := builder.dbSyncPlanSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
 	}
@@ -162,10 +165,6 @@ func BuildPrimarySidecarAttachment(
 	if err != nil {
 		return nil, unsupportedSpec("build db-sync plan: %v", err)
 	}
-
-	// The reused container helpers are pure and do not depend on scheme or the
-	// follower-node image override.
-	builder := dbSyncWorkloadBuilder{}
 	return &PrimarySidecarAttachment{
 		InitContainer: builder.pgPassInitContainer(dbSync),
 		Container:     builder.dbSyncContainer(dbSync, plan),

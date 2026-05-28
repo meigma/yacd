@@ -7,17 +7,22 @@ import (
 // SchemaVersion identifies the CardanoNetwork artifact payload schema.
 const SchemaVersion = "yacd.meigma.io/cardano-network-artifacts/v1alpha1"
 
-// Artifact data keys published for a CardanoNetwork localnet.
+// Artifact data keys published for a CardanoNetwork.
 const (
-	ConfigurationKey   = "configuration.yaml"
-	ByronGenesisKey    = "byron-genesis.json"
-	ShelleyGenesisKey  = "shelley-genesis.json"
-	AlonzoGenesisKey   = "alonzo-genesis.json"
-	ConwayGenesisKey   = "conway-genesis.json"
-	DijkstraGenesisKey = "dijkstra-genesis.json"
-	PrimaryTopologyKey = "primary-topology.json"
-	PlanManifestKey    = "yacd-localnet-plan.json"
-	ConnectionKey      = "connection.json"
+	ConfigurationKey         = "configuration.yaml"
+	ByronGenesisKey          = "byron-genesis.json"
+	ShelleyGenesisKey        = "shelley-genesis.json"
+	AlonzoGenesisKey         = "alonzo-genesis.json"
+	ConwayGenesisKey         = "conway-genesis.json"
+	DijkstraGenesisKey       = "dijkstra-genesis.json"
+	PrimaryTopologyKey       = "primary-topology.json"
+	PlanManifestKey          = "yacd-localnet-plan.json"
+	PublicProfileManifestKey = "yacd-public-profile.json"
+	CheckpointsKey           = "checkpoints.json"
+	PeerSnapshotKey          = "peer-snapshot.json"
+	MithrilGenesisKey        = "mithril-genesis.vkey"
+	MithrilAncillaryKey      = "mithril-ancillary.vkey"
+	ConnectionKey            = "connection.json"
 )
 
 var requiredKeys = []string{
@@ -27,12 +32,17 @@ var requiredKeys = []string{
 	AlonzoGenesisKey,
 	ConwayGenesisKey,
 	PrimaryTopologyKey,
-	PlanManifestKey,
 	ConnectionKey,
 }
 
 var optionalKeys = []string{
 	DijkstraGenesisKey,
+	PlanManifestKey,
+	PublicProfileManifestKey,
+	CheckpointsKey,
+	PeerSnapshotKey,
+	MithrilGenesisKey,
+	MithrilAncillaryKey,
 }
 
 // RequiredKeys returns the required artifact data keys.

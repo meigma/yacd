@@ -1,0 +1,15 @@
+apiVersion: yacd.meigma.io/v1alpha1
+kind: CardanoDBSync
+metadata:
+  name: preprod-dbsync
+  namespace: yacd-smoke
+spec:
+  networkRef:
+    name: preprod-smoke
+  placement:
+    mode: dedicatedFollower
+  database:
+    managed: {}
+  config:
+    insert:
+      preset: disable_all

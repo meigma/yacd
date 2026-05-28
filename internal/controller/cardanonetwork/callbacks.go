@@ -145,20 +145,35 @@ func validateControllerOwner(current metav1.Object, desired metav1.Object) error
 	return nil
 }
 
-// validateAcceptedLocalnetFingerprint rejects desired-state changes that
-// would alter localnet inputs after the CardanoNetwork has accepted a
-// fingerprint. The CardanoNetwork must be deleted and recreated to change
-// localnet parameters.
-func validateAcceptedLocalnetFingerprint(network *yacdv1alpha1.CardanoNetwork, desiredFingerprint string) error {
-	if network.Status.Network == nil || network.Status.Network.LocalnetFingerprint == "" {
-		return nil
-	}
-	if network.Status.Network.LocalnetFingerprint == desiredFingerprint {
+// validateAcceptedNetworkFingerprint rejects desired-state changes that would
+// alter network inputs after the CardanoNetwork has accepted a fingerprint.
+// The CardanoNetwork must be deleted and recreated to change network
+// parameters. Localnet status written before the mode-neutral field existed is
+// accepted through the localnetFingerprint fallback.
+func validateAcceptedNetworkFingerprint(network *yacdv1alpha1.CardanoNetwork, desired primaryNetworkPlan) error {
+	if network.Status.Network == nil {
 		return nil
 	}
 
-	return unsupportedLocalnetChange(
-		"CardanoNetwork localnet inputs changed from accepted fingerprint; delete and recreate the CardanoNetwork to change network parameters",
+	if desiredLocalnetFingerprint := desired.localnetFingerprint(); desiredLocalnetFingerprint != "" &&
+		network.Status.Network.LocalnetFingerprint != "" {
+		if network.Status.Network.LocalnetFingerprint == desiredLocalnetFingerprint {
+			return nil
+		}
+		return unsupportedLocalnetChange(
+			"CardanoNetwork localnet inputs changed from accepted fingerprint; delete and recreate the CardanoNetwork to change network parameters",
+		)
+	}
+
+	if network.Status.Network.NetworkFingerprint == "" {
+		return nil
+	}
+	if network.Status.Network.NetworkFingerprint == desired.Fingerprint {
+		return nil
+	}
+
+	return unsupportedNetworkChange(
+		"CardanoNetwork network inputs changed from accepted fingerprint; delete and recreate the CardanoNetwork to change network parameters",
 	)
 }
 
@@ -167,18 +182,38 @@ func validateAcceptedLocalnetFingerprint(network *yacdv1alpha1.CardanoNetwork, d
 // localnet state is per-fingerprint, so we cannot safely reuse the PVC
 // across drift.
 func validateLocalnetFingerprint(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim) error {
-	currentFingerprint := current.Annotations[localnetFingerprintAnno]
+	desiredLocalnetFingerprint := desired.Annotations[localnetFingerprintAnno]
+	if desiredLocalnetFingerprint != "" {
+		currentFingerprint := current.Annotations[localnetFingerprintAnno]
+		if currentFingerprint == "" {
+			return missingLocalnetFingerprint(
+				"PVC %s is missing localnet fingerprint annotation; delete and recreate the CardanoNetwork to recreate localnet state",
+				ctrlmetadata.ObjectKey(desired),
+			)
+		}
+
+		if currentFingerprint != desiredLocalnetFingerprint {
+			return unsupportedLocalnetChange(
+				"CardanoNetwork localnet inputs changed for PVC %s; delete and recreate the CardanoNetwork to change network parameters",
+				ctrlmetadata.ObjectKey(desired),
+			)
+		}
+
+		return nil
+	}
+
+	currentFingerprint := current.Annotations[networkFingerprintAnno]
 	if currentFingerprint == "" {
-		return missingLocalnetFingerprint(
-			"PVC %s is missing localnet fingerprint annotation; delete and recreate the CardanoNetwork to recreate localnet state",
+		return missingNetworkFingerprint(
+			"PVC %s is missing network fingerprint annotation; delete and recreate the CardanoNetwork to recreate network state",
 			ctrlmetadata.ObjectKey(desired),
 		)
 	}
 
-	desiredFingerprint := desired.Annotations[localnetFingerprintAnno]
+	desiredFingerprint := desired.Annotations[networkFingerprintAnno]
 	if currentFingerprint != desiredFingerprint {
-		return unsupportedLocalnetChange(
-			"CardanoNetwork localnet inputs changed for PVC %s; delete and recreate the CardanoNetwork to change network parameters",
+		return unsupportedNetworkChange(
+			"CardanoNetwork network inputs changed for PVC %s; delete and recreate the CardanoNetwork to change network parameters",
 			ctrlmetadata.ObjectKey(desired),
 		)
 	}

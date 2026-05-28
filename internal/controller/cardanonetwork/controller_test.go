@@ -8,6 +8,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	"github.com/meigma/yacd/internal/cardano/publicnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
@@ -161,6 +162,203 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assertFaucetStatus(t, ctx, reconciler, network, faucetAuthSecret.Name)
 	current := requireNetwork(t, ctx, reconciler, network)
 	assert.Nil(t, current.Status.Artifacts)
+}
+
+func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testing.T) {
+	ctx := context.Background()
+	network := publicPreviewCardanoNetwork("preview-workload")
+	reconciler := newTestReconciler(t, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, kupoContainerName)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
+	assert.Equal(t, "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29", deployment.Spec.Template.Annotations[networkFingerprintAnno])
+	assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
+	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, artifactPublisherTokenVolumeName)
+
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.Equal(t, deployment.Spec.Template.Annotations[networkFingerprintAnno], configMap.Annotations[networkFingerprintAnno])
+	assert.NotContains(t, configMap.Annotations, localnetFingerprintAnno)
+	assert.Equal(t, networkartifacts.SchemaVersion, configMap.Annotations[ctrlannotations.ArtifactSchemaVersion])
+	assert.Equal(t, ctrlartifacts.ComputeDataHash(configMap.Data), configMap.Annotations[ctrlannotations.ArtifactDataHash])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.PublicProfileManifestKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.ConnectionKey])
+	assertNoArtifactPublisherResources(t, ctx, reconciler, network)
+	assertNoPrimaryKupoService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
+	assertNodeToNodeEndpoint(t, ctx, reconciler, network, primaryWorkloadName(network), network.Spec.Node.Port)
+	assertOgmiosEndpoint(t, ctx, reconciler, network, primaryOgmiosServiceName(network), defaultOgmiosPort)
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	assert.Equal(t, yacdv1alpha1.CardanoNetworkModePublic, current.Status.Network.Mode)
+	assert.Equal(t, deployment.Spec.Template.Annotations[networkFingerprintAnno], current.Status.Network.NetworkFingerprint)
+	assert.Empty(t, current.Status.Network.LocalnetFingerprint)
+	require.NotNil(t, current.Status.Network.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfilePreview, *current.Status.Network.Profile)
+	require.NotNil(t, current.Status.Network.NetworkMagic)
+	assert.Equal(t, int64(2), *current.Status.Network.NetworkMagic)
+	require.NotNil(t, current.Status.Artifacts)
+	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
+	assert.Equal(t, networkartifacts.SchemaVersion, current.Status.Artifacts.SchemaVersion)
+	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], current.Status.Artifacts.DataHash)
+	require.NotNil(t, current.Status.Endpoints)
+	assert.Nil(t, current.Status.Endpoints.Kupo)
+	assert.Nil(t, current.Status.Endpoints.Faucet)
+	assert.Nil(t, current.Status.Faucet)
+}
+
+func TestCardanoNetworkReconcilerReconcileCreatesPublicMainnetWorkload(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("mainnet-workload", yacdv1alpha1.PublicNetworkProfileMainnet)
+	network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
+		Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, mithrilBootstrapInitContainerName, deployment.Spec.Template.Spec.InitContainers[0].Name)
+	assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", deployment.Spec.Template.Spec.InitContainers[0].Image)
+	require.NotNil(t, requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName).EmptyDir)
+	nodeContainer := requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, cardanoNodeContainerName)
+	assert.Equal(t, defaultMainnetNodeResources(), nodeContainer.Resources)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse(defaultMainnetNodeStorageSize)))
+
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilGenesisKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilAncillaryKey])
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotNil(t, current.Status.Network.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileMainnet, *current.Status.Network.Profile)
+}
+
+func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkload(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("custom-workload", yacdv1alpha1.PublicNetworkProfileCustom)
+	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	source := customProfileConfigMap(network.Namespace, "custom-profile", customPublicProfileBundle(t))
+	reconciler := newTestReconciler(t, source, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
+	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, kupoContainerName)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
+
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
+	assert.NotContains(t, configMap.Data, "unsupported.json")
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotNil(t, current.Status.Network.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileCustom, *current.Status.Network.Profile)
+	require.NotNil(t, current.Status.Network.NetworkMagic)
+	assert.Equal(t, int64(2), *current.Status.Network.NetworkMagic)
+}
+
+func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkloadFromSecret(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("secret-custom", yacdv1alpha1.PublicNetworkProfileCustom)
+	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		SecretRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	source := customProfileSecret(network.Namespace, "custom-profile", customPublicProfileBundle(t))
+	reconciler := newTestReconciler(t, source, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
+	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotNil(t, current.Status.Network.Profile)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileCustom, *current.Status.Network.Profile)
+}
+
+func TestCardanoNetworkReconcilerReconcileDegradesMissingCustomPublicSource(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("missing-custom-source", yacdv1alpha1.PublicNetworkProfileCustom)
+	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	assertNoPrimaryChildren(t, ctx, reconciler, network)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+}
+
+func TestCardanoNetworkReconcilerReconcileRejectsCustomProfileDriftBeforeArtifactMutation(t *testing.T) {
+	ctx := context.Background()
+	network := publicCardanoNetwork("custom-drift", yacdv1alpha1.PublicNetworkProfileCustom)
+	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	source := customProfileConfigMap(network.Namespace, "custom-profile", customPublicProfileBundle(t))
+	reconciler := newTestReconciler(t, source, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	originalDataHash := configMap.Annotations[ctrlannotations.ArtifactDataHash]
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	originalDeploymentFingerprint := deployment.Spec.Template.Annotations[networkFingerprintAnno]
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Status.Network = nil
+	current.Status.Artifacts = nil
+	storeNetworkStatus(t, ctx, reconciler, current)
+
+	source = &corev1.ConfigMap{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: "custom-profile"}, source))
+	source.Data["topology.json"] = "{\"Producers\":[]}\n"
+	require.NoError(t, reconciler.Update(ctx, source))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedNetworkChange)
+	configMap = requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.Equal(t, originalDataHash, configMap.Annotations[ctrlannotations.ArtifactDataHash])
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, originalDeploymentFingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
 }
 
 func TestCardanoNetworkReconcilerReconcileLeavesFaucetDisabledByDefault(t *testing.T) {
@@ -1932,24 +2130,80 @@ func TestCardanoNetworkReconcilerReconcileReturnsInternalBuildErrors(t *testing.
 // TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput verifies adapter
 // rejections are surfaced through status without creating children.
 func TestCardanoNetworkReconcilerReconcileMarksUnsupportedInput(t *testing.T) {
-	ctx := context.Background()
-	network := localCardanoNetwork("unsupported-input")
-	network.Spec.Local.Era = yacdv1alpha1.CardanoEraBabbage
-	reconciler := newTestReconciler(t, network)
+	tests := []struct {
+		name    string
+		network *yacdv1alpha1.CardanoNetwork
+	}{
+		{
+			name: "local babbage era",
+			network: func() *yacdv1alpha1.CardanoNetwork {
+				network := localCardanoNetwork("unsupported-local-era")
+				network.Spec.Local.Era = yacdv1alpha1.CardanoEraBabbage
+				return network
+			}(),
+		},
+		{
+			name: "public kupo",
+			network: func() *yacdv1alpha1.CardanoNetwork {
+				network := publicPreviewCardanoNetwork("unsupported-public-kupo")
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    defaultKupoPort,
+					},
+				}
+				return network
+			}(),
+		},
+		{
+			name: "public faucet",
+			network: func() *yacdv1alpha1.CardanoNetwork {
+				network := publicPreviewCardanoNetwork("unsupported-public-faucet")
+				enableFaucet(network)
+				return network
+			}(),
+		},
+		{
+			name:    "public mainnet without mithril bootstrap",
+			network: publicCardanoNetwork("unsupported-public-mainnet", yacdv1alpha1.PublicNetworkProfileMainnet),
+		},
+		{
+			name: "public mainnet storage below minimum",
+			network: func() *yacdv1alpha1.CardanoNetwork {
+				network := publicCardanoNetwork("unsupported-mainnet-storage", yacdv1alpha1.PublicNetworkProfileMainnet)
+				network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
+					Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
+				}
+				network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+					Size: resource.MustParse("299Gi"),
+				}
+				return network
+			}(),
+		},
+	}
 
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			network := tt.network
+			reconciler := newTestReconciler(t, network)
 
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-	assertNoPrimaryChildren(t, ctx, reconciler, network)
-	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Endpoints)
+			result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+			require.NoError(t, err)
+			assert.Equal(t, ctrl.Result{}, result)
+			assertNoPrimaryChildren(t, ctx, reconciler, network)
+			assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+			assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+			assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+			assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+			assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+			assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
+			current := requireNetwork(t, ctx, reconciler, network)
+			assert.Nil(t, current.Status.Endpoints)
+		})
+	}
 }
 
 func TestCardanoNetworkReconcilerReconcileRevokesFaucetOnUnsupportedSpec(t *testing.T) {
@@ -2063,6 +2317,60 @@ func localCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 				},
 			},
 		},
+	}
+}
+
+// publicPreviewCardanoNetwork returns a minimally supported public preview
+// CardanoNetwork.
+func publicPreviewCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
+	return publicCardanoNetwork(name, yacdv1alpha1.PublicNetworkProfilePreview)
+}
+
+func publicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkProfile) *yacdv1alpha1.CardanoNetwork {
+	return &yacdv1alpha1.CardanoNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+		},
+		Spec: yacdv1alpha1.CardanoNetworkSpec{
+			Mode: yacdv1alpha1.CardanoNetworkModePublic,
+			Node: yacdv1alpha1.CardanoNodeSpec{
+				Version: "11.0.1",
+				Port:    3001,
+			},
+			Public: &yacdv1alpha1.PublicNetworkSpec{
+				Profile: profile,
+			},
+		},
+	}
+}
+
+func customProfileConfigMap(namespace string, name string, bundle *publicnet.CustomBundle) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Data: maps.Clone(bundle.Files),
+		BinaryData: map[string][]byte{
+			"unsupported.json": []byte("ignored"),
+		},
+	}
+}
+
+func customProfileSecret(namespace string, name string, bundle *publicnet.CustomBundle) *corev1.Secret {
+	data := make(map[string][]byte, len(bundle.Files)+1)
+	for key, value := range bundle.Files {
+		data[key] = []byte(value)
+	}
+	data["unsupported.json"] = []byte("ignored")
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
 	}
 }
 
@@ -2637,6 +2945,33 @@ func assertNoNetworkArtifactChildren(
 	assert.True(t, apierrors.IsNotFound(err), "expected network artifacts ConfigMap to be absent, got %v", err)
 
 	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      artifactPublisherServiceAccountName(network),
+	}, &corev1.ServiceAccount{})
+	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher ServiceAccount to be absent, got %v", err)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      artifactPublisherRoleName(network),
+	}, &rbacv1.Role{})
+	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher Role to be absent, got %v", err)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      artifactPublisherRoleBindingName(network),
+	}, &rbacv1.RoleBinding{})
+	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher RoleBinding to be absent, got %v", err)
+}
+
+func assertNoArtifactPublisherResources(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
 		Namespace: network.Namespace,
 		Name:      artifactPublisherServiceAccountName(network),
 	}, &corev1.ServiceAccount{})

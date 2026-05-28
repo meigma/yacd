@@ -1,0 +1,15 @@
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: preview-smoke
+  namespace: yacd-smoke
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+      storage:
+        size: 20Gi
+    public:
+      profile: preview

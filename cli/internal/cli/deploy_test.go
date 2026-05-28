@@ -43,6 +43,66 @@ func TestDeployDryRunPrintsManifestWithoutKubeClient(t *testing.T) {
 	assert.Contains(t, stderr.String(), "Dry run: rendered CardanoNetwork flag-ns/devnet; no resources applied.")
 }
 
+func TestDeployDryRunAllowsMainnetWithWarning(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeTempConfig(t, testPublicMainnetDevConfig)
+	var stdout, stderr bytes.Buffer
+	root := NewRootCommand(Options{
+		Out:   &stdout,
+		Err:   &stderr,
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return nil, fmt.Errorf("kube client should not be constructed for dry run")
+		},
+	})
+	root.SetArgs([]string{"deploy", "-f", configPath, "--dry-run"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+
+	assert.Contains(t, stdout.String(), "profile: mainnet")
+	assert.Contains(t, stdout.String(), "bootstrap:")
+	assert.Contains(t, stderr.String(), "Warning: rendering mainnet CardanoNetwork config-ns/mainnet without --allow-mainnet")
+	assert.Contains(t, stderr.String(), "Dry run: rendered CardanoNetwork config-ns/mainnet; no resources applied.")
+}
+
+func TestDeployDryRunDoesNotWarnForNonMainnetPublicProfiles(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		config string
+	}{
+		{name: "preview", config: testPublicPreviewDevConfig},
+		{
+			name: "preprod",
+			config: strings.Replace(
+				strings.Replace(testPublicPreviewDevConfig, "profile: preview", "profile: preprod", 1),
+				"name: preview", "name: preprod", 1,
+			),
+		},
+		{name: "custom", config: testPublicCustomDevConfig},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configPath := writeTempConfig(t, tc.config)
+			var stderr bytes.Buffer
+			root := NewRootCommand(Options{
+				Err:   &stderr,
+				Viper: viper.New(),
+				KubeClientFactory: func(kube.Config) (kube.Client, error) {
+					return nil, fmt.Errorf("kube client should not be constructed for dry run")
+				},
+			})
+			root.SetArgs([]string{"deploy", "-f", configPath, "--dry-run"})
+
+			require.NoError(t, root.ExecuteContext(context.Background()))
+			assert.NotContains(t, stderr.String(), "Warning: rendering mainnet")
+		})
+	}
+}
+
 func TestDeployRejectsUnexpectedArgs(t *testing.T) {
 	t.Parallel()
 
@@ -128,4 +188,48 @@ func TestDeployAppliesAndWaits(t *testing.T) {
 	require.NotNil(t, applied, "CardanoNetwork was not applied")
 	assert.Equal(t, "config-ns", applied.Namespace)
 	assert.Contains(t, stderr.String(), "CardanoNetwork config-ns/devnet is ready.")
+}
+
+func TestDeployRejectsMainnetApplyWithoutAllowFlag(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeTempConfig(t, testPublicMainnetDevConfig)
+	root := NewRootCommand(Options{
+		Viper: viper.New(),
+		KubeClientFactory: func(kube.Config) (kube.Client, error) {
+			return nil, fmt.Errorf("kube client should not be constructed when --allow-mainnet is missing")
+		},
+	})
+	root.SetArgs([]string{"deploy", "-f", configPath})
+
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mainnet deployments require --allow-mainnet")
+}
+
+func TestDeployAppliesMainnetWithAllowFlag(t *testing.T) {
+	t.Parallel()
+
+	configPath := writeTempConfig(t, testPublicMainnetDevConfig)
+	client := newKubeMock(t)
+	var applied *yacdv1alpha1.CardanoNetwork
+	client.EXPECT().
+		ApplyCardanoNetwork(mock.Anything, mock.AnythingOfType("*v1alpha1.CardanoNetwork")).
+		Run(func(_ context.Context, network *yacdv1alpha1.CardanoNetwork) {
+			applied = network.DeepCopy()
+		}).
+		Return(nil)
+
+	root := NewRootCommand(Options{
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+	})
+	root.SetArgs([]string{"deploy", "-f", configPath, "--allow-mainnet"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	require.NotNil(t, applied)
+	require.NotNil(t, applied.Spec.Public)
+	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileMainnet, applied.Spec.Public.Profile)
+	require.NotNil(t, applied.Spec.Public.Bootstrap)
+	require.NotNil(t, applied.Spec.Public.Bootstrap.Mithril)
 }

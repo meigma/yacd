@@ -19,6 +19,7 @@ fileGroups:
     - 'containers/cardano-testnet/publisher/go.mod'
     - 'containers/cardano-testnet/publisher/go.sum'
     - 'internal/**/*.go'
+    - 'internal/cardano/publicnet/profiles/**/*'
     - 'services/**/*.go'
     - 'test/**/*.go'
     - 'go.mod'

@@ -12,6 +12,10 @@ const (
 	// hard error (PVC) or a Pod template hash roll (Deployment).
 	localnetFingerprintAnno = ctrlannotations.LocalnetFingerprint
 
+	// networkFingerprintAnno is the mode-neutral annotation key carrying the
+	// accepted network fingerprint on owned resources and artifact ConfigMaps.
+	networkFingerprintAnno = ctrlannotations.NetworkFingerprint
+
 	// networkArtifactsConfigMapUIDAnno is the annotation key carrying the
 	// artifact ConfigMap UID on the Deployment pod template. The reconciler
 	// stamps this so a recovered (delete-then-create) ConfigMap rolls the
@@ -30,6 +34,7 @@ const (
 // pick them up automatically.
 var cardanoNetworkOwnedAnnotations = []string{
 	localnetFingerprintAnno,
+	networkFingerprintAnno,
 	ctrlannotations.RequestedStorageClass,
 	networkArtifactsConfigMapUIDAnno,
 	dbSyncSidecarRevisionAnno,

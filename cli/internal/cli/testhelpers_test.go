@@ -40,6 +40,63 @@ spec:
           count: 1
 `
 
+const testPublicMainnetDevConfig = `
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: mainnet
+  namespace: config-ns
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+    public:
+      profile: mainnet
+      bootstrap:
+        mithril: {}
+`
+
+const testPublicPreviewDevConfig = `
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: preview
+  namespace: config-ns
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+      storage:
+        size: 20Gi
+    public:
+      profile: preview
+`
+
+const testPublicCustomDevConfig = `
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: custom
+  namespace: config-ns
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+      storage:
+        size: 20Gi
+    public:
+      profile: custom
+      configSource:
+        configMapRef:
+          name: custom-profile
+`
+
 // writeTempConfig writes contents to a yacd.yaml file inside a fresh
 // t.TempDir and returns the absolute path.
 func writeTempConfig(t *testing.T, contents string) string {

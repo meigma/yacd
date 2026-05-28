@@ -40,6 +40,28 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	return result, err
 }
 
+// validateAcceptedPrimaryPersistentVolumeClaim checks the live primary PVC's
+// accepted network fingerprint before other children are mutated. The apply
+// callback repeats this validation, but this early gate prevents profile drift
+// from patching artifacts or rolling the Deployment first.
+func (r *CardanoNetworkReconciler) validateAcceptedPrimaryPersistentVolumeClaim(
+	ctx context.Context,
+	desired *corev1.PersistentVolumeClaim,
+) error {
+	current := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if err := validateControllerOwner(current, desired); err != nil {
+		return err
+	}
+
+	return validateLocalnetFingerprint(current, desired)
+}
+
 // applyPrimaryDeployment applies the primary node Deployment.
 func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	ctx context.Context,
@@ -97,7 +119,7 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	// foreign data keys, or otherwise fails verification. Delete it and let
 	// the next reconcile recreate; the new UID rolls the Deployment so the
 	// init publisher can republish.
-	if artifactConfigMapNeedsRecovery(current, desired.Annotations[localnetFingerprintAnno]) {
+	if artifactConfigMapNeedsRecovery(current, desired.Annotations[networkFingerprintAnno]) {
 		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
 			return controllerutil.OperationResultNone, nil, err
 		}
@@ -109,6 +131,10 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	current.Labels = ctrlmetadata.OverlayStringMap(current.Labels, desired.Labels)
 	current.Annotations = ctrlmetadata.OverlayStringMap(current.Annotations, desired.Annotations)
 	current.OwnerReferences = desired.OwnerReferences
+	if len(desired.Data) > 0 {
+		current.Data = desired.Data
+		current.BinaryData = nil
+	}
 
 	if equality.Semantic.DeepEqual(before, current) {
 		return controllerutil.OperationResultNone, current, nil

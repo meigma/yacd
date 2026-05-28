@@ -65,7 +65,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
@@ -92,12 +92,17 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	resources, err := (primaryWorkloadBuilder{
-		scheme:                     r.Scheme,
-		defaultFaucetImage:         r.DefaultFaucetImage,
-		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
-		dbSyncAttachment:           dbSyncAttachment.Attachment,
-	}).Build(network)
+	publicCustomBundle, err := r.publicCustomProfileBundle(ctx, network)
+	var resources *primaryWorkloadResources
+	if err == nil {
+		resources, err = (primaryWorkloadBuilder{
+			scheme:                     r.Scheme,
+			defaultFaucetImage:         r.DefaultFaucetImage,
+			defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+			dbSyncAttachment:           dbSyncAttachment.Attachment,
+			publicCustomBundle:         publicCustomBundle,
+		}).Build(network)
+	}
 	if err != nil {
 		var unsupportedSpec unsupportedSpecError
 		if !errors.As(err, &unsupportedSpec) {
@@ -133,8 +138,10 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	localnetFingerprint := resources.Deployment.Spec.Template.Annotations[localnetFingerprintAnno]
-	if err := validateAcceptedLocalnetFingerprint(network, localnetFingerprint); err != nil {
+	if err := validateAcceptedNetworkFingerprint(network, resources.NetworkPlan); err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
+	}
+	if err := r.validateAcceptedPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim); err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
@@ -143,7 +150,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, localnetFingerprint, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -155,6 +162,18 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	ogmiosServiceKey := disabledChildResourceLogValue
 	if resources.OgmiosService != nil {
 		ogmiosServiceKey = client.ObjectKeyFromObject(resources.OgmiosService).String()
+	}
+	artifactPublisherServiceAccountKey := disabledChildResourceLogValue
+	if resources.ArtifactPublisherServiceAccount != nil {
+		artifactPublisherServiceAccountKey = client.ObjectKeyFromObject(resources.ArtifactPublisherServiceAccount).String()
+	}
+	artifactPublisherRoleKey := disabledChildResourceLogValue
+	if resources.ArtifactPublisherRole != nil {
+		artifactPublisherRoleKey = client.ObjectKeyFromObject(resources.ArtifactPublisherRole).String()
+	}
+	artifactPublisherRoleBindingKey := disabledChildResourceLogValue
+	if resources.ArtifactPublisherRoleBinding != nil {
+		artifactPublisherRoleBindingKey = client.ObjectKeyFromObject(resources.ArtifactPublisherRoleBinding).String()
 	}
 	kupoServiceKey := disabledChildResourceLogValue
 	if resources.KupoService != nil {
@@ -171,11 +190,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	resultLog.Info("Applied CardanoNetwork primary workload",
 		"networkArtifactsConfigMap", client.ObjectKeyFromObject(resources.NetworkArtifactsConfigMap),
 		"networkArtifactsConfigMapOperation", applyResults.NetworkArtifactsConfigMap,
-		"artifactPublisherServiceAccount", client.ObjectKeyFromObject(resources.ArtifactPublisherServiceAccount),
+		"artifactPublisherServiceAccount", artifactPublisherServiceAccountKey,
 		"artifactPublisherServiceAccountOperation", applyResults.ArtifactPublisherServiceAccount,
-		"artifactPublisherRole", client.ObjectKeyFromObject(resources.ArtifactPublisherRole),
+		"artifactPublisherRole", artifactPublisherRoleKey,
 		"artifactPublisherRoleOperation", applyResults.ArtifactPublisherRole,
-		"artifactPublisherRoleBinding", client.ObjectKeyFromObject(resources.ArtifactPublisherRoleBinding),
+		"artifactPublisherRoleBinding", artifactPublisherRoleBindingKey,
 		"artifactPublisherRoleBindingOperation", applyResults.ArtifactPublisherRoleBinding,
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
 		"persistentVolumeClaimOperation", applyResults.PersistentVolumeClaim,
@@ -191,7 +210,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"faucetServiceOperation", applyResults.FaucetService,
 		"faucetAuthSecret", faucetAuthSecretKey,
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
-		"localnetFingerprint", localnetFingerprint)
+		"networkFingerprint", resources.NetworkPlan.Fingerprint)
 
 	if ready.Status != metav1.ConditionTrue &&
 		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
@@ -261,17 +280,23 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	if err != nil {
 		return results, err
 	}
-	results.ArtifactPublisherServiceAccount, err = r.applyArtifactPublisherServiceAccount(ctx, resources.ArtifactPublisherServiceAccount)
-	if err != nil {
-		return results, err
+	if resources.ArtifactPublisherServiceAccount != nil {
+		results.ArtifactPublisherServiceAccount, err = r.applyArtifactPublisherServiceAccount(ctx, resources.ArtifactPublisherServiceAccount)
+		if err != nil {
+			return results, err
+		}
 	}
-	results.ArtifactPublisherRole, err = r.applyArtifactPublisherRole(ctx, resources.ArtifactPublisherRole)
-	if err != nil {
-		return results, err
+	if resources.ArtifactPublisherRole != nil {
+		results.ArtifactPublisherRole, err = r.applyArtifactPublisherRole(ctx, resources.ArtifactPublisherRole)
+		if err != nil {
+			return results, err
+		}
 	}
-	results.ArtifactPublisherRoleBinding, err = r.applyArtifactPublisherRoleBinding(ctx, resources.ArtifactPublisherRoleBinding)
-	if err != nil {
-		return results, err
+	if resources.ArtifactPublisherRoleBinding != nil {
+		results.ArtifactPublisherRoleBinding, err = r.applyArtifactPublisherRoleBinding(ctx, resources.ArtifactPublisherRoleBinding)
+		if err != nil {
+			return results, err
+		}
 	}
 
 	results.PersistentVolumeClaim, err = r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
@@ -391,12 +416,18 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 
 // SetupWithManager sets up the CardanoNetwork controller with the manager.
 func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.indexCustomProfileSources(mgr); err != nil {
+		return err
+	}
+
 	logf.Log.WithName("controllers").WithName(controllerName).
 		Info("Starting CardanoNetwork controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
+		Watches(&corev1.ConfigMap{}, r.customProfileConfigMapEventHandler()).
+		Watches(&corev1.Secret{}, r.customProfileSecretEventHandler()).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).

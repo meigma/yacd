@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"encoding/json"
 	"maps"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -400,6 +402,96 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
+func TestCardanoNetworkControllerManagerHandlesCustomProfileSources(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	skipNameValidation := true
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	require.NoError(t, (&CardanoNetworkReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cardanonetwork-custom-envtest"}}
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	configMapNetwork := publicCardanoNetwork("custom-configmap", yacdv1alpha1.PublicNetworkProfileCustom)
+	configMapNetwork.Namespace = namespace.Name
+	configMapNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	configMapSource := customProfileConfigMap(namespace.Name, "custom-profile", customPublicProfileBundle(t))
+	require.NoError(t, apiClient.Create(ctx, configMapSource))
+	require.NoError(t, apiClient.Create(ctx, configMapNetwork))
+
+	secretNetwork := publicCardanoNetwork("custom-secret", yacdv1alpha1.PublicNetworkProfileCustom)
+	secretNetwork.Namespace = namespace.Name
+	secretNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		SecretRef: &corev1.LocalObjectReference{Name: "custom-profile-secret"},
+	}
+	secretSource := customProfileSecret(namespace.Name, "custom-profile-secret", customPublicProfileBundle(t))
+	require.NoError(t, apiClient.Create(ctx, secretSource))
+	require.NoError(t, apiClient.Create(ctx, secretNetwork))
+
+	require.Eventually(t, func() bool {
+		return statusHasCustomPublicArtifacts(ctx, apiClient, configMapNetwork)
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return statusHasCustomPublicArtifacts(ctx, apiClient, secretNetwork)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	currentSource := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(configMapSource), currentSource))
+	currentSource.Data["topology.json"] = "{\"Producers\":[]}\n"
+	require.NoError(t, apiClient.Update(ctx, currentSource))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(configMapNetwork), current); err != nil {
+			return false
+		}
+		return conditionHas(current, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedNetworkChange)
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -472,21 +564,35 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	}, 10*time.Second, 100*time.Millisecond)
 	artifactConfigMap := &corev1.ConfigMap{}
 	require.NoError(t, apiClient.Get(ctx, artifactKey, artifactConfigMap))
-	if artifactConfigMap.Annotations == nil {
-		artifactConfigMap.Annotations = map[string]string{}
-	}
-	artifactConfigMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
-	artifactConfigMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
-	artifactConfigMap.Data = testNetworkArtifactsData()
-	require.NoError(t, apiClient.Update(ctx, artifactConfigMap))
 
 	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork))
-	currentNetwork.Status.ObservedGeneration = currentNetwork.Generation
-	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: artifactConfigMap.Name,
-		SchemaVersion:        networkartifacts.SchemaVersion,
-		DataHash:             testNetworkArtifactsDataHash,
+	networkFingerprint := ""
+	localnetFingerprint := ""
+	if currentNetwork.Status.Network != nil {
+		networkFingerprint = currentNetwork.Status.Network.NetworkFingerprint
+		localnetFingerprint = currentNetwork.Status.Network.LocalnetFingerprint
+	}
+	if networkFingerprint == "" || localnetFingerprint == "" {
+		currentDeployment := &appsv1.Deployment{}
+		require.NoError(t, apiClient.Get(ctx, deploymentKey, currentDeployment))
+		if networkFingerprint == "" {
+			networkFingerprint = currentDeployment.Spec.Template.Annotations[networkFingerprintAnno]
+		}
+		if localnetFingerprint == "" {
+			localnetFingerprint = currentDeployment.Spec.Template.Annotations[localnetFingerprintAnno]
+		}
+	}
+	require.NotEmpty(t, networkFingerprint)
+	require.NotEmpty(t, localnetFingerprint)
+	networkMagic := currentNetwork.Spec.Local.NetworkMagic
+	era := currentNetwork.Spec.Local.Era
+	currentNetwork.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{
+		Mode:                yacdv1alpha1.CardanoNetworkModeLocal,
+		LocalnetFingerprint: localnetFingerprint,
+		NetworkFingerprint:  networkFingerprint,
+		NetworkMagic:        &networkMagic,
+		Era:                 &era,
 	}
 	currentNetwork.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
@@ -499,6 +605,24 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 			Port:        defaultOgmiosPort,
 			URL:         "ws://sidecar-network-ogmios.cardanonetwork-dbsync-envtest.svc.cluster.local:1337",
 		},
+	}
+	artifactData := dbSyncEnvtestNetworkArtifactsData(currentNetwork)
+	artifactDataHash := ctrlartifacts.ComputeDataHash(artifactData)
+	if artifactConfigMap.Annotations == nil {
+		artifactConfigMap.Annotations = map[string]string{}
+	}
+	artifactConfigMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
+	artifactConfigMap.Annotations[ctrlannotations.ArtifactDataHash] = artifactDataHash
+	artifactConfigMap.Annotations[ctrlannotations.NetworkFingerprint] = currentNetwork.Status.Network.NetworkFingerprint
+	artifactConfigMap.Annotations[ctrlannotations.LocalnetFingerprint] = currentNetwork.Status.Network.LocalnetFingerprint
+	artifactConfigMap.Data = artifactData
+	require.NoError(t, apiClient.Update(ctx, artifactConfigMap))
+
+	currentNetwork.Status.ObservedGeneration = currentNetwork.Generation
+	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+		NetworkConfigMapName: artifactConfigMap.Name,
+		SchemaVersion:        networkartifacts.SchemaVersion,
+		DataHash:             artifactDataHash,
 	}
 	currentNetwork.Status.Conditions = []metav1.Condition{{
 		Type:               string(conditionTypeArtifactsReady),
@@ -682,6 +806,29 @@ func statusHasDisabledFaucetReadyConditions(
 		current.Status.Faucet == nil
 }
 
+func statusHasCustomPublicArtifacts(
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) bool {
+	current := &yacdv1alpha1.CardanoNetwork{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+		return false
+	}
+	if current.Status.Network == nil ||
+		current.Status.Network.NetworkFingerprint == "" ||
+		current.Status.Network.Profile == nil ||
+		*current.Status.Network.Profile != yacdv1alpha1.PublicNetworkProfileCustom ||
+		current.Status.Artifacts == nil {
+		return false
+	}
+
+	return conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady) &&
+		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
+		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
+		current.Status.Artifacts.DataHash != ""
+}
+
 func conditionHas(
 	network *yacdv1alpha1.CardanoNetwork,
 	ct conditionType,
@@ -833,4 +980,49 @@ func networkArtifactsStatusMatches(current *yacdv1alpha1.CardanoNetwork, network
 		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
 		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
 		current.Status.Artifacts.DataHash == testNetworkArtifactsDataHash
+}
+
+func dbSyncEnvtestNetworkArtifactsData(network *yacdv1alpha1.CardanoNetwork) map[string]string {
+	data := testNetworkArtifactsData()
+	data[networkartifacts.ConnectionKey] = dbSyncEnvtestConnectionJSON(network)
+	return data
+}
+
+func dbSyncEnvtestConnectionJSON(network *yacdv1alpha1.CardanoNetwork) string {
+	doc := struct {
+		SchemaVersion     string            `json:"schemaVersion"`
+		Network           map[string]any    `json:"network"`
+		PrimaryNodeToNode map[string]any    `json:"primaryNodeToNode"`
+		Files             map[string]string `json:"files"`
+	}{
+		SchemaVersion: networkartifacts.SchemaVersion,
+		Network: map[string]any{
+			"name":                network.Name,
+			"namespace":           network.Namespace,
+			"mode":                string(network.Status.Network.Mode),
+			"networkMagic":        *network.Status.Network.NetworkMagic,
+			"era":                 string(*network.Status.Network.Era),
+			"localnetFingerprint": network.Status.Network.LocalnetFingerprint,
+		},
+		PrimaryNodeToNode: map[string]any{
+			"host": network.Status.Endpoints.NodeToNode.ServiceName + "." + network.Namespace + ".svc.cluster.local",
+			"port": network.Status.Endpoints.NodeToNode.Port,
+			"url":  network.Status.Endpoints.NodeToNode.URL,
+		},
+		Files: map[string]string{
+			"configuration":   networkartifacts.ConfigurationKey,
+			"byronGenesis":    networkartifacts.ByronGenesisKey,
+			"shelleyGenesis":  networkartifacts.ShelleyGenesisKey,
+			"alonzoGenesis":   networkartifacts.AlonzoGenesisKey,
+			"conwayGenesis":   networkartifacts.ConwayGenesisKey,
+			"primaryTopology": networkartifacts.PrimaryTopologyKey,
+			"connection":      networkartifacts.ConnectionKey,
+			"localnetPlan":    networkartifacts.PlanManifestKey,
+		},
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return string(raw) + "\n"
 }

@@ -232,7 +232,18 @@ func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
 		)
 	}
 
-	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime)
+	connectionResult := ctrlnetworkartifacts.ConsumerConnection(configMap, network)
+	if !connectionResult.Ready {
+		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
+			conditionReasonNetworkArtifactsMismatch,
+			connectionResult.Message,
+		)
+	}
+	if err := validatePublicDBSyncSupport(dbSync, connectionResult.Connection); err != nil {
+		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
+	}
+
+	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime, connectionResult.Connection)
 }
 
 // reconcileWorkloads applies (in dependency order) the managed Postgres
@@ -247,10 +258,12 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	network *yacdv1alpha1.CardanoNetwork,
 	configMap *corev1.ConfigMap,
 	databaseRuntime databaseRuntime,
+	networkConnection ctrlnetworkartifacts.Connection,
 ) (ctrl.Result, error) {
 	builder := dbSyncWorkloadBuilder{
 		scheme:                     r.Scheme,
 		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+		networkConnection:          &networkConnection,
 	}
 	var postgresResources *managedPostgresResources
 	if databaseRuntime.Mode == databaseModeManaged {

@@ -3,12 +3,15 @@ package cardanodbsync
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -91,25 +94,17 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 	}, 10*time.Second, 100*time.Millisecond)
 
 	artifactConfigMapName := "watched-network-network-artifacts"
-	require.NoError(t, apiClient.Create(ctx, &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      artifactConfigMapName,
-			Namespace: namespace.Name,
-			Annotations: map[string]string{
-				ctrlannotations.ArtifactSchemaVersion: testNetworkArtifactSchemaVersion,
-				ctrlannotations.ArtifactDataHash:      testNetworkArtifactDataHash,
-			},
-		},
-		Data: testNetworkArtifactsData(),
-	}))
-
 	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork))
+	networkMagic := int64(42)
+	era := yacdv1alpha1.CardanoEraConway
 	currentNetwork.Status.ObservedGeneration = currentNetwork.Generation
-	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: artifactConfigMapName,
-		SchemaVersion:        testNetworkArtifactSchemaVersion,
-		DataHash:             testNetworkArtifactDataHash,
+	currentNetwork.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{
+		Mode:                yacdv1alpha1.CardanoNetworkModeLocal,
+		LocalnetFingerprint: "fingerprint",
+		NetworkFingerprint:  "fingerprint",
+		NetworkMagic:        &networkMagic,
+		Era:                 &era,
 	}
 	currentNetwork.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
@@ -117,6 +112,26 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 			Port:        3001,
 			URL:         "tcp://watched-network-node.cardanodbsync-envtest.svc.cluster.local:3001",
 		},
+	}
+	artifactData := testNetworkArtifactsDataFor(currentNetwork)
+	artifactDataHash := ctrlartifacts.ComputeDataHash(artifactData)
+	require.NoError(t, apiClient.Create(ctx, &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      artifactConfigMapName,
+			Namespace: namespace.Name,
+			Annotations: map[string]string{
+				ctrlannotations.ArtifactSchemaVersion: testNetworkArtifactSchemaVersion,
+				ctrlannotations.ArtifactDataHash:      artifactDataHash,
+				ctrlannotations.NetworkFingerprint:    currentNetwork.Status.Network.NetworkFingerprint,
+				ctrlannotations.LocalnetFingerprint:   currentNetwork.Status.Network.LocalnetFingerprint,
+			},
+		},
+		Data: artifactData,
+	}))
+	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+		NetworkConfigMapName: artifactConfigMapName,
+		SchemaVersion:        testNetworkArtifactSchemaVersion,
+		DataHash:             artifactDataHash,
 	}
 	currentNetwork.Status.Conditions = []metav1.Condition{{
 		Type:               "ArtifactsReady",
@@ -212,6 +227,76 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 	}, 10*time.Second, 100*time.Millisecond)
 
 	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
+}
+
+func TestCardanoDBSyncControllerManagerReconcilesPublicPreprodDedicatedFollower(t *testing.T) {
+	ctx := context.Background()
+	apiClient := startCardanoDBSyncTestManager(t, ctx)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanodbsync-public-envtest"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	publishedNetwork := readyPublicCardanoNetwork("public-preprod-network", yacdv1alpha1.PublicNetworkProfilePreprod)
+	moveReadyNetworkToNamespace(publishedNetwork, namespace.Name)
+	createdNetwork := publishedNetwork.DeepCopy()
+	createdNetwork.Status = yacdv1alpha1.CardanoNetworkStatus{}
+	require.NoError(t, apiClient.Create(ctx, createdNetwork))
+	require.NoError(t, apiClient.Create(ctx, artifactConfigMapFor(publishedNetwork)))
+
+	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(createdNetwork), currentNetwork))
+	currentNetwork.Status = publishedNetwork.Status
+	require.NoError(t, apiClient.Status().Update(ctx, currentNetwork))
+
+	dbSync := localCardanoDBSync("public-dbsync", publishedNetwork.Name)
+	dbSync.Namespace = namespace.Name
+	dbSync.Spec.Placement = &yacdv1alpha1.CardanoDBSyncPlacementSpec{
+		Mode: yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower,
+	}
+	require.NoError(t, apiClient.Create(ctx, externalDatabaseSecretFor(dbSync)))
+	require.NoError(t, apiClient.Create(ctx, dbSync))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
+			return false
+		}
+		progressing := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeProgressing))
+		ready := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeReady))
+		return current.Status.ObservedGeneration == current.Generation &&
+			progressing != nil &&
+			progressing.Status == metav1.ConditionTrue &&
+			progressing.Reason == string(conditionReasonDeploymentProgressing) &&
+			ready != nil &&
+			ready.Status == metav1.ConditionFalse &&
+			ready.Reason == string(conditionReasonDeploymentProgressing)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	ownedConfigMap := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncConfigMapName(dbSync)}, ownedConfigMap))
+	require.Contains(t, ownedConfigMap.Data[dbSyncConfigFileName], "NetworkName: preprod")
+	require.Contains(t, ownedConfigMap.Data[dbSyncConfigFileName], "RequiresNetworkMagic: RequiresMagic")
+
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(createdNetwork), currentNetwork))
+	currentNetwork.Status.Artifacts.DataHash = "sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, apiClient.Status().Update(ctx, currentNetwork))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
+			return false
+		}
+		progressing := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeProgressing))
+		return progressing != nil &&
+			progressing.Status == metav1.ConditionTrue &&
+			progressing.Reason == string(conditionReasonNetworkArtifactsMismatch)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	ownedDeployment := &appsv1.Deployment{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncWorkloadName(dbSync)}, ownedDeployment))
+	require.NotNil(t, ownedDeployment.Spec.Replicas)
+	require.Equal(t, int32(0), *ownedDeployment.Spec.Replicas)
 }
 
 func TestCardanoDBSyncControllerManagerReconcilesPrimarySidecarPlacementPeers(t *testing.T) {

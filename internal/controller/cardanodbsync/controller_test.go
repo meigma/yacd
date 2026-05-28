@@ -2,6 +2,7 @@ package cardanodbsync
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	"github.com/meigma/yacd/internal/cardano/primarypod"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	"github.com/stretchr/testify/assert"
@@ -29,8 +31,6 @@ import (
 )
 
 const testNetworkArtifactSchemaVersion = networkartifacts.SchemaVersion
-
-var testNetworkArtifactDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 const driftedDBSyncConfig = "drifted"
 
@@ -415,7 +415,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarToDedicatedAfterAc
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseIdentityChange)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedDatabaseIdentityChange)
-	assertConditionMessage(t, ctx, reconciler, dbSync, conditionTypeDegraded, `CardanoDBSync placement changed from accepted placement "primarySidecar" to "dedicatedFollower"; delete and recreate the CardanoDBSync with a fresh or compatible database`)
+	assertDegradedMessage(t, ctx, reconciler, dbSync, `CardanoDBSync placement changed from accepted placement "primarySidecar" to "dedicatedFollower"; delete and recreate the CardanoDBSync with a fresh or compatible database`)
 	current = requireDBSync(t, ctx, reconciler, dbSync)
 	require.NotNil(t, current.Status.Database)
 	assert.Equal(t, yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, current.Status.Database.AcceptedPlacementMode)
@@ -598,7 +598,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarPortConflict(t *te
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
-	assertConditionMessage(t, ctx, reconciler, dbSync, conditionTypeDegraded, "db-sync metrics port 8080 conflicts with faucet port in the primary Pod")
+	assertDegradedMessage(t, ctx, reconciler, dbSync, "db-sync metrics port 8080 conflicts with faucet port in the primary Pod")
 }
 
 func TestCardanoDBSyncReconcilerReconcileReportsPrimarySidecarPlacementConflict(t *testing.T) {
@@ -616,7 +616,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsPrimarySidecarPlacementConflict(
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
 	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
-	assertConditionMessage(t, ctx, reconciler, dbSync, conditionTypeDegraded, placementConflictMessage("shared-network"))
+	assertDegradedMessage(t, ctx, reconciler, dbSync, placementConflictMessage("shared-network"))
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
 }
 
@@ -801,8 +801,9 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForNodeToNodeEndpoint(t *testing.T
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "missing-node-endpoint")
 	network := readyCardanoNetwork("missing-node-endpoint")
+	configMap := artifactConfigMapFor(network)
 	network.Status.Endpoints = nil
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -866,6 +867,61 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExplicitDedicatedFollowerWorkloa
 	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower, false)
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{}))
+}
+
+func TestCardanoDBSyncReconcilerReconcileAppliesPublicDedicatedFollowerWorkloads(t *testing.T) {
+	ctx := context.Background()
+	network := readyPublicCardanoNetwork("preprod-network", yacdv1alpha1.PublicNetworkProfilePreprod)
+	dbSync := localCardanoDBSync("dbsync", network.Name)
+	dbSync.Spec.Placement = &yacdv1alpha1.CardanoDBSyncPlacementSpec{
+		Mode: yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower,
+	}
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower, false)
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, configMap))
+	assert.Contains(t, configMap.Data[dbSyncConfigFileName], "NetworkName: preprod")
+	assert.Contains(t, configMap.Data[dbSyncConfigFileName], "RequiresNetworkMagic: RequiresMagic")
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{}))
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{}))
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnet(t *testing.T) {
+	ctx := context.Background()
+	network := readyPublicCardanoNetwork("mainnet-network", yacdv1alpha1.PublicNetworkProfileMainnet)
+	dbSync := localCardanoDBSync("dbsync", network.Name)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	assertDegradedMessage(t, ctx, reconciler, dbSync, "public mainnet CardanoDBSync is not supported until a later follower-node Mithril bootstrap or public primarySidecar slice is implemented")
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, &corev1.ConfigMap{})
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsPublicPrimarySidecar(t *testing.T) {
+	ctx := context.Background()
+	network := readyPublicCardanoNetwork("preview-network", yacdv1alpha1.PublicNetworkProfilePreview)
+	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", network.Name))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
+	assertDegradedMessage(t, ctx, reconciler, dbSync, "primarySidecar placement is supported only for local CardanoNetwork resources")
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
 }
 
 func TestCardanoDBSyncReconcilerReconcileReportsRuntimeReadyContainers(t *testing.T) {
@@ -1500,19 +1556,18 @@ func assertPlacementStatus(
 	assert.Nil(t, dbSync.Status.Placement.PrimarySidecar)
 }
 
-func assertConditionMessage(
+func assertDegradedMessage(
 	t *testing.T,
 	ctx context.Context,
 	reconciler *CardanoDBSyncReconciler,
 	dbSync *yacdv1alpha1.CardanoDBSync,
-	ct conditionType,
 	message string,
 ) {
 	t.Helper()
 
 	current := requireDBSync(t, ctx, reconciler, dbSync)
-	condition := apimeta.FindStatusCondition(current.Status.Conditions, string(ct))
-	require.NotNil(t, condition, "expected condition %s", ct)
+	condition := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, condition, "expected condition %s", conditionTypeDegraded)
 	assert.Equal(t, message, condition.Message)
 }
 
@@ -1971,7 +2026,9 @@ func providedManagedPostgresAuthSecretFor(dbSync *yacdv1alpha1.CardanoDBSync) *c
 }
 
 func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
-	return &yacdv1alpha1.CardanoNetwork{
+	networkMagic := int64(42)
+	era := yacdv1alpha1.CardanoEraConway
+	network := &yacdv1alpha1.CardanoNetwork{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:       name,
 			Namespace:  "default",
@@ -1986,10 +2043,16 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 		},
 		Status: yacdv1alpha1.CardanoNetworkStatus{
 			ObservedGeneration: 1,
+			Network: &yacdv1alpha1.CardanoNetworkIdentityStatus{
+				Mode:                yacdv1alpha1.CardanoNetworkModeLocal,
+				LocalnetFingerprint: "fingerprint",
+				NetworkFingerprint:  "fingerprint",
+				NetworkMagic:        &networkMagic,
+				Era:                 &era,
+			},
 			Artifacts: &yacdv1alpha1.CardanoNetworkArtifactsStatus{
 				NetworkConfigMapName: name + "-network-artifacts",
 				SchemaVersion:        testNetworkArtifactSchemaVersion,
-				DataHash:             testNetworkArtifactDataHash,
 			},
 			Endpoints: &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 				NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
@@ -2013,31 +2076,180 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 			}},
 		},
 	}
+	network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
+	return network
+}
+
+func readyPublicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkProfile) *yacdv1alpha1.CardanoNetwork {
+	networkMagic := int64(2)
+	switch profile {
+	case yacdv1alpha1.PublicNetworkProfilePreprod:
+		networkMagic = 1
+	case yacdv1alpha1.PublicNetworkProfileMainnet:
+		networkMagic = 764824073
+	case yacdv1alpha1.PublicNetworkProfileCustom:
+		networkMagic = 42
+	}
+	era := yacdv1alpha1.CardanoEraConway
+	network := &yacdv1alpha1.CardanoNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       name,
+			Namespace:  "default",
+			Generation: 1,
+		},
+		Spec: yacdv1alpha1.CardanoNetworkSpec{
+			Mode: yacdv1alpha1.CardanoNetworkModePublic,
+			Node: yacdv1alpha1.CardanoNodeSpec{
+				Version: "11.0.1",
+				Port:    3001,
+			},
+			Public: &yacdv1alpha1.PublicNetworkSpec{Profile: profile},
+		},
+		Status: yacdv1alpha1.CardanoNetworkStatus{
+			ObservedGeneration: 1,
+			Network: &yacdv1alpha1.CardanoNetworkIdentityStatus{
+				Mode:               yacdv1alpha1.CardanoNetworkModePublic,
+				NetworkFingerprint: "fingerprint",
+				NetworkMagic:       &networkMagic,
+				Profile:            &profile,
+				Era:                &era,
+			},
+			Artifacts: &yacdv1alpha1.CardanoNetworkArtifactsStatus{
+				NetworkConfigMapName: name + "-network-artifacts",
+				SchemaVersion:        testNetworkArtifactSchemaVersion,
+			},
+			Endpoints: &yacdv1alpha1.CardanoNetworkEndpointsStatus{
+				NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-node",
+					Port:        3001,
+					URL:         "tcp://" + name + "-node.default.svc.cluster.local:3001",
+				},
+				Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-ogmios",
+					Port:        1337,
+					URL:         "ws://" + name + "-ogmios.default.svc.cluster.local:1337",
+				},
+			},
+			Conditions: []metav1.Condition{{
+				Type:               "ArtifactsReady",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ArtifactsReady",
+				Message:            "artifacts are ready",
+				ObservedGeneration: 1,
+				LastTransitionTime: metav1.Now(),
+			}},
+		},
+	}
+	network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
+	return network
+}
+
+func moveReadyNetworkToNamespace(network *yacdv1alpha1.CardanoNetwork, namespace string) {
+	network.Namespace = namespace
+	if network.Status.Endpoints == nil {
+		return
+	}
+	if network.Status.Endpoints.NodeToNode != nil {
+		network.Status.Endpoints.NodeToNode.URL = "tcp://" + network.Status.Endpoints.NodeToNode.ServiceName + "." + namespace + ".svc.cluster.local:" + "3001"
+	}
+	if network.Status.Endpoints.Ogmios != nil {
+		network.Status.Endpoints.Ogmios.URL = "ws://" + network.Status.Endpoints.Ogmios.ServiceName + "." + namespace + ".svc.cluster.local:" + "1337"
+	}
+	if network.Status.Artifacts != nil {
+		network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
+	}
 }
 
 func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMap {
+	data := testNetworkArtifactsDataFor(network)
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      network.Status.Artifacts.NetworkConfigMapName,
 			Namespace: network.Namespace,
 			Annotations: map[string]string{
 				ctrlannotations.ArtifactSchemaVersion: network.Status.Artifacts.SchemaVersion,
-				ctrlannotations.ArtifactDataHash:      network.Status.Artifacts.DataHash,
+				ctrlannotations.ArtifactDataHash:      ctrlartifacts.ComputeDataHash(data),
+				ctrlannotations.NetworkFingerprint:    network.Status.Network.NetworkFingerprint,
+				ctrlannotations.LocalnetFingerprint:   network.Status.Network.LocalnetFingerprint,
 			},
 		},
-		Data: testNetworkArtifactsData(),
+		Data: data,
 	}
 }
 
-func testNetworkArtifactsData() map[string]string {
-	return map[string]string{
+func parsedConnectionForNetwork(t testing.TB, network *yacdv1alpha1.CardanoNetwork) ctrlnetworkartifacts.Connection {
+	t.Helper()
+	result := ctrlnetworkartifacts.ConsumerConnection(artifactConfigMapFor(network), network)
+	require.True(t, result.Ready, result.Message)
+	return result.Connection
+}
+
+func testNetworkArtifactsDataFor(network *yacdv1alpha1.CardanoNetwork) map[string]string {
+	data := map[string]string{
 		networkartifacts.ConfigurationKey:   "test configuration.yaml",
 		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
 		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
 		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
 		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
 		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
-		networkartifacts.PlanManifestKey:    "test yacd-localnet-plan.json",
-		networkartifacts.ConnectionKey:      "test connection.json",
+		networkartifacts.ConnectionKey:      testConnectionJSONForNetwork(network),
 	}
+	if network.Status.Network.Mode == yacdv1alpha1.CardanoNetworkModePublic {
+		data[networkartifacts.PublicProfileManifestKey] = "test yacd-public-profile.json"
+	} else {
+		data[networkartifacts.PlanManifestKey] = "test yacd-localnet-plan.json"
+	}
+	return data
+}
+
+func testConnectionJSONForNetwork(network *yacdv1alpha1.CardanoNetwork) string {
+	networkFields := map[string]any{
+		"name":         network.Name,
+		"namespace":    network.Namespace,
+		"mode":         string(network.Status.Network.Mode),
+		"networkMagic": *network.Status.Network.NetworkMagic,
+		"era":          string(*network.Status.Network.Era),
+	}
+	files := map[string]string{
+		"configuration":   networkartifacts.ConfigurationKey,
+		"byronGenesis":    networkartifacts.ByronGenesisKey,
+		"shelleyGenesis":  networkartifacts.ShelleyGenesisKey,
+		"alonzoGenesis":   networkartifacts.AlonzoGenesisKey,
+		"conwayGenesis":   networkartifacts.ConwayGenesisKey,
+		"primaryTopology": networkartifacts.PrimaryTopologyKey,
+		"connection":      networkartifacts.ConnectionKey,
+	}
+	if network.Status.Network.Mode == yacdv1alpha1.CardanoNetworkModePublic {
+		requiresMagic := true
+		if network.Status.Network.Profile != nil && *network.Status.Network.Profile == yacdv1alpha1.PublicNetworkProfileMainnet {
+			requiresMagic = false
+		}
+		networkFields["profile"] = string(*network.Status.Network.Profile)
+		networkFields["requiresNetworkMagic"] = requiresMagic
+		networkFields["networkFingerprint"] = network.Status.Network.NetworkFingerprint
+		files["publicProfile"] = networkartifacts.PublicProfileManifestKey
+	} else {
+		networkFields["localnetFingerprint"] = network.Status.Network.LocalnetFingerprint
+		files["localnetPlan"] = networkartifacts.PlanManifestKey
+	}
+	doc := struct {
+		SchemaVersion     string            `json:"schemaVersion"`
+		Network           map[string]any    `json:"network"`
+		PrimaryNodeToNode map[string]any    `json:"primaryNodeToNode"`
+		Files             map[string]string `json:"files"`
+	}{
+		SchemaVersion: networkartifacts.SchemaVersion,
+		Network:       networkFields,
+		PrimaryNodeToNode: map[string]any{
+			"host": network.Status.Endpoints.NodeToNode.ServiceName + "." + network.Namespace + ".svc.cluster.local",
+			"port": network.Status.Endpoints.NodeToNode.Port,
+			"url":  network.Status.Endpoints.NodeToNode.URL,
+		},
+		Files: files,
+	}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+	return string(raw) + "\n"
 }

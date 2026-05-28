@@ -5,7 +5,6 @@ import (
 	"maps"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/localnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,11 +32,26 @@ const (
 	// faucet's auth token into its container.
 	faucetAuthVolumeName = "faucet-auth"
 
+	// publicProfileVolumeName is the ConfigMap-backed volume carrying checked-in
+	// public profile files for passive public-network nodes.
+	publicProfileVolumeName = "public-profile"
+
 	// faucetAuthTokenKey is the data key inside the faucet auth Secret that
 	// carries the token. The Secret data map is shaped {faucetAuthTokenKey:
 	// []byte(token)}.
 	faucetAuthTokenKey = "token"
 )
+
+func publicProfileVolume(network *yacdv1alpha1.CardanoNetwork) corev1.Volume {
+	return corev1.Volume{
+		Name: publicProfileVolumeName,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: networkArtifactsConfigMapName(network)},
+			},
+		},
+	}
+}
 
 // deployment builds the primary workload Deployment. It composes the
 // cardano-node container with the enabled optional sidecars (ogmios, kupo,
@@ -45,7 +59,7 @@ const (
 // and adds the artifact publisher's projected ServiceAccount token volume.
 // The RecreateDeploymentStrategyType prevents two cardano-node instances
 // from running at once (they cannot share the underlying state PVC).
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan, initContainer corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) (*appsv1.Deployment, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
@@ -62,12 +76,18 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if b.dbSyncAttachment != nil {
 		containers = append(containers, b.dbSyncAttachment.Container)
 	}
-	initContainers := []corev1.Container{initContainer}
+	initContainers := make([]corev1.Container, 0, 3)
+	if initContainer != nil {
+		initContainers = append(initContainers, *initContainer)
+	}
+	if mithril := plan.mithrilBootstrap(); mithril != nil {
+		initContainers = append(initContainers, b.mithrilBootstrapInitContainer(*mithril))
+	}
 	if b.dbSyncAttachment != nil {
 		initContainers = append(initContainers, b.dbSyncAttachment.InitContainer)
 	}
 	if faucet.enabled {
-		initContainers = append(initContainers, b.faucetSourceAddressInitContainer(plan))
+		initContainers = append(initContainers, b.faucetSourceAddressInitContainer(*plan.Localnet))
 	}
 	volumes := []corev1.Volume{
 		{
@@ -129,9 +149,23 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if b.dbSyncAttachment != nil {
 		volumes = append(volumes, b.dbSyncAttachment.Volumes...)
 	}
+	if plan.mithrilBootstrap() != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name: mithrilTmpVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+	}
+	if plan.isPublic() {
+		volumes = append(volumes, publicProfileVolume(network))
+	}
 	templateLabels := primaryWorkloadSelectorLabels(network)
 	templateAnnotations := map[string]string{
-		localnetFingerprintAnno: plan.Fingerprint.Value,
+		networkFingerprintAnno: plan.Fingerprint,
+	}
+	if localnetFingerprint := plan.localnetFingerprint(); localnetFingerprint != "" {
+		templateAnnotations[localnetFingerprintAnno] = localnetFingerprint
 	}
 	if b.dbSyncAttachment != nil {
 		maps.Copy(templateLabels, b.dbSyncAttachment.PodLabels)
@@ -171,13 +205,16 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
-					ServiceAccountName: artifactPublisherServiceAccountName(network),
-					InitContainers:     initContainers,
-					Containers:         containers,
-					Volumes:            append(volumes, artifactPublisherProjectedVolume()),
+					InitContainers: initContainers,
+					Containers:     containers,
+					Volumes:        volumes,
 				},
 			},
 		},
+	}
+	if plan.isLocal() {
+		deployment.Spec.Template.Spec.ServiceAccountName = artifactPublisherServiceAccountName(network)
+		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, artifactPublisherProjectedVolume())
 	}
 
 	if err := controllerutil.SetControllerReference(network, deployment, b.scheme); err != nil {
@@ -191,7 +228,7 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 // the accepted localnet fingerprint and the requested storage class so PVC
 // apply can detect and reject incompatible drift before mutating the live
 // object.
-func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) (*corev1.PersistentVolumeClaim, error) {
+func (b primaryWorkloadBuilder) persistentVolumeClaim(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (*corev1.PersistentVolumeClaim, error) {
 	persistentVolumeClaim := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        primaryNodeStatePVCName(network),
@@ -350,9 +387,12 @@ func (b primaryWorkloadBuilder) faucetAuthSecret(network *yacdv1alpha1.CardanoNe
 // and (optionally) the requested storage class on the primary PVC. The PVC
 // apply path validates these against the live object before allowing the
 // patch.
-func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan localnet.Plan) map[string]string {
+func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) map[string]string {
 	annotations := map[string]string{
-		localnetFingerprintAnno: plan.Fingerprint.Value,
+		networkFingerprintAnno: plan.Fingerprint,
+	}
+	if localnetFingerprint := plan.localnetFingerprint(); localnetFingerprint != "" {
+		annotations[localnetFingerprintAnno] = localnetFingerprint
 	}
 	if network.Spec.Node.Storage != nil && network.Spec.Node.Storage.StorageClassName != nil {
 		annotations[ctrlannotations.RequestedStorageClass] = *network.Spec.Node.Storage.StorageClassName
@@ -366,6 +406,9 @@ func persistentVolumeClaimAnnotations(network *yacdv1alpha1.CardanoNetwork, plan
 // unspecified when the spec is silent.
 func (b primaryWorkloadBuilder) persistentVolumeClaimSpec(network *yacdv1alpha1.CardanoNetwork) corev1.PersistentVolumeClaimSpec {
 	storageSize := resource.MustParse(defaultNodeStorageSize)
+	if isPublicMainnet(network) {
+		storageSize = resource.MustParse(defaultMainnetNodeStorageSize)
+	}
 	var storageClassName *string
 	if network.Spec.Node.Storage != nil {
 		storageSize = network.Spec.Node.Storage.Size

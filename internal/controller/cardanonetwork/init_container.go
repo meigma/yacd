@@ -3,11 +3,13 @@ package cardanonetwork
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	"github.com/meigma/yacd/internal/cardano/publicnet"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -16,9 +18,12 @@ const (
 	cardanoTestnetImageRevision   = "yacd.4"
 
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
+	mithrilBootstrapInitContainerName    = "mithril-bootstrap"
 	faucetSourceAddressInitContainerName = "faucet-source-addresses"
 	localnetStateVolumeName              = "localnet-state"
+	mithrilTmpVolumeName                 = "mithril-tmp"
 	localnetCreateEnvCommand             = "/opt/yacd/bin/yacd-cardano-testnet-init"
+	mithrilBootstrapCommand              = "/bin/sh"
 	faucetSourceAddressCommand           = "/bin/sh"
 	faucetVerificationKeyFileName        = "utxo.vkey"
 	faucetAddressFileName                = "utxo.addr"
@@ -29,6 +34,11 @@ const (
 	localnetConfigFileEnvName   = "YACD_LOCALNET_CONFIG_FILE"
 	localnetManifestFileEnvName = "YACD_LOCALNET_PLAN_MANIFEST_FILE"
 	localnetManifestEnvName     = "YACD_LOCALNET_PLAN_MANIFEST"
+
+	mithrilAggregatorEndpointEnvName       = "AGGREGATOR_ENDPOINT"
+	mithrilSnapshotEnvName                 = "MITHRIL_SNAPSHOT"
+	mithrilGenesisVerificationKeyEnvName   = "GENESIS_VERIFICATION_KEY"
+	mithrilAncillaryVerificationKeyEnvName = "ANCILLARY_VERIFICATION_KEY"
 )
 
 // cardanoTestnetInitContainer converts a localnet plan into the init
@@ -122,6 +132,87 @@ done`,
 			{
 				Name:      localnetStateVolumeName,
 				MountPath: plan.Layout.StateDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+}
+
+func (b primaryWorkloadBuilder) mithrilBootstrapInitContainer(plan publicnet.MithrilPlan) corev1.Container {
+	script := fmt.Sprintf(`target_db=%q
+staging_root=%q
+download_dir="${staging_root}/download"
+
+if [ -d "${target_db}" ] && [ "$(find "${target_db}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "Existing cardano-node database found at ${target_db}; skipping Mithril bootstrap."
+  exit 0
+fi
+
+rm -rf "${staging_root}"
+mkdir -p "${download_dir}"
+
+mithril-client cardano-db download \
+  --include-ancillary \
+  --download-dir "${download_dir}" \
+  --genesis-verification-key "${GENESIS_VERIFICATION_KEY}" \
+  --ancillary-verification-key "${ANCILLARY_VERIFICATION_KEY}" \
+  "${MITHRIL_SNAPSHOT}"
+
+if [ -d "${target_db}" ] && [ "$(find "${target_db}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "Cardano-node database was populated while Mithril bootstrap was running; refusing to overwrite ${target_db}." >&2
+  exit 1
+fi
+
+candidate_db="$(find "${download_dir}" -mindepth 1 -type d -name db -print -quit)"
+if [ -z "${candidate_db}" ]; then
+  echo "Mithril download did not produce a cardano-node db directory under ${download_dir}." >&2
+  exit 1
+fi
+
+rm -rf "${target_db}"
+mkdir -p "$(dirname "${target_db}")"
+mv "${candidate_db}" "${target_db}"
+rm -rf "${staging_root}"
+`,
+		cardanoNodeDatabaseDir,
+		path.Join(localnetStateDir, "bootstrap", "mithril"),
+	)
+
+	return corev1.Container{
+		Name:            mithrilBootstrapInitContainerName,
+		Image:           plan.Image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		WorkingDir:      localnetStateDir,
+		Command:         []string{mithrilBootstrapCommand},
+		Args:            []string{"-eu", "-c", script},
+		Env: []corev1.EnvVar{
+			{Name: mithrilAggregatorEndpointEnvName, Value: plan.AggregatorEndpoint},
+			{Name: mithrilSnapshotEnvName, Value: plan.Snapshot},
+			{Name: mithrilGenesisVerificationKeyEnvName, Value: plan.GenesisVerificationKey},
+			{Name: mithrilAncillaryVerificationKeyEnvName, Value: plan.AncillaryVerificationKey},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: localnetStateDir,
+			},
+			{
+				Name:      mithrilTmpVolumeName,
+				MountPath: "/tmp",
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
