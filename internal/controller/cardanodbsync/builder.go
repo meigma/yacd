@@ -7,6 +7,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
+	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -113,6 +114,11 @@ type dbSyncWorkloadBuilder struct {
 	// CardanoDBSync picks up publisher changes the published
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
+
+	// networkConnection is the parsed connection.json identity from the
+	// referenced CardanoNetwork artifact bundle. Nil preserves the legacy local
+	// identity path for primary-sidecar attachment rendering.
+	networkConnection *ctrlnetworkartifacts.Connection
 }
 
 // Build renders the dbsync workload resources for the external-database
@@ -173,7 +179,7 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 		return nil, fmt.Errorf("scheme is required")
 	}
 
-	spec, err := dbSyncPlanSpec(dbSync, network, database)
+	spec, err := b.dbSyncPlanSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +262,7 @@ func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 		return nil, err
 	}
 
-	spec, err := dbSyncPlanSpec(dbSync, network, database)
+	spec, err := b.dbSyncPlanSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +301,7 @@ func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 // CardanoNetwork status, and the resolved dbsync.Database into the dbsync
 // planner input. It rejects empty image references and missing network
 // endpoints up front so the planner does not have to recheck them.
-func dbSyncPlanSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, database dbsync.Database) (dbsync.Spec, error) {
+func (b dbSyncWorkloadBuilder) dbSyncPlanSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.CardanoNetwork, database dbsync.Database) (dbsync.Spec, error) {
 	if network.Status.Endpoints == nil || network.Status.Endpoints.NodeToNode == nil {
 		return dbsync.Spec{}, unsupportedSpec("node-to-node endpoint is required")
 	}
@@ -313,15 +319,25 @@ func dbSyncPlanSpec(dbSync *yacdv1alpha1.CardanoDBSync, network *yacdv1alpha1.Ca
 	if network.Status.Artifacts != nil {
 		networkArtifactHash = network.Status.Artifacts.DataHash
 	}
+	networkName := network.Name
+	requiresNetworkMagic := true
+	nodeToNodeHost := fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace)
+	nodeToNodePort := network.Status.Endpoints.NodeToNode.Port
+	if b.networkConnection != nil {
+		networkName = b.networkConnection.NetworkName
+		requiresNetworkMagic = b.networkConnection.RequiresNetworkMagic
+		nodeToNodeHost = b.networkConnection.NodeToNodeHost
+		nodeToNodePort = b.networkConnection.NodeToNodePort
+	}
 
 	return dbsync.Spec{
-		NetworkName:          network.Name,
-		RequiresNetworkMagic: true,
+		NetworkName:          networkName,
+		RequiresNetworkMagic: requiresNetworkMagic,
 		NetworkArtifactHash:  networkArtifactHash,
 		Image:                strings.TrimSpace(dbSync.Spec.Image),
 		NodeToNode: dbsync.NodeToNode{
-			Host: fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace),
-			Port: network.Status.Endpoints.NodeToNode.Port,
+			Host: nodeToNodeHost,
+			Port: nodeToNodePort,
 		},
 		Database:     database,
 		Runtime:      runtimeSettings(dbSync),

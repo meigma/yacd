@@ -40,7 +40,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, testNetworkArtifactDataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: ready-network")
 	assert.Contains(t, resources.ConfigMap.Data[followerTopologyFileName], `"address": "ready-network-node.default.svc.cluster.local"`)
 
@@ -90,7 +90,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, deployment.Spec.Template.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), deployment.Spec.Template.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, testNetworkArtifactDataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, network.Status.Artifacts.DataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.PGPassSecret.Annotations[dbSyncPlacementModeAnno])
@@ -112,6 +112,54 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, dbSyncWorkloadSelectorLabels(dbSync), resources.MetricsService.Spec.Selector)
 }
 
+func TestDBSyncWorkloadBuilderBuildsPublicDedicatedFollowerIdentity(t *testing.T) {
+	testCases := []struct {
+		name              string
+		profile           yacdv1alpha1.PublicNetworkProfile
+		wantNetworkName   string
+		wantRequiresMagic string
+	}{
+		{
+			name:              "preview",
+			profile:           yacdv1alpha1.PublicNetworkProfilePreview,
+			wantNetworkName:   "preview",
+			wantRequiresMagic: "RequiresMagic",
+		},
+		{
+			name:              "preprod",
+			profile:           yacdv1alpha1.PublicNetworkProfilePreprod,
+			wantNetworkName:   "preprod",
+			wantRequiresMagic: "RequiresMagic",
+		},
+		{
+			name:              "custom",
+			profile:           yacdv1alpha1.PublicNetworkProfileCustom,
+			wantNetworkName:   "custom",
+			wantRequiresMagic: "RequiresMagic",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			network := readyPublicCardanoNetwork("public-"+testCase.name, testCase.profile)
+			connection := parsedConnectionForNetwork(t, network)
+			builder := newDBSyncWorkloadBuilder(t)
+			builder.networkConnection = &connection
+			dbSync := localCardanoDBSync("dbsync-"+testCase.name, network.Name)
+			secret := externalDatabaseSecretFor(dbSync)
+
+			resources, err := builder.BuildForDatabase(dbSync, network, artifactConfigMapFor(network), secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
+
+			require.NoError(t, err)
+			assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: "+testCase.wantNetworkName)
+			assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "RequiresNetworkMagic: "+testCase.wantRequiresMagic)
+			assert.Contains(t, resources.ConfigMap.Data[followerTopologyFileName], `"address": "`+network.Name+`-node.default.svc.cluster.local"`)
+			assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+			assert.Equal(t, network.Status.Artifacts.DataHash, resources.Deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
+		})
+	}
+}
+
 func TestDBSyncWorkloadBuilderBuildsPrimarySidecarMaterial(t *testing.T) {
 	builder := newDBSyncWorkloadBuilder(t)
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
@@ -130,7 +178,7 @@ func TestDBSyncWorkloadBuilderBuildsPrimarySidecarMaterial(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, testNetworkArtifactDataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.PersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.PersistentVolumeClaim.Annotations[dbSyncPlacementModeAnno])
 	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
