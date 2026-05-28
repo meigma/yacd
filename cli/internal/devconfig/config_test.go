@@ -51,6 +51,27 @@ spec:
       profile: preview
 `
 
+const validPublicCustomConfig = `
+apiVersion: yacd.meigma.io/devconfig/v1alpha1
+kind: Environment
+metadata:
+  name: custom
+  namespace: yacd-dev
+spec:
+  network:
+    mode: public
+    node:
+      version: "11.0.1"
+      port: 3001
+      storage:
+        size: 20Gi
+    public:
+      profile: custom
+      configSource:
+        configMapRef:
+          name: custom-profile
+`
+
 func TestLoadReadsEnvironmentConfig(t *testing.T) {
 	t.Parallel()
 
@@ -61,14 +82,36 @@ func TestLoadReadsEnvironmentConfig(t *testing.T) {
 	assert.Equal(t, int64(42), environment.Spec.Network.Local.NetworkMagic)
 }
 
-func TestLoadReadsPublicPreviewEnvironmentConfig(t *testing.T) {
+func TestLoadReadsPublicEnvironmentConfig(t *testing.T) {
 	t.Parallel()
 
-	environment, err := Load(strings.NewReader(validPublicPreviewConfig))
-	require.NoError(t, err)
-	assert.Equal(t, "preview", environment.Metadata.Name)
-	require.NotNil(t, environment.Spec.Network.Public)
-	assert.Equal(t, "preview", string(environment.Spec.Network.Public.Profile))
+	tests := []struct {
+		name        string
+		config      string
+		wantProfile string
+	}{
+		{name: "preview", config: validPublicPreviewConfig, wantProfile: "preview"},
+		{
+			name:        "preprod",
+			config:      strings.Replace(validPublicPreviewConfig, "name: preview", "name: preprod", 1),
+			wantProfile: "preprod",
+		},
+		{
+			name:        "mainnet",
+			config:      strings.Replace(validPublicPreviewConfig, "name: preview", "name: mainnet", 1),
+			wantProfile: "mainnet",
+		},
+		{name: "custom", config: validPublicCustomConfig, wantProfile: "custom"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			environment, err := Load(strings.NewReader(strings.Replace(tc.config, "profile: preview", "profile: "+tc.wantProfile, 1)))
+			require.NoError(t, err)
+			require.NotNil(t, environment.Spec.Network.Public)
+			assert.Equal(t, tc.wantProfile, string(environment.Spec.Network.Public.Profile))
+		})
+	}
 }
 
 func TestLoadRejectsUnknownTopLevelFields(t *testing.T) {
@@ -147,28 +190,34 @@ func TestLoadRejectsUnsupportedPublicConfigs(t *testing.T) {
 			wantErr: "spec.network.public",
 		},
 		{
-			name:    "preprod",
-			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: preprod", 1),
-			wantErr: "spec.network.public.profile",
-		},
-		{
-			name:    "mainnet",
-			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: mainnet", 1),
-			wantErr: "spec.network.public.profile",
-		},
-		{
-			name:    "custom",
+			name:    "custom without config source",
 			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: custom", 1),
-			wantErr: "spec.network.public.profile",
+			wantErr: "spec.network.public.configSource",
 		},
 		{
-			name: "config source",
+			name: "curated config source",
 			config: strings.Replace(validPublicPreviewConfig, "      profile: preview\n", `      profile: preview
       configSource:
         configMapRef:
           name: custom-profile
 `, 1),
 			wantErr: "spec.network.public.configSource",
+		},
+		{
+			name: "custom with both sources",
+			config: strings.Replace(validPublicCustomConfig, `        configMapRef:
+          name: custom-profile
+`, `        configMapRef:
+          name: custom-profile
+        secretRef:
+          name: custom-profile
+`, 1),
+			wantErr: "spec.network.public.configSource",
+		},
+		{
+			name:    "unknown profile",
+			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: unknown", 1),
+			wantErr: "spec.network.public.profile",
 		},
 	}
 

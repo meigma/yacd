@@ -73,6 +73,8 @@ type primaryWorkloadBuilder struct {
 	defaultCardanoTestnetImage string
 
 	dbSyncAttachment *ctrldbsync.PrimarySidecarAttachment
+
+	publicCustomBundle *publicnet.CustomBundle
 }
 
 // Build composes the desired primary workload resources for the given
@@ -209,7 +211,7 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	}
 	if plan.isPublic() {
 		if kupoExplicitlyEnabled(network) {
-			return chainAPISettings{}, unsupportedSpec("kupo is not supported for public preview networks")
+			return chainAPISettings{}, unsupportedSpec("kupo is not supported for public networks")
 		}
 		if faucetExplicitlyEnabled(network) {
 			return chainAPISettings{}, unsupportedSpec("faucet is not supported for public networks")
@@ -269,7 +271,7 @@ func (b primaryWorkloadBuilder) networkPlan(network *yacdv1alpha1.CardanoNetwork
 		}
 		return localPrimaryNetworkPlan(plan, network.Spec.Local.Era), nil
 	case yacdv1alpha1.CardanoNetworkModePublic:
-		spec, err := publicNetworkSpec(network)
+		spec, err := b.publicNetworkSpec(network)
 		if err != nil {
 			return primaryNetworkPlan{}, err
 		}
@@ -343,19 +345,36 @@ func (b primaryWorkloadBuilder) localnetSpec(network *yacdv1alpha1.CardanoNetwor
 	}, nil
 }
 
-func publicNetworkSpec(network *yacdv1alpha1.CardanoNetwork) (publicnet.Spec, error) {
+func (b primaryWorkloadBuilder) publicNetworkSpec(network *yacdv1alpha1.CardanoNetwork) (publicnet.Spec, error) {
 	if network.Spec.Public == nil {
 		return publicnet.Spec{}, unsupportedSpec("public spec is required")
 	}
 	if network.Spec.Local != nil {
 		return publicnet.Spec{}, unsupportedSpec("local spec is not supported with public mode")
 	}
-	if network.Spec.Public.ConfigSource != nil {
-		return publicnet.Spec{}, unsupportedSpec("public configSource is not supported")
+
+	public := network.Spec.Public
+	switch public.Profile {
+	case yacdv1alpha1.PublicNetworkProfileCustom:
+		if public.ConfigSource == nil {
+			return publicnet.Spec{}, unsupportedSpec("public custom profile configSource is required")
+		}
+		if b.publicCustomBundle == nil {
+			return publicnet.Spec{}, unsupportedSpec("public custom profile source has not been resolved")
+		}
+	case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileMainnet:
+		if public.ConfigSource != nil {
+			return publicnet.Spec{}, unsupportedSpec("public configSource is supported only for custom profiles")
+		}
+	default:
+		if public.Profile == "" {
+			return publicnet.Spec{}, unsupportedSpec("public profile is required")
+		}
 	}
 
 	return publicnet.Spec{
-		Profile: string(network.Spec.Public.Profile),
+		Profile: string(public.Profile),
+		Custom:  b.publicCustomBundle,
 		Paths: publicnet.Paths{
 			ProfileDir: publicProfileMountDir,
 		},

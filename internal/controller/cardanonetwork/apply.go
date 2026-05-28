@@ -40,6 +40,28 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	return result, err
 }
 
+// validateAcceptedPrimaryPersistentVolumeClaim checks the live primary PVC's
+// accepted network fingerprint before other children are mutated. The apply
+// callback repeats this validation, but this early gate prevents profile drift
+// from patching artifacts or rolling the Deployment first.
+func (r *CardanoNetworkReconciler) validateAcceptedPrimaryPersistentVolumeClaim(
+	ctx context.Context,
+	desired *corev1.PersistentVolumeClaim,
+) error {
+	current := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if err := validateControllerOwner(current, desired); err != nil {
+		return err
+	}
+
+	return validateLocalnetFingerprint(current, desired)
+}
+
 // applyPrimaryDeployment applies the primary node Deployment.
 func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	ctx context.Context,

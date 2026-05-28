@@ -2,11 +2,23 @@ package publicnet
 
 // Spec describes the supported public profile inputs.
 type Spec struct {
-	// Profile is the public network profile name. Slice 1 supports "preview".
+	// Profile is the public network profile name.
 	Profile string
+
+	// Custom carries the profile files supplied by the controller when Profile
+	// is "custom". Curated profiles must leave it nil.
+	Custom *CustomBundle
 
 	// Paths identifies the container filesystem locations used by the plan.
 	Paths Paths
+}
+
+// CustomBundle carries caller-supplied public profile files. Files use the
+// source bundle keys documented on the CardanoNetwork API, not the published
+// network-artifact ConfigMap keys.
+type CustomBundle struct {
+	// Files maps custom profile source keys to UTF-8 file content.
+	Files map[string]string
 }
 
 // Paths identifies the mounted public profile directory.
@@ -83,6 +95,10 @@ type Manifest struct {
 
 	// Source records the upstream profile bundle URL used for the checked-in assets.
 	Source string `json:"source"`
+
+	// CompatibleNodeRelease records the cardano-node release advertised by the
+	// checked-in source page. Custom profiles leave this empty.
+	CompatibleNodeRelease string `json:"compatibleNodeRelease,omitempty"`
 
 	// Fingerprint identifies the checked-in profile assets.
 	Fingerprint Fingerprint `json:"fingerprint"`

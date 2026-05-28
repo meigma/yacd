@@ -400,6 +400,96 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
+func TestCardanoNetworkControllerManagerHandlesCustomProfileSources(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	skipNameValidation := true
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	require.NoError(t, (&CardanoNetworkReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cardanonetwork-custom-envtest"}}
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	configMapNetwork := publicCardanoNetwork("custom-configmap", yacdv1alpha1.PublicNetworkProfileCustom)
+	configMapNetwork.Namespace = namespace.Name
+	configMapNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
+	}
+	configMapSource := customProfileConfigMap(namespace.Name, "custom-profile", customPublicProfileBundle(t))
+	require.NoError(t, apiClient.Create(ctx, configMapSource))
+	require.NoError(t, apiClient.Create(ctx, configMapNetwork))
+
+	secretNetwork := publicCardanoNetwork("custom-secret", yacdv1alpha1.PublicNetworkProfileCustom)
+	secretNetwork.Namespace = namespace.Name
+	secretNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
+		SecretRef: &corev1.LocalObjectReference{Name: "custom-profile-secret"},
+	}
+	secretSource := customProfileSecret(namespace.Name, "custom-profile-secret", customPublicProfileBundle(t))
+	require.NoError(t, apiClient.Create(ctx, secretSource))
+	require.NoError(t, apiClient.Create(ctx, secretNetwork))
+
+	require.Eventually(t, func() bool {
+		return statusHasCustomPublicArtifacts(ctx, apiClient, configMapNetwork)
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool {
+		return statusHasCustomPublicArtifacts(ctx, apiClient, secretNetwork)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	currentSource := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(configMapSource), currentSource))
+	currentSource.Data["topology.json"] = "{\"Producers\":[]}\n"
+	require.NoError(t, apiClient.Update(ctx, currentSource))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(configMapNetwork), current); err != nil {
+			return false
+		}
+		return conditionHas(current, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedNetworkChange)
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -680,6 +770,29 @@ func statusHasDisabledFaucetReadyConditions(
 		current.Status.Endpoints != nil &&
 		current.Status.Endpoints.Faucet == nil &&
 		current.Status.Faucet == nil
+}
+
+func statusHasCustomPublicArtifacts(
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) bool {
+	current := &yacdv1alpha1.CardanoNetwork{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+		return false
+	}
+	if current.Status.Network == nil ||
+		current.Status.Network.NetworkFingerprint == "" ||
+		current.Status.Network.Profile == nil ||
+		*current.Status.Network.Profile != yacdv1alpha1.PublicNetworkProfileCustom ||
+		current.Status.Artifacts == nil {
+		return false
+	}
+
+	return conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady) &&
+		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
+		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
+		current.Status.Artifacts.DataHash != ""
 }
 
 func conditionHas(

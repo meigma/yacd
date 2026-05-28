@@ -65,7 +65,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch
@@ -92,12 +92,17 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
-	resources, err := (primaryWorkloadBuilder{
-		scheme:                     r.Scheme,
-		defaultFaucetImage:         r.DefaultFaucetImage,
-		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
-		dbSyncAttachment:           dbSyncAttachment.Attachment,
-	}).Build(network)
+	publicCustomBundle, err := r.publicCustomProfileBundle(ctx, network)
+	var resources *primaryWorkloadResources
+	if err == nil {
+		resources, err = (primaryWorkloadBuilder{
+			scheme:                     r.Scheme,
+			defaultFaucetImage:         r.DefaultFaucetImage,
+			defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+			dbSyncAttachment:           dbSyncAttachment.Attachment,
+			publicCustomBundle:         publicCustomBundle,
+		}).Build(network)
+	}
 	if err != nil {
 		var unsupportedSpec unsupportedSpecError
 		if !errors.As(err, &unsupportedSpec) {
@@ -134,6 +139,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	if err := validateAcceptedNetworkFingerprint(network, resources.NetworkPlan); err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
+	}
+	if err := r.validateAcceptedPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim); err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
@@ -408,12 +416,18 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 
 // SetupWithManager sets up the CardanoNetwork controller with the manager.
 func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.indexCustomProfileSources(mgr); err != nil {
+		return err
+	}
+
 	logf.Log.WithName("controllers").WithName(controllerName).
 		Info("Starting CardanoNetwork controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
+		Watches(&corev1.ConfigMap{}, r.customProfileConfigMapEventHandler()).
+		Watches(&corev1.Secret{}, r.customProfileSecretEventHandler()).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
