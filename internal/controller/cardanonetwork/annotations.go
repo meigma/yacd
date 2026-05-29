@@ -18,9 +18,15 @@ const (
 
 	// networkArtifactsConfigMapUIDAnno is the annotation key carrying the
 	// artifact ConfigMap UID on the Deployment pod template. The reconciler
-	// stamps this so a recovered (delete-then-create) ConfigMap rolls the
-	// primary Pod through the standard Deployment hash-change path.
+	// stamps this so a recovered (delete-then-create) ConfigMap can roll the
+	// primary Pod through the standard Deployment hash-change path when
+	// recovery rollout cooldown allows it.
 	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
+
+	// networkArtifactsRecoveryRolloutAtAnno records the last artifact recovery
+	// timestamp on Deployment metadata. It is intentionally not a pod-template
+	// annotation so updating the cooldown state does not itself roll the Pod.
+	networkArtifactsRecoveryRolloutAtAnno = "yacd.meigma.io/network-artifacts-recovery-rollout-at"
 
 	dbSyncSidecarRevisionAnno = ctrlannotations.DBSyncSidecarRevision
 )
@@ -37,6 +43,7 @@ var cardanoNetworkOwnedAnnotations = []string{
 	networkFingerprintAnno,
 	ctrlannotations.RequestedStorageClass,
 	networkArtifactsConfigMapUIDAnno,
+	networkArtifactsRecoveryRolloutAtAnno,
 	dbSyncSidecarRevisionAnno,
 }
 

@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"time"
 
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
@@ -77,54 +78,78 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	return result, err
 }
 
+type networkArtifactsRecoveryApplyResult struct {
+	RolloutAt    *time.Time
+	RequeueAfter time.Duration
+}
+
 // applyNetworkArtifactsConfigMap reconciles the artifact ConfigMap.
 //
 // The ConfigMap is intentionally NOT routed through ApplyOwnedObject because
 // it has special delete-and-recover semantics: when the live ConfigMap fails
-// the producer-side verification (data hash drift, missing keys, schema
-// drift) we delete the live object and let the next reconcile recreate it.
-// The new ConfigMap UID is stamped into the Deployment pod-template
-// annotations, which is how the primary Pod rolls to pick up republished
-// localnet files. The mutate-in-place model ApplyOwnedObject implements
-// cannot satisfy that invariant.
+// the producer-side verification (data hash drift, missing keys, schema drift)
+// we delete and recreate the live object, bounded by a per-network recovery
+// rollout cooldown. The recreated ConfigMap UID is stamped into the Deployment
+// pod-template annotations only when that cooldown allows a republish roll. The
+// mutate-in-place model ApplyOwnedObject implements cannot satisfy that
+// invariant.
 func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	ctx context.Context,
 	desired *corev1.ConfigMap,
-) (controllerutil.OperationResult, *corev1.ConfigMap, error) {
+	deployment *appsv1.Deployment,
+) (controllerutil.OperationResult, *corev1.ConfigMap, networkArtifactsRecoveryApplyResult, error) {
+	var recovery networkArtifactsRecoveryApplyResult
 	desired = desired.DeepCopy()
 	current := &corev1.ConfigMap{}
 	err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current)
 	if apierrors.IsNotFound(err) {
 		if err := r.Create(ctx, desired); err != nil {
-			return controllerutil.OperationResultNone, nil, err
+			return controllerutil.OperationResultNone, nil, recovery, err
 		}
 
-		return controllerutil.OperationResultCreated, desired, nil
+		return controllerutil.OperationResultCreated, desired, recovery, nil
 	}
 	if err != nil {
-		return controllerutil.OperationResultNone, nil, err
+		return controllerutil.OperationResultNone, nil, recovery, err
 	}
 
 	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, nil, err
+		return controllerutil.OperationResultNone, nil, recovery, err
 	}
 
 	// A delete already in flight: skip the patch and let the next reconcile
 	// hit the NotFound branch and recreate.
 	if !current.DeletionTimestamp.IsZero() {
-		return controllerutil.OperationResultUpdated, current, nil
+		return controllerutil.OperationResultUpdated, current, recovery, nil
 	}
 
 	// Recovery path: the live ConfigMap is missing required keys, has
-	// foreign data keys, or otherwise fails verification. Delete it and let
-	// the next reconcile recreate; the new UID rolls the Deployment so the
-	// init publisher can republish.
+	// foreign data keys, or otherwise fails verification. Delete and recreate
+	// it when the Deployment-level recovery cooldown allows the resulting Pod
+	// roll. If deletion is held by a finalizer, leave recreation to a later
+	// reconcile after the object actually disappears.
 	if artifactConfigMapNeedsRecovery(current, desired.Annotations[networkFingerprintAnno]) {
-		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
-			return controllerutil.OperationResultNone, nil, err
+		now := r.now()
+		remaining, err := r.networkArtifactsRecoveryCooldownRemaining(ctx, deployment, now)
+		if err != nil {
+			return controllerutil.OperationResultNone, nil, recovery, err
 		}
+		if remaining > 0 {
+			recovery.RequeueAfter = remaining
+			return controllerutil.OperationResultNone, current, recovery, nil
+		}
+		if err := r.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+			return controllerutil.OperationResultNone, nil, recovery, err
+		}
+		if err := r.Create(ctx, desired); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				return controllerutil.OperationResultUpdated, current, recovery, nil
+			}
+			return controllerutil.OperationResultNone, nil, recovery, err
+		}
+		recovery.RolloutAt = &now
 
-		return controllerutil.OperationResultUpdated, current, nil
+		return controllerutil.OperationResultUpdated, desired, recovery, nil
 	}
 
 	before := current.DeepCopy()
@@ -137,13 +162,13 @@ func (r *CardanoNetworkReconciler) applyNetworkArtifactsConfigMap(
 	}
 
 	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, current, nil
+		return controllerutil.OperationResultNone, current, recovery, nil
 	}
 	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, nil, err
+		return controllerutil.OperationResultNone, nil, recovery, err
 	}
 
-	return controllerutil.OperationResultUpdated, current, nil
+	return controllerutil.OperationResultUpdated, current, recovery, nil
 }
 
 // applyArtifactPublisherServiceAccount applies the artifact publisher

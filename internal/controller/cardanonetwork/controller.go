@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/go-logr/logr"
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,6 +30,7 @@ const (
 	primaryWorkloadReadinessRequeueAfter = 15 * time.Second
 	resourceConflictRequeueAfter         = time.Minute
 	faucetSecretRepairRequeueAfter       = 10 * time.Minute
+	networkArtifactsRecoveryCooldown     = time.Minute
 	disabledChildResourceLogValue        = "disabled"
 )
 
@@ -55,6 +57,10 @@ type CardanoNetworkReconciler struct {
 	// the primary cardano-node container. Empty leaves the built-in
 	// "<repo>:<toolVersion>-<revision>" formula in place.
 	DefaultCardanoTestnetImage string
+
+	// Now returns the current time. Tests override this to exercise
+	// time-bounded recovery behavior deterministically.
+	Now func() time.Time
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
@@ -155,6 +161,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	logNetworkArtifactRecovery(log, client.ObjectKeyFromObject(resources.NetworkArtifactsConfigMap), applyResults)
+
 	resultLog := log
 	if applyResults.unchanged() {
 		resultLog = log.V(1)
@@ -212,16 +220,52 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"networkFingerprint", resources.NetworkPlan.Fingerprint)
 
-	if ready.Status != metav1.ConditionTrue &&
-		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
-			ready.Reason == string(conditionReasonDBSyncAttachmentPending)) {
-		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, nil
-	}
-	if resources.FaucetAuthSecret != nil {
-		return ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, nil
+	if result, requeue := primaryWorkloadRequeueResult(ready, applyResults, resources.FaucetAuthSecret != nil); requeue {
+		return result, nil
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *CardanoNetworkReconciler) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
+}
+
+func logNetworkArtifactRecovery(log logr.Logger, key client.ObjectKey, results primaryWorkloadApplyResults) {
+	if results.NetworkArtifactsRecoveryRolloutAt != nil {
+		log.Info("Recovering network artifact ConfigMap after verification failure",
+			"networkArtifactsConfigMap", key,
+			"recoveryRolloutAt", results.NetworkArtifactsRecoveryRolloutAt.UTC().Format(time.RFC3339),
+			"cooldown", networkArtifactsRecoveryCooldown.String())
+	}
+	if results.NetworkArtifactsRecoveryRequeueAfter > 0 {
+		log.Info("Suppressing network artifact recovery rollout during cooldown",
+			"networkArtifactsConfigMap", key,
+			"requeueAfter", results.NetworkArtifactsRecoveryRequeueAfter.String())
+	}
+}
+
+func primaryWorkloadRequeueResult(
+	ready metav1.Condition,
+	applyResults primaryWorkloadApplyResults,
+	hasFaucetAuthSecret bool,
+) (ctrl.Result, bool) {
+	if ready.Status != metav1.ConditionTrue && applyResults.NetworkArtifactsRecoveryRequeueAfter > 0 {
+		return ctrl.Result{RequeueAfter: applyResults.NetworkArtifactsRecoveryRequeueAfter}, true
+	}
+	if ready.Status != metav1.ConditionTrue &&
+		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
+			ready.Reason == string(conditionReasonDBSyncAttachmentPending)) {
+		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, true
+	}
+	if hasFaucetAuthSecret {
+		return ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, true
+	}
+
+	return ctrl.Result{}, false
 }
 
 // primaryWorkloadApplyResults captures the per-resource OperationResult
@@ -230,18 +274,20 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 // debug). NetworkArtifactsConfigMapObject also carries the live ConfigMap
 // for the Deployment-annotation stamping step.
 type primaryWorkloadApplyResults struct {
-	NetworkArtifactsConfigMap       controllerutil.OperationResult
-	NetworkArtifactsConfigMapObject *corev1.ConfigMap
-	ArtifactPublisherServiceAccount controllerutil.OperationResult
-	ArtifactPublisherRole           controllerutil.OperationResult
-	ArtifactPublisherRoleBinding    controllerutil.OperationResult
-	PersistentVolumeClaim           controllerutil.OperationResult
-	Deployment                      controllerutil.OperationResult
-	Service                         controllerutil.OperationResult
-	OgmiosService                   controllerutil.OperationResult
-	KupoService                     controllerutil.OperationResult
-	FaucetService                   controllerutil.OperationResult
-	FaucetAuthSecret                controllerutil.OperationResult
+	NetworkArtifactsConfigMap            controllerutil.OperationResult
+	NetworkArtifactsConfigMapObject      *corev1.ConfigMap
+	NetworkArtifactsRecoveryRolloutAt    *time.Time
+	NetworkArtifactsRecoveryRequeueAfter time.Duration
+	ArtifactPublisherServiceAccount      controllerutil.OperationResult
+	ArtifactPublisherRole                controllerutil.OperationResult
+	ArtifactPublisherRoleBinding         controllerutil.OperationResult
+	PersistentVolumeClaim                controllerutil.OperationResult
+	Deployment                           controllerutil.OperationResult
+	Service                              controllerutil.OperationResult
+	OgmiosService                        controllerutil.OperationResult
+	KupoService                          controllerutil.OperationResult
+	FaucetService                        controllerutil.OperationResult
+	FaucetAuthSecret                     controllerutil.OperationResult
 }
 
 // unchanged reports whether every owned child was already in the desired
@@ -262,12 +308,13 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 }
 
 // applyPrimaryWorkloadResources applies the primary workload bundle in
-// dependency order: the artifact ConfigMap is created first because its UID
-// is stamped onto the Deployment pod-template annotations; RBAC follows so
-// the init container's ServiceAccount can patch the ConfigMap; PVC and
-// faucet auth Secret are created before the Deployment so its volumes can
-// mount; the Deployment itself rolls last; finally the optional Services
-// are reconciled or deleted to match the spec.
+// dependency order: the artifact ConfigMap is created first because its UID is
+// stamped onto the Deployment pod-template annotations when recovery rollout
+// cooldown allows a republish; RBAC follows so the init container's
+// ServiceAccount can patch the ConfigMap; PVC and faucet auth Secret are
+// created before the Deployment so its volumes can mount; the Deployment
+// itself rolls last; finally the optional Services are reconciled or deleted to
+// match the spec.
 func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -275,11 +322,14 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 ) (primaryWorkloadApplyResults, error) {
 	var results primaryWorkloadApplyResults
 	var err error
+	var artifactRecovery networkArtifactsRecoveryApplyResult
 
-	results.NetworkArtifactsConfigMap, results.NetworkArtifactsConfigMapObject, err = r.applyNetworkArtifactsConfigMap(ctx, resources.NetworkArtifactsConfigMap)
+	results.NetworkArtifactsConfigMap, results.NetworkArtifactsConfigMapObject, artifactRecovery, err = r.applyNetworkArtifactsConfigMap(ctx, resources.NetworkArtifactsConfigMap, resources.Deployment)
 	if err != nil {
 		return results, err
 	}
+	results.NetworkArtifactsRecoveryRolloutAt = artifactRecovery.RolloutAt
+	results.NetworkArtifactsRecoveryRequeueAfter = artifactRecovery.RequeueAfter
 	if resources.ArtifactPublisherServiceAccount != nil {
 		results.ArtifactPublisherServiceAccount, err = r.applyArtifactPublisherServiceAccount(ctx, resources.ArtifactPublisherServiceAccount)
 		if err != nil {
@@ -311,7 +361,16 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		}
 	}
 
-	setDeploymentArtifactConfigMapUID(resources.Deployment, results.NetworkArtifactsConfigMapObject)
+	if artifactRecovery.RolloutAt != nil {
+		setDeploymentNetworkArtifactsRecoveryRolloutAt(resources.Deployment, *artifactRecovery.RolloutAt)
+	}
+	if artifactRecovery.RequeueAfter > 0 {
+		if err := r.preserveDeploymentArtifactConfigMapUID(ctx, resources.Deployment); err != nil {
+			return results, err
+		}
+	} else {
+		setDeploymentArtifactConfigMapUID(resources.Deployment, results.NetworkArtifactsConfigMapObject)
+	}
 	results.Deployment, err = r.applyPrimaryDeployment(ctx, resources.Deployment)
 	if err != nil {
 		return results, err
