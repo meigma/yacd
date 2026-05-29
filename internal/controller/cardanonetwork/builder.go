@@ -72,6 +72,12 @@ type primaryWorkloadBuilder struct {
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
 
+	// acceptedIdentity is the already-accepted network identity read from
+	// owned runtime material. It is used only to preserve the primary
+	// UnsupportedNetworkChange error when later spec edits also introduce
+	// secondary sidecar compatibility failures.
+	acceptedIdentity acceptedNetworkIdentity
+
 	dbSyncAttachment *ctrldbsync.PrimarySidecarAttachment
 
 	publicCustomBundle *publicnet.CustomBundle
@@ -238,7 +244,7 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	// Skip the ogmios/cardano-node compatibility check when the CR is going
 	// to be rejected as UnsupportedNetworkChange anyway; surface that specific
 	// error instead.
-	if !acceptedNetworkFingerprintChanged(network, plan.Fingerprint) {
+	if !acceptedNetworkFingerprintChanged(b.acceptedIdentity, plan.Fingerprint) {
 		err = validateOgmiosCompatibility(network.Spec.Node.Version, ogmios)
 	}
 	if err != nil {
