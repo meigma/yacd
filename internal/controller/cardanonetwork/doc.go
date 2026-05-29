@@ -14,8 +14,8 @@
 //     touch the API server, time, randomness, or the file system.
 //   - controller.go, apply.go, callbacks.go, delete.go, faucet_auth.go,
 //     status.go, readiness.go: side-effecting reconciler. Reads from and
-//     writes to the cluster, generates auth tokens (faucet_auth.go is the
-//     only crypto/rand caller), and publishes status.
+//     writes to the cluster, generates and hashes faucet auth tokens
+//     (faucet_auth.go is the only crypto/rand caller), and publishes status.
 //
 // Owned-child apply is routed through ctrlkit/apply.ApplyOwnedObject with
 // per-resource Validate/Mutate callbacks (callbacks.go). The network

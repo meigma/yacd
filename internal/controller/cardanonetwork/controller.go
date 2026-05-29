@@ -297,6 +297,7 @@ type primaryWorkloadApplyResults struct {
 	KupoService                          controllerutil.OperationResult
 	FaucetService                        controllerutil.OperationResult
 	FaucetAuthSecret                     controllerutil.OperationResult
+	FaucetAuthSecretObject               *corev1.Secret
 }
 
 // unchanged reports whether every owned child was already in the desired
@@ -364,7 +365,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	}
 
 	if resources.FaucetAuthSecret != nil {
-		results.FaucetAuthSecret, err = r.applyPrimaryFaucetAuthSecret(ctx, resources.FaucetAuthSecret)
+		results.FaucetAuthSecret, results.FaucetAuthSecretObject, err = r.applyPrimaryFaucetAuthSecret(ctx, resources.FaucetAuthSecret)
 		if err != nil {
 			return results, err
 		}
@@ -379,6 +380,9 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		}
 	} else {
 		setDeploymentArtifactConfigMapUID(resources.Deployment, results.NetworkArtifactsConfigMapObject)
+	}
+	if results.FaucetAuthSecretObject != nil {
+		setDeploymentFaucetAuthTokenHash(resources.Deployment, results.FaucetAuthSecretObject)
 	}
 	results.Deployment, err = r.applyPrimaryDeployment(ctx, resources.Deployment)
 	if err != nil {
@@ -500,6 +504,7 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
 		Watches(&corev1.ConfigMap{}, r.customProfileConfigMapEventHandler()).
 		Watches(&corev1.Secret{}, r.customProfileSecretEventHandler()).
+		Owns(&corev1.Secret{}, ctrlbuilder.WithPredicates(faucetAuthSecretEventPredicate())).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).

@@ -28,6 +28,11 @@ const (
 	// annotation so updating the cooldown state does not itself roll the Pod.
 	networkArtifactsRecoveryRolloutAtAnno = "yacd.meigma.io/network-artifacts-recovery-rollout-at"
 
+	// faucetAuthTokenHashAnno carries the hash of the live faucet auth token
+	// on the Deployment pod template. Token creation or rotation must roll the
+	// primary Pod so the mounted token and advertised Secret cannot diverge.
+	faucetAuthTokenHashAnno = "yacd.meigma.io/faucet-auth-token-hash"
+
 	dbSyncSidecarRevisionAnno = ctrlannotations.DBSyncSidecarRevision
 )
 
@@ -44,6 +49,7 @@ var cardanoNetworkOwnedAnnotations = []string{
 	ctrlannotations.RequestedStorageClass,
 	networkArtifactsConfigMapUIDAnno,
 	networkArtifactsRecoveryRolloutAtAnno,
+	faucetAuthTokenHashAnno,
 	dbSyncSidecarRevisionAnno,
 }
 

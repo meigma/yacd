@@ -248,6 +248,16 @@ func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap 
 	deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] = string(configMap.UID)
 }
 
+// setDeploymentFaucetAuthTokenHash stamps the live faucet auth token hash
+// onto the Deployment pod template so token creation or rotation rolls the
+// primary Pod through Kubernetes' normal ReplicaSet machinery.
+func setDeploymentFaucetAuthTokenHash(deployment *appsv1.Deployment, secret *corev1.Secret) {
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = map[string]string{}
+	}
+	deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno] = faucetAuthTokenHash(secret)
+}
+
 func setDeploymentNetworkArtifactsRecoveryRolloutAt(deployment *appsv1.Deployment, at time.Time) {
 	if deployment.Annotations == nil {
 		deployment.Annotations = map[string]string{}
