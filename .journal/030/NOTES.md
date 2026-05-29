@@ -161,3 +161,21 @@ env), yacd-env JS GitHub Action, criteria fit, deferred/rejected, risks
 (CI runner ceiling UNVERIFIED, chart 0.0.0 unreleased, topup --await needs Kupo,
 ownerRef teardown unverified, exec assumes chain-API in primary pod), and
 smallest-first next steps. Status: proposal for review; no code yet.
+
+## 2026-05-29 — Drafted phased implementation plan
+Wrote .journal/030/TEST_HARNESS_PLAN.md (companion to the proposal). High-level
+work breakdown, no code. Six phases, risk-first ordering:
+- P0 Validate feasibility (de-risk: CI cold-start go/no-go, teardown GC, host-
+  access assumptions — uses today's tooling, no new verbs).
+- P1 CLI foundation: identity-as-CLI-arg (breaking spec change) + up/down/list.
+- P2 Host access + env-var contract: run/connect/exec + topup --await => LOCAL
+  STORY COMPLETE.
+- P3 Release operator/chart (parallel; gates P4).
+- P4 CI integration: yacd-env Action => CI STORY COMPLETE.
+- P5 Adoption: examples + Diataxis how-to.
+Dependency flow + criteria-coverage milestones (end P2 = local; end P4 = CI;
+end P5 = adoption-ready) included. Out-of-plan backlog: detached connect,
+guarded ns auto-delete, in-cluster exec mode, k3d in action, snapshot cache.
+Three journal artifacts now: TEST_HARNESS_DESIGN.md (workflow analysis/
+alternatives), TEST_HARNESS_PROPOSAL.md (decided design), TEST_HARNESS_PLAN.md
+(phased work). Status: all proposals for review; no code yet.
