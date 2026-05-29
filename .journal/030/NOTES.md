@@ -100,3 +100,48 @@ blocker; topup --await depends on Kupo; clean ownerRef teardown unverified for
 publisher RBAC + artifacts ConfigMap + PVCs.
 
 Next: user review of the proposal before any implementation.
+
+## 2026-05-29 — User UX refinements to the proposal (discussion)
+User proposed three refinements; my assessment (detail in chat):
+
+1. Env management: `yacd list` (List on CRD via kube port — clear yes);
+   name-as-identity `yacd up NAME [-n ns]` and DROP metadata from the devconfig
+   spec (spec = shape, name/ns = runtime identity → strengthens
+   spec-over-tuning, enables parallel shards; breaking change but chart is 0.0.0
+   so free now). Cautions: (a) DNS-1123 — user's `my_network` is ILLEGAL
+   (underscore); use `my-network`. (b) auto-CREATE ns is safe; auto-DELETE needs
+   an ownership stamp (managed-by + created-by-yacd label on the namespace) —
+   never delete a pre-existing ns (matches the workflow's MAJOR finding).
+   (c) default ns = name is a good predictable default.
+
+2. Managed port-forward via `.yacd/` (mirrors .run/yacd-dev/): right direction,
+   but "managed" must mean SUPERVISED (forwards die on pod restart/idle/blip →
+   flaky tests), not just spawn+pidfile. Use client-go portforward, not shelling
+   kubectl. Detached daemon = stale-state complexity.
+
+3. `yacd run NAME -- <cmd>` (env-injection, aws-vault/doppler/nix pattern): the
+   STRONGEST idea. Makes the harness invisible to the test runner (env vars,
+   zero YACD awareness = scope discipline). Solves port-forward lifecycle for
+   free (forwards scoped to the child, no daemon/PID/stale state). Can REPLACE
+   the workflow's in-cluster-Job CI default and beat it on friction AND parity
+   (env var name stable, value adapts host-loopback vs ClusterIP DNS).
+   => connect = persistent forwards (dev); run = ephemeral scoped forwards
+   (CI/tests, primary).
+
+SHARP CAVEAT: the `cardano-cli` example mostly WON'T work via run —
+cardano-cli uses the node UNIX SOCKET (--socket-path, local IPC), not TCP;
+port-forward can't expose it. Socket-backed subcommands (query tip/utxo/params,
+cli submit) fail; offline (address/key build) work. Host chain interfaces are
+Ogmios(WS)/Kupo(HTTP) = TCP, forwardable. => add sibling `yacd exec NAME -- ...`
+(kubectl-exec into node pod) for the socket case. Split: run = host+TCP env;
+exec = in-pod+socket.
+
+New load-bearing surface: the YACD_-prefixed env-var contract (NETWORK,
+NAMESPACE, NETWORK_MAGIC, OGMIOS_URL, KUPO_URL, FAUCET_URL, FAUCET_TOKEN) —
+becomes the stable API the endpoints file was; design deliberately. run with no
+`-- cmd` => interactive $SHELL with env set.
+
+Emerging vocabulary: up/down/list/info/connect/disconnect/run/exec/topup, all
+keyed on NAME [-n ns]. Make-or-break risk unchanged (CI runner ceiling — gating
+spike still needed). Next: fold into TEST_HARNESS_DESIGN.md or keep iterating on
+vocabulary (run-vs-connect defaults, exact env var names). Awaiting user.
