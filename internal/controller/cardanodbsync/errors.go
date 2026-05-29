@@ -50,10 +50,8 @@ func unsupportedWorkloadChange(format string, args ...any) statusConditionError 
 	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedWorkloadChange), format, args...)
 }
 
-// unsupportedDatabaseIdentityChange reports that the accepted database
-// identity has drifted from the live identity. The CardanoDBSync must be
-// deleted and recreated with a fresh or compatible database to change
-// identity-affecting inputs.
+// unsupportedDatabaseIdentityChange reports that the desired database identity
+// has drifted from the identity accepted on owned runtime material.
 func unsupportedDatabaseIdentityChange(format string, args ...any) statusConditionError {
 	return ctrlstatus.NewConditionError(string(conditionReasonUnsupportedDatabaseIdentityChange), format, args...)
 }

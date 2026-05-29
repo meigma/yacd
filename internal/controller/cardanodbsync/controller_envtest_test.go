@@ -229,6 +229,58 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
 }
 
+func TestCardanoDBSyncControllerManagerRepairsAcceptedDatabaseIdentityStatusForgery(t *testing.T) {
+	ctx := context.Background()
+	apiClient := startCardanoDBSyncTestManager(t, ctx)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanodbsync-identity-envtest"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	network := readyCardanoNetwork("identity-network")
+	network.Spec = localCardanoNetwork(network.Name).Spec
+	moveReadyNetworkToNamespace(network, namespace.Name)
+	createReadyNetworkWithArtifacts(t, ctx, apiClient, network)
+
+	dbSync := localCardanoDBSync("identity-dbsync", network.Name)
+	dbSync.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, externalDatabaseSecretFor(dbSync)))
+	require.NoError(t, apiClient.Create(ctx, dbSync))
+
+	var acceptedIdentity string
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
+			return false
+		}
+		if current.Status.Database == nil || current.Status.Database.AcceptedIdentityFingerprint == "" {
+			return false
+		}
+		acceptedIdentity = current.Status.Database.AcceptedIdentityFingerprint
+		return dbSyncConditionHas(current, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	statePVC := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: dbSyncStatePVCName(dbSync)}, statePVC))
+	require.Equal(t, acceptedIdentity, statePVC.Annotations[dbSyncDatabaseIdentityAnno])
+
+	forged := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), forged))
+	require.NotNil(t, forged.Status.Database)
+	forged.Status.Database.AcceptedIdentityFingerprint = forgedDBSyncDatabaseIdentity
+	require.NoError(t, apiClient.Status().Update(ctx, forged))
+
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), current); err != nil {
+			return false
+		}
+		return current.Status.Database != nil &&
+			current.Status.Database.AcceptedIdentityFingerprint == acceptedIdentity &&
+			dbSyncConditionHas(current, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestCardanoDBSyncControllerManagerReconcilesPublicPreprodDedicatedFollower(t *testing.T) {
 	ctx := context.Background()
 	apiClient := startCardanoDBSyncTestManager(t, ctx)
@@ -438,9 +490,44 @@ func startCardanoDBSyncTestManager(t *testing.T, ctx context.Context) client.Cli
 	return apiClient
 }
 
+func createReadyNetworkWithArtifacts(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	createdNetwork := network.DeepCopy()
+	createdNetwork.Status = yacdv1alpha1.CardanoNetworkStatus{}
+	require.NoError(t, apiClient.Create(ctx, createdNetwork))
+	require.NoError(t, apiClient.Create(ctx, artifactConfigMapFor(network)))
+
+	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(createdNetwork), currentNetwork))
+	currentNetwork.Status = network.Status
+	require.NoError(t, apiClient.Status().Update(ctx, currentNetwork))
+}
+
 func cardanoDBSyncEnvtestControllerOptions() config.Controller {
 	skipNameValidation := true
 	return config.Controller{SkipNameValidation: &skipNameValidation}
+}
+
+func dbSyncConditionHas(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	conditionType conditionType,
+	status metav1.ConditionStatus,
+	reason conditionReason,
+) bool {
+	condition := apimeta.FindStatusCondition(dbSync.Status.Conditions, string(conditionType))
+	if condition == nil || condition.Status != status {
+		return false
+	}
+	if reason == "" {
+		return true
+	}
+	return condition.Reason == string(reason)
 }
 
 func requireDBSyncDegradedReasonEventually(

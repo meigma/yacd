@@ -502,7 +502,7 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Info("Starting CardanoDBSync controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&yacdv1alpha1.CardanoDBSync{}, ctrlbuilder.WithPredicates(cardanoDBSyncEventPredicate())).
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.placementPeerEventHandler()).
 		Watches(&yacdv1alpha1.CardanoNetwork{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForNetwork)).
 		Watches(&corev1.Secret{}, handler.EnqueueRequestsFromMapFunc(r.cardanoDBSyncsForDatabaseSecret)).
@@ -513,6 +513,36 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Secret{}).
 		Named(controllerName).
 		Complete(r)
+}
+
+func cardanoDBSyncEventPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldDBSync, oldOK := e.ObjectOld.(*yacdv1alpha1.CardanoDBSync)
+			newDBSync, newOK := e.ObjectNew.(*yacdv1alpha1.CardanoDBSync)
+			if !oldOK || !newOK {
+				return true
+			}
+			if oldDBSync.Generation != newDBSync.Generation {
+				return true
+			}
+
+			return acceptedDatabaseIdentityStatusChanged(oldDBSync, newDBSync)
+		},
+	}
+}
+
+func acceptedDatabaseIdentityStatusChanged(oldDBSync *yacdv1alpha1.CardanoDBSync, newDBSync *yacdv1alpha1.CardanoDBSync) bool {
+	return acceptedDatabaseIdentityStatusValue(oldDBSync.Status.Database) !=
+		acceptedDatabaseIdentityStatusValue(newDBSync.Status.Database)
+}
+
+func acceptedDatabaseIdentityStatusValue(status *yacdv1alpha1.CardanoDBSyncDatabaseStatus) string {
+	if status == nil {
+		return ""
+	}
+
+	return status.AcceptedIdentityFingerprint
 }
 
 // placementPeerEventHandler enqueues peer primary-sidecar claims when a

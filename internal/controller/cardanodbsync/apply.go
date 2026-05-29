@@ -167,11 +167,9 @@ func (r *CardanoDBSyncReconciler) applyManagedPostgresResources(
 }
 
 // validateAcceptedDBSyncDatabaseIdentity rejects a workload apply when the
-// dbsync database identity has drifted from the accepted fingerprint. The
-// CardanoDBSync must be deleted and recreated to change identity-affecting
-// inputs. As a side effect the function lifts the accepted fingerprint
-// from the live PVC into in-memory status so the subsequent patch carries
-// it forward.
+// dbsync database identity has drifted from the fingerprint accepted on owned
+// runtime state. The db-sync state PVC is authoritative; status only mirrors
+// the PVC annotation for humans and clients.
 func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -181,32 +179,29 @@ func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncDatabaseIdentity(
 		return unsupportedSpec("db-sync database identity fingerprint is required")
 	}
 
-	acceptedFingerprint := ""
-	if dbSync.Status.Database != nil {
-		acceptedFingerprint = dbSync.Status.Database.AcceptedIdentityFingerprint
-	}
-	if acceptedFingerprint == "" {
-		var err error
-		acceptedFingerprint, err = r.acceptedDBSyncDatabaseIdentityFromPVC(ctx, dbSync)
-		if err != nil {
-			return err
-		}
+	acceptedFingerprint, err := r.currentAcceptedDBSyncDatabaseIdentity(ctx, dbSync)
+	if err != nil {
+		return err
 	}
 	if acceptedFingerprint == "" || acceptedFingerprint == desiredFingerprint {
 		if acceptedFingerprint != "" &&
-			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "") {
+			(dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint != acceptedFingerprint) {
 			_, authSecretName, acceptedPlacementMode := databaseStatusValues(dbSync.Status.Database)
 			dbSync.Status.Database = databaseStatus(acceptedFingerprint, authSecretName, acceptedPlacementMode)
 		}
 		return nil
 	}
-	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint == "" {
+	if dbSync.Status.Database == nil || dbSync.Status.Database.AcceptedIdentityFingerprint != acceptedFingerprint {
 		_, authSecretName, acceptedPlacementMode := databaseStatusValues(dbSync.Status.Database)
 		dbSync.Status.Database = databaseStatus(acceptedFingerprint, authSecretName, acceptedPlacementMode)
 	}
 
 	return unsupportedDatabaseIdentityChange(
-		"CardanoDBSync database-affecting inputs changed from accepted identity; delete and recreate the CardanoDBSync with a fresh or compatible external database",
+		"CardanoDBSync database-affecting inputs changed from accepted identity %q to desired identity %q; accepted identity is stored on PVC %q annotation %q. Restore the previous database-affecting spec fields, or recreate the CardanoDBSync with a fresh or compatible database if the change is intentional",
+		acceptedFingerprint,
+		desiredFingerprint,
+		dbSyncStatePVCName(dbSync),
+		dbSyncDatabaseIdentityAnno,
 	)
 }
 
@@ -248,19 +243,14 @@ func (r *CardanoDBSyncReconciler) validateAcceptedDBSyncPlacementMode(
 	)
 }
 
-// currentAcceptedDBSyncDatabaseIdentity returns the accepted database
-// identity fingerprint from CardanoDBSync status or the PVC annotation
-// (whichever exists), without consulting the desired fingerprint. Used by
-// the intermediate "managed Postgres applied" patch so it can carry the
-// accepted identity forward even before the dbsync workload runs.
+// currentAcceptedDBSyncDatabaseIdentity returns the database identity accepted
+// on owned runtime material, without consulting status or the desired
+// fingerprint. Status mirrors this value, but direct status edits are not part
+// of the acceptance decision.
 func (r *CardanoDBSyncReconciler) currentAcceptedDBSyncDatabaseIdentity(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 ) (string, error) {
-	if dbSync.Status.Database != nil && dbSync.Status.Database.AcceptedIdentityFingerprint != "" {
-		return dbSync.Status.Database.AcceptedIdentityFingerprint, nil
-	}
-
 	return r.acceptedDBSyncDatabaseIdentityFromPVC(ctx, dbSync)
 }
 

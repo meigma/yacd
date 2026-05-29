@@ -33,7 +33,9 @@
 // shape with per-component {FollowerNode,NodeSocket,DBSync,Postgres}Ready,
 // SidecarMaterialReady, and a dedicated Synced condition for chain-sync
 // progress. Condition type/reason/message strings are package-private typed
-// constants in conditions.go.
+// constants in conditions.go. The accepted database identity is read from
+// owned runtime material and mirrored into status; direct status edits are
+// repaired, not trusted.
 //
 // The default dbsync workload is one Deployment with two long-running
 // containers (the follower cardano-node and cardano-db-sync). In
