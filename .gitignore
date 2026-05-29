@@ -20,3 +20,6 @@ coverage.html
 .idea/
 .vscode/
 *.swp
+
+# Claude
+.claude/scheduled_tasks.lock

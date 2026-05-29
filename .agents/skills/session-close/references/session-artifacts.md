@@ -47,8 +47,9 @@ agent would benefit from.
 |-----|------------|-------|--------|---------|
 ```
 
-Rows stay ordered oldest to newest. Status is `in-progress`, `complete`, or
-`abandoned`. Keep the summary cell to one sentence.
+Rows stay ordered oldest to newest. New sessions start as `in-progress`;
+closeout updates the matching row to `complete` or `abandoned`. Keep the summary
+cell to one sentence.
 
 ## TECH_NOTES.md
 

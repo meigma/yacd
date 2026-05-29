@@ -26,11 +26,11 @@ Specifically:
 3. **Fetch and inspect:**
    - Run `git fetch origin --prune`.
    - Run `wt list --format=json`.
-   - If an existing worktree for `journal/<login>` is present, use that as the journal root, require `git status --short` there to be clean, then run `git pull --rebase`.
+   - If an existing worktree for `journal/<login>` is present, use that as the journal root. Run the journal sync transaction from `.session.md`: inspect `git status --short`; if the only dirty paths are existing `.journal/<ID>/NOTES.md` files, commit those checkpoints first with `docs(journal): checkpoint session <ID>` for one session or `docs(journal): checkpoint active sessions` for several; if any other files are dirty, stop and surface them. Then run `git pull --rebase` and push any checkpoint commit.
 4. **Open an existing journal branch if needed:**
    - If no worktree exists but `origin/journal/<login>` exists, create a local tracking branch if needed with `git branch --track journal/<login> origin/journal/<login>`.
    - Open it with `wt switch --no-cd --format=json journal/<login>`.
-   - Require `git status --short` in that worktree to be clean, then run `git pull --rebase`.
+   - Run the same journal sync transaction in that worktree.
 5. **Create the journal branch if needed:**
    - If neither a worktree nor `origin/journal/<login>` exists, create one with `wt switch --create --base origin/<default-branch> --no-cd --format=json journal/<login>`.
    - If the current checkout has an ignored local `.journal/`, copy its contents into the new journal worktree without overwriting existing files, for example with `rsync -a --ignore-existing .journal/ <journal-root>/.journal/`.
