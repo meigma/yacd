@@ -182,10 +182,14 @@
   primary Deployment disables pod-level token automount; only the init container
   receives a projected token/CA/namespace volume.
 - If a published owned artifact ConfigMap fails verification, the
-  `CardanoNetwork` controller deletes it and waits for a later reconcile to
-  recreate it. The new ConfigMap UID rolls the primary Deployment so the init
-  publisher can republish exact files. This avoids same-reconcile delete/create
-  races with Kubernetes asynchronous deletion or finalizers.
+  `CardanoNetwork` controller may delete and recreate it to force local
+  artifact republish through the primary init container. That recovery roll is
+  throttled by the Deployment metadata annotation
+  `yacd.meigma.io/network-artifacts-recovery-rollout-at`; while cooldown is
+  active the controller leaves the corrupted ConfigMap in place, preserves the
+  previous pod-template ConfigMap UID, reports `ArtifactsReady=False`, and
+  requeues for the remaining cooldown. If deletion is held by a finalizer,
+  recreation is deferred until the object actually disappears.
 - The manager Helm chart is intentionally cluster-scoped for the current
   local/dev operator. Treat the manager ServiceAccount as trusted cluster
   automation for YACD-managed namespaces; namespace-scoped manager mode is a
