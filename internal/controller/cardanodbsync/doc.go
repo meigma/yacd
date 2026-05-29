@@ -18,7 +18,8 @@
 //     file system. The managed-Postgres password generator in database.go is
 //     the only crypto/rand caller.
 //   - controller.go, apply.go, callbacks.go, status.go, readiness.go,
-//     database.go, placement_handoff.go, and runtime_probe.go:
+//     database.go, managed_postgres_auth.go, placement_handoff.go, and
+//     runtime_probe.go:
 //     side-effecting reconciler. Reads from and writes to the cluster, runs
 //     Postgres and Ogmios probes, checks placement handoff state, and
 //     publishes status.
@@ -26,8 +27,9 @@
 // Owned-child apply is routed through ctrlkit/apply.ApplyOwnedObject with
 // per-resource Validate/Mutate callbacks (callbacks.go). The managed-Postgres
 // auth Secret is the deliberate exception: it has create-once token
-// semantics that do not fit ApplyOwnedObject's mutate-on-update model, and
-// is reconciled inline in database.go.
+// semantics and a narrow restore-and-adopt path that do not fit
+// ApplyOwnedObject's mutate-on-update model, and is reconciled in
+// managed_postgres_auth.go.
 //
 // Status conditions follow the standard Progressing / Degraded / Ready
 // shape with per-component {FollowerNode,NodeSocket,DBSync,Postgres}Ready,

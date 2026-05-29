@@ -229,6 +229,78 @@ func TestCardanoDBSyncControllerManagerReconcilesReferencedNetworkAndExternalDat
 	assertManagedPostgresSecretAndChildWatches(t, ctx, apiClient, namespace.Name)
 }
 
+func TestCardanoDBSyncControllerManagerAdoptsRestoredGeneratedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	apiClient := startCardanoDBSyncTestManager(t, ctx)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanodbsync-generated-auth-envtest"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	network := readyCardanoNetwork("generated-auth-network")
+	network.Spec = localCardanoNetwork(network.Name).Spec
+	moveReadyNetworkToNamespace(network, namespace.Name)
+	createReadyNetworkWithArtifacts(t, ctx, apiClient, network)
+
+	dbSync := managedCardanoDBSync("generated-auth-dbsync", network.Name)
+	dbSync.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, dbSync))
+	createdDBSync := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), createdDBSync))
+	initialGeneration := createdDBSync.Generation
+
+	secretKey := client.ObjectKey{Namespace: namespace.Name, Name: managedPostgresAuthSecretName(dbSync)}
+	pvcKey := client.ObjectKey{Namespace: namespace.Name, Name: managedPostgresPVCName(dbSync)}
+	var originalPassword []byte
+	require.Eventually(t, func() bool {
+		authSecret := &corev1.Secret{}
+		if err := apiClient.Get(ctx, secretKey, authSecret); err != nil {
+			return false
+		}
+		if len(authSecret.Data[managedPostgresPasswordKey]) == 0 {
+			return false
+		}
+		postgresPVC := &corev1.PersistentVolumeClaim{}
+		if err := apiClient.Get(ctx, pvcKey, postgresPVC); err != nil {
+			return false
+		}
+		if postgresPVC.Annotations[managedPostgresIdentityAnno] == "" {
+			return false
+		}
+		originalPassword = append([]byte(nil), authSecret.Data[managedPostgresPasswordKey]...)
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
+
+	authSecret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, secretKey, authSecret))
+	require.NoError(t, apiClient.Delete(ctx, authSecret))
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(dbSync), conditionReasonManagedDatabaseSecretMissing)
+
+	require.NoError(t, apiClient.Create(ctx, restoredGeneratedManagedPostgresAuthSecret(dbSync, originalPassword)))
+
+	require.Eventually(t, func() bool {
+		currentSecret := &corev1.Secret{}
+		if err := apiClient.Get(ctx, secretKey, currentSecret); err != nil {
+			return false
+		}
+		currentDBSync := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(dbSync), currentDBSync); err != nil {
+			return false
+		}
+		if !controlledBy(currentSecret, currentDBSync) {
+			return false
+		}
+		if currentSecret.Annotations[managedPostgresPasswordFingerprintAnno] == "" {
+			return false
+		}
+		degraded := apimeta.FindStatusCondition(currentDBSync.Status.Conditions, string(conditionTypeDegraded))
+		return currentDBSync.Generation == initialGeneration &&
+			currentDBSync.Status.ObservedGeneration == currentDBSync.Generation &&
+			degraded != nil &&
+			degraded.Status == metav1.ConditionFalse
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestCardanoDBSyncControllerManagerRepairsAcceptedDatabaseIdentityStatusForgery(t *testing.T) {
 	ctx := context.Background()
 	apiClient := startCardanoDBSyncTestManager(t, ctx)

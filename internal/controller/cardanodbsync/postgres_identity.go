@@ -40,12 +40,41 @@ type managedPostgresAuthIdentityInput struct {
 // managed Postgres inputs into a stable identity. Returns an error when
 // the auth Secret is missing the inputs the fingerprint needs.
 func managedPostgresIdentityFingerprint(dbSync *yacdv1alpha1.CardanoDBSync, authSecret *corev1.Secret) (string, error) {
-	managed := dbSync.Spec.Database.Managed
 	credentialVersion, err := managedPostgresCredentialVersion(dbSync, authSecret)
 	if err != nil {
 		return "", err
 	}
 
+	return managedPostgresIdentityFingerprintForCredentialVersion(
+		dbSync,
+		authSecret.Name,
+		credentialVersion,
+		dbSync.Spec.Database.Managed.AuthSecretRef != nil,
+	)
+}
+
+// managedPostgresIdentityFingerprintForCredentialVersion hashes the managed
+// Postgres identity around an already-resolved credential version. The normal
+// builder path uses [managedPostgresIdentityFingerprint]; generated auth
+// Secret recovery uses this narrower helper to verify a user-restored Secret
+// before the controller has adopted and annotated it.
+func managedPostgresIdentityFingerprintForCredentialVersion(
+	dbSync *yacdv1alpha1.CardanoDBSync,
+	authSecretName string,
+	credentialVersion string,
+	authProvided bool,
+) (string, error) {
+	if dbSync == nil || dbSync.Spec.Database.Managed == nil {
+		return "", unsupportedSpec("managed database spec is required")
+	}
+	if authSecretName == "" {
+		return "", unsupportedSpec("managed Postgres auth Secret name is required")
+	}
+	if credentialVersion == "" {
+		return "", unsupportedSpec("managed Postgres credential version is required")
+	}
+
+	managed := dbSync.Spec.Database.Managed
 	input, err := json.Marshal(managedPostgresIdentityInput{
 		Kind:         "managed-postgres/v1",
 		Image:        managedPostgresImage(managed),
@@ -53,9 +82,9 @@ func managedPostgresIdentityFingerprint(dbSync *yacdv1alpha1.CardanoDBSync, auth
 		User:         managedPostgresUser(managed),
 		Port:         managedPostgresPort,
 		PasswordKey:  managedPostgresPasswordKey,
-		AuthProvided: managed.AuthSecretRef != nil,
+		AuthProvided: authProvided,
 		AuthSecret: managedPostgresAuthIdentityInput{
-			Name:    authSecret.Name,
+			Name:    authSecretName,
 			Version: credentialVersion,
 		},
 	})

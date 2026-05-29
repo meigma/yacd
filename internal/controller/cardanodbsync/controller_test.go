@@ -1493,6 +1493,95 @@ func TestCardanoDBSyncReconcilerReconcileDoesNotRegenerateGeneratedManagedPostgr
 	assert.Equal(t, managedPostgresAuthSecretName(dbSync), current.Status.Database.AuthSecretName)
 }
 
+func TestCardanoDBSyncReconcilerReconcileAdoptsRestoredGeneratedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	originalPassword := append([]byte(nil), authSecret.Data[managedPostgresPasswordKey]...)
+	require.NoError(t, reconciler.Delete(ctx, authSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonManagedDatabaseSecretMissing)
+
+	restoredSecret := restoredGeneratedManagedPostgresAuthSecret(dbSync, originalPassword)
+	require.NoError(t, reconciler.Create(ctx, restoredSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(restoredSecret), currentSecret))
+	assert.True(t, controlledBy(currentSecret, dbSync))
+	assert.Equal(t, managedPostgresPasswordFingerprint(originalPassword), currentSecret.Annotations[managedPostgresPasswordFingerprintAnno])
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsRestoredGeneratedManagedPostgresAuthSecretPasswordDrift(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	require.NoError(t, reconciler.Delete(ctx, authSecret))
+
+	restoredSecret := restoredGeneratedManagedPostgresAuthSecret(dbSync, []byte("wrong-password"))
+	require.NoError(t, reconciler.Create(ctx, restoredSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(restoredSecret), currentSecret))
+	assert.Empty(t, currentSecret.OwnerReferences)
+	assert.Empty(t, currentSecret.Annotations[managedPostgresPasswordFingerprintAnno])
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsForeignOwnedGeneratedManagedPostgresAuthSecret(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	authSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresAuthSecretName(dbSync)}, authSecret))
+	originalPassword := append([]byte(nil), authSecret.Data[managedPostgresPasswordKey]...)
+	require.NoError(t, reconciler.Delete(ctx, authSecret))
+
+	foreignSecret := restoredGeneratedManagedPostgresAuthSecret(dbSync, originalPassword)
+	controller := true
+	foreignSecret.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: yacdv1alpha1.GroupVersion.String(),
+		Kind:       "CardanoDBSync",
+		Name:       "other-dbsync",
+		UID:        types.UID("other-dbsync-uid"),
+		Controller: &controller,
+	}}
+	require.NoError(t, reconciler.Create(ctx, foreignSecret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonResourceConflict)
+	currentSecret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(foreignSecret), currentSecret))
+	assert.False(t, controlledBy(currentSecret, dbSync))
+	assert.Empty(t, currentSecret.Annotations[managedPostgresPasswordFingerprintAnno])
+}
+
 func TestCardanoDBSyncReconcilerReconcilePreservesRuntimeStatusWhenManagedPostgresRegresses(t *testing.T) {
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
@@ -2088,6 +2177,19 @@ func primarySidecarCardanoDBSync(dbSync *yacdv1alpha1.CardanoDBSync) *yacdv1alph
 		Mode: yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar,
 	}
 	return dbSync
+}
+
+func restoredGeneratedManagedPostgresAuthSecret(dbSync *yacdv1alpha1.CardanoDBSync, password []byte) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      managedPostgresAuthSecretName(dbSync),
+			Namespace: dbSync.Namespace,
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{
+			managedPostgresPasswordKey: password,
+		},
+	}
 }
 
 func ownedDedicatedDBSyncDeployment(dbSync *yacdv1alpha1.CardanoDBSync, replicas int32) *appsv1.Deployment {
