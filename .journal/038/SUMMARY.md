@@ -16,9 +16,11 @@ lost state.
 
 ## Outcome
 The goal was met. PR #56 was reviewed, CI passed, and it was squash-merged into
-`master` as `a28cc401`. Local `master` was fast-forwarded, the D2 dev stack was
-shut down, and the `feat/d2-primary-pvc-deletion` Worktrunk worktree and remote
-branch were removed.
+`master` as `a28cc401`. Local `master` was fast-forwarded and includes PR #56
+as an ancestor; PR #55 landed separately during closeout, so final local
+`master` ended at `0bb852d`. The D2 dev stack was shut down, and the
+`feat/d2-primary-pvc-deletion` Worktrunk worktree and remote branch were
+removed.
 
 ## Key Decisions
 - Primary PVC loss after accepted identity is not auto-recovered -> localnet
@@ -51,8 +53,8 @@ branch were removed.
 
 ## Open Threads
 - TEST_REPORT D6, F0, and F2/F4 remain for future sessions.
-- Session 036 was already in progress and was left untouched.
-- The unrelated `fix/manager-build-embed` worktree remains active.
+- Session 036 remains listed as in progress in the journal and was not closed
+  here. Its PR #55 merged separately during this closeout window.
 
 ## References
 - PR #56: https://github.com/meigma/yacd/pull/56
