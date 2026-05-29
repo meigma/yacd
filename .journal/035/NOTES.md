@@ -13,3 +13,7 @@ Plan: Prime the journal session, then wait for the next implementation request. 
 Implemented B6 on `feat/b6-storage-expansion-status` with commit `8bc30a5` (`fix(controller): surface rejected PVC expansion in status`).
 What changed: `ctrlkit/apply.ApplyOwnedObject` now has an optional persistence-error mapper, controller storage maps Forbidden/Invalid PVC expansion update failures to `StorageExpansionRejected`, and both CardanoNetwork and CardanoDBSync PVC apply paths use it.
 Validation: focused Go tests passed; `moon run root:test`, `moon run root:check`, and `git diff --check` passed. Manual Kind/Tilt proof confirmed default StorageClass `standard` has no `allowVolumeExpansion`, `2Gi -> 5Gi` on `phase4-smoke` surfaces `Degraded=True` / `Ready=False` / `StorageExpansionRejected` with PVC still at `2Gi`, and reverting to `2Gi` recovers `Ready=True`.
+
+## 2026-05-29 12:26 — Close
+Merged PR #53 (`fix(controller): surface rejected PVC expansion in status`) as squash commit `dea708e`.
+Closeout state: GitHub CI and Kusari passed; local `master` fast-forwarded to `dea708e`; `moon run root:dev-down` shut down the Kind/Tilt stack; the `feat/b6-storage-expansion-status` Worktrunk worktree and branch were removed; `.journal/035/SUMMARY.md`, `.journal/INDEX.md`, and `.journal/TECH_NOTES.md` were updated on `journal/jmgilman`.

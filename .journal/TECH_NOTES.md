@@ -225,6 +225,12 @@
   fingerprint matches, rejects storage shrink and requested storage class
   drift, and refuses unowned or foreign-owned same-name children rather than
   adopting them silently.
+- Rejected PVC expansion from Kubernetes `Forbidden` / `Invalid` update errors
+  is surfaced as `StorageExpansionRejected` rather than returned as a raw
+  reconcile error. The shared mapper lives in `internal/controller/storage`,
+  is invoked through `ctrlkit/apply.ApplyOwnedObject`'s persistence-error hook,
+  and covers the `CardanoNetwork` primary PVC plus `CardanoDBSync` state,
+  follower, primary-sidecar, and managed Postgres PVC paths.
 - Shared controller mechanics now live in `internal/ctrlkit`: naming,
   metadata/ownership, owned-child apply, artifact data hash/key validation,
   readiness predicates, resource mutation helpers, status error/condition
@@ -354,7 +360,7 @@
   enabled is the most common path that triggers this; the clean
   cascade is to disable both in a single patch.
 - Known-issues catalog from the session-029 break-pass lives in
-  `.journal/TEST_REPORT.md`. A3, A4, B1, and B2 have been fixed in later
+  `.journal/TEST_REPORT.md`. A3, A4, B1, B2, and B6 have been fixed in later
   sessions. Remaining findings with concrete reproductions and suggested fixes
-  include B6, D1, D2, D6, F0, and F2/F4; consult the report before touching the
+  include D1, D2, D6, F0, and F2/F4; consult the report before touching the
   relevant code paths.
