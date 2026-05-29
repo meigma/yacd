@@ -38,4 +38,4 @@
 | 035 | 2026-05-29 | B6 storage expansion status | complete | Fixed TEST_REPORT B6 by surfacing rejected PVC expansion as `StorageExpansionRejected` status, merged PR #53, and cleaned up the dev stack/worktree. |
 | 036 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session primed; awaiting the user's request, likely the next `.journal/TEST_REPORT.md` finding (D1, D2, D6, F0, or F2/F4) after B6 landed. |
 | 037 | 2026-05-29 | TEST_REPORT issue follow-through | complete | Fixed TEST_REPORT D1 by reconciling owned faucet auth Secret events, stamping the Deployment with the live token hash, manually proving recovery, and merging PR #54. |
-| 038 | 2026-05-29 | TEST_REPORT continuation | in-progress | Session primed to continue the remaining `.journal/TEST_REPORT.md` fixes after B2, B6, and D1 were closed. |
+| 038 | 2026-05-29 | TEST_REPORT continuation | complete | Fixed TEST_REPORT D2 by failing closed on terminating/lost primary PVC state, manually proving the path, and merging PR #56. |

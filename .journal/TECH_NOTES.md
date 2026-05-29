@@ -249,12 +249,16 @@
   fallback only when the PVC is absent. `status.network.*Fingerprint` is
   derived display state and must not be used as an acceptance source. If
   localnet inputs drift after acceptance, reconcile stops before Deployment
-  updates and sets a degraded condition. Delete and recreate the CR/PVC to
-  change localnet parameters.
+  updates and sets a degraded condition. If the accepted primary state PVC is
+  missing, reconcile reports `PrimaryStateLost` and does not recreate it; delete
+  and recreate the CR/PVC to intentionally start fresh or change localnet
+  parameters.
 - Primary PVC reconciliation allows storage expansion when the accepted
   fingerprint matches, rejects storage shrink and requested storage class
   drift, and refuses unowned or foreign-owned same-name children rather than
-  adopting them silently.
+  adopting them silently. If the live primary PVC is terminating, reconcile
+  reports `ChildBeingDeleted` with blocking finalizers and does not mutate other
+  primary children.
 - Rejected PVC expansion from Kubernetes `Forbidden` / `Invalid` update errors
   is surfaced as `StorageExpansionRejected` rather than returned as a raw
   reconcile error. The shared mapper lives in `internal/controller/storage`,
@@ -271,6 +275,9 @@
   create/read/controller-owner/validate/mutate/persist flows. Callbacks are the
   field-ownership boundary: create uses the defaulted desired object directly,
   while `Validate` and `Mutate` only run for existing owned objects.
+  `ValidateCreate` is the hook for refusing unsafe recreation, and
+  `ObjectDeleting` is the hook for fail-closed status when an owned child has a
+  deletion timestamp.
 - The primary node Service uses the same safe name as the Deployment
   (`<safe CardanoNetwork name>-node`), targets the named `node-to-node`
   container port, preserves Kubernetes-assigned cluster IP fields, and refuses
