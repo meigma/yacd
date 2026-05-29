@@ -111,3 +111,30 @@ untracked root `TEST_HARNESS_PLAN.md`/`PROPOSAL.md` and `git mv`'d
 `TEST_HARNESS_DESIGN.md` from `030/` to root so the doc set is co-located and
 the relative `./TEST_HARNESS_DESIGN.md` links resolve. Spike branch/worktree to
 be discarded (evidence-only).
+
+## 2026-05-29 13:58 — Fix the e2e build defect (PR #55)
+User: fix the e2e defect, make it run in CI, open a PR, verify green, then pause.
+
+Bigger than expected: the manager `docker build .` is the PRODUCTION build path
+too — `release.yml` builds it via `docker/build-push-action` (`context: .`,
+root Dockerfile). So the same `.dockerignore`/embed bug fails the release image
+build on both arches, and the `release 1.0.0` release-please dry-run is RED
+(confirmed runs 26660606449, 26657609056, 26652588873 — same
+`pattern profiles/mainnet/*: no matching files found`). So the correct fix is
+NOT "switch test-e2e.sh to ko" (that would leave release broken) — it's fixing
+`.dockerignore` at the root, which repairs e2e + release + dry-run together.
+Only one `//go:embed` in the manager tree: publicnet profiles.
+
+Did (branch `fix/manager-build-embed` off master, worktree `.wt/...`):
+- `.dockerignore`: add `!internal/cardano/publicnet/profiles/**`. Verified
+  locally — `docker build .` now compiles the manager (previously-failing
+  `go build -a -o manager ./cmd` step passes, image written).
+- `.github/workflows/ci.yml`: add a dedicated `e2e` job (ubuntu-latest, 45m cap)
+  running `moon run root:test-e2e`. Tools are proto-pinned (`.prototools`:
+  kind/ko/chainsaw/kubectl/helm) so `moonrepo/setup-toolchain` auto-installs
+  them; Docker is preinstalled. No manual tool installs (unlike the spike).
+- `moon.yml`: `test-e2e` `runInCI: false → true`, added `.dockerignore` input.
+Committed `ecdb942`, pushed, opened PR #55. CI run `26661842560` in progress
+(`ci` job + the new `e2e` job). e2e runs the FULL chainsaw smoke incl. db-sync
+(~25m unknown on hosted runner). Awaiting green; pause for user review after.
+NOTE: concurrent session 037 owns `feat/d1-faucet-auth-recovery` (independent).
