@@ -9,13 +9,14 @@
 // reconciliation:
 //
 //   - builder.go, settings.go, validate.go, containers.go, resources.go,
-//     postgres_identity.go, placement.go, primary_sidecar.go, and
-//     primary_sidecar_status.go: pure builders. Given a CardanoDBSync spec
-//     and resolved dependencies they produce desired Kubernetes objects,
-//     status contracts, attachment fragments, and the managed-Postgres
-//     identity fingerprint in memory; they never touch the API server, time,
-//     or the file system. The managed-Postgres password generator in
-//     database.go is the only crypto/rand caller.
+//     postgres_identity.go, placement.go, placement_claims.go,
+//     primary_sidecar.go, and primary_sidecar_status.go: pure builders. Given
+//     a CardanoDBSync spec and resolved dependencies they produce desired
+//     Kubernetes objects, status contracts, attachment fragments,
+//     primary-sidecar incumbent selection, and the managed-Postgres identity
+//     fingerprint in memory; they never touch the API server, time, or the
+//     file system. The managed-Postgres password generator in database.go is
+//     the only crypto/rand caller.
 //   - controller.go, apply.go, callbacks.go, status.go, readiness.go,
 //     database.go, placement_handoff.go, and runtime_probe.go:
 //     side-effecting reconciler. Reads from and writes to the cluster, runs

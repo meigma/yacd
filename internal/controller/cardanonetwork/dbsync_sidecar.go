@@ -2,7 +2,6 @@ package cardanonetwork
 
 import (
 	"context"
-	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
@@ -37,9 +36,9 @@ func (result primaryDBSyncAttachmentResult) statusCondition() metav1.Condition {
 	)
 }
 
-// primaryDBSyncAttachment resolves the CardanoDBSync primary-sidecar claim for
-// the network and builds the pod-template fragment when exactly one claim has
-// fresh attachable status.
+// primaryDBSyncAttachment resolves the incumbent CardanoDBSync primary-sidecar
+// claim for the network and builds the pod-template fragment when that claim
+// has fresh attachable status.
 func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -57,17 +56,19 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 			),
 		}, nil
 	}
-	if len(claims) != 1 {
+
+	selection := ctrldbsync.SelectPrimarySidecarClaim(claims)
+	if selection.Incumbent == nil {
 		return primaryDBSyncAttachmentResult{
 			Condition: dbSyncAttachmentReadyCondition(
 				metav1.ConditionFalse,
-				conditionReasonPlacementConflict,
-				fmt.Sprintf("CardanoNetwork %q has multiple primary-sidecar CardanoDBSync claims; exactly one primary-sidecar claim is allowed", network.Name),
+				conditionReasonDBSyncAttachmentNotRequested,
+				conditionMessageDBSyncAttachmentNotRequested,
 			),
 		}, nil
 	}
 
-	claim := claims[0]
+	claim := *selection.Incumbent
 	sidecarStatus, ok := ctrldbsync.PrimarySidecarClaimReadyForAttachment(&claim, network.Name)
 	if !ok {
 		return primaryDBSyncAttachmentResult{
