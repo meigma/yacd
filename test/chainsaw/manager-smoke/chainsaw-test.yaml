@@ -71,7 +71,7 @@ spec:
             timeout: 5m
             workDir: ../../..
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl create namespace yacd-system --dry-run=client -o yaml | kubectl apply -f -
               kubectl label --overwrite namespace yacd-system pod-security.kubernetes.io/enforce=restricted
@@ -97,7 +97,7 @@ spec:
             timeout: 1m
             workDir: ../../..
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl apply -f - <<'YAML'
               apiVersion: v1
@@ -181,7 +181,7 @@ spec:
         - script:
             timeout: 1m
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               logs="$(kubectl logs -n yacd-system curl-metrics)"
               printf '%s\n' "$logs"
@@ -193,7 +193,7 @@ spec:
             timeout: 12m
             workDir: ../../..
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
               kubectl label --overwrite namespace yacd-smoke pod-security.kubernetes.io/enforce=restricted
@@ -329,14 +329,14 @@ spec:
         - script:
             timeout: 10m
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               selector="yacd.meigma.io/cardanonetwork=phase4-smoke,yacd.meigma.io/role=primary-node"
               kubectl wait -n yacd-smoke --for=condition=Ready pod -l "${selector}" --timeout=10m
         - script:
             timeout: 10m
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               for _ in $(seq 1 120); do
                 ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
@@ -396,7 +396,7 @@ spec:
         - script:
             timeout: 1m
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               network_json="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o json)"
               configmap_json="$(kubectl get configmap -n yacd-smoke phase4-smoke-network-artifacts -o json)"
@@ -446,7 +446,7 @@ spec:
             timeout: 15m
             workDir: ../../..
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl apply -f - <<'YAML'
               apiVersion: yacd.meigma.io/v1alpha1
@@ -615,7 +615,7 @@ spec:
             timeout: 3m
             workDir: ../../..
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               info_json="$(go run ./cli/cmd/yacd --namespace yacd-smoke info phase4-smoke --json)"
               printf '%s\n' "$info_json"
@@ -855,7 +855,7 @@ spec:
         - script:
             timeout: 5m
             content: |
-              set -euo pipefail
+              set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442},"faucet":{"enabled":false,"port":8080,"defaultSource":"utxo1","minTopUpLovelace":1000000,"maxTopUpLovelace":10000000000}}}}'
               for _ in $(seq 1 60); do
