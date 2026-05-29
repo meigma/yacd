@@ -490,9 +490,16 @@ func (r *CardanoDBSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncManagedDatabaseSecretNameField, func(object client.Object) []string {
 		dbSync, ok := object.(*yacdv1alpha1.CardanoDBSync)
-		if !ok || dbSync.Spec.Database.Managed == nil || dbSync.Spec.Database.Managed.AuthSecretRef == nil || dbSync.Spec.Database.Managed.AuthSecretRef.Name == "" {
+		if !ok || dbSync.Spec.Database.Managed == nil {
 			return nil
 		}
+		if dbSync.Spec.Database.Managed.AuthSecretRef == nil {
+			return []string{managedPostgresAuthSecretName(dbSync)}
+		}
+		if dbSync.Spec.Database.Managed.AuthSecretRef.Name == "" {
+			return nil
+		}
+
 		return []string{dbSync.Spec.Database.Managed.AuthSecretRef.Name}
 	}); err != nil {
 		return err
@@ -691,10 +698,10 @@ func (r *CardanoDBSyncReconciler) cardanoDBSyncsForNetwork(ctx context.Context, 
 	return requests
 }
 
-// cardanoDBSyncsForDatabaseSecret is the Watches mapper that enqueues
-// every CardanoDBSync whose external or managed database Secret matches
-// the given Secret. Used so a Secret rotation re-rolls the consuming
-// dbsync workload.
+// cardanoDBSyncsForDatabaseSecret is the Watches mapper that enqueues every
+// CardanoDBSync whose external, provided managed, or generated managed database
+// Secret matches the given Secret. Used so credential repair or rotation
+// re-enters the owning reconcile loop.
 func (r *CardanoDBSyncReconciler) cardanoDBSyncsForDatabaseSecret(ctx context.Context, object client.Object) []reconcile.Request {
 	secret, ok := object.(*corev1.Secret)
 	if !ok {
