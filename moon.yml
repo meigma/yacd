@@ -117,7 +117,9 @@ tasks:
       - '.dev/scripts/deploy.sh'
     options:
       cache: false
-      runInCI: false
+      # Invoked by the Chainsaw e2e smoke (test/chainsaw), which runs in CI;
+      # Moon filters runInCI:false tasks under CI, so this must allow CI.
+      runInCI: true
 
   undeploy:
     command: 'bash .dev/scripts/undeploy.sh'
@@ -127,7 +129,8 @@ tasks:
       - '.dev/scripts/undeploy.sh'
     options:
       cache: false
-      runInCI: false
+      # Invoked by the Chainsaw e2e smoke cleanup, which runs in CI.
+      runInCI: true
 
   dev-up:
     command: 'bash .dev/scripts/dev-up.sh'
@@ -157,10 +160,11 @@ tasks:
       - '@group(chainsawSources)'
       - '@group(toolchainConfig)'
       - 'Dockerfile'
+      - '.dockerignore'
       - 'services/faucet/Dockerfile'
       - '.dev/scripts/deploy.sh'
       - '.dev/scripts/undeploy.sh'
       - '.dev/scripts/test-e2e.sh'
     options:
       cache: false
-      runInCI: false
+      runInCI: true

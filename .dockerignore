@@ -10,3 +10,9 @@
 !go.mod
 !go.sum
 !.go-version
+
+# Re-include embedded non-Go assets. The manager binary embeds the public
+# network profiles via `//go:embed` in internal/cardano/publicnet/plan.go;
+# without these in the build context, `docker build` fails with
+# "pattern profiles/mainnet/*: no matching files found".
+!internal/cardano/publicnet/profiles/**
