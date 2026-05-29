@@ -197,11 +197,14 @@
   local/dev operator. Treat the manager ServiceAccount as trusted cluster
   automation for YACD-managed namespaces; namespace-scoped manager mode is a
   future hardening path.
-- A `CardanoNetwork` localnet is stable for its lifetime. The accepted localnet
-  fingerprint is stored on the owned PVC and in CR status; if localnet inputs
-  drift after acceptance, reconcile stops before Deployment updates and sets a
-  degraded condition. Delete and recreate the CR/PVC to change localnet
-  parameters.
+- A `CardanoNetwork` localnet is stable for its lifetime. The accepted network
+  identity is read from owned runtime material: the primary node PVC is
+  authoritative, with the primary Deployment pod-template annotations as a
+  fallback only when the PVC is absent. `status.network.*Fingerprint` is
+  derived display state and must not be used as an acceptance source. If
+  localnet inputs drift after acceptance, reconcile stops before Deployment
+  updates and sets a degraded condition. Delete and recreate the CR/PVC to
+  change localnet parameters.
 - Primary PVC reconciliation allows storage expansion when the accepted
   fingerprint matches, rejects storage shrink and requested storage class
   drift, and refuses unowned or foreign-owned same-name children rather than
