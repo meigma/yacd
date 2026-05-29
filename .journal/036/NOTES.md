@@ -79,3 +79,35 @@ cold-start stage; verifies host-access via port-forward + in-pod
 `cardano-cli query tip`; verifies teardown by deleting the CR and polling for
 ownerRef'd children to hit 0). Committed `c7d1a7d`, pushed; CI run
 `26659474962` in progress. Awaiting numbers, then write the go/no-go.
+
+## 2026-05-29 13:28 — Phase 0 complete (GO)
+First run (`26659474962`) FAILED at image_build: root `.dockerignore` ignores
+all then re-includes only `**/*.go`+`go.{mod,sum}`, so `docker build .` strips
+the embedded `internal/cardano/publicnet/profiles/*/*` assets and
+`//go:embed profiles/.../*` errors `no matching files found`. Same breakage
+hits `.dev/scripts/test-e2e.sh` (the documented `moon run root:test-e2e`), which
+is `runInCI:false` so it went unnoticed since 2026-05-27. Cancelled it.
+Fix: build with **ko** (`.dev/ko-build.sh` / `.dev/ko-build-faucet.sh`), the
+operator's real build path (builds from the Go module tree → embeds resolve).
+Committed `cd2c58e`, re-ran.
+
+Second run (`26660099746`) SUCCEEDED — all three Phase 0 deliverables GREEN:
+- ① cold-start to `Ready` = 27s; full pipeline (kind+preload+install+up) = 112s
+  vs 10–12m budget. ~6× margin.
+- ② teardown: `delete cardanonetwork` rc=0; 11 owner-ref'd children → 0 in 3s,
+  no finalizer stall (closes proposal §10 unverified risk).
+- ③ host-access: Ogmios/Kupo/faucet 200 via host port-forward; in-pod
+  `cardano-cli query tip` OK — port-forward and exec agree on slot 130 / same
+  hash. Budget: 0 OOM, 0 evictions.
+CAVEAT: runner was 4 vCPU/16 GB (public-repo `ubuntu-latest` was upgraded from
+2 vCPU/7 GB) — the 2-core private tier is untested but the margin makes it very
+likely fine. Single sample; Ogmios/Kupo Docker Hub pulls didn't rate-limit this
+run (preload them in Phase 4 to be safe).
+
+Wrote go/no-go evidence to `.journal/TEST_HARNESS_PHASE0_RESULTS.md`; marked
+Phase 0 DONE in `TEST_HARNESS_PLAN.md`; recorded the Phase 0 result + the
+`test-e2e.sh` defect in `TECH_NOTES.md`. Journal hygiene: force-added the
+untracked root `TEST_HARNESS_PLAN.md`/`PROPOSAL.md` and `git mv`'d
+`TEST_HARNESS_DESIGN.md` from `030/` to root so the doc set is co-located and
+the relative `./TEST_HARNESS_DESIGN.md` links resolve. Spike branch/worktree to
+be discarded (evidence-only).

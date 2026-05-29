@@ -136,13 +136,36 @@
 - `yacd deploy --wait` must only trust `Ready` or `Degraded` conditions whose
   `observedGeneration` is at least the current object generation; otherwise an
   updated already-ready resource can report stale success.
-- A design (not yet implemented) for using the operator as a local/CI test
-  harness lives in `.journal/030/`: `TEST_HARNESS_PROPOSAL.md` (decided design —
-  fresh-build lifecycle, identity-as-CLI-arg, the `up/down/list/connect/run/exec`
-  verb set, the `YACD_*` env-var contract, and a `yacd-env` GitHub Action),
-  `TEST_HARNESS_PLAN.md` (phased work), and `TEST_HARNESS_DESIGN.md` (the
+- The test-harness design docs live at the `.journal/` root (moved out of
+  `.journal/030/`): `TEST_HARNESS_PROPOSAL.md` (decided design — fresh-build
+  lifecycle, identity-as-CLI-arg, the `up/down/list/connect/run/exec` verb set,
+  the `YACD_*` env-var contract, and a `yacd-env` GitHub Action),
+  `TEST_HARNESS_PLAN.md` (phased work), `TEST_HARNESS_DESIGN.md` (the
   adversarial-workflow analysis and rejected alternatives, incl. why a bespoke
-  snapshot format was deferred in favor of fresh-build).
+  snapshot format was deferred in favor of fresh-build), and
+  `TEST_HARNESS_PHASE0_RESULTS.md` (the Phase 0 go/no-go evidence). Phases 1–5
+  are not yet implemented.
+- Test-harness Phase 0 is **done — GO** (session 036). A throwaway hosted-runner
+  spike proved KinD + operator + a representative local `CardanoNetwork`
+  (Ogmios+Kupo+faucet) cold-starts to `Ready` in ~27s (full pipeline ~112s) vs
+  the 10–12m budget; `delete cardanonetwork` GC's all 11 owner-referenced
+  children in ~3s with no finalizers; and the `run` (host port-forward) and
+  `exec` (in-pod `cardano-cli` over `/ipc/node.socket`) host-access paths both
+  work and agree on the chain tip. Measured on a 4 vCPU/16 GB `ubuntu-latest`
+  (public-repo runners were upgraded from 2 vCPU/7 GB); the 2-core private tier
+  is untested. Before Phase 4 wires a gating job, preload Ogmios/Kupo too
+  (Docker Hub rate-limit jitter) and fix the `test-e2e.sh` defect below.
+- `moon run root:test-e2e` (`.dev/scripts/test-e2e.sh`) is **broken** and has
+  been since the public profiles landed (2026-05-27): it builds the manager with
+  `docker build .`, but the root `.dockerignore` ignores everything and
+  re-includes only `**/*.go` + `go.{mod,sum}`, stripping the embedded
+  `internal/cardano/publicnet/profiles/*/*` assets, so
+  `//go:embed profiles/preview/* profiles/preprod/* profiles/mainnet/*` fails
+  with `pattern profiles/mainnet/*: no matching files found`. The task is
+  `runInCI: false`, which is why it went unnoticed. The operator's real build
+  path is **ko** (`.dev/ko-build.sh` / `.ko.yaml`, used by the dev stack and
+  release), which builds from the Go module tree so embeds resolve. Fix
+  `test-e2e.sh` to use ko (or re-include the profile assets in `.dockerignore`).
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
 - PR #3 introduced the first real API group/version with
