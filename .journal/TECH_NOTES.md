@@ -410,8 +410,14 @@
   published auth token in flight. Disabling `kupo` while `faucet` is
   enabled is the most common path that triggers this; the clean
   cascade is to disable both in a single patch.
+- Generated managed-Postgres auth Secret recovery now has a narrow adoption
+  path: after accepted managed Postgres identity exists, a plain unowned
+  same-name Secret restored with the original `data.password` is adopted and
+  annotated; wrong password material is rejected as
+  `UnsupportedDatabaseIdentityChange`, and foreign-owned same-name Secrets
+  remain `ResourceConflict`.
 - Known-issues catalog from the session-029 break-pass lives in
-  `.journal/TEST_REPORT.md`. A3, A4, B1, B2, and B6 have been fixed in later
-  sessions. Remaining findings with concrete reproductions and suggested fixes
-  include D1, D2, D6, F0, and F2/F4; consult the report before touching the
+  `.journal/TEST_REPORT.md`. A3, A4, B1, B2, B6, D1, D2, and D6 have been fixed
+  in later sessions. Remaining findings with concrete reproductions and
+  suggested fixes include F0 and F2/F4; consult the report before touching the
   relevant code paths.
