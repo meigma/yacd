@@ -130,23 +130,36 @@
 - The companion CLI now lives under `cli/`. It uses Cobra/Viper, builds the
   release binary from `./cli/cmd/yacd`, and keeps the operator manager image
   entrypoint on `./cmd`.
-- The first CLI surface is intentionally small: `yacd deploy -f yacd.yaml`
-  renders and server-side-applies one `CardanoNetwork`, `--dry-run` prints the
-  rendered manifest without applying, `--wait` polls readiness, and `yacd info
-  NAME --json` returns a command-owned DTO with status, network identity, and
-  node/Ogmios endpoints.
-- `yacd deploy` rejects real applies of developer configs with
-  `spec.network.public.profile: mainnet` unless `--allow-mainnet` is supplied.
-  `--dry-run` may render mainnet without the flag, but prints a warning.
-- The phase-4 developer config is
-  `apiVersion: yacd.meigma.io/devconfig/v1alpha1`, `kind: Environment`, with
-  `metadata.name`, optional `metadata.namespace`, and `spec.network` currently
-  shaped as `api/v1alpha1.CardanoNetworkSpec`. Because the CLI decodes into the
-  concrete API type, it rejects omitted CRD-defaulted concrete fields rather
-  than rendering zero values.
-- `yacd deploy --wait` must only trust `Ready` or `Degraded` conditions whose
-  `observedGeneration` is at least the current object generation; otherwise an
-  updated already-ready resource can report stale success.
+- Test-harness Phase 1 (session 036, PR #58) made environment identity a
+  command-line concern. The verbs are keyed on `NAME [-n ns]`, with `-n`/
+  `--namespace` defaulting to `NAME` (DNS-1123-validated via
+  `cli/internal/cli/identity.go:resolveIdentity`): `yacd up NAME -f yacd.yaml`
+  (auto-creates + ownership-stamps the namespace via SSA `EnsureNamespace`,
+  applies, waits Ready — `--wait` defaults TRUE, `--timeout` 12m; replaces the
+  old `deploy`), `yacd down NAME` (delete + `WaitGone`, idempotent on NotFound,
+  `--timeout` 5m), `yacd list [-A|-n] [--json]` (projects name/namespace/mode/
+  ready/endpoints). `info`/`topup` adopt the same NAME-default-namespace model.
+- BREAKING (safe pre-1.0): the developer `Environment` document DROPPED its
+  `metadata` block — identity comes only from the CLI. `Load` uses
+  `yaml.UnmarshalStrict`, so any spec still carrying `metadata:` fails to parse.
+  `render.CardanoNetwork(env, name, namespace)` takes identity as params. All
+  `examples/*/yacd.yaml` Environments and the Chainsaw e2e use the new `up` form.
+- The CLI's `kube.Client` port (`cli/internal/kube`) carries
+  `ApplyCardanoNetwork`, `GetCardanoNetwork`, `GetSecretValue`,
+  `DeleteCardanoNetwork`, `ListCardanoNetworks`, `EnsureNamespace`, and
+  `DefaultNamespace`; package helpers `WaitReady`/`WaitGone` poll through the
+  port, and `ErrNotFound`+`IsNotFound` are the single source of not-found
+  semantics (`GetCardanoNetwork` wraps `ErrNotFound`). `EnsureNamespace` stamps
+  `app.kubernetes.io/managed-by=yacd` + `yacd.meigma.io/created-by=yacd-cli`.
+- `up` rejects real applies of `spec.network.public.profile: mainnet` unless
+  `--allow-mainnet`; `--dry-run` may render mainnet without the flag but warns.
+  The developer config is `apiVersion: yacd.meigma.io/devconfig/v1alpha1`,
+  `kind: Environment`, `spec.network` shaped as `api/v1alpha1.CardanoNetworkSpec`
+  decoded into the concrete API type (so omitted CRD-defaulted fields are
+  rejected, not zero-rendered).
+- `up --wait`/readiness must only trust `Ready`/`Degraded` conditions whose
+  `observedGeneration` is at least the current generation (`FreshCondition`);
+  otherwise an updated already-ready resource reports stale success.
 - The test-harness design docs live at the `.journal/` root (moved out of
   `.journal/030/`): `TEST_HARNESS_PROPOSAL.md` (decided design — fresh-build
   lifecycle, identity-as-CLI-arg, the `up/down/list/connect/run/exec` verb set,

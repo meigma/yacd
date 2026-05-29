@@ -230,3 +230,22 @@ CI run `26665502208` in progress (ci + e2e, e2e now drives `yacd up`).
 Breaking-change versioning: PR titled `feat(cli):` (minor); did NOT add a
 BREAKING CHANGE footer (safe pre-1.0) — flagged for user's call at merge.
 PAUSED before merge per request. Local dev stack still UP (kind-yacd-dev).
+
+## 2026-05-29 15:45 — Close
+User approved Phase 1 (LGTM). Squash-merged PR #58 as `c7825f8` on master
+(`feat(cli): add up/down/list lifecycle verbs and CLI-driven identity (#58)`);
+deleted the remote `feat/cli-lifecycle` branch, removed the worktree + merged
+local branch via `wt remove`, fast-forwarded local master to `c7825f8`. Stopped
+the dev stack (`moon run root:dev-down`) — verified `kind-yacd-dev` gone and
+`.run/yacd-dev` removed (the `oidc-smoke` kind cluster still present is a
+concurrent session's, not ours).
+
+Session 036 net outcome (all merged/done): test-harness Phase 0 GO
+(`TEST_HARNESS_PHASE0_RESULTS.md`, evidence-only); e2e/release manager-build
+embed fix + CI e2e gate (PR #55 `0bb852d`, also unblocked the 1.0.0 dry-run);
+Phase 1 CLI identity + up/down/list (PR #58 `c7825f8`). Wrote SUMMARY.md, flipped
+INDEX 036 to complete, refreshed the CLI bullets in TECH_NOTES. Hand-off:
+test-harness Phase 2 (host access / run/exec/connect / topup --await / YACD_*
+contract) is next. The original TEST_REPORT findings (D1/D2/D6/F0/F2/F4) were
+taken by concurrent sessions 037–040, not here. No worktrees or background
+processes left from this session.
