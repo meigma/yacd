@@ -69,9 +69,12 @@
   publishes
   `status.placement.primarySidecar` only when `SidecarMaterialReady=True`, while
   CardanoNetwork is the only controller that composes the primary Pod from that
-  status contract. Multiple primary-sidecar claims for one CardanoNetwork attach
-  none and report `PlacementConflict`. Once db-sync state accepts a placement,
-  later `primarySidecar` <-> `dedicatedFollower` changes are rejected with
+  status contract. Multiple primary-sidecar claims for one CardanoNetwork use
+  deterministic incumbent selection: oldest non-deleting `primarySidecar` claim
+  by creation timestamp, then UID, then namespace/name remains attachable; later
+  peers report `PlacementConflict` on their own CardanoDBSync status and do not
+  detach the incumbent. Once db-sync state accepts a placement, later
+  `primarySidecar` <-> `dedicatedFollower` changes are rejected with
   `UnsupportedDatabaseIdentityChange`; the old pod-drain handoff guards remain
   to prevent duplicate processes during pre-acceptance and cleanup paths.
 - Public `CardanoDBSync` supports `dedicatedFollower` and `primarySidecar` for
