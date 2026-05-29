@@ -611,8 +611,9 @@ type CardanoDBSyncEndpointsStatus struct {
 // CardanoDBSyncDatabaseStatus reports database-specific runtime details.
 type CardanoDBSyncDatabaseStatus struct {
 	// acceptedIdentityFingerprint is the database-affecting plan identity that
-	// this resource accepted. Changing it requires deleting and recreating the
-	// CardanoDBSync with a fresh or compatible external database.
+	// the controller accepted on owned runtime material. Status mirrors the
+	// value from the db-sync state PVC annotation and is not the authority for
+	// identity validation.
 	// +optional
 	AcceptedIdentityFingerprint string `json:"acceptedIdentityFingerprint,omitempty"`
 

@@ -31,9 +31,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const testNetworkArtifactSchemaVersion = networkartifacts.SchemaVersion
-
-const driftedDBSyncConfig = "drifted"
+const (
+	testNetworkArtifactSchemaVersion = networkartifacts.SchemaVersion
+	driftedDBSyncConfig              = "drifted"
+	forgedDBSyncDatabaseIdentity     = "deadbeef-forged-db-identity"
+	changedDBSyncImage               = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
+)
 
 func TestCardanoDBSyncReconcilerReconcileHandlesMissingObject(t *testing.T) {
 	ctx := context.Background()
@@ -485,6 +488,91 @@ func TestCardanoDBSyncReconcilerReconcileBackfillsLegacyAcceptedPlacementMode(t 
 	assert.Equal(t, yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower, current.Status.Database.AcceptedPlacementMode)
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, statePVC))
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), statePVC.Annotations[dbSyncPlacementModeAnno])
+}
+
+func TestCardanoDBSyncReconcilerReconcileRepairsForgedDatabaseIdentityStatus(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	acceptedIdentity := current.Status.Database.AcceptedIdentityFingerprint
+	require.NotEmpty(t, acceptedIdentity)
+	statePVC := requireDBSyncStatePVC(t, ctx, reconciler, dbSync)
+	require.Equal(t, acceptedIdentity, statePVC.Annotations[dbSyncDatabaseIdentityAnno])
+
+	current.Status.Database.AcceptedIdentityFingerprint = forgedDBSyncDatabaseIdentity
+	require.NoError(t, reconciler.Status().Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, acceptedIdentity, current.Status.Database.AcceptedIdentityFingerprint)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoDBSyncReconcilerReconcileRejectsDatabaseIdentityMutationAfterForgedStatus(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	acceptedIdentity := current.Status.Database.AcceptedIdentityFingerprint
+	require.NotEmpty(t, acceptedIdentity)
+	statePVC := requireDBSyncStatePVC(t, ctx, reconciler, dbSync)
+	require.Equal(t, acceptedIdentity, statePVC.Annotations[dbSyncDatabaseIdentityAnno])
+
+	current.Status.Database.AcceptedIdentityFingerprint = forgedDBSyncDatabaseIdentity
+	require.NoError(t, reconciler.Status().Update(ctx, current))
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	current.Spec.Image = changedDBSyncImage
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedDatabaseIdentityChange)
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.Equal(t, acceptedIdentity, current.Status.Database.AcceptedIdentityFingerprint)
+	degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, degraded)
+	assert.Contains(t, degraded.Message, `accepted identity "`+acceptedIdentity+`"`)
+	assert.Contains(t, degraded.Message, `desired identity "`)
+	assert.Contains(t, degraded.Message, `PVC "`+dbSyncStatePVCName(dbSync)+`" annotation "`+dbSyncDatabaseIdentityAnno+`"`)
+	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
+}
+
+func TestCardanoDBSyncReconcilerReconcileIgnoresForgedDatabaseIdentityStatusBeforeStatePVC(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	dbSync.Status.Database = &yacdv1alpha1.CardanoDBSyncDatabaseStatus{
+		AcceptedIdentityFingerprint: forgedDBSyncDatabaseIdentity,
+	}
+	network := readyCardanoNetwork("ready-network")
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	require.NotNil(t, current.Status.Database)
+	assert.NotEqual(t, forgedDBSyncDatabaseIdentity, current.Status.Database.AcceptedIdentityFingerprint)
+	assert.NotEmpty(t, current.Status.Database.AcceptedIdentityFingerprint)
+	statePVC := requireDBSyncStatePVC(t, ctx, reconciler, dbSync)
+	assert.Equal(t, current.Status.Database.AcceptedIdentityFingerprint, statePVC.Annotations[dbSyncDatabaseIdentityAnno])
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
 func TestPrimarySidecarMaterialRevisionChangesWithMaterialInputs(t *testing.T) {
@@ -1445,7 +1533,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsImageMutation(t *testing.T) {
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncConfigMapName(dbSync)}, configMap))
 	acceptedPlan := configMap.Annotations[dbSyncPlanFingerprintAnno]
 
-	current.Spec.Image = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
+	current.Spec.Image = changedDBSyncImage
 	current.Generation = 2
 	require.NoError(t, reconciler.Update(ctx, current))
 
@@ -1680,6 +1768,19 @@ func requireManagedPostgresDeployment(
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresDeploymentName(dbSync)}, deployment))
 	return deployment
+}
+
+func requireDBSyncStatePVC(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) *corev1.PersistentVolumeClaim {
+	t.Helper()
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncStatePVCName(dbSync)}, pvc))
+	return pvc
 }
 
 func requireContainerSpec(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Container {

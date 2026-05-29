@@ -326,14 +326,14 @@ func TestDBSyncWorkloadBuilderDatabaseIdentityIncludesDBSyncImage(t *testing.T) 
 	base, err := builder.Build(dbSync, network, artifactConfigMap, secret)
 	require.NoError(t, err)
 
-	dbSync.Spec.Image = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
+	dbSync.Spec.Image = changedDBSyncImage
 	changed, err := builder.Build(dbSync, network, artifactConfigMap, secret)
 
 	require.NoError(t, err)
 	assert.NotEqual(t, base.Plan.Fingerprint, changed.Plan.Fingerprint)
 	assert.NotEqual(t, base.Plan.DatabaseIdentityFingerprint, changed.Plan.DatabaseIdentityFingerprint)
 	assert.NotEqual(t, base.Deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno], changed.Deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno])
-	assert.Equal(t, "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0", requireContainer(t, changed.Deployment, dbSyncContainerName).Image)
+	assert.Equal(t, changedDBSyncImage, requireContainer(t, changed.Deployment, dbSyncContainerName).Image)
 }
 
 func TestDBSyncWorkloadBuilderUsesFollowerStorageAndIPFSGateways(t *testing.T) {
