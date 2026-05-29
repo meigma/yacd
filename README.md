@@ -17,7 +17,8 @@ local YACD environment from a checked-in config file.
 - Local-mode `CardanoNetwork` reconciliation for one primary node with Ogmios
   as the default chain API, Kupo as the default chain index API, and an opt-in
   token-protected faucet for local top-ups.
-- Developer CLI under `cli/` with `deploy`, `info`, and `topup` commands.
+- Developer CLI under `cli/` with `up`, `down`, `list`, `info`, and `topup`
+  commands.
 - Helm chart packaging for the manager deployment.
 - Moon tasks for generation, checks, tests, local deployment, and Kind smoke
   testing.
@@ -55,18 +56,21 @@ git diff --check
 Render the example local environment without changing the cluster:
 
 ```sh
-go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --dry-run
+go run ./cli/cmd/yacd up phase4-smoke -f examples/local/yacd.yaml --dry-run
 ```
 
-Deploy the example environment and wait for the operator to report readiness:
+Bring the environment up and wait for readiness, then inspect and tear it down.
+The environment name is a command-line argument; the namespace defaults to the
+name and is auto-created, so one spec deploys under any name:
 
 ```sh
-kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
-go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait
-go run ./cli/cmd/yacd info phase4-smoke --namespace yacd-smoke
-kubectl -n yacd-smoke port-forward svc/phase4-smoke-faucet 8080:8080
+go run ./cli/cmd/yacd up phase4-smoke -f examples/local/yacd.yaml
+go run ./cli/cmd/yacd list
+go run ./cli/cmd/yacd info phase4-smoke
+kubectl -n phase4-smoke port-forward svc/phase4-smoke-faucet 8080:8080
 # In another terminal:
-go run ./cli/cmd/yacd topup phase4-smoke --namespace yacd-smoke --faucet-url http://127.0.0.1:8080 --address addr_test... --lovelace 1000000
+go run ./cli/cmd/yacd topup phase4-smoke --faucet-url http://127.0.0.1:8080 --address addr_test... --lovelace 1000000
+go run ./cli/cmd/yacd down phase4-smoke
 ```
 
 The checked-in local example opts into the faucet. A minimal `CardanoNetwork`

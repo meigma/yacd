@@ -7,6 +7,8 @@
 //
 // FreshCondition and the typed ConditionType vocabulary are pure helpers
 // reused by WaitReady and the topup readiness gate; they do not depend on a
-// live Kubernetes API. Config and the kubeconfig loader sit alongside the
-// adapter because they are part of the same construction surface.
+// live Kubernetes API. WaitReady and WaitGone poll the network through the
+// Client port for readiness and teardown completion respectively. Config and
+// the kubeconfig loader sit alongside the adapter because they are part of the
+// same construction surface.
 package kube

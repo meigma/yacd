@@ -67,7 +67,7 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 				return nil
 			}
 
-			return printList(commandContext.out, items)
+			return printList(commandContext.out, items, namespace, allNamespaces)
 		},
 	}
 
@@ -169,10 +169,15 @@ func endpointURL(endpoint *yacdv1alpha1.ServiceEndpointStatus) string {
 }
 
 // printList renders the projected items as an aligned table. An empty result
-// is reported explicitly so the user can tell "none" from a filtering error.
-func printList(out io.Writer, items []listItem) error {
+// is reported explicitly, with the search scope, so the user can tell "none"
+// from a filtering error.
+func printList(out io.Writer, items []listItem, namespace string, allNamespaces bool) error {
 	if len(items) == 0 {
-		if _, err := fmt.Fprintln(out, "No CardanoNetworks found."); err != nil {
+		message := "No CardanoNetworks found."
+		if !allNamespaces {
+			message = fmt.Sprintf("No CardanoNetworks found in namespace %q.", namespace)
+		}
+		if _, err := fmt.Fprintln(out, message); err != nil {
 			return fmt.Errorf("write list: %w", err)
 		}
 		return nil

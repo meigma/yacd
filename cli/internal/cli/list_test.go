@@ -106,7 +106,7 @@ func TestListUsesDefaultNamespaceWhenUnset(t *testing.T) {
 	root.SetArgs([]string{"list"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
-	assert.Contains(t, stdout.String(), "No CardanoNetworks found.")
+	assert.Contains(t, stdout.String(), `No CardanoNetworks found in namespace "default-ns".`)
 }
 
 func TestListAllNamespacesPassesEmptyNamespace(t *testing.T) {
@@ -151,7 +151,7 @@ func TestListEmptyResultReportsNone(t *testing.T) {
 	root.SetArgs([]string{"list", "-n", "team-a"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
-	assert.Equal(t, "No CardanoNetworks found.\n", stdout.String())
+	assert.Equal(t, "No CardanoNetworks found in namespace \"team-a\".\n", stdout.String())
 }
 
 func TestListJSONOutputShape(t *testing.T) {

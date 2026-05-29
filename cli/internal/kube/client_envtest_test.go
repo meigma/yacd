@@ -232,6 +232,19 @@ func TestWaitGoneReturnsWhenNetworkDisappears(t *testing.T) {
 	assert.GreaterOrEqual(t, client.calls, 2, "WaitGone did not observe the network disappear")
 }
 
+func TestWaitGoneReturnsImmediatelyWhenAlreadyAbsent(t *testing.T) {
+	t.Parallel()
+
+	network := localCardanoNetwork("cli-already-gone", "devnet")
+	// The network is absent on the very first poll. WaitGone must succeed
+	// without further polling — the idempotent path `down` relies on when the
+	// network was already deleted or garbage collection beat the poll.
+	client := &goneAfterClient{network: network, presentCalls: 0}
+
+	require.NoError(t, WaitGone(context.Background(), client, "cli-already-gone", "devnet", pollInterval+time.Second))
+	assert.Equal(t, 1, client.calls, "WaitGone should detect the network is gone on the first poll")
+}
+
 func TestWaitGoneTimesOutWhileTerminating(t *testing.T) {
 	t.Parallel()
 
