@@ -175,3 +175,10 @@ PRODUCTION build is `docker build .` via release.yml's build-push-action, NOT ko
 — ko is dev-only). Next: confirm the `release 1.0.0` release-please dry-run goes
 green now that master carries the .dockerignore fix (release-please rebases its
 branch on push to master).
+
+## 2026-05-29 14:48 — Release 1.0.0 dry-run confirmed green
+Release-please rebased the `release 1.0.0` PR (#7) onto master (head `44dcde2`,
+includes `0bb852d`). Release Dry Run `26663558229` SUCCEEDED — prior runs
+(`ddc0ad1`, `6d2481a`, pre-fix) failed on the manager embed build. Release path
+unblocked; the e2e build defect work (PR #55) is fully done and verified end to
+end (e2e in CI + release dry-run both green). Task complete.
