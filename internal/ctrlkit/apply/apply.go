@@ -43,6 +43,10 @@ type OwnedObjectOptions[T client.Object] struct {
 	// UpdateMode selects patch or full update when current changes. The zero
 	// value uses UpdateModePatch.
 	UpdateMode UpdateMode
+	// UpdateError maps a failed patch or update of an existing owned object
+	// into the caller's error contract. The first object is the live object
+	// before mutation; the second is the desired object after Default.
+	UpdateError func(current T, desired T, err error) error
 }
 
 // ApplyOwnedObject reconciles the common create/read/owner-check/mutate/persist
@@ -110,11 +114,17 @@ func ApplyOwnedObject[T client.Object](
 	}
 	if options.UpdateMode == UpdateModeUpdate {
 		if err := c.Update(ctx, current); err != nil {
+			if options.UpdateError != nil {
+				err = options.UpdateError(before, desiredCopy, err)
+			}
 			return controllerutil.OperationResultNone, current, err
 		}
 		return controllerutil.OperationResultUpdated, current, nil
 	}
 	if err := c.Patch(ctx, current, client.MergeFrom(before)); err != nil {
+		if options.UpdateError != nil {
+			err = options.UpdateError(before, desiredCopy, err)
+		}
 		return controllerutil.OperationResultNone, current, err
 	}
 

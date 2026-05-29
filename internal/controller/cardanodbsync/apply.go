@@ -7,6 +7,7 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	controllerstorage "github.com/meigma/yacd/internal/controller/storage"
 	ctrlapply "github.com/meigma/yacd/internal/ctrlkit/apply"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	appsv1 "k8s.io/api/apps/v1"
@@ -538,6 +539,9 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 		Validate:      validateDBSyncPersistentVolumeClaim,
 		Mutate:        mutateDBSyncPersistentVolumeClaim,
 		UpdateMode:    ctrlapply.UpdateModeUpdate,
+		UpdateError: func(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim, err error) error {
+			return controllerstorage.PersistentVolumeClaimUpdateError(string(conditionReasonStorageExpansionRejected), current, desired, err)
+		},
 	})
 	return result, err
 }

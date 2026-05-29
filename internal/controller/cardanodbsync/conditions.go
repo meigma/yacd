@@ -36,6 +36,7 @@ const (
 	conditionReasonReady                             conditionReason = "Ready"
 	conditionReasonUnsupportedSpec                   conditionReason = "UnsupportedSpec"
 	conditionReasonUnsupportedStorageChange          conditionReason = "UnsupportedStorageChange"
+	conditionReasonStorageExpansionRejected          conditionReason = "StorageExpansionRejected"
 	conditionReasonUnsupportedWorkloadChange         conditionReason = "UnsupportedWorkloadChange"
 	conditionReasonUnsupportedDatabaseIdentityChange conditionReason = "UnsupportedDatabaseIdentityChange"
 	conditionReasonResourceConflict                  conditionReason = "ResourceConflict"

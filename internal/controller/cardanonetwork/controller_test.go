@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
@@ -1843,6 +1845,51 @@ func TestCardanoNetworkReconcilerReconcileExpandsStorage(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
+func TestCardanoNetworkReconcilerReconcileSurfacesStorageExpansionRejection(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("rejects-storage-expansion")
+	network.Spec.Node.Storage = &yacdv1alpha1.NodeStorageSpec{
+		Size: resource.MustParse("2Gi"),
+	}
+	rejection := apierrors.NewForbidden(
+		corev1.Resource("persistentvolumeclaims"),
+		primaryNodeStatePVCName(network),
+		errors.New("only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize"),
+	)
+	reconciler := newTestReconcilerWithInterceptor(t, interceptor.Funcs{
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, ok := obj.(*corev1.PersistentVolumeClaim); ok && obj.GetName() == primaryNodeStatePVCName(network) {
+				return rejection
+			}
+
+			return c.Update(ctx, obj, opts...)
+		},
+	}, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Spec.Node.Storage.Size = resource.MustParse("5Gi")
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse("2Gi")))
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonStorageExpansionRejected)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonStorageExpansionRejected)
+	current = requireNetwork(t, ctx, reconciler, network)
+	degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, degraded)
+	assert.Contains(t, degraded.Message, "storage expansion from 2Gi to 5Gi was rejected by Kubernetes")
+	assert.Contains(t, degraded.Message, "only dynamically provisioned pvc can be resized")
+}
+
 func TestCardanoNetworkReconcilerReconcilePreservesPVCForeignMetadata(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("preserves-pvc-metadata")
@@ -2691,6 +2738,12 @@ func readyPrimarySidecarDBSync(name string, network *yacdv1alpha1.CardanoNetwork
 func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkReconciler {
 	t.Helper()
 
+	return newTestReconcilerWithInterceptor(t, interceptor.Funcs{}, objects...)
+}
+
+func newTestReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objects ...client.Object) *CardanoNetworkReconciler {
+	t.Helper()
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
@@ -2699,6 +2752,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoNetworkRe
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithInterceptorFuncs(funcs).
 		WithStatusSubresource(&yacdv1alpha1.CardanoNetwork{}, &yacdv1alpha1.CardanoDBSync{}, &appsv1.Deployment{}, &corev1.Pod{})
 	objectCopies := make([]client.Object, 0, len(objects))
 	for _, object := range objects {

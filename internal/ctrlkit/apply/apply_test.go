@@ -2,6 +2,7 @@ package apply
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
@@ -158,6 +159,75 @@ func TestApplyOwnedObjectUsesUpdateModeUpdate(t *testing.T) {
 	assert.Equal(t, 1, updateCalls)
 }
 
+func TestApplyOwnedObjectMapsPatchError(t *testing.T) {
+	ctx := context.Background()
+	current := ownedConfigMap(t)
+	current.Data = map[string]string{"key": "old"}
+	sourceErr := errors.New("patch failed")
+	c := newApplyTestClientWithInterceptor(t, []client.Object{current}, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			return sourceErr
+		},
+	})
+	desired := ownedConfigMap(t)
+	var updateErrCalls int
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			current.Data = desired.Data
+			return nil
+		},
+		UpdateError: func(current *corev1.ConfigMap, desired *corev1.ConfigMap, err error) error {
+			updateErrCalls++
+			assert.Equal(t, map[string]string{"key": "old"}, current.Data)
+			assert.Equal(t, map[string]string{"key": "desired"}, desired.Data)
+			assert.ErrorIs(t, err, sourceErr)
+			return mappedUpdateError{message: "mapped patch error"}
+		},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	require.ErrorAs(t, err, &mappedUpdateError{})
+	assert.Equal(t, "mapped patch error", err.Error())
+	assert.Equal(t, 1, updateErrCalls)
+}
+
+func TestApplyOwnedObjectMapsUpdateError(t *testing.T) {
+	ctx := context.Background()
+	current := ownedConfigMap(t)
+	current.Data = map[string]string{"key": "old"}
+	sourceErr := errors.New("update failed")
+	c := newApplyTestClientWithInterceptor(t, []client.Object{current}, interceptor.Funcs{
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			return sourceErr
+		},
+	})
+	desired := ownedConfigMap(t)
+	var updateErrCalls int
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current:    &corev1.ConfigMap{},
+		UpdateMode: UpdateModeUpdate,
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			current.Data = desired.Data
+			return nil
+		},
+		UpdateError: func(current *corev1.ConfigMap, desired *corev1.ConfigMap, err error) error {
+			updateErrCalls++
+			assert.Equal(t, map[string]string{"key": "old"}, current.Data)
+			assert.Equal(t, map[string]string{"key": "desired"}, desired.Data)
+			assert.ErrorIs(t, err, sourceErr)
+			return mappedUpdateError{message: "mapped update error"}
+		},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	require.ErrorAs(t, err, &mappedUpdateError{})
+	assert.Equal(t, "mapped update error", err.Error())
+	assert.Equal(t, 1, updateErrCalls)
+}
+
 func TestApplyOwnedObjectReturnsNoneWhenUnchanged(t *testing.T) {
 	ctx := context.Background()
 	current := ownedConfigMap(t)
@@ -174,6 +244,52 @@ func TestApplyOwnedObjectReturnsNoneWhenUnchanged(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, controllerutil.OperationResultNone, result)
+}
+
+func TestApplyOwnedObjectDoesNotMapValidationError(t *testing.T) {
+	ctx := context.Background()
+	sourceErr := errors.New("validation failed")
+	c := newApplyTestClient(t, ownedConfigMap(t))
+	desired := ownedConfigMap(t)
+	var updateErrCalls int
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		Validate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			return sourceErr
+		},
+		UpdateError: func(current *corev1.ConfigMap, desired *corev1.ConfigMap, err error) error {
+			updateErrCalls++
+			return err
+		},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	assert.ErrorIs(t, err, sourceErr)
+	assert.Zero(t, updateErrCalls)
+}
+
+func TestApplyOwnedObjectDoesNotMapUnchangedObject(t *testing.T) {
+	ctx := context.Background()
+	c := newApplyTestClient(t, ownedConfigMap(t))
+	desired := ownedConfigMap(t)
+	var updateErrCalls int
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			current.Data = desired.Data
+			return nil
+		},
+		UpdateError: func(current *corev1.ConfigMap, desired *corev1.ConfigMap, err error) error {
+			updateErrCalls++
+			return err
+		},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	assert.Zero(t, updateErrCalls)
 }
 
 func TestApplyOwnedObjectMapsOwnerConflict(t *testing.T) {
@@ -193,6 +309,14 @@ func TestApplyOwnedObjectMapsOwnerConflict(t *testing.T) {
 	var mapped mappedOwnerConflict
 	require.ErrorAs(t, err, &mapped)
 	assert.Equal(t, "resource testing/child already exists without a controller owner", err.Error())
+}
+
+type mappedUpdateError struct {
+	message string
+}
+
+func (e mappedUpdateError) Error() string {
+	return e.message
 }
 
 type mappedOwnerConflict struct {
