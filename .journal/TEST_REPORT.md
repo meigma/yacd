@@ -866,6 +866,261 @@ expect from the displayed message. (2) is independently shippable as a
 quick win even if (1) is contentious. (3) is a small correctness
 improvement that pairs well with either.
 
+---
+
+## F0 — Mainnet artifact ConfigMap exceeds Kubernetes 1 MiB cap; mainnet cannot be created (high)
+
+(Numbered F0 because the original F1/F3 tests blocked on this preceding
+issue; the finding is genuinely upstream of every other F-category
+probe against mainnet.)
+
+### Test
+Attempt to create a CardanoNetwork with `mode: public, profile: mainnet`
+and any valid Mithril bootstrap (`spec.public.bootstrap.mithril.image`
+and `.snapshot`) — this is the only documented way to instantiate
+a mainnet today, since the CRD validation requires
+`bootstrap.mithril` when `profile=mainnet`. Two attempts: F1 used
+`mithril.image=alpine:latest` (probing for silent bootstrap success on
+exit 0), F3 used `mithril.snapshot=definitely-not-a-real-digest-xyz123`
+(probing for the failure-mode message). Both attempts were applied
+into clean namespaces (`break-f1`, `break-f3`). 90 s observation
+windows at 10 s sampling.
+
+### Failure
+Neither test reached the init container, the Pod, or even owned
+resource creation. The reconcile errors at the network-artifacts
+ConfigMap apply step with verbatim operator log lines:
+
+> `"Reconciler error" ... err="ConfigMap \"f1-net-network-artifacts\" is invalid: []: Too long: may not be more than 1048576 bytes"`
+
+Root cause: the CardanoNetwork controller builds the network artifacts
+ConfigMap with the full profile bundle inline — for mainnet that
+includes Byron genesis, Shelley genesis, Alonzo genesis, Conway
+genesis, topology, and node config. The Mainnet Conway genesis alone
+is large; bundled with the other three genesis files the canonical
+total exceeds Kubernetes' hard cap of 1,048,576 bytes per ConfigMap
+(`Resource limit on the values of an individual ConfigMap`, enforced
+at the apiserver). The apply call returns Invalid and the controller's
+`Reconciler error` log line fires; controller-runtime retries with
+exponential backoff, never makes progress.
+
+User-visible impact:
+- The CardanoNetwork CR exists in etcd with the spec the user applied.
+- **It has no `.status` block whatsoever.** No conditions, no
+  `observedGeneration`, nothing. Neither `Ready=False` nor
+  `Degraded=True` nor any reason or message.
+- No events on the CR (status-patch failure paths don't emit events).
+- No owned children: no PVC, no Deployment, no Pod, no init container,
+  no Service, no artifact-publisher RBAC.
+- A user running `kubectl describe cardanonetwork` sees the spec
+  they applied and zero feedback. They cannot tell whether the
+  operator is working on it, has rejected it, or has never seen it.
+
+The cluster operator's only signal is in the controller-manager log
+stream, which most users can't read. This is exactly the
+silent-quiet-failure mode the whole break-pass was hunting for —
+uncovered orthogonally to the original Mithril-targeted theories.
+
+Severity is **high** because:
+- (a) The mainnet capability is broken end-to-end. No mainnet
+  CardanoNetwork can be created today, regardless of the user's
+  Mithril config.
+- (b) The failure mode is silent — no status, no events, no condition.
+  The CRD's primary observability surface gives the user nothing.
+- (c) Mainnet support is recently-shipped (session 027, PR #47) and
+  mentioned in `DESIGN.md` and `TECH_NOTES`; the breakage is either
+  regressive or latent-since-merge.
+- (d) Chainsaw smoke tests use preview/preprod, so this didn't surface
+  in CI — there's a coverage gap as well as the code bug.
+
+The original F1 (silent Mithril bootstrap on a wrong image) and F3
+(invalid snapshot digest UX) are still theoretically real concerns — the
+agent's source-review note: `mithrilBootstrapInitContainer` in
+`internal/controller/cardanonetwork/init_container.go:21` runs
+`mithril-client cardano-db download` and the operator does **not**
+perform any post-init validation that `db/` was actually populated.
+But empirical confirmation needs this F0 blocker fixed first.
+
+Evidence: `.run/break-pass/f1f3/`
+
+### Suggested Fixes
+
+1. **Move large genesis files out of the artifacts ConfigMap to a
+   per-file Secret or per-file ConfigMap bundle (preferred).** The
+   easiest is a *bundle of ConfigMaps* — one ConfigMap per genesis
+   file (Byron / Shelley / Alonzo / Conway) — with the artifact
+   manifest CM only carrying the manifest + non-genesis files.
+   Mount each ConfigMap separately into the primary Pod (the pod-spec
+   supports as many ConfigMap volume mounts as needed). This stays
+   inside the operator's existing apply/Owns pattern and keeps
+   genesis material non-secret as the existing contract requires.
+   Code: `internal/controller/cardanonetwork/artifacts.go` bundle
+   assembly, `internal/cardano/networkartifacts/contract.go` for the
+   published artifact list (extend it to multiple CM names).
+
+2. **Compress + base64-encode bundle contents inside a single CM
+   (alternative — easier code change, more user-visible).** Gzip the
+   bundle before storing as `binaryData`. Mainnet genesis files
+   compress to roughly 200-300 KiB total, well under the 1 MiB cap.
+   Tradeoff: any consumer (the publisher init container, the node
+   container) must decompress before reading, which complicates the
+   init/projection logic and breaks the "exact text-file ConfigMap"
+   contract the publisher relies on. Probably not worth it given (1).
+
+3. **Pre-flight check: detect the bundle size at plan time, fail
+   loudly with a typed status condition (required, independent of
+   the storage approach).** Today the size violation surfaces as a
+   raw `Reconciler error` log with no status update. Add a planner-side
+   `if len(bundle) > maxConfigMapBytes` check (with `maxConfigMapBytes =
+   1*1024*1024 - <safety margin>`) and return an `unsupportedSpec`
+   error so the existing degraded-status path fires with reason
+   `ArtifactBundleTooLarge`. Even after fix (1), this guards against
+   future bundle growth.
+
+4. **Add a Chainsaw smoke test for mainnet that asserts at least
+   ArtifactsReady or a clear Degraded condition.** Independent of the
+   above code fixes, the CI gap means a regression here can ship
+   undetected. A Chainsaw test that applies a minimal mainnet CR
+   (with Mithril image override and a tiny snapshot for fast init,
+   or with a custom-profile shim) and waits for either Ready=True or
+   any condition transition would have caught F0 in CI.
+
+Pair (1) + (3). (1) fixes the underlying limit; (3) ensures the
+failure mode is observable even when (1) is incomplete or when future
+profiles add new fields that push past the new limit. (4) closes the
+CI coverage gap.
+
+---
+
+(F1 and F3 from the original synthesis return verdicts INCONCLUSIVE
+because the F0 blocker prevented their test paths from running. The
+theorized concerns — silent Mithril bootstrap acceptance, opaque
+snapshot-failure messaging — are still worth re-running after F0 is
+fixed. The source-review observation that `mithrilBootstrapInitContainer`
+has no post-init validation that `db/` was populated is recorded in
+NOTES as a follow-up candidate.)
+
+---
+
+## F2+F4 — NodeReady message is uselessly generic for common Pod / PVC failures (medium)
+
+(Combined entry because both tests share identical root cause and fix
+surface.)
+
+### Test
+Two cheap probes against a local-mode CardanoNetwork, each in its own
+namespace:
+
+- **F2**: `spec.node.image: ghcr.io/nope/nope:404` — an image that
+  will never pull. Observe how the CR surfaces the resulting
+  `ImagePullBackOff`.
+- **F4**: `spec.node.storage.storageClassName: nope-not-a-real-class`
+  — a StorageClass that doesn't exist. Observe how the CR surfaces
+  the resulting PVC `Pending` / Pod `FailedScheduling`.
+
+Sample CR conditions at 10 s for 60 s; capture Pod / PVC events;
+compare what the kubelet / scheduler / provisioner are saying to what
+the CR's `NodeReady` condition is saying.
+
+### Failure
+Both failure modes resolve to the **same boilerplate condition**:
+
+```
+NodeReady = False
+Ready     = False
+Degraded  = False
+reason    = DeploymentProgressing
+message   = "Primary node Deployment is not available"
+```
+
+No mention of "image", "pull", "storage class", "PVC", or anything
+that could help a user identify which configuration field they got
+wrong. Meanwhile the underlying Kubernetes objects contain rich,
+actionable diagnostics:
+
+- F2 Pod event: `Failed to pull image "ghcr.io/nope/nope:404": ... 403
+  Forbidden` followed by `Back-off pulling image
+  "ghcr.io/nope/nope:404"`.
+- F4 PVC event: `storageclass.storage.k8s.io
+  "nope-not-a-real-class" not found` with reason `ProvisioningFailed`,
+  plus Pod event: `0/1 nodes are available: pod has unbound immediate
+  PersistentVolumeClaims`.
+
+Root cause: the operator's `NodeReady` computation (and the analogous
+`OgmiosReady` / `KupoReady` checks for the sidecar containers) reads
+only the parent `Deployment.status.availableReplicas` / the
+`Available` Deployment condition, and translates the binary
+"available / not available" result into a single fixed message. It
+never inspects the underlying Pod's
+`status.containerStatuses[*].state.waiting.reason`, Pod-level events,
+or PVC binding state.
+
+User-visible impact: any first-time misconfiguration of `image`,
+`storageClassName`, `nodeSelector`, `tolerations`, or `resources` (the
+most common Kubernetes-level user mistakes) produces an
+indistinguishable CR-level signal. The user has to know to leave
+`kubectl describe cardanonetwork` and walk `kubectl describe pod`,
+`kubectl describe pvc`, `kubectl get events` to find anything useful.
+For a developer-facing operator targeting Kind/dev environments
+(per `DESIGN.md`), this is exactly the wrong UX trade-off.
+
+Severity is **medium** because:
+- (+) The CR correctly reports `Ready=False`; there's no lying status.
+- (+) Recovery is clean on spec correction (Owns watch fires on the
+  Deployment / Pod transition).
+- (−) The message is functionally useless for diagnosing the actual
+  Kubernetes-level problem.
+- (−) The same boilerplate appears for distinct, common failure
+  classes; the UX gap is not a one-off.
+
+Evidence: `.run/break-pass/f2f4/`
+
+### Suggested Fixes
+
+1. **Pod-walk in the readiness computation (preferred, small).** When
+   the primary `Deployment` is not Available, walk the latest
+   ReplicaSet's Pods and scan `status.containerStatuses[*].state.waiting`
+   for actionable reasons (`ImagePullBackOff`, `ErrImagePull`,
+   `CreateContainerError`, `CreateContainerConfigError`,
+   `CrashLoopBackOff`). Also scan `status.conditions[type=PodScheduled]`
+   for `status=False`, which surfaces the "unbound immediate PVC" /
+   "no nodes satisfy" scheduler messages. Promote the most specific
+   waiting reason and a truncated message into the `NodeReady`
+   condition. Example outputs:
+   - F2: `NodeReady=False reason=ImagePullBackOff message="cardano-node
+     container is waiting: Back-off pulling image \"ghcr.io/nope/nope:404\""`.
+   - F4: `NodeReady=False reason=PodUnschedulable message="primary
+     node pod is unschedulable: unbound immediate PersistentVolumeClaim
+     f4-net-node-state (storageclass \"nope-not-a-real-class\"
+     not found)"`.
+
+   No new RBAC required (Pods are already implied by `.Owns(...)` on
+   the parent Deployment). Code:
+   `internal/controller/cardanonetwork/readiness.go` and the analogous
+   sidecar paths.
+
+2. **Apply the same pattern to sidecar readiness conditions
+   (independent of (1)).** `OgmiosReady` and `KupoReady` use the same
+   generic `DeploymentProgressing` reason today; they'd benefit from
+   the same Pod-walk because sidecar containers in the same Pod
+   inherit the image-pull and scheduling failure modes.
+
+3. **Bonus: surface PVC events on Degraded for the primary PVC apply
+   path.** Today the operator's storage-drift checks catch
+   capacity/class/access-mode drift, but a PVC stuck Pending against a
+   missing StorageClass goes unmentioned until the Pod-walk catches it
+   downstream. Reading the bound PVC's
+   `status.conditions[type=Resizing or FileSystemResizePending]` plus
+   its `events[reason=ProvisioningFailed]` and propagating that into a
+   `StorageClassUnavailable` Degraded reason would help users who
+   never get to the Pod stage (e.g., the Pod is blocked at scheduling
+   because the PVC is Pending).
+
+Option (1) alone gets ~80% of the value. Combine with (2) for full
+coverage; (3) is a small bonus.
+
+
+
 
 
 

@@ -632,3 +632,107 @@ All three are "message-clarity" improvements rather than functional bugs — col
 One hardening observation from E2 (not a bug): when the upstream external Secret is missing/Terminating/invalid, the controller-owned `<dbsync>-pgpass` Secret persists with the previously-validated password. Conventional Kubernetes operator behavior (don't tear down workloads on dep unavailability), but worth a security-review consideration: should the controller scrub the rendered pgpass when the upstream becomes invalid? Default Kubernetes pattern is "untouched"; YACD's posture matches. Flagging the choice rather than calling it a bug.
 
 Pause for user review before starting Category F (Runtime / cluster lifecycle — F1 Mithril init container with non-mithril image, F2 non-existent node image, F3 invalid Mithril snapshot digest, F4 missing StorageClass, F5 faucet revoke/re-enable race, F6 operator pod kill mid-apply). Dev stack left running.
+
+## 2026-05-28 14:25 — F1+F3 INCONCLUSIVE, but uncovered a separate **HIGH-severity finding**: mainnet artifact ConfigMap exceeds 1 MiB cap, mainnet cannot be created
+The F1+F3 agent set out to test Mithril init container behavior on mainnet (F1: alpine image as Mithril, F3: invalid snapshot digest). Both tests blocked at a preceding step: the controller's reconcile fails when it tries to apply the mainnet network-artifacts ConfigMap because the bundle (Byron + Shelley + Alonzo + Conway genesis files + topology + config) exceeds the Kubernetes 1 MiB cap on ConfigMaps.
+
+Observed via the agent's operator-log evidence: `Reconciler error ... ConfigMap "f1-net-network-artifacts" is invalid: []: Too long: may not be more than 1048576 bytes`. 34 such error log lines across the two CRs in a few minutes — controller-runtime retries with exponential backoff, never makes progress, never patches CR status.
+
+User-visible impact: a CardanoNetwork applied with `mode=public, profile=mainnet` and any valid Mithril bootstrap config (i.e., the only currently-supported way to create a mainnet) has NO `.status` block. No conditions. No events on the CR. The CR exists in etcd as an unaccepted spec; the cluster has no operator-owned resources for it. A user running `kubectl describe cardanonetwork` sees the spec they applied and zero feedback — exactly the lying-quiet failure the synthesis was hunting for.
+
+Severity HIGH: this breaks the mainnet capability entirely. Mainnet is a documented and tested-in-Chainsaw feature per recent sessions (027 added public profiles + mainnet bootstrap); the breakage was introduced (or always latent) and not caught because Chainsaw tests use preview/preprod, not mainnet. The CRD comment for `MithrilBootstrapSpec` says "bootstrap.mithril is required only when public.profile is mainnet" — i.e., the only mainnet code path goes through Mithril which goes through the artifact bundle that can't fit in a ConfigMap.
+
+F1 verdict INCONCLUSIVE — the original concern about Mithril image-override silent-success was never reachable because the Pod never gets created. Agent's source review note worth keeping: `mithrilBootstrapInitContainer` in `internal/controller/cardanonetwork/init_container.go:21` runs `mithril-client cardano-db download` and the operator does **not** perform any post-init validation that `db/` was actually populated. So if a hostile or accidentally-misconfigured Mithril image override ever did get past the artifact-bundle blocker, the downstream cardano-node would silently start with an empty data dir. The synthesis concern is theoretically real; the test couldn't empirically confirm. Recommend a follow-up later either via envtest (mock the init container apply) or via a code review that adds post-init checks.
+
+F3 verdict INCONCLUSIVE — same block. Cannot test snapshot-digest behavior because the Pod never starts.
+
+Writing the mainnet-ConfigMap-too-large finding to TEST_REPORT.md immediately. Moving on to F2+F4.
+
+Evidence under `.run/break-pass/f1f3/`. Namespaces cleanly torn down.
+
+## 2026-05-28 14:33 — F2+F4 UX-GAP (medium): NodeReady message is uselessly generic for image-pull and PVC-binding failures
+Adversarial tests F2 and F4 from the synthesized list: do CR conditions surface the underlying Kubernetes failure mode (image pull, PVC binding) usefully, or just show "Deployment not available"?
+
+F2 (bad node image `ghcr.io/nope/nope:404`): kubelet correctly reports `ImagePullBackOff` with verbatim `"Back-off pulling image"` plus the underlying 403 from ghcr.io. CR conditions: `NodeReady=False / reason=DeploymentProgressing / message="Primary node Deployment is not available"`. No mention of "image", the image string, or "pull". User must `kubectl describe pod` to diagnose.
+
+F4 (missing StorageClass `nope-not-a-real-class`): PVC has `ProvisioningFailed` event with verbatim `"storageclass nope-not-a-real-class not found"`. Pod has `FailedScheduling` event `"unbound immediate PersistentVolumeClaim"`. CR conditions: identical `NodeReady=False / reason=DeploymentProgressing / message="Primary node Deployment is not available"`. No mention of "storage", "PVC", "binding", or the class name.
+
+Same root cause: the operator's `NodeReady` computation reads only `Deployment.status.availableReplicas` (or the `Available` Deployment condition) and translates that into a fixed message. It never inspects the underlying Pod's `containerStatuses[*].state.waiting.reason`, Pod events, or PVC binding status. Both F2 and F4 result in the same `DeploymentProgressing` boilerplate.
+
+Verdict UX-GAP (medium severity). Not BUG-A (status correctly says `Ready=False`), not BUG-B (recovery should be clean on spec correction). The bug is purely "user-visible message is uselessly vague for two very common configuration mistakes." Same finding applies to `OgmiosReady` and `KupoReady` (sidecar containers in the same Pod inherit the image-pull surface; their messages reuse the same generic `DeploymentProgressing` reason).
+
+Agent's concrete fix is small and contained: in the node-readiness check, when the primary Deployment is not Available, walk the latest ReplicaSet's Pods and scan `containerStatuses[*].state.waiting` for actionable reasons (`ImagePullBackOff`, `ErrImagePull`, `CreateContainerError`, `CreateContainerConfigError`, `CrashLoopBackOff`) plus `status.conditions[type=PodScheduled].status=False` (which surfaces the "unbound immediate PVC" message). Promote the most specific reason and a truncated message into the `NodeReady` condition. Example outputs:
+- F2: `NodeReady=False reason=ImagePullBackOff message="cardano-node container is waiting: Back-off pulling image \"ghcr.io/nope/nope:404\""`
+- F4: `NodeReady=False reason=PodUnschedulable message="primary node pod is unschedulable: unbound immediate PVC f4-net-node-state (storageclass \"nope-not-a-real-class\" not found)"`
+
+Writing as a combined TEST_REPORT entry because both tests share the same root cause and fix.
+
+Evidence under `.run/break-pass/f2f4/`. Namespaces cleanly torn down.
+
+## 2026-05-28 14:42 — F5 NOT-A-BUG (compounds with D1): kupo toggle silently rotates faucet token
+Adversarial test F5 from the synthesized list: with faucet + kupo enabled and Ready, race the kupo disable (which triggers `revokePrimaryFaucetExposure` → strips faucet container and deletes auth Secret) with kupo re-enable (which rebuilds), to test whether the operator's apply path can be caught in a half-state mid-revoke.
+
+Setup: local CardanoNetwork with ogmios + kupo + faucet enabled. FaucetReady=True in ~26s. Baseline faucet auth Secret UID and token sha256 captured.
+
+F5a (race — both patches as fast as possible): the final state converged correctly to `kupo=true + faucet enabled` with Deployment containers `cardano-node, ogmios, kupo, faucet`, auth Secret present, FaucetReady=True. No Pod restart (the Pod was a fresh ReplicaSet roll-out, not crash-restart). controller-runtime serializes reconciles for a given CR, so there's no in-flight overlap of revoke vs apply on the same object. The race didn't produce the half-state the synthesis worried about.
+
+F5b (sequential timing): also clean — controller observed each intermediate state, ran revoke or rebuild appropriately, convergence ~7-10s. No stuck states.
+
+**But here's the catch:** every transit through revoke→apply ROTATES the faucet auth token. F5a: `905462a3` → `77f5fe4d`. F5b spaced: → `abacf30c`. F5b2 recovery: → `85d457de`. The `createFaucetAuthSecretWithToken` path always generates a fresh random token when the Secret is absent (same code path as D1's BUG-B). The root cause is the same: the controller doesn't roll the Deployment when the auth Secret is recreated, so the *running* faucet pod's in-memory token diverges from the *API server's* Secret bytes. Any external consumer holding a cached token loses authentication silently the next time the running pod rolls.
+
+Notable amplification of D1 scope: D1's failure mode requires a malicious or buggy actor to delete the Secret. F5 shows the same token rotation can happen as a side effect of a routine `kupo.enabled=false` → `kupo.enabled=true` config toggle, which is much more likely to happen by accident than a Secret deletion.
+
+NOT-A-BUG for the race per se. The token rotation is a real concern but it's structurally identical to D1's BUG-B — the fix is the same (stamp the auth Secret resourceVersion onto the pod-template annotation so the Deployment rolls whenever the Secret rotates). Not duplicating into a separate TEST_REPORT entry; flagging in D1's entry that F5 amplifies the scope.
+
+UX observation worth keeping: a user toggling kupo off-and-on silently invalidates the faucet auth token with no surfaced status condition warning. Same D1 root cause.
+
+Evidence under `.run/break-pass/f5/`. Namespace cleanly torn down.
+
+## 2026-05-28 14:48 — F6 NOT-A-BUG: apply path is robust to mid-flight manager kills
+Adversarial test F6 from the synthesized list: kill the operator pod during a fresh CR apply, observe whether the new manager pod completes the half-applied state idempotently.
+
+F6a (kill immediately after apply): the entire reconcile pass committed all 9 owned children before SIGTERM landed. The kubelet's graceful shutdown drains the manager only AFTER the in-flight reconcile finishes — so this test couldn't actually probe a half-applied state, it instead confirmed the manager doesn't *abandon* a reconcile mid-flight when killed. Children: artifact CM, artifact-publisher SA/Role/RoleBinding, PVC (Bound), Deployment with stamped artifact-CM UID, primary Service, Ogmios + Kupo Services. UID stamp matches live CM. CR Ready=True in ~27s.
+
+F6b (kill, then apply CR while no manager is running): controller-runtime's manager queues the apply until leader-elect + caches are up, then processes cleanly. Full child set created in one pass. CR Ready=True in ~30s. No errors.
+
+NOT-A-BUG. The apply path is robust to pod-kill timing because (a) each reconcile is sequential and atomic from the API server's perspective (sub-second partial-write windows), (b) `controllerutil.CreateOrUpdate`-style semantics tolerate pre-existing children. Forcing a true half-applied state would require injecting a delay between apply steps (e.g., a webhook on Deployment create) — not reachable via pod-kill alone.
+
+Evidence under `.run/break-pass/f6/`. Namespace cleanly torn down.
+
+## 2026-05-28 14:50 — Category F synthesis (pause for user review)
+Six probes attempted, with the original F1/F3 blocked by an unexpected upstream finding:
+
+| Test | Theory | Verdict | Severity |
+|------|--------|---------|----------|
+| F0 | (uncovered: mainnet artifact CM exceeds 1 MiB cap) | BUG-A (silent failure) | **high** |
+| F1 | Mithril init with non-mithril image | INCONCLUSIVE (blocked by F0) | — |
+| F2 | Non-existent node image | UX-GAP (generic "Deployment not available") | medium |
+| F3 | Invalid Mithril snapshot digest | INCONCLUSIVE (blocked by F0) | — |
+| F4 | Missing StorageClass | UX-GAP (same boilerplate as F2) | medium |
+| F5 | Faucet revoke/re-enable race | NOT-A-BUG (race is clean; token rotation compounds with D1) | — |
+| F6 | Operator pod kill mid-apply | NOT-A-BUG (apply path is robust) | — |
+
+Two new TEST_REPORT entries (F0, F2+F4 combined).
+
+**F0 — Mainnet artifact ConfigMap exceeds 1 MiB cap, mainnet cannot be created (high).** The mainnet bundle (Byron + Shelley + Alonzo + Conway genesis files + topology + node config) exceeds Kubernetes' 1 MiB hard cap on ConfigMaps. The reconcile fails at the artifact CM apply step with `ConfigMap "...network-artifacts" is invalid: Too long: may not be more than 1048576 bytes`. The CR ends up with NO `.status` block, no conditions, no events — completely silent failure. Mainnet support shipped in PR #47 but Chainsaw tests cover only preview/preprod, so this didn't surface in CI. Fix path: move large genesis files to per-file ConfigMaps + pre-flight size check + Chainsaw mainnet smoke test.
+
+**F2+F4 — NodeReady message is uselessly generic for image-pull and PVC-binding failures (medium).** Both `ghcr.io/nope/nope:404` (ImagePullBackOff) and `storageClassName: missing` (PVC Pending / FailedScheduling) produce identical `NodeReady=False / reason=DeploymentProgressing / message="Primary node Deployment is not available"`. The operator reads only `Deployment.status.availableReplicas` and never inspects the underlying Pod containerStatuses, Pod events, or PVC binding state. Fix path: walk the latest ReplicaSet's Pods, scan `containerStatuses[*].state.waiting` for actionable reasons, promote to NodeReady. Same fix surface works for OgmiosReady/KupoReady.
+
+Two non-findings:
+
+**F5 — race is clean per se (controller-runtime serializes reconciles per-CR; final state converges in ~7-10s with 0 Pod restarts).** But every kupo toggle cycle rotates the faucet auth token because `createFaucetAuthSecretWithToken` always generates a fresh random token when the Secret is absent. This is structurally identical to D1's BUG-B — the controller doesn't roll the Deployment when the auth Secret rotates, so the running pod's in-memory token diverges from the API server's Secret bytes. Amplification of D1's scope: the silent token rotation can happen from a routine `kupo.enabled=false→true` config toggle, not just adversarial Secret deletion. Fix: same as D1 (stamp auth Secret resourceVersion onto pod-template annotation so the Deployment rolls on rotation).
+
+**F6 — apply path is robust to mid-flight manager kills.** The kubelet's graceful shutdown drains the manager only AFTER the in-flight reconcile finishes, so SIGTERM doesn't actually interrupt mid-apply in practice. Even when the manager is killed before apply, the new manager processes the workqueue cleanly via controller-runtime's caches + leader election. Forcing a true half-applied state would require injecting a delay between apply steps (e.g., a webhook); not reachable via pod-kill alone.
+
+Category F highlight: the **F0 finding is the biggest discovery of the entire break-pass so far** — not because it's the worst kind of bug (it's not data loss, like D1/D2), but because it's a completely silent breakage of a documented major feature that wasn't on the synthesis list and wasn't caught in CI. The break-pass methodology paid for itself just by surfacing F0.
+
+Running totals after Categories A–F:
+- Tests run: 33 (A:5, B:6, C:4, D:7, E:6, F:6) — 2 INCONCLUSIVE (F1, F3, blocked by F0), 31 conclusive
+- TEST_REPORT entries: **10** (A3, A4, B1, B2, B6, D1, D2, D6, F0, F2+F4)
+- High severity: **5** (A4, B1, D1, D2, F0)
+- Medium severity: **5** (A3, B2, B6, D6, F2+F4)
+- Architectural strengths revealed in passing: E4 (replay-resistant identity binding), E2 (DeletionTimestamp parity), E1/E1b (planner-layer defense-in-depth), B3 (PVC-annotation backfill works), F6 (graceful-shutdown apply integrity)
+
+Pause for user review. The synthesis list also has G (UX-clarity) — those were noted to be addressed as a parallel sweep rather than a separate test category, and most have been covered organically across categories (multiple "messages don't name X" findings in B2, B6, D1, E5, F2/F4). Happy to do a dedicated G sweep if you want, or close out the pass here.
+
+Dev stack still up.
