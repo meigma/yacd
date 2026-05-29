@@ -3,7 +3,9 @@ package cardanonetwork
 import (
 	"fmt"
 
+	controllerchildren "github.com/meigma/yacd/internal/controller/children"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // statusConditionError is the local alias for ctrlstatus.ConditionError used
@@ -40,6 +42,20 @@ func resourceConflict(format string, args ...any) statusConditionError {
 // resourceConflict for the reconciler's typed-error flow.
 func controllerOwnerConflict(err error) error {
 	return resourceConflict("%s", err.Error())
+}
+
+// childBeingDeleted adapts a terminating owned child into the
+// CardanoNetwork condition contract. Reconciliation must fail closed until
+// Kubernetes finishes deleting the old object.
+func childBeingDeleted[T client.Object](current T, _ T) error {
+	return controllerchildren.BeingDeleted(string(conditionReasonChildBeingDeleted), current)
+}
+
+// primaryStateLost reports that a missing primary state PVC cannot be safely
+// recreated because another owned runtime object proves this CardanoNetwork
+// already accepted durable state.
+func primaryStateLost(format string, args ...any) statusConditionError {
+	return ctrlstatus.NewConditionError(string(conditionReasonPrimaryStateLost), format, args...)
 }
 
 // unsupportedWorkloadChange reports that an existing owned object has drifted

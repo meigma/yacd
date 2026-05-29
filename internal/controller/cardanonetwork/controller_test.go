@@ -1847,6 +1847,67 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChangeAfterPVCDele
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
 }
 
+func TestCardanoNetworkReconcilerReconcileDegradesWhenPrimaryPVCIsDeleting(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("primary-pvc-deleting")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	pvc.Finalizers = []string{"test.example.io/never-removed"}
+	require.NoError(t, reconciler.Update(ctx, pvc))
+	require.NoError(t, reconciler.Delete(ctx, pvc))
+	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+	require.False(t, pvc.DeletionTimestamp.IsZero())
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonChildBeingDeleted)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonChildBeingDeleted)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonChildBeingDeleted)
+	current := requireNetwork(t, ctx, reconciler, network)
+	degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, degraded)
+	assert.Contains(t, degraded.Message, primaryNodeStatePVCName(network))
+	assert.Contains(t, degraded.Message, "test.example.io/never-removed")
+}
+
+func TestCardanoNetworkReconcilerReconcileRefusesPrimaryPVCRecreationAfterAcceptance(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("primary-state-lost")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NotEmpty(t, requireAcceptedLocalnetFingerprint(t, ctx, reconciler, network))
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	require.NoError(t, reconciler.Delete(ctx, pvc))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	err = reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryNodeStatePVCName(network),
+	}, &corev1.PersistentVolumeClaim{})
+	assert.True(t, apierrors.IsNotFound(err), "expected PVC to remain absent, got %v", err)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonPrimaryStateLost)
+	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonPrimaryStateLost)
+	assertCondition(t, ctx, reconciler, network, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonPrimaryStateLost)
+	current := requireNetwork(t, ctx, reconciler, network)
+	degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, degraded)
+	assert.Contains(t, degraded.Message, primaryNodeStatePVCName(network))
+	assert.Contains(t, degraded.Message, "Delete and recreate the CardanoNetwork")
+}
+
 func TestCardanoNetworkReconcilerReconcileRejectsMissingLocalnetFingerprint(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("missing-localnet-fingerprint")

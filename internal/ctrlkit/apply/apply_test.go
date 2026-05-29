@@ -311,6 +311,82 @@ func TestApplyOwnedObjectMapsOwnerConflict(t *testing.T) {
 	assert.Equal(t, "resource testing/child already exists without a controller owner", err.Error())
 }
 
+func TestApplyOwnedObjectMapsDeletingObjectBeforeValidationMutationOrPatch(t *testing.T) {
+	ctx := context.Background()
+	current := ownedConfigMap(t)
+	now := metav1.Now()
+	current.DeletionTimestamp = &now
+	current.Finalizers = []string{"test.example.io/hold"}
+	var patchCalls int
+	var updateCalls int
+	c := newApplyTestClientWithInterceptor(t, []client.Object{current}, interceptor.Funcs{
+		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+			patchCalls++
+			return c.Patch(ctx, obj, patch, opts...)
+		},
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			updateCalls++
+			return c.Update(ctx, obj, opts...)
+		},
+	})
+	desired := ownedConfigMap(t)
+	var deletingCalls int
+	var validateCalls int
+	var mutateCalls int
+
+	result, got, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		ObjectDeleting: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			deletingCalls++
+			assert.False(t, current.DeletionTimestamp.IsZero())
+			assert.Equal(t, []string{"test.example.io/hold"}, current.Finalizers)
+			return mappedObjectDeleting{message: "mapped deleting object"}
+		},
+		Validate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			validateCalls++
+			return nil
+		},
+		Mutate: func(current *corev1.ConfigMap, desired *corev1.ConfigMap) error {
+			mutateCalls++
+			current.Data = desired.Data
+			return nil
+		},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	require.ErrorAs(t, err, &mappedObjectDeleting{})
+	assert.Equal(t, "mapped deleting object", err.Error())
+	assert.Equal(t, "child", got.Name)
+	assert.Equal(t, 1, deletingCalls)
+	assert.Zero(t, validateCalls)
+	assert.Zero(t, mutateCalls)
+	assert.Zero(t, patchCalls)
+	assert.Zero(t, updateCalls)
+}
+
+func TestApplyOwnedObjectValidateCreateCanBlockMissingObject(t *testing.T) {
+	ctx := context.Background()
+	c := newApplyTestClient(t)
+	desired := ownedConfigMap(t)
+	var validateCreateCalls int
+
+	result, _, err := ApplyOwnedObject(ctx, c, desired, OwnedObjectOptions[*corev1.ConfigMap]{
+		Current: &corev1.ConfigMap{},
+		ValidateCreate: func(desired *corev1.ConfigMap) error {
+			validateCreateCalls++
+			return mappedValidateCreate{message: "mapped create validation"}
+		},
+	})
+
+	assert.Equal(t, controllerutil.OperationResultNone, result)
+	require.ErrorAs(t, err, &mappedValidateCreate{})
+	assert.Equal(t, "mapped create validation", err.Error())
+	assert.Equal(t, 1, validateCreateCalls)
+
+	stored := &corev1.ConfigMap{}
+	assert.Error(t, c.Get(ctx, client.ObjectKey{Name: "child", Namespace: "testing"}, stored))
+}
+
 type mappedUpdateError struct {
 	message string
 }
@@ -324,6 +400,22 @@ type mappedOwnerConflict struct {
 }
 
 func (e mappedOwnerConflict) Error() string {
+	return e.message
+}
+
+type mappedObjectDeleting struct {
+	message string
+}
+
+func (e mappedObjectDeleting) Error() string {
+	return e.message
+}
+
+type mappedValidateCreate struct {
+	message string
+}
+
+func (e mappedValidateCreate) Error() string {
 	return e.message
 }
 

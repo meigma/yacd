@@ -32,6 +32,21 @@ func validatePrimaryPersistentVolumeClaim(current *corev1.PersistentVolumeClaim,
 	return nil
 }
 
+// validatePrimaryPersistentVolumeClaimCreate rejects implicit recreation of
+// the primary state PVC after runtime material proves the CardanoNetwork
+// already accepted a network identity. A missing PVC at that point means the
+// node state is gone; starting fresh must be an explicit CR delete/recreate.
+func validatePrimaryPersistentVolumeClaimCreate(desired *corev1.PersistentVolumeClaim, acceptedIdentity acceptedNetworkIdentity) error {
+	if acceptedIdentity.empty() {
+		return nil
+	}
+
+	return primaryStateLost(
+		"Primary state PVC %s is missing after CardanoNetwork accepted network identity; primary node state cannot be recovered safely. Delete and recreate the CardanoNetwork to intentionally create fresh state",
+		ctrlmetadata.ObjectKey(desired),
+	)
+}
+
 // mutatePrimaryPersistentVolumeClaim is the ApplyOwnedObject Mutate callback
 // for the primary node PVC. The underlying ctrlkit helper preserves
 // Kubernetes-assigned spec fields and merges the cardanonetwork-owned

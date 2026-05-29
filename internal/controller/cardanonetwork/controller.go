@@ -156,11 +156,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if err := validateAcceptedNetworkFingerprint(acceptedIdentity, resources.NetworkPlan); err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
-	if err := r.validateAcceptedPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim); err != nil {
+	if err := r.validateAcceptedPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim, acceptedIdentity); err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources)
+	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources, acceptedIdentity)
 	if err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
@@ -329,6 +329,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	resources *primaryWorkloadResources,
+	acceptedIdentity acceptedNetworkIdentity,
 ) (primaryWorkloadApplyResults, error) {
 	var results primaryWorkloadApplyResults
 	var err error
@@ -359,7 +360,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		}
 	}
 
-	results.PersistentVolumeClaim, err = r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim)
+	results.PersistentVolumeClaim, err = r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim, acceptedIdentity)
 	if err != nil {
 		return results, err
 	}
