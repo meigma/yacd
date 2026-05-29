@@ -514,7 +514,7 @@ func TestCardanoNetworkReconcilerReconcileKeepsDBSyncAttachmentReadySeparateFrom
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 }
 
-func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenMultipleClaimsExist(t *testing.T) {
+func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSyncIncumbentWhenMultipleClaimsExist(t *testing.T) {
 	ctx := context.Background()
 	network := readyLocalCardanoNetwork()
 	first := readyPrimarySidecarDBSync("first", network)
@@ -526,9 +526,20 @@ func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenMultipleC
 
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
-	assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
-	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
+	assert.Equal(t, "first", deployment.Spec.Template.Labels[labelDBSync])
+	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+
+	currentFirst := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
+	require.NoError(t, reconciler.Delete(ctx, currentFirst))
+	storeNetworkStatus(t, ctx, reconciler, network)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+
+	require.NoError(t, err)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "second", deployment.Spec.Template.Labels[labelDBSync])
+	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
 }
 
 func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenStatusContractIsNotAttachable(t *testing.T) {

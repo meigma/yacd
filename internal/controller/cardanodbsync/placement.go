@@ -3,6 +3,7 @@ package cardanodbsync
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -14,8 +15,8 @@ const (
 
 // reconcilePlacement gates CardanoDBSync reconciliation on the effective
 // placement mode. Dedicated-follower placement preserves the existing runtime
-// path; primary-sidecar placement proceeds only when exactly one non-deleting
-// same-network sidecar claim exists.
+// path; primary-sidecar placement proceeds only for the deterministic
+// same-network incumbent.
 func (r *CardanoDBSyncReconciler) reconcilePlacement(
 	ctx context.Context,
 	dbSync *yacdv1alpha1.CardanoDBSync,
@@ -28,12 +29,16 @@ func (r *CardanoDBSyncReconciler) reconcilePlacement(
 		if err != nil {
 			return false, err
 		}
-		if len(claims) > 1 {
+		selection := SelectPrimarySidecarClaim(claims)
+		if selection.Incumbent == nil {
+			return true, nil
+		}
+		if !samePrimarySidecarClaim(dbSync, selection.Incumbent) {
 			return false, r.patchWorkloadApplyBlockedStatus(
 				ctx,
 				dbSync,
 				conditionReasonPlacementConflict,
-				placementConflictMessage(dbSync.Spec.NetworkRef.Name),
+				placementConflictMessage(dbSync.Spec.NetworkRef.Name, selection),
 			)
 		}
 
@@ -90,8 +95,17 @@ func effectivePlacementMode(dbSync *yacdv1alpha1.CardanoDBSync) yacdv1alpha1.Car
 	return dbSync.Spec.Placement.Mode
 }
 
-// placementConflictMessage returns the user-facing condition message for
-// multiple primarySidecar claims on the same CardanoNetwork.
-func placementConflictMessage(networkName string) string {
-	return fmt.Sprintf("CardanoNetwork %q has multiple primarySidecar CardanoDBSync claims; exactly one primary-sidecar claim is allowed", networkName)
+// placementConflictMessage returns the user-facing condition message for a
+// non-incumbent primarySidecar claim on the same CardanoNetwork.
+func placementConflictMessage(networkName string, selection PrimarySidecarClaimSelection) string {
+	incumbent := primarySidecarClaimKey(selection.Incumbent)
+	if incumbent == "" {
+		incumbent = "<unknown>"
+	}
+	conflicts := strings.Join(selection.ConflictingPeerKeys, ", ")
+	if conflicts == "" {
+		conflicts = primarySidecarClaimKey(selection.Incumbent)
+	}
+
+	return fmt.Sprintf("CardanoNetwork %q already has primarySidecar incumbent %q; conflicting CardanoDBSync claims must use dedicatedFollower placement or be removed: %s", networkName, incumbent, conflicts)
 }

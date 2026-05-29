@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
@@ -602,11 +603,33 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarPortConflict(t *te
 	assertDegradedMessage(t, ctx, reconciler, dbSync, "db-sync metrics port 8080 conflicts with faucet port in the primary Pod")
 }
 
-func TestCardanoDBSyncReconcilerReconcileReportsPrimarySidecarPlacementConflict(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileAllowsPrimarySidecarIncumbentWithNewerPeer(t *testing.T) {
 	ctx := context.Background()
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "shared-network"))
 	peer := primarySidecarCardanoDBSync(localCardanoDBSync("peer", "shared-network"))
+	dbSync.CreationTimestamp = metav1.NewTime(time.Date(2026, 5, 28, 21, 0, 0, 0, time.UTC))
+	peer.CreationTimestamp = metav1.NewTime(dbSync.CreationTimestamp.Add(time.Minute))
 	reconciler := newTestReconciler(t, dbSync, peer)
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonNetworkUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonNetworkUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonNetworkUnavailable)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonNetworkUnavailable)
+	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
+	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+}
+
+func TestCardanoDBSyncReconcilerReconcileReportsPrimarySidecarPlacementConflictForNewerPeer(t *testing.T) {
+	ctx := context.Background()
+	incumbent := primarySidecarCardanoDBSync(localCardanoDBSync("incumbent", "shared-network"))
+	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("peer", "shared-network"))
+	incumbent.CreationTimestamp = metav1.NewTime(time.Date(2026, 5, 28, 21, 0, 0, 0, time.UTC))
+	dbSync.CreationTimestamp = metav1.NewTime(incumbent.CreationTimestamp.Add(time.Minute))
+	reconciler := newTestReconciler(t, dbSync, incumbent)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -617,8 +640,20 @@ func TestCardanoDBSyncReconcilerReconcileReportsPrimarySidecarPlacementConflict(
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonPlacementConflict)
 	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
-	assertDegradedMessage(t, ctx, reconciler, dbSync, placementConflictMessage("shared-network"))
+	assertDegradedMessage(t, ctx, reconciler, dbSync, placementConflictMessage("shared-network", SelectPrimarySidecarClaim([]yacdv1alpha1.CardanoDBSync{*incumbent, *dbSync})))
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, &appsv1.Deployment{})
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	current.Spec.Placement.Mode = yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower
+	current.Generation++
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	result, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Empty(t, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretMissing)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonExternalDatabaseSecretMissing)
 }
 
 func TestCardanoDBSyncReconcilerReconcileIgnoresDedicatedFollowerInPrimarySidecarConflict(t *testing.T) {

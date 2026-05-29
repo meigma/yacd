@@ -1,8 +1,9 @@
 // Package cardanonetwork reconciles CardanoNetwork custom resources. The
 // controller renders a primary cardano-node workload, the optional ogmios /
-// kupo / faucet chain API sidecars, owned artifact-publisher RBAC, and a
-// per-CR ConfigMap of network artifacts; it then publishes endpoints and
-// readiness state through CardanoNetwork status.
+// kupo / faucet chain API sidecars, the selected CardanoDBSync primary-sidecar
+// attachment, owned artifact-publisher RBAC, and a per-CR ConfigMap of network
+// artifacts; it then publishes endpoints and readiness state through
+// CardanoNetwork status.
 //
 // The package separates side-effect-free planning from side-effecting
 // reconciliation:

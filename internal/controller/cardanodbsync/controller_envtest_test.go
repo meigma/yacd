@@ -313,19 +313,22 @@ func TestCardanoDBSyncControllerManagerReconcilesPrimarySidecarPlacementPeers(t 
 
 	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
 
+	time.Sleep(1100 * time.Millisecond)
+
 	second := primarySidecarCardanoDBSync(localCardanoDBSync("second", "shared-network"))
 	second.Namespace = namespace.Name
 	require.NoError(t, apiClient.Create(ctx, second))
 
-	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonPlacementConflict)
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
 	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(second), conditionReasonPlacementConflict)
 
 	currentSecond := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(second), currentSecond))
-	currentSecond.Spec.NetworkRef.Name = "other-network"
+	currentSecond.Spec.Placement.Mode = yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower
 	require.NoError(t, apiClient.Update(ctx, currentSecond))
 
 	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(first), conditionReasonNetworkUnavailable)
+	requireDBSyncDegradedReasonEventually(t, ctx, apiClient, client.ObjectKeyFromObject(second), conditionReasonExternalDatabaseSecretMissing)
 }
 
 func assertManagedPostgresSecretAndChildWatches(

@@ -675,11 +675,11 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
 	currentFirst := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
-	requireDeploymentAnnotationEventually(t, ctx, apiClient, deploymentKey, dbSyncSidecarRevisionAnno, currentFirst.Status.Placement.PrimarySidecar.Revision)
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, currentFirst.Status.Placement.PrimarySidecar.Revision)
 
 	currentFirst.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 	require.NoError(t, apiClient.Status().Update(ctx, currentFirst))
-	requireDeploymentAnnotationEventually(t, ctx, apiClient, deploymentKey, dbSyncSidecarRevisionAnno, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
 
 	require.Eventually(t, func() bool {
 		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
@@ -691,10 +691,26 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Create(ctx, primarySidecarExternalSecret(second)))
 	require.NoError(t, apiClient.Create(ctx, second))
 
-	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", false)
-
-	require.NoError(t, apiClient.Delete(ctx, second))
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+
+	require.NoError(t, apiClient.Delete(ctx, currentFirst))
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(second), current); err != nil {
+			return false
+		}
+		sidecarMaterialReady := apimeta.FindStatusCondition(current.Status.Conditions, "SidecarMaterialReady")
+		return current.Status.ObservedGeneration == current.Generation &&
+			current.Status.Placement != nil &&
+			current.Status.Placement.PrimarySidecar != nil &&
+			sidecarMaterialReady != nil &&
+			sidecarMaterialReady.Status == metav1.ConditionTrue
+	}, 10*time.Second, 100*time.Millisecond)
+	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
+	currentSecond := &yacdv1alpha1.CardanoDBSync{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(second), currentSecond))
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, currentSecond.Status.Placement.PrimarySidecar.Revision)
 }
 
 func primarySidecarExternalSecret(dbSync *yacdv1alpha1.CardanoDBSync) *corev1.Secret {
@@ -733,12 +749,11 @@ func requireDeploymentContainerEventually(
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
-func requireDeploymentAnnotationEventually(
+func requireDeploymentDBSyncSidecarRevisionEventually(
 	t *testing.T,
 	ctx context.Context,
 	apiClient client.Client,
 	deploymentKey client.ObjectKey,
-	annotation string,
 	value string,
 ) {
 	t.Helper()
@@ -749,7 +764,7 @@ func requireDeploymentAnnotationEventually(
 			return false
 		}
 
-		return deployment.Spec.Template.Annotations[annotation] == value
+		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == value
 	}, 10*time.Second, 100*time.Millisecond)
 }
 

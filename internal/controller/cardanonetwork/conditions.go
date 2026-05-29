@@ -40,7 +40,6 @@ const (
 	conditionReasonUnsupportedStorageChange     conditionReason = "UnsupportedStorageChange"
 	conditionReasonUnsupportedWorkloadChange    conditionReason = "UnsupportedWorkloadChange"
 	conditionReasonResourceConflict             conditionReason = "ResourceConflict"
-	conditionReasonPlacementConflict            conditionReason = "PlacementConflict"
 	conditionReasonDeploymentProgressing        conditionReason = "DeploymentProgressing"
 	conditionReasonReady                        conditionReason = "Ready"
 	conditionReasonPrimaryWorkloadMissing       conditionReason = "PrimaryWorkloadMissing"
