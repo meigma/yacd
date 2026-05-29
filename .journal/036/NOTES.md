@@ -182,3 +182,51 @@ includes `0bb852d`). Release Dry Run `26663558229` SUCCEEDED — prior runs
 (`ddc0ad1`, `6d2481a`, pre-fix) failed on the manager embed build. Release path
 unblocked; the e2e build defect work (PR #55) is fully done and verified end to
 end (e2e in CI + release dry-run both green). Task complete.
+
+## 2026-05-29 15:31 — Phase 1 (CLI lifecycle) implemented, PR #58 open
+Request: review & complete Phase 1 of the test-harness plan; pause before merge.
+Scope: CLI-driven identity + up/down/list verbs + drop the devconfig metadata
+block (the one intentional breaking change).
+
+Approach: recon workflow (6 agents) mapped the CLI (kube port, commands,
+devconfig, render, mocks, CardanoNetwork API). Implemented inline:
+- devconfig: removed the `Metadata` struct/field; Validate drops the
+  metadata.name check (validateExplicitFields keeps its env param — it reads
+  Spec.Network, not metadata).
+- render: `CardanoNetwork(env, name, namespace)`; removed the dead
+  `render.Namespace` helper.
+- kube: `ErrNotFound` sentinel + `IsNotFound`; `DeleteCardanoNetwork`
+  (idempotent on NotFound), `ListCardanoNetworks` (ns="" = all), `EnsureNamespace`
+  (SSA namespace + ownership labels managed-by=yacd/created-by=yacd-cli);
+  `WaitGone` poller. `GetCardanoNetwork` now wraps `ErrNotFound`.
+- cli: `resolveIdentity` (NAME positional + ns default-to-NAME + DNS-1123);
+  `deploy`→`up` (up.go; --wait default true, --timeout 12m, EnsureNamespace
+  before Apply); new `down` (delete+WaitGone, --timeout 5m) and `list`
+  (-A/-n/--json, table+json projection). info/topup adopted the same identity
+  model. Removed the now-dead `KubeNamespaceResolver` type/field.
+- examples: dropped metadata from all 5 Environment yacd.yaml files (local +
+  4 public; the cardanodbsync-*.yaml examples are raw CRs, left alone).
+- chainsaw e2e: `deploy -f ... --namespace yacd-smoke` → `up phase4-smoke -n
+  yacd-smoke -f ...` (so the CI e2e now exercises `up`).
+Mocks regenerated via `moon run root:generate`.
+
+Tests: delegated the suite to a focused agent (test-only edits, report-don't-fix
+production bugs); it correctly flagged my commandContext gofmt misalignment +
+the missing nolint for client.Apply in EnsureNamespace (both fixed by me).
+
+Verification: `moon run root:check` + `root:test` + `git diff --check` all green.
+Proved exit criteria END-TO-END on the live dev cluster: up phase1 → Ready;
+list (table+json w/ endpoints); ns ownership stamp present; info; down phase1 →
+CR + owned children GC'd, list empty; idempotent re-down. Cleaned up test ns.
+
+Review: adversarial workflow (5 dims → per-finding verify); 10/23 confirmed.
+Fixed: stale `deploy` refs in README + cli/kube doc.go; a MISSED metadata block
+in `examples/public-custom/yacd.yaml` (my earlier grep was `head`-truncated —
+the review caught it); contextual `list` empty message; extra WaitGone
+already-gone test. Deferred 2 low topup flag-polish items (out of Phase 1 scope).
+
+Committed `a0290cb` (impl) + `b5e58a2` (review fixes); pushed; opened PR #58.
+CI run `26665502208` in progress (ci + e2e, e2e now drives `yacd up`).
+Breaking-change versioning: PR titled `feat(cli):` (minor); did NOT add a
+BREAKING CHANGE footer (safe pre-1.0) — flagged for user's call at merge.
+PAUSED before merge per request. Local dev stack still UP (kind-yacd-dev).
