@@ -57,9 +57,13 @@
   `<dbsync>-postgres` Service, and `<dbsync>-postgres` Deployment. The
   generated password is create-once only; if the generated Secret is deleted
   after managed DB identity acceptance, the controller degrades instead of
-  regenerating a random password for an initialized data directory. Provided
-  managed auth Secret identity is based on password material, not Secret
-  resourceVersion metadata.
+  regenerating a random password for an initialized data directory. A plain
+  unowned same-name generated auth Secret restored with the original
+  `data.password` is the narrow adoption exception: the controller adopts it
+  only when the password re-derives the accepted managed Postgres identity,
+  while wrong restored passwords remain `UnsupportedDatabaseIdentityChange` and
+  foreign-owned Secrets remain `ResourceConflict`. Provided managed auth Secret
+  identity is based on password material, not Secret resourceVersion metadata.
 - Managed Postgres bootstrap-affecting inputs are immutable after acceptance:
   image, database name, user, port/password key, auth Secret name, and password
   material are captured in the managed Postgres identity stored on the owned

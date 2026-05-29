@@ -39,4 +39,4 @@
 | 036 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session primed; awaiting the user's request, likely the next `.journal/TEST_REPORT.md` finding (D1, D2, D6, F0, or F2/F4) after B6 landed. |
 | 037 | 2026-05-29 | TEST_REPORT issue follow-through | complete | Fixed TEST_REPORT D1 by reconciling owned faucet auth Secret events, stamping the Deployment with the live token hash, manually proving recovery, and merging PR #54. |
 | 038 | 2026-05-29 | TEST_REPORT continuation | complete | Fixed TEST_REPORT D2 by failing closed on terminating/lost primary PVC state, manually proving the path, and merging PR #56. |
-| 039 | 2026-05-29 | TEST_REPORT continuation | in-progress | Session primed to continue the remaining `.journal/TEST_REPORT.md` fixes after D1 and D2 landed. |
+| 039 | 2026-05-29 | D6 managed Postgres auth recovery | complete | Fixed TEST_REPORT D6 by safely adopting restored generated managed Postgres auth Secrets that match the accepted identity, merged PR #57, and cleaned up the dev stack/worktree. |
