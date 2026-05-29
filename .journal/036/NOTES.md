@@ -138,3 +138,28 @@ Committed `ecdb942`, pushed, opened PR #55. CI run `26661842560` in progress
 (`ci` job + the new `e2e` job). e2e runs the FULL chainsaw smoke incl. db-sync
 (~25m unknown on hosted runner). Awaiting green; pause for user review after.
 NOTE: concurrent session 037 owns `feat/d1-faucet-auth-recovery` (independent).
+
+## 2026-05-29 14:26 — PR #55 GREEN (paused for review)
+The e2e had never run on Linux/CI before (only macOS locally), so it surfaced
+THREE stacked CI-only failures, each masking the next:
+1. `.dockerignore` strips `go:embed` publicnet profiles → manager `docker build`
+   fails. Fixed by re-including `internal/cardano/publicnet/profiles/**`
+   (`ecdb942`). This ALSO unblocks release: `release.yml` builds the manager via
+   `docker/build-push-action` (root Dockerfile), so the `release 1.0.0`
+   release-please dry-run was red on both arches with the same embed error.
+2. Chainsaw shells out to `moon run root:deploy`/`undeploy`, both
+   `runInCI:false` → Moon filters them under CI=true ("No tasks found"). Flipped
+   both to `runInCI:true` (`33ad2bf`); dev-up/dev-down stay false.
+3. Chainsaw runs script `content` via `/usr/bin/sh` = dash on Linux (bash on
+   macOS), so `set -euo pipefail` → "Illegal option". Audited all inline scripts
+   (only bashism was pipefail) and made them `set -eu` POSIX-portable
+   (`c2c6d4d`).
+Result (CI run 26662661765): ci SUCCESS (1m), e2e SUCCESS (8m). The FULL smoke —
+CardanoNetwork→Ready AND CardanoDBSync managed-Postgres — passes in 8m on a
+hosted runner, so db-sync is NOT too heavy for CI. PR #55 mergeStateStatus=CLEAN.
+Run 2's ci failure was a PRE-EXISTING flaky envtest
+(`TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync`, "Condition
+never satisfied") — passed on identical code in runs 1 and 3; flag in review, not
+a regression. PAUSED for user review; NOT merged. TODO on merge: update
+TECH_NOTES (supersede the earlier "use ko" note — the real fix is .dockerignore;
+ko would have left release broken) and confirm the 1.0.0 dry-run goes green.
