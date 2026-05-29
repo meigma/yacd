@@ -108,6 +108,13 @@
   controller.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
+- `CardanoNetwork` owns the primary faucet auth Secret when faucet is enabled
+  and watches those owned Secrets directly. The reconciler still uses live
+  Secret reads for faucet auth apply/readiness, then stamps
+  `yacd.meigma.io/faucet-auth-token-hash` on the primary Deployment pod
+  template from `data.token` so Secret repair or valid token rotation rolls the
+  primary Pod. Keep this side-effecting behavior out of the pure
+  `primaryWorkloadBuilder`.
 - The local dev stack builds the faucet image through the `faucet-image` Tilt
   local resource, which runs the ko helper and loads
   `ghcr.io/meigma/yacd/faucet:tilt` into `kind-yacd-dev`. Keep this explicit:
