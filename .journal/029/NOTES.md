@@ -736,3 +736,18 @@ Running totals after Categories A–F:
 Pause for user review. The synthesis list also has G (UX-clarity) — those were noted to be addressed as a parallel sweep rather than a separate test category, and most have been covered organically across categories (multiple "messages don't name X" findings in B2, B6, D1, E5, F2/F4). Happy to do a dedicated G sweep if you want, or close out the pass here.
 
 Dev stack still up.
+
+## 2026-05-28 18:10 — Close
+Session closed. 33 adversarial tests run across categories A–F: 31 conclusive, 2 INCONCLUSIVE (F1 and F3 blocked by the F0 finding uncovered orthogonally). Ten findings written to `.journal/TEST_REPORT.md` with structured test/failure/suggested-fix entries — five high-severity (A4, B1, D1, D2, F0) and five medium-severity (A3, B2, B6, D6, F2+F4). No code changes; documentation-only session.
+
+Hand-off state:
+- `.journal/029/SUMMARY.md` written with goal/outcome/decisions/changes/open-threads/references/lessons.
+- `.journal/INDEX.md` updated with session 029 row.
+- `.journal/TECH_NOTES.md` updated with a pointer to the TEST_REPORT.md known-issues catalog.
+- `.journal/TEST_REPORT.md` is the durable deliverable — future implementation work touching the relevant code paths should consult it.
+- All `.run/break-pass/<test-id>/` evidence files preserved in tree.
+- Dev stack stopped via `moon run root:dev-down` from master (3s clean shutdown).
+- No PR opened — this session produced no source code changes.
+- Snapshot/restore design work from the pre-pivot phase of session 029 (commits `8047673`, `50ff28f`, and `.journal/SNAPSHOT_DESIGN.md`) remains in the journal as the original session's first artifact; session 030 (opened in parallel by a separate agent) appears to be resuming that work.
+
+Worktrunk worktrees unchanged — no implementation worktree was created for this session (test-pass against master). The journal worktree at `.wt/journal-jmgilman` remains active for future session work.

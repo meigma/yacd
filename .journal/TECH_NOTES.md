@@ -327,3 +327,16 @@
   published auth token in flight. Disabling `kupo` while `faucet` is
   enabled is the most common path that triggers this; the clean
   cascade is to disable both in a single patch.
+- Known-issues catalog from the session-029 break-pass lives in
+  `.journal/TEST_REPORT.md`. Ten findings with reproductions and
+  suggested fixes, including F0 (mainnet artifact ConfigMap exceeds
+  Kubernetes' 1 MiB cap; mainnet cannot be created today),
+  D1 (faucet auth Secret deletion produces lying status + silent token
+  rotation), D2 (no `DeletionTimestamp` gate in `ApplyOwnedObject` →
+  silent lie during stuck Terminating + localnet data loss on
+  recovery), B1 (status-subresource forgery permanently bricks
+  CardanoNetwork because validation reads only status), and A4
+  (placement-conflict is symmetric — a competing primarySidecar claim
+  dethrones the existing incumbent every cycle). Consult before
+  touching the relevant code paths; the fix suggestions are concrete
+  and locally scoped.
