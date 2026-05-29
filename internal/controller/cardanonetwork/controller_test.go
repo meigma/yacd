@@ -100,6 +100,7 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	faucetAuthSecret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	assert.Equal(t, "creates-workload-network-artifacts", networkArtifactsConfigMap.Name)
 	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], networkArtifactsConfigMap.Annotations[localnetFingerprintAnno])
+	assertDeploymentFaucetAuthTokenHash(t, deployment, faucetAuthSecret)
 	assert.Equal(t, "creates-workload-artifact-publisher", artifactPublisherServiceAccount.Name)
 	require.NotNil(t, artifactPublisherServiceAccount.AutomountServiceAccountToken)
 	assert.False(t, *artifactPublisherServiceAccount.AutomountServiceAccountToken)
@@ -1046,6 +1047,8 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedOgmiosServiceWhenDisabled(
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.NotContains(t, deployment.Spec.Template.Annotations, faucetAuthTokenHashAnno)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Ogmios)
@@ -1126,6 +1129,8 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedKupoServiceWhenDisabled(t 
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.NotContains(t, deployment.Spec.Template.Annotations, faucetAuthTokenHashAnno)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
@@ -1220,6 +1225,8 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedFaucetChildrenWhenDisabled
 
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.NotContains(t, deployment.Spec.Template.Annotations, faucetAuthTokenHashAnno)
 	current = requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Faucet)
@@ -1580,11 +1587,41 @@ func TestCardanoNetworkReconcilerReconcilePreservesValidFaucetAuthToken(t *testi
 	require.NoError(t, err)
 
 	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	assert.Equal(t, foreignMetadataValue, secret.Labels["example.com/foreign-label"])
 	assert.Equal(t, "yacd", secret.Labels[labelAppManagedBy])
 	assert.Equal(t, foreignMetadataValue, secret.Annotations["example.com/foreign-annotation"])
 	assert.Equal(t, corev1.SecretTypeOpaque, secret.Type)
 	assert.Equal(t, validToken, string(secret.Data[faucetAuthTokenKey]))
+	assertDeploymentFaucetAuthTokenHash(t, deployment, secret)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
+func TestCardanoNetworkReconcilerReconcileRollsDeploymentForValidFaucetAuthTokenRotation(t *testing.T) {
+	const validToken = "abcdefghijklmnopqrstuvwxyzABCDEF1234567890"
+
+	ctx := context.Background()
+	network := localCardanoNetwork("rotates-faucet-token")
+	enableFaucet(network)
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	originalHash := deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno]
+
+	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	secret.Data[faucetAuthTokenKey] = []byte(validToken)
+	require.NoError(t, reconciler.Update(ctx, secret))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, validToken, string(secret.Data[faucetAuthTokenKey]))
+	assert.NotEqual(t, originalHash, deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno])
+	assertDeploymentFaucetAuthTokenHash(t, deployment, secret)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -1605,9 +1642,11 @@ func TestCardanoNetworkReconcilerReconcileRegeneratesInvalidFaucetAuthToken(t *t
 	require.NoError(t, err)
 
 	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	token := string(secret.Data[faucetAuthTokenKey])
 	assert.NotEqual(t, "short", token)
 	assert.True(t, validFaucetAuthToken(token))
+	assertDeploymentFaucetAuthTokenHash(t, deployment, secret)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -1620,6 +1659,9 @@ func TestCardanoNetworkReconcilerReconcileRepairsMissingFaucetAuthSecret(t *test
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	secret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	originalToken := string(secret.Data[faucetAuthTokenKey])
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	originalHash := deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno]
 	require.NoError(t, reconciler.Delete(ctx, secret))
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 
@@ -1627,7 +1669,12 @@ func TestCardanoNetworkReconcilerReconcileRepairsMissingFaucetAuthSecret(t *test
 	require.NoError(t, err)
 
 	secret = requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
-	assert.True(t, validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])))
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	token := string(secret.Data[faucetAuthTokenKey])
+	assert.NotEqual(t, originalToken, token)
+	assert.True(t, validFaucetAuthToken(token))
+	assert.NotEqual(t, originalHash, deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno])
+	assertDeploymentFaucetAuthTokenHash(t, deployment, secret)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
@@ -2947,6 +2994,13 @@ func requirePrimaryFaucetAuthSecret(
 	}, secret))
 
 	return secret
+}
+
+func assertDeploymentFaucetAuthTokenHash(t *testing.T, deployment *appsv1.Deployment, secret *corev1.Secret) {
+	t.Helper()
+
+	require.NotNil(t, deployment.Spec.Template.Annotations)
+	assert.Equal(t, faucetAuthTokenHash(secret), deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno])
 }
 
 func requireNetworkArtifactsConfigMap(

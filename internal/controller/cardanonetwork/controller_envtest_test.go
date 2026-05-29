@@ -348,6 +348,8 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return statusHasReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
 
+	recoverDeletedFaucetAuthSecret(t, ctx, apiClient, network, faucetAuthSecretKey, deploymentKey)
+
 	forgedNetwork := &yacdv1alpha1.CardanoNetwork{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), forgedNetwork))
 	require.NotNil(t, forgedNetwork.Status.Network)
@@ -943,6 +945,52 @@ func faucetEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1
 func faucetStatusMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
 	return current.Status.Faucet != nil &&
 		current.Status.Faucet.AuthSecretName == primaryFaucetAuthSecretName(network)
+}
+
+func recoverDeletedFaucetAuthSecret(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+	faucetAuthSecretKey client.ObjectKey,
+	deploymentKey client.ObjectKey,
+) {
+	t.Helper()
+
+	secret := &corev1.Secret{}
+	require.NoError(t, apiClient.Get(ctx, faucetAuthSecretKey, secret))
+	originalSecretUID := secret.UID
+	originalToken := string(secret.Data[faucetAuthTokenKey])
+	originalHash := faucetAuthTokenHash(secret)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
+	require.Equal(t, originalHash, deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno])
+
+	require.NoError(t, apiClient.Delete(ctx, secret))
+
+	require.Eventually(t, func() bool {
+		gotSecret := &corev1.Secret{}
+		if err := apiClient.Get(ctx, faucetAuthSecretKey, gotSecret); err != nil {
+			return false
+		}
+		gotDeployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
+			return false
+		}
+		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
+			return false
+		}
+
+		repairedHash := faucetAuthTokenHash(gotSecret)
+		return gotSecret.UID != originalSecretUID &&
+			string(gotSecret.Data[faucetAuthTokenKey]) != originalToken &&
+			gotDeployment.Spec.Template.Annotations[faucetAuthTokenHashAnno] == repairedHash &&
+			repairedHash != originalHash &&
+			conditionHas(currentNetwork, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing) &&
+			conditionHas(currentNetwork, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(

@@ -4,11 +4,9 @@
 // the shared helper a poor fit:
 //
 //  1. ApplyOwnedObject reads through [sigs.k8s.io/controller-runtime/pkg/client.Client]
-//     (the cached client). Secrets are not watched here (SetupWithManager
-//     does not Owns(&corev1.Secret{}) — adding Secret watches would
-//     materially increase watch traffic in YACD-managed namespaces, a cost
-//     the package deliberately avoided), so live Secret reads must go
-//     through r.liveReader() to bypass the manager cache.
+//     (the cached client). Faucet readiness and token-hash stamping must use
+//     live Secret data so stale cache reads cannot publish a misleading
+//     Deployment revision or Ready condition.
 //  2. ApplyOwnedObject's Mutate callback only runs for existing objects, so
 //     create-once data (here: the random auth token) cannot flow through
 //     it without a second pass.
@@ -22,7 +20,9 @@ package cardanonetwork
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"unicode"
 
@@ -48,10 +48,10 @@ const faucetAuthTokenByteLength = 32
 func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 	ctx context.Context,
 	desired *corev1.Secret,
-) (controllerutil.OperationResult, error) {
+) (controllerutil.OperationResult, *corev1.Secret, error) {
 	desired = desired.DeepCopy()
 	if err := r.defaultObject(desired); err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 
 	current := &corev1.Secret{}
@@ -60,7 +60,7 @@ func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 		return r.createFaucetAuthSecretWithToken(ctx, desired)
 	}
 	if err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 
 	return r.reconcileFaucetAuthSecret(ctx, current, desired)
@@ -71,19 +71,19 @@ func (r *CardanoNetworkReconciler) applyPrimaryFaucetAuthSecret(
 func (r *CardanoNetworkReconciler) createFaucetAuthSecretWithToken(
 	ctx context.Context,
 	desired *corev1.Secret,
-) (controllerutil.OperationResult, error) {
+) (controllerutil.OperationResult, *corev1.Secret, error) {
 	token, err := generateFaucetAuthToken()
 	if err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 	desired.Data = map[string][]byte{
 		faucetAuthTokenKey: []byte(token),
 	}
 	if err := r.Create(ctx, desired); err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 
-	return controllerutil.OperationResultCreated, nil
+	return controllerutil.OperationResultCreated, desired, nil
 }
 
 // reconcileFaucetAuthSecret handles the live-Secret-exists branch:
@@ -95,9 +95,9 @@ func (r *CardanoNetworkReconciler) reconcileFaucetAuthSecret(
 	ctx context.Context,
 	current *corev1.Secret,
 	desired *corev1.Secret,
-) (controllerutil.OperationResult, error) {
+) (controllerutil.OperationResult, *corev1.Secret, error) {
 	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 
 	before := current.DeepCopy()
@@ -109,19 +109,19 @@ func (r *CardanoNetworkReconciler) reconcileFaucetAuthSecret(
 	if !validFaucetAuthToken(string(current.Data[faucetAuthTokenKey])) {
 		token, err := generateFaucetAuthToken()
 		if err != nil {
-			return controllerutil.OperationResultNone, err
+			return controllerutil.OperationResultNone, nil, err
 		}
 		current.Data[faucetAuthTokenKey] = []byte(token)
 	}
 
 	if equality.Semantic.DeepEqual(before, current) {
-		return controllerutil.OperationResultNone, nil
+		return controllerutil.OperationResultNone, current, nil
 	}
 	if err := r.Patch(ctx, current, client.MergeFrom(before)); err != nil {
-		return controllerutil.OperationResultNone, err
+		return controllerutil.OperationResultNone, nil, err
 	}
 
-	return controllerutil.OperationResultUpdated, nil
+	return controllerutil.OperationResultUpdated, current, nil
 }
 
 // generateFaucetAuthToken returns a base64url-encoded random token. The
@@ -134,6 +134,14 @@ func generateFaucetAuthToken() (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(tokenBytes[:]), nil
+}
+
+// faucetAuthTokenHash returns the stable Deployment revision value for the
+// live token bytes. The caller validates and repairs the token before hashing.
+func faucetAuthTokenHash(secret *corev1.Secret) string {
+	sum := sha256.Sum256(secret.Data[faucetAuthTokenKey])
+
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // validFaucetAuthToken reports whether the given token meets the minimum
