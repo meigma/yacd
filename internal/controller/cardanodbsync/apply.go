@@ -506,9 +506,10 @@ func (r *CardanoDBSyncReconciler) applyDBSyncConfigMap(
 	desired *corev1.ConfigMap,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.ConfigMap]{
-		Current:       &corev1.ConfigMap{},
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutateDBSyncConfigMap,
+		Current:        &corev1.ConfigMap{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.ConfigMap],
+		Mutate:         mutateDBSyncConfigMap,
 	})
 	return result, err
 }
@@ -519,9 +520,10 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPGPassSecret(
 	desired *corev1.Secret,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.Secret]{
-		Current:       &corev1.Secret{},
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutateDBSyncPGPassSecret,
+		Current:        &corev1.Secret{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.Secret],
+		Mutate:         mutateDBSyncPGPassSecret,
 	})
 	return result, err
 }
@@ -534,11 +536,12 @@ func (r *CardanoDBSyncReconciler) applyDBSyncPersistentVolumeClaim(
 	desired *corev1.PersistentVolumeClaim,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.PersistentVolumeClaim]{
-		Current:       &corev1.PersistentVolumeClaim{},
-		OwnerConflict: controllerOwnerConflict,
-		Validate:      validateDBSyncPersistentVolumeClaim,
-		Mutate:        mutateDBSyncPersistentVolumeClaim,
-		UpdateMode:    ctrlapply.UpdateModeUpdate,
+		Current:        &corev1.PersistentVolumeClaim{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.PersistentVolumeClaim],
+		Validate:       validateDBSyncPersistentVolumeClaim,
+		Mutate:         mutateDBSyncPersistentVolumeClaim,
+		UpdateMode:     ctrlapply.UpdateModeUpdate,
 		UpdateError: func(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim, err error) error {
 			return controllerstorage.PersistentVolumeClaimUpdateError(string(conditionReasonStorageExpansionRejected), current, desired, err)
 		},
@@ -554,11 +557,12 @@ func (r *CardanoDBSyncReconciler) applyDBSyncDeployment(
 	desired *appsv1.Deployment,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*appsv1.Deployment]{
-		Current:       &appsv1.Deployment{},
-		Default:       func(desired *appsv1.Deployment) error { return r.defaultObject(desired) },
-		OwnerConflict: controllerOwnerConflict,
-		Validate:      validateDBSyncDeployment,
-		Mutate:        mutateDBSyncDeployment,
+		Current:        &appsv1.Deployment{},
+		Default:        func(desired *appsv1.Deployment) error { return r.defaultObject(desired) },
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*appsv1.Deployment],
+		Validate:       validateDBSyncDeployment,
+		Mutate:         mutateDBSyncDeployment,
 	})
 	return result, err
 }
@@ -571,10 +575,11 @@ func (r *CardanoDBSyncReconciler) applyDBSyncService(
 	desired *corev1.Service,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.Service]{
-		Current:       &corev1.Service{},
-		Default:       func(desired *corev1.Service) error { return r.defaultObject(desired) },
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutateDBSyncService,
+		Current:        &corev1.Service{},
+		Default:        func(desired *corev1.Service) error { return r.defaultObject(desired) },
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.Service],
+		Mutate:         mutateDBSyncService,
 	})
 	return result, err
 }

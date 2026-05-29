@@ -41,6 +41,8 @@ const (
 	conditionReasonStorageExpansionRejected     conditionReason = "StorageExpansionRejected"
 	conditionReasonUnsupportedWorkloadChange    conditionReason = "UnsupportedWorkloadChange"
 	conditionReasonResourceConflict             conditionReason = "ResourceConflict"
+	conditionReasonChildBeingDeleted            conditionReason = "ChildBeingDeleted"
+	conditionReasonPrimaryStateLost             conditionReason = "PrimaryStateLost"
 	conditionReasonDeploymentProgressing        conditionReason = "DeploymentProgressing"
 	conditionReasonReady                        conditionReason = "Ready"
 	conditionReasonPrimaryWorkloadMissing       conditionReason = "PrimaryWorkloadMissing"

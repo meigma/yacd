@@ -31,13 +31,18 @@ import (
 func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 	ctx context.Context,
 	desired *corev1.PersistentVolumeClaim,
+	acceptedIdentity acceptedNetworkIdentity,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.PersistentVolumeClaim]{
 		Current:       &corev1.PersistentVolumeClaim{},
 		OwnerConflict: controllerOwnerConflict,
-		Validate:      validatePrimaryPersistentVolumeClaim,
-		Mutate:        mutatePrimaryPersistentVolumeClaim,
-		UpdateMode:    ctrlapply.UpdateModeUpdate,
+		ValidateCreate: func(desired *corev1.PersistentVolumeClaim) error {
+			return validatePrimaryPersistentVolumeClaimCreate(desired, acceptedIdentity)
+		},
+		ObjectDeleting: childBeingDeleted[*corev1.PersistentVolumeClaim],
+		Validate:       validatePrimaryPersistentVolumeClaim,
+		Mutate:         mutatePrimaryPersistentVolumeClaim,
+		UpdateMode:     ctrlapply.UpdateModeUpdate,
 		UpdateError: func(current *corev1.PersistentVolumeClaim, desired *corev1.PersistentVolumeClaim, err error) error {
 			return controllerstorage.PersistentVolumeClaimUpdateError(string(conditionReasonStorageExpansionRejected), current, desired, err)
 		},
@@ -52,16 +57,20 @@ func (r *CardanoNetworkReconciler) applyPrimaryPersistentVolumeClaim(
 func (r *CardanoNetworkReconciler) validateAcceptedPrimaryPersistentVolumeClaim(
 	ctx context.Context,
 	desired *corev1.PersistentVolumeClaim,
+	acceptedIdentity acceptedNetworkIdentity,
 ) error {
 	current := &corev1.PersistentVolumeClaim{}
 	if err := r.Get(ctx, ctrlmetadata.ObjectKey(desired), current); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil
+			return validatePrimaryPersistentVolumeClaimCreate(desired, acceptedIdentity)
 		}
 		return err
 	}
 	if err := validateControllerOwner(current, desired); err != nil {
 		return err
+	}
+	if !current.DeletionTimestamp.IsZero() {
+		return childBeingDeleted(current, desired)
 	}
 
 	return validateLocalnetFingerprint(current, desired)
@@ -73,11 +82,12 @@ func (r *CardanoNetworkReconciler) applyPrimaryDeployment(
 	desired *appsv1.Deployment,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*appsv1.Deployment]{
-		Current:       &appsv1.Deployment{},
-		Default:       func(desired *appsv1.Deployment) error { return r.defaultObject(desired) },
-		OwnerConflict: controllerOwnerConflict,
-		Validate:      validatePrimaryDeployment,
-		Mutate:        mutatePrimaryDeployment,
+		Current:        &appsv1.Deployment{},
+		Default:        func(desired *appsv1.Deployment) error { return r.defaultObject(desired) },
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*appsv1.Deployment],
+		Validate:       validatePrimaryDeployment,
+		Mutate:         mutatePrimaryDeployment,
 	})
 	return result, err
 }
@@ -182,9 +192,10 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherServiceAccount(
 	desired *corev1.ServiceAccount,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.ServiceAccount]{
-		Current:       &corev1.ServiceAccount{},
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutateArtifactPublisherServiceAccount,
+		Current:        &corev1.ServiceAccount{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.ServiceAccount],
+		Mutate:         mutateArtifactPublisherServiceAccount,
 	})
 	return result, err
 }
@@ -196,9 +207,10 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherRole(
 	desired *rbacv1.Role,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*rbacv1.Role]{
-		Current:       &rbacv1.Role{},
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutateArtifactPublisherRole,
+		Current:        &rbacv1.Role{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*rbacv1.Role],
+		Mutate:         mutateArtifactPublisherRole,
 	})
 	return result, err
 }
@@ -210,10 +222,11 @@ func (r *CardanoNetworkReconciler) applyArtifactPublisherRoleBinding(
 	desired *rbacv1.RoleBinding,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*rbacv1.RoleBinding]{
-		Current:       &rbacv1.RoleBinding{},
-		OwnerConflict: controllerOwnerConflict,
-		Validate:      validateArtifactPublisherRoleBinding,
-		Mutate:        mutateArtifactPublisherRoleBinding,
+		Current:        &rbacv1.RoleBinding{},
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*rbacv1.RoleBinding],
+		Validate:       validateArtifactPublisherRoleBinding,
+		Mutate:         mutateArtifactPublisherRoleBinding,
 	})
 	return result, err
 }
@@ -227,10 +240,11 @@ func (r *CardanoNetworkReconciler) applyPrimaryService(
 	desired *corev1.Service,
 ) (controllerutil.OperationResult, error) {
 	result, _, err := ctrlapply.ApplyOwnedObject(ctx, r.Client, desired, ctrlapply.OwnedObjectOptions[*corev1.Service]{
-		Current:       &corev1.Service{},
-		Default:       func(desired *corev1.Service) error { return r.defaultObject(desired) },
-		OwnerConflict: controllerOwnerConflict,
-		Mutate:        mutatePrimaryService,
+		Current:        &corev1.Service{},
+		Default:        func(desired *corev1.Service) error { return r.defaultObject(desired) },
+		OwnerConflict:  controllerOwnerConflict,
+		ObjectDeleting: childBeingDeleted[*corev1.Service],
+		Mutate:         mutatePrimaryService,
 	})
 	return result, err
 }

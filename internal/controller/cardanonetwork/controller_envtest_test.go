@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,8 +49,10 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
 
+	skipNameValidation := true
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:                 scheme,
+		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
 		Metrics:                metricsserver.Options{BindAddress: "0"},
 		HealthProbeBindAddress: "0",
 	})
@@ -165,19 +168,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		got := &appsv1.Deployment{}
 		err := apiClient.Get(ctx, deploymentKey, got)
 		return err == nil && got.UID != originalUID
-	}, 10*time.Second, 100*time.Millisecond)
-
-	pvc := &corev1.PersistentVolumeClaim{}
-	require.NoError(t, apiClient.Get(ctx, pvcKey, pvc))
-	originalPVCUID := pvc.UID
-	pvc.Finalizers = nil
-	require.NoError(t, apiClient.Update(ctx, pvc))
-	require.NoError(t, apiClient.Delete(ctx, pvc))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.PersistentVolumeClaim{}
-		err := apiClient.Get(ctx, pvcKey, got)
-		return err == nil && got.UID != originalPVCUID
 	}, 10*time.Second, 100*time.Millisecond)
 
 	service := &corev1.Service{}
@@ -444,6 +434,125 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 
 	envtestNow = envtestNow.Add(30 * time.Second)
 	suppressCorruptedNetworkArtifactsConfigMapDuringCooldown(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey)
+}
+
+func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	require.NoError(t, (&CardanoNetworkReconciler{
+		Client: mgr.GetClient(),
+		Reader: mgr.GetAPIReader(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanonetwork-pvc-deletion"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	network := localCardanoNetwork("state-loss")
+	network.Namespace = namespace.Name
+	require.NoError(t, apiClient.Create(ctx, network))
+
+	pvcKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryNodeStatePVCName(network)}
+	deploymentKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
+	require.Eventually(t, func() bool {
+		pvc := &corev1.PersistentVolumeClaim{}
+		if err := apiClient.Get(ctx, pvcKey, pvc); err != nil {
+			return false
+		}
+		deployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, deployment); err != nil {
+			return false
+		}
+
+		return pvc.Annotations[localnetFingerprintAnno] != "" &&
+			deployment.Spec.Template.Annotations[localnetFingerprintAnno] != ""
+	}, 10*time.Second, 100*time.Millisecond)
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, apiClient.Get(ctx, pvcKey, pvc))
+	originalPVCUID := pvc.UID
+	pvc.Finalizers = []string{"test.example.io/never-removed"}
+	require.NoError(t, apiClient.Update(ctx, pvc))
+	require.NoError(t, apiClient.Delete(ctx, pvc))
+
+	require.Eventually(t, func() bool {
+		gotPVC := &corev1.PersistentVolumeClaim{}
+		if err := apiClient.Get(ctx, pvcKey, gotPVC); err != nil {
+			return false
+		}
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+			return false
+		}
+		degraded := findCondition(current, conditionTypeDegraded)
+
+		return gotPVC.UID == originalPVCUID &&
+			!gotPVC.DeletionTimestamp.IsZero() &&
+			degraded != nil &&
+			degraded.Status == metav1.ConditionTrue &&
+			degraded.Reason == string(conditionReasonChildBeingDeleted) &&
+			strings.Contains(degraded.Message, pvcKey.Name) &&
+			strings.Contains(degraded.Message, "test.example.io/never-removed")
+	}, 10*time.Second, 100*time.Millisecond)
+
+	require.NoError(t, apiClient.Get(ctx, pvcKey, pvc))
+	pvc.Finalizers = nil
+	require.NoError(t, apiClient.Update(ctx, pvc))
+
+	require.Eventually(t, func() bool {
+		err := apiClient.Get(ctx, pvcKey, &corev1.PersistentVolumeClaim{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond)
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+			return false
+		}
+		return conditionHas(current, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonPrimaryStateLost) &&
+			conditionHas(current, conditionTypeReady, metav1.ConditionFalse, conditionReasonPrimaryStateLost) &&
+			conditionHas(current, conditionTypeNodeReady, metav1.ConditionFalse, conditionReasonPrimaryStateLost)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	err = apiClient.Get(ctx, pvcKey, &corev1.PersistentVolumeClaim{})
+	require.True(t, apierrors.IsNotFound(err), "expected primary state PVC to remain absent, got %v", err)
 }
 
 func TestCardanoNetworkControllerManagerHandlesCustomProfileSources(t *testing.T) {

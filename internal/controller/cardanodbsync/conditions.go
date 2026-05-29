@@ -40,6 +40,7 @@ const (
 	conditionReasonUnsupportedWorkloadChange         conditionReason = "UnsupportedWorkloadChange"
 	conditionReasonUnsupportedDatabaseIdentityChange conditionReason = "UnsupportedDatabaseIdentityChange"
 	conditionReasonResourceConflict                  conditionReason = "ResourceConflict"
+	conditionReasonChildBeingDeleted                 conditionReason = "ChildBeingDeleted"
 	conditionReasonWorkloadMissing                   conditionReason = "WorkloadMissing"
 	conditionReasonDeploymentProgressing             conditionReason = "DeploymentProgressing"
 	conditionReasonDedicatedFollowerPlacement        conditionReason = "DedicatedFollowerPlacement"

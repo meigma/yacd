@@ -33,6 +33,15 @@ type OwnedObjectOptions[T client.Object] struct {
 	// OwnerConflict maps a generic owner conflict into the caller's status
 	// error contract.
 	OwnerConflict func(error) error
+	// ValidateCreate runs before creating a missing owned object. Callers use
+	// this to reject unsafe recreation when another owned runtime object proves
+	// the child existed before.
+	ValidateCreate func(desired T) error
+	// ObjectDeleting maps an existing owned object with a deletionTimestamp
+	// into the caller's status error contract. It runs before Validate or
+	// Mutate because objects already being deleted cannot safely accept
+	// reconciled state.
+	ObjectDeleting func(current T, desired T) error
 	// Validate runs for existing objects after owner validation and before
 	// mutation. It is not called for newly-created objects.
 	Validate func(current T, desired T) error
@@ -77,6 +86,11 @@ func ApplyOwnedObject[T client.Object](
 	current := options.Current
 	err = c.Get(ctx, ctrlmetadata.ObjectKey(desiredCopy), current)
 	if apierrors.IsNotFound(err) {
+		if options.ValidateCreate != nil {
+			if err := options.ValidateCreate(desiredCopy); err != nil {
+				return controllerutil.OperationResultNone, zero, err
+			}
+		}
 		if err := c.Create(ctx, desiredCopy); err != nil {
 			return controllerutil.OperationResultNone, zero, err
 		}
@@ -92,6 +106,15 @@ func ApplyOwnedObject[T client.Object](
 			err = options.OwnerConflict(err)
 		}
 		return controllerutil.OperationResultNone, current, err
+	}
+	if !current.GetDeletionTimestamp().IsZero() {
+		if options.ObjectDeleting != nil {
+			if err := options.ObjectDeleting(current, desiredCopy); err != nil {
+				return controllerutil.OperationResultNone, current, err
+			}
+			return controllerutil.OperationResultNone, current, nil
+		}
+		return controllerutil.OperationResultNone, current, fmt.Errorf("owned object %s is being deleted", ctrlmetadata.ObjectKey(current))
 	}
 	if options.Validate != nil {
 		if err := options.Validate(current, desiredCopy); err != nil {

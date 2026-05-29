@@ -11,6 +11,8 @@
 // labels or annotations that define the controller-owned identity. Defaulting is
 // optional and runs against a deep copy of desired before create/read logic so
 // API-defaulted desired state can be compared consistently with live state. If
-// the object is missing, that defaulted desired copy is created directly;
-// Validate and Mutate callbacks are not invoked on the create path.
+// the object is missing, ValidateCreate may reject unsafe recreation before
+// that defaulted desired copy is created. Validate and Mutate callbacks are not
+// invoked on the create path, and ObjectDeleting blocks mutation of live
+// objects whose deletion is already in flight.
 package apply
