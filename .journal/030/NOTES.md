@@ -145,3 +145,19 @@ Emerging vocabulary: up/down/list/info/connect/disconnect/run/exec/topup, all
 keyed on NAME [-n ns]. Make-or-break risk unchanged (CI runner ceiling — gating
 spike still needed). Next: fold into TEST_HARNESS_DESIGN.md or keep iterating on
 vocabulary (run-vs-connect defaults, exact env var names). Awaiting user.
+
+## 2026-05-29 — Drafted converged design proposal
+User agreed with refinements (esp. run/exec) and deprioritized connect --detach
+(too complex for v1; foreground connect only). Wrote
+.journal/030/TEST_HARNESS_PROPOSAL.md — the converged human-authored design that
+REFINES the workflow report (TEST_HARNESS_DESIGN.md stays as the analysis/
+alternatives record). Captures: spec-is-shape/identity-is-CLI-arg (drop metadata
+from devconfig), fresh-build-only, YACD_* env-var contract as the integration
+surface, one port-forward engine with three ergonomics (connect foreground+
+supervised / run scoped+env / exec in-pod+socket), the cardano-cli socket
+caveat, name-as-identity + auto-created ownership-stamped namespaces (no
+auto-delete v1), verb table (up/down/list/info/connect/run/exec/topup --await/
+env), yacd-env JS GitHub Action, criteria fit, deferred/rejected, risks
+(CI runner ceiling UNVERIFIED, chart 0.0.0 unreleased, topup --await needs Kupo,
+ownerRef teardown unverified, exec assumes chain-API in primary pod), and
+smallest-first next steps. Status: proposal for review; no code yet.
