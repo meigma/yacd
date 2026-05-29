@@ -136,6 +136,13 @@
 - `yacd deploy --wait` must only trust `Ready` or `Degraded` conditions whose
   `observedGeneration` is at least the current object generation; otherwise an
   updated already-ready resource can report stale success.
+- A design (not yet implemented) for using the operator as a local/CI test
+  harness lives in `.journal/030/`: `TEST_HARNESS_PROPOSAL.md` (decided design —
+  fresh-build lifecycle, identity-as-CLI-arg, the `up/down/list/connect/run/exec`
+  verb set, the `YACD_*` env-var contract, and a `yacd-env` GitHub Action),
+  `TEST_HARNESS_PLAN.md` (phased work), and `TEST_HARNESS_DESIGN.md` (the
+  adversarial-workflow analysis and rejected alternatives, incl. why a bespoke
+  snapshot format was deferred in favor of fresh-build).
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
 - PR #3 introduced the first real API group/version with

@@ -179,3 +179,19 @@ guarded ns auto-delete, in-cluster exec mode, k3d in action, snapshot cache.
 Three journal artifacts now: TEST_HARNESS_DESIGN.md (workflow analysis/
 alternatives), TEST_HARNESS_PROPOSAL.md (decided design), TEST_HARNESS_PLAN.md
 (phased work). Status: all proposals for review; no code yet.
+
+## 2026-05-29 17:30 — Close
+Session 030 closed. Design-only session: NO code, NO implementation PR (all
+output is journal documentation on journal/jmgilman, which is never merged to
+master). User approved closeout ("LGTM").
+
+Artifacts delivered to .journal/030/: TEST_HARNESS_DESIGN.md (adversarial
+workflow report + rejected alternatives), TEST_HARNESS_PROPOSAL.md (decided
+design), TEST_HARNESS_PLAN.md (six-phase plan), SUMMARY.md (postmortem).
+INDEX.md row 030 added (complete); TECH_NOTES.md gained a pointer to the design.
+
+Handoff: design awaits implementation. Start at Plan Phase 0 (validate CI
+cold-start feasibility + teardown GC, using today's tooling) before building the
+CLI verbs/Action. Make-or-break unknown = KinD+localnet readiness within a
+hosted-runner budget. Operator/chart still unreleased (0.0.0) — gates the CI
+story. Dev stack not owned by this session (concurrent sessions manage it).
