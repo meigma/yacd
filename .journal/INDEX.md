@@ -34,3 +34,4 @@
 | 032 | 2026-05-28 | A4 primary-sidecar incumbent fix | complete | Fixed TEST_REPORT finding A4 by preserving the deterministic primary-sidecar incumbent under peer churn, manually validated the toggle scenario, and merged PR #50. |
 | 033 | 2026-05-29 | TEST_REPORT B1 derived identity fix | complete | Fixed TEST_REPORT finding B1 by deriving CardanoNetwork identity status from owned runtime material, manually validating recovery, and merging PR #51. |
 | 034 | 2026-05-29 | TEST_REPORT follow-through | complete | Fixed TEST_REPORT B2 by making CardanoDBSync accepted database identity authoritative from the owned state PVC annotation, merged PR #52, and cleaned up the dev stack/worktree. |
+| 035 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Continue fixing the remaining `.journal/TEST_REPORT.md` findings after A3, A4, B1, and B2 landed. |
