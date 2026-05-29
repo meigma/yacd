@@ -163,3 +163,15 @@ never satisfied") — passed on identical code in runs 1 and 3; flag in review, 
 a regression. PAUSED for user review; NOT merged. TODO on merge: update
 TECH_NOTES (supersede the earlier "use ko" note — the real fix is .dockerignore;
 ko would have left release broken) and confirm the 1.0.0 dry-run goes green.
+
+## 2026-05-29 14:40 — PR #55 merged
+User approved. Squash-merged PR #55 as `0bb852d` on master
+(`fix(build): re-include embedded publicnet profiles in docker context (#55)`).
+Deleted the remote `fix/manager-build-embed` branch, removed the worktree +
+merged local branch via `wt remove`, fast-forwarded local master to `0bb852d`.
+Updated TECH_NOTES: the e2e now runs in CI (~8m, full smoke incl. db-sync);
+documented the three CI-only root causes; corrected the build-path note (manager
+PRODUCTION build is `docker build .` via release.yml's build-push-action, NOT ko
+— ko is dev-only). Next: confirm the `release 1.0.0` release-please dry-run goes
+green now that master carries the .dockerignore fix (release-please rebases its
+branch on push to master).

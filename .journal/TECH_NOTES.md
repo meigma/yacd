@@ -160,19 +160,33 @@
   `exec` (in-pod `cardano-cli` over `/ipc/node.socket`) host-access paths both
   work and agree on the chain tip. Measured on a 4 vCPU/16 GB `ubuntu-latest`
   (public-repo runners were upgraded from 2 vCPU/7 GB); the 2-core private tier
-  is untested. Before Phase 4 wires a gating job, preload Ogmios/Kupo too
-  (Docker Hub rate-limit jitter) and fix the `test-e2e.sh` defect below.
-- `moon run root:test-e2e` (`.dev/scripts/test-e2e.sh`) is **broken** and has
-  been since the public profiles landed (2026-05-27): it builds the manager with
-  `docker build .`, but the root `.dockerignore` ignores everything and
-  re-includes only `**/*.go` + `go.{mod,sum}`, stripping the embedded
-  `internal/cardano/publicnet/profiles/*/*` assets, so
-  `//go:embed profiles/preview/* profiles/preprod/* profiles/mainnet/*` fails
-  with `pattern profiles/mainnet/*: no matching files found`. The task is
-  `runInCI: false`, which is why it went unnoticed. The operator's real build
-  path is **ko** (`.dev/ko-build.sh` / `.ko.yaml`, used by the dev stack and
-  release), which builds from the Go module tree so embeds resolve. Fix
-  `test-e2e.sh` to use ko (or re-include the profile assets in `.dockerignore`).
+  is untested. The e2e now runs in CI (see the e2e-job bullet below); when
+  Phase 4 builds the dedicated `yacd-env` action, also preload Ogmios/Kupo
+  (Docker Hub rate-limit jitter) and validate on a consumer's 2-core tier.
+- The KinD/Chainsaw e2e smoke now runs in CI as the `e2e` job in
+  `.github/workflows/ci.yml` (`moon run root:test-e2e`, ~8m on `ubuntu-latest`,
+  full smoke incl. CardanoDBSync managed Postgres). Landed in PR #55
+  (`0bb852d`). It had NEVER run on Linux before (only macOS locally), which
+  hid three CI-only issues, each masking the next:
+  1. The root `.dockerignore` ignored everything and re-included only
+     `**/*.go` + `go.{mod,sum}`, stripping the embedded
+     `internal/cardano/publicnet/profiles/**` assets, so the manager
+     `docker build` failed `//go:embed profiles/mainnet/*`
+     (`no matching files found`). Fixed by re-including the profiles. This same
+     bug also broke the manager image build in `release.yml` / release-dry-run
+     (the `release 1.0.0` dry-run was red on both arches) — so keep the
+     `.dockerignore` re-includes in sync with any new `//go:embed` the manager
+     gains.
+  2. The chainsaw test shells out to `moon run root:deploy`/`undeploy`, which
+     were `runInCI:false`; Moon filters those under `CI=true` ("No tasks
+     found"). Both are now `runInCI:true` (dev-up/dev-down stay false).
+  3. Chainsaw runs script `content` via `/usr/bin/sh` — dash on Linux, bash on
+     macOS — so `set -euo pipefail` was rejected. All inline scripts are now
+     `set -eu` (POSIX). Keep new chainsaw script steps dash-portable.
+  IMPORTANT: the manager image's PRODUCTION build path is `docker build .` (root
+  `Dockerfile` via `docker/build-push-action` in `release.yml`), NOT ko — ko
+  (`.dev/ko-build.sh`) is only the dev-stack/Tilt build. A `.dockerignore`/embed
+  regression breaks releases, not just the e2e.
 - Root `DESIGN.md` captures the current high-level architecture; `.journal/PLAN.md`
   captures the rough component sequence for the initial prototype.
 - PR #3 introduced the first real API group/version with
