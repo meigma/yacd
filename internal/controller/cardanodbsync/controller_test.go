@@ -3,6 +3,7 @@ package cardanodbsync
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -1347,6 +1349,56 @@ func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresPVCDrift(t *testi
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedStorageChange)
 }
 
+func TestCardanoDBSyncReconcilerReconcileSurfacesManagedPostgresStorageExpansionRejection(t *testing.T) {
+	ctx := context.Background()
+	dbSync := managedCardanoDBSync("dbsync", "ready-network")
+	twoGi := resource.MustParse("2Gi")
+	dbSync.Spec.Database.Managed.Storage = &yacdv1alpha1.CardanoDBSyncStorageSpec{
+		Size: &twoGi,
+	}
+	network := readyCardanoNetwork("ready-network")
+	rejection := apierrors.NewForbidden(
+		corev1.Resource("persistentvolumeclaims"),
+		managedPostgresPVCName(dbSync),
+		errors.New("only dynamically provisioned pvc can be resized and the storageclass that provisions the pvc must support resize"),
+	)
+	reconciler := newTestReconcilerWithInterceptor(t, interceptor.Funcs{
+		Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+			if _, ok := obj.(*corev1.PersistentVolumeClaim); ok && obj.GetName() == managedPostgresPVCName(dbSync) {
+				return rejection
+			}
+
+			return c.Update(ctx, obj, opts...)
+		},
+	}, dbSync, network, artifactConfigMapFor(network))
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+
+	current := requireDBSync(t, ctx, reconciler, dbSync)
+	fiveGi := resource.MustParse("5Gi")
+	current.Spec.Database.Managed.Storage = &yacdv1alpha1.CardanoDBSyncStorageSpec{
+		Size: &fiveGi,
+	}
+	current.Generation = 2
+	require.NoError(t, reconciler.Update(ctx, current))
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+	require.NoError(t, err)
+	assert.Empty(t, result)
+
+	pvc := requireManagedPostgresPVC(t, ctx, reconciler, dbSync)
+	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	assert.Zero(t, storage.Cmp(resource.MustParse("2Gi")))
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonStorageExpansionRejected)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonStorageExpansionRejected)
+	current = requireDBSync(t, ctx, reconciler, dbSync)
+	degraded := apimeta.FindStatusCondition(current.Status.Conditions, string(conditionTypeDegraded))
+	require.NotNil(t, degraded)
+	assert.Contains(t, degraded.Message, "storage expansion from 2Gi to 5Gi was rejected by Kubernetes")
+	assert.Contains(t, degraded.Message, "only dynamically provisioned pvc can be resized")
+}
+
 func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresIdentityMutationBeforeApply(t *testing.T) {
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
@@ -1783,6 +1835,19 @@ func requireDBSyncStatePVC(
 	return pvc
 }
 
+func requireManagedPostgresPVC(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoDBSyncReconciler,
+	dbSync *yacdv1alpha1.CardanoDBSync,
+) *corev1.PersistentVolumeClaim {
+	t.Helper()
+
+	pvc := &corev1.PersistentVolumeClaim{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: managedPostgresPVCName(dbSync)}, pvc))
+	return pvc
+}
+
 func requireContainerSpec(t *testing.T, deployment *appsv1.Deployment, name string) corev1.Container {
 	t.Helper()
 
@@ -1932,6 +1997,12 @@ func markManagedPostgresPodReady(
 func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoDBSyncReconciler {
 	t.Helper()
 
+	return newTestReconcilerWithInterceptor(t, interceptor.Funcs{}, objects...)
+}
+
+func newTestReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objects ...client.Object) *CardanoDBSyncReconciler {
+	t.Helper()
+
 	scheme := runtime.NewScheme()
 	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
 	require.NoError(t, appsv1.AddToScheme(scheme))
@@ -1939,6 +2010,7 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *CardanoDBSyncRec
 
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
+		WithInterceptorFuncs(funcs).
 		WithStatusSubresource(&yacdv1alpha1.CardanoDBSync{}, &yacdv1alpha1.CardanoNetwork{}, &appsv1.Deployment{}, &corev1.Pod{})
 	builder.WithIndex(&yacdv1alpha1.CardanoDBSync{}, cardanoDBSyncNetworkRefNameField, cardanoDBSyncNetworkRefIndexer)
 	builder.WithObjects(objects...)

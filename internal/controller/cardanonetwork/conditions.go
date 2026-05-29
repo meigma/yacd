@@ -38,6 +38,7 @@ const (
 	conditionReasonMissingNetworkFingerprint    conditionReason = "MissingNetworkFingerprint"
 	conditionReasonMissingLocalnetFingerprint   conditionReason = "MissingLocalnetFingerprint"
 	conditionReasonUnsupportedStorageChange     conditionReason = "UnsupportedStorageChange"
+	conditionReasonStorageExpansionRejected     conditionReason = "StorageExpansionRejected"
 	conditionReasonUnsupportedWorkloadChange    conditionReason = "UnsupportedWorkloadChange"
 	conditionReasonResourceConflict             conditionReason = "ResourceConflict"
 	conditionReasonDeploymentProgressing        conditionReason = "DeploymentProgressing"
