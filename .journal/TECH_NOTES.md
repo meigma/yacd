@@ -26,6 +26,15 @@
   artifact ConfigMap data/hash before applying workloads, scales the Deployment
   to zero on hard prerequisite failure, and uses owned-child watches rather than
   placeholder resources.
+- A `CardanoDBSync` database identity is accepted from owned runtime material:
+  the db-sync state PVC annotation
+  `yacd.meigma.io/dbsync-database-identity` is authoritative, while
+  `status.database.acceptedIdentityFingerprint` is controller-published derived
+  status. Parent reconciles intentionally enqueue accepted-identity status-only
+  changes so forged or cleared status self-heals from the PVC annotation without
+  a spec bump. If desired identity-affecting inputs drift after acceptance,
+  reconcile stops before workload mutation and sets
+  `UnsupportedDatabaseIdentityChange`.
 - `internal/cardano/dbsync` is the Kubernetes-free planner for db-sync config,
   topology, invocation args, environment, plan fingerprint, and database
   identity fingerprint. The accepted database identity includes network
@@ -338,15 +347,7 @@
   enabled is the most common path that triggers this; the clean
   cascade is to disable both in a single patch.
 - Known-issues catalog from the session-029 break-pass lives in
-  `.journal/TEST_REPORT.md`. Ten findings with reproductions and
-  suggested fixes, including F0 (mainnet artifact ConfigMap exceeds
-  Kubernetes' 1 MiB cap; mainnet cannot be created today),
-  D1 (faucet auth Secret deletion produces lying status + silent token
-  rotation), D2 (no `DeletionTimestamp` gate in `ApplyOwnedObject` →
-  silent lie during stuck Terminating + localnet data loss on
-  recovery), B1 (status-subresource forgery permanently bricks
-  CardanoNetwork because validation reads only status), and A4
-  (placement-conflict is symmetric — a competing primarySidecar claim
-  dethrones the existing incumbent every cycle). Consult before
-  touching the relevant code paths; the fix suggestions are concrete
-  and locally scoped.
+  `.journal/TEST_REPORT.md`. A3, A4, B1, and B2 have been fixed in later
+  sessions. Remaining findings with concrete reproductions and suggested fixes
+  include B6, D1, D2, D6, F0, and F2/F4; consult the report before touching the
+  relevant code paths.
