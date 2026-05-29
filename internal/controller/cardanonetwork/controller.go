@@ -18,6 +18,7 @@ import (
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -98,6 +99,11 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	acceptedIdentity, err := r.acceptedNetworkIdentity(ctx, network)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	publicCustomBundle, err := r.publicCustomProfileBundle(ctx, network)
 	var resources *primaryWorkloadResources
 	if err == nil {
@@ -105,6 +111,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			scheme:                     r.Scheme,
 			defaultFaucetImage:         r.DefaultFaucetImage,
 			defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+			acceptedIdentity:           acceptedIdentity,
 			dbSyncAttachment:           dbSyncAttachment.Attachment,
 			publicCustomBundle:         publicCustomBundle,
 		}).Build(network)
@@ -128,6 +135,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			)
 		}
 		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
+			primaryNetworkPlan{},
+			acceptedNetworkIdentity{},
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
 			progressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, string(conditionReasonUnsupportedSpec), conditionMessagePrimaryWorkloadUnsupported),
@@ -144,19 +153,19 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	if err := validateAcceptedNetworkFingerprint(network, resources.NetworkPlan); err != nil {
-		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
+	if err := validateAcceptedNetworkFingerprint(acceptedIdentity, resources.NetworkPlan); err != nil {
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 	if err := r.validateAcceptedPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim); err != nil {
-		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
 	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources)
 	if err != nil {
-		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
+		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -427,6 +436,8 @@ func (r *CardanoNetworkReconciler) applyOrDeletePrimaryChainAPIService(
 func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
+	networkPlan primaryNetworkPlan,
+	acceptedIdentity acceptedNetworkIdentity,
 	dbSyncAttached bool,
 	dbSyncAttachmentCondition metav1.Condition,
 	err error,
@@ -454,6 +465,8 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		dbSyncAttachment = dbSyncAttachmentCondition
 	}
 	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
+		networkPlan,
+		acceptedIdentity,
 		degradedCondition(metav1.ConditionTrue, reason, conditionErr.Message),
 		progressingCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
@@ -483,7 +496,7 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Info("Starting CardanoNetwork controller")
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(predicate.GenerationChangedPredicate{})).
+		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(cardanoNetworkEventPredicate())).
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
 		Watches(&corev1.ConfigMap{}, r.customProfileConfigMapEventHandler()).
 		Watches(&corev1.Secret{}, r.customProfileSecretEventHandler()).
@@ -496,4 +509,32 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&rbacv1.RoleBinding{}).
 		Named(controllerName).
 		Complete(r)
+}
+
+func cardanoNetworkEventPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			oldNetwork, oldOK := e.ObjectOld.(*yacdv1alpha1.CardanoNetwork)
+			newNetwork, newOK := e.ObjectNew.(*yacdv1alpha1.CardanoNetwork)
+			if !oldOK || !newOK {
+				return true
+			}
+			if oldNetwork.Generation != newNetwork.Generation {
+				return true
+			}
+
+			return networkIdentityStatusFingerprintsChanged(oldNetwork, newNetwork)
+		},
+	}
+}
+
+func networkIdentityStatusFingerprintsChanged(oldNetwork *yacdv1alpha1.CardanoNetwork, newNetwork *yacdv1alpha1.CardanoNetwork) bool {
+	oldIdentity := oldNetwork.Status.Network
+	newIdentity := newNetwork.Status.Network
+	if oldIdentity == nil || newIdentity == nil {
+		return oldIdentity != newIdentity
+	}
+
+	return oldIdentity.NetworkFingerprint != newIdentity.NetworkFingerprint ||
+		oldIdentity.LocalnetFingerprint != newIdentity.LocalnetFingerprint
 }

@@ -3,7 +3,6 @@ package cardanonetwork
 import (
 	"fmt"
 
-	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	controllerstorage "github.com/meigma/yacd/internal/controller/storage"
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
@@ -154,17 +153,15 @@ func validateControllerOwner(current metav1.Object, desired metav1.Object) error
 
 // validateAcceptedNetworkFingerprint rejects desired-state changes that would
 // alter network inputs after the CardanoNetwork has accepted a fingerprint.
-// The CardanoNetwork must be deleted and recreated to change network
-// parameters. Localnet status written before the mode-neutral field existed is
-// accepted through the localnetFingerprint fallback.
-func validateAcceptedNetworkFingerprint(network *yacdv1alpha1.CardanoNetwork, desired primaryNetworkPlan) error {
-	if network.Status.Network == nil {
+// The acceptance source is owned runtime material, not CardanoNetwork status.
+func validateAcceptedNetworkFingerprint(acceptedIdentity acceptedNetworkIdentity, desired primaryNetworkPlan) error {
+	if acceptedIdentity.empty() {
 		return nil
 	}
 
 	if desiredLocalnetFingerprint := desired.localnetFingerprint(); desiredLocalnetFingerprint != "" &&
-		network.Status.Network.LocalnetFingerprint != "" {
-		if network.Status.Network.LocalnetFingerprint == desiredLocalnetFingerprint {
+		acceptedIdentity.LocalnetFingerprint != "" {
+		if acceptedIdentity.LocalnetFingerprint == desiredLocalnetFingerprint {
 			return nil
 		}
 		return unsupportedLocalnetChange(
@@ -172,10 +169,10 @@ func validateAcceptedNetworkFingerprint(network *yacdv1alpha1.CardanoNetwork, de
 		)
 	}
 
-	if network.Status.Network.NetworkFingerprint == "" {
+	if acceptedIdentity.NetworkFingerprint == "" {
 		return nil
 	}
-	if network.Status.Network.NetworkFingerprint == desired.Fingerprint {
+	if acceptedIdentity.NetworkFingerprint == desired.Fingerprint {
 		return nil
 	}
 

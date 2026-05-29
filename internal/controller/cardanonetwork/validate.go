@@ -4,8 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 )
 
 // validateKupoImage rejects kupo images other than the single supported
@@ -102,22 +100,20 @@ func validateOgmiosCompatibility(nodeVersion string, settings ogmiosSettings) er
 	)
 }
 
-// acceptedNetworkFingerprintChanged reports whether the CardanoNetwork's
-// accepted network fingerprint differs from a freshly computed one.
+// acceptedNetworkFingerprintChanged reports whether the accepted
+// mode-neutral network fingerprint from owned runtime material differs from
+// a freshly computed one.
 //
 // When this returns true, builder validation skips the ogmios/node
 // compatibility check because the CR is going to be rejected as
 // UnsupportedNetworkChange anyway and we want the reconciler to surface
 // that specific error rather than the (less actionable) compatibility error.
-func acceptedNetworkFingerprintChanged(network *yacdv1alpha1.CardanoNetwork, networkFingerprint string) bool {
-	if network.Status.Network == nil {
-		return false
+func acceptedNetworkFingerprintChanged(acceptedIdentity acceptedNetworkIdentity, networkFingerprint string) bool {
+	if acceptedIdentity.NetworkFingerprint != "" {
+		return acceptedIdentity.NetworkFingerprint != networkFingerprint
 	}
-	if network.Status.Network.NetworkFingerprint != "" {
-		return network.Status.Network.NetworkFingerprint != networkFingerprint
-	}
-	return network.Status.Network.LocalnetFingerprint != "" &&
-		network.Status.Network.LocalnetFingerprint != networkFingerprint
+	return acceptedIdentity.LocalnetFingerprint != "" &&
+		acceptedIdentity.LocalnetFingerprint != networkFingerprint
 }
 
 // ogmiosCompatibilityKey extracts the major.minor key (e.g. "v6.14") from

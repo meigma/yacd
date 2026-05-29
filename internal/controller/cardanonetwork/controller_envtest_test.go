@@ -348,6 +348,28 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return statusHasReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
 
+	forgedNetwork := &yacdv1alpha1.CardanoNetwork{}
+	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), forgedNetwork))
+	require.NotNil(t, forgedNetwork.Status.Network)
+	baselineNetworkFingerprint := forgedNetwork.Status.Network.NetworkFingerprint
+	baselineLocalnetFingerprint := forgedNetwork.Status.Network.LocalnetFingerprint
+	require.NotEmpty(t, baselineNetworkFingerprint)
+	require.NotEmpty(t, baselineLocalnetFingerprint)
+	forgedNetwork.Status.Network.NetworkFingerprint = "deadbeef-forged-network"
+	forgedNetwork.Status.Network.LocalnetFingerprint = forgedLocalnetFingerprint
+	require.NoError(t, apiClient.Status().Update(ctx, forgedNetwork))
+
+	require.Eventually(t, func() bool {
+		repaired := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), repaired); err != nil {
+			return false
+		}
+		return repaired.Status.Network != nil &&
+			repaired.Status.Network.NetworkFingerprint == baselineNetworkFingerprint &&
+			repaired.Status.Network.LocalnetFingerprint == baselineLocalnetFingerprint &&
+			conditionHas(repaired, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	}, 10*time.Second, 100*time.Millisecond)
+
 	recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey)
 	publishNetworkArtifactsWithClient(t, ctx, apiClient, network)
 

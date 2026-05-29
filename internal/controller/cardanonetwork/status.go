@@ -19,9 +19,11 @@ import (
 func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
+	networkPlan primaryNetworkPlan,
+	acceptedIdentity acceptedNetworkIdentity,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, primaryNetworkPlan{}, nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -32,6 +34,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	networkPlan primaryNetworkPlan,
+	acceptedIdentity acceptedNetworkIdentity,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
@@ -81,7 +84,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	}
 	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -105,6 +108,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	networkPlan primaryNetworkPlan,
+	acceptedIdentity acceptedNetworkIdentity,
 	nodeService *corev1.Service,
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
@@ -117,7 +121,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	original := network.DeepCopy()
 	network.Status.ObservedGeneration = network.Generation
 	if networkPlan.Fingerprint != "" {
-		setNetworkIdentityStatus(network, networkPlan)
+		setNetworkIdentityStatus(network, networkPlan, acceptedIdentity)
 	}
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
@@ -161,17 +165,25 @@ func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
 	network.Status.Artifacts = nil
 }
 
-// setNetworkIdentityStatus stamps the accepted network identity onto
-// CardanoNetwork status. Used as the acceptance gate for the
-// validateAcceptedNetworkFingerprint check on subsequent reconciles.
-func setNetworkIdentityStatus(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) {
+// setNetworkIdentityStatus publishes the resolved network identity to
+// CardanoNetwork status. Fingerprints are mirrored from accepted owned
+// runtime material when present; status itself is not an acceptance source.
+func setNetworkIdentityStatus(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, acceptedIdentity acceptedNetworkIdentity) {
 	if network.Status.Network == nil {
 		network.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{}
 	}
 
 	network.Status.Network.Mode = plan.Mode
-	network.Status.Network.LocalnetFingerprint = plan.localnetFingerprint()
-	network.Status.Network.NetworkFingerprint = plan.Fingerprint
+	localnetFingerprint := plan.localnetFingerprint()
+	if acceptedIdentity.LocalnetFingerprint != "" {
+		localnetFingerprint = acceptedIdentity.LocalnetFingerprint
+	}
+	networkFingerprint := plan.Fingerprint
+	if acceptedIdentity.NetworkFingerprint != "" {
+		networkFingerprint = acceptedIdentity.NetworkFingerprint
+	}
+	network.Status.Network.LocalnetFingerprint = localnetFingerprint
+	network.Status.Network.NetworkFingerprint = networkFingerprint
 	network.Status.Network.Profile = nil
 	if plan.Profile != nil {
 		profile := *plan.Profile

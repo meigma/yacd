@@ -34,6 +34,7 @@ import (
 
 const (
 	wrongManagedByLabelValue  = "wrong"
+	forgedLocalnetFingerprint = "cafebabe-forged-localnet"
 	testDBSyncSidecarRevision = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 )
 
@@ -220,6 +221,31 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 	assert.Nil(t, current.Status.Endpoints.Kupo)
 	assert.Nil(t, current.Status.Endpoints.Faucet)
 	assert.Nil(t, current.Status.Faucet)
+}
+
+func TestCardanoNetworkReconcilerReconcileRepairsForgedNetworkIdentityStatus(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("repairs-forged-network-status")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	baseline := requireAcceptedNetworkIdentityStatus(t, ctx, reconciler, network)
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	require.Equal(t, baseline.NetworkFingerprint, pvc.Annotations[networkFingerprintAnno])
+	require.Equal(t, baseline.LocalnetFingerprint, pvc.Annotations[localnetFingerprintAnno])
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Status.Network.NetworkFingerprint = "deadbeef-forged-network"
+	current.Status.Network.LocalnetFingerprint = forgedLocalnetFingerprint
+	storeNetworkStatus(t, ctx, reconciler, current)
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	repaired := requireAcceptedNetworkIdentityStatus(t, ctx, reconciler, network)
+	assert.Equal(t, baseline, repaired)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 }
 
 func TestCardanoNetworkReconcilerReconcileCreatesPublicMainnetWorkload(t *testing.T) {
@@ -1701,6 +1727,44 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChanges(t *testing
 	}
 }
 
+func TestCardanoNetworkReconcilerReconcileRecoversAfterForgedStatusAndPVCFingerprintRestore(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("recovers-forged-status-pvc")
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	baseline := requireAcceptedNetworkIdentityStatus(t, ctx, reconciler, network)
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	current.Status.Network.NetworkFingerprint = "deadbeef-forged-both"
+	current.Status.Network.LocalnetFingerprint = forgedLocalnetFingerprint
+	storeNetworkStatus(t, ctx, reconciler, current)
+
+	pvc := requirePrimaryPVC(t, ctx, reconciler, network)
+	pvc.Annotations[localnetFingerprintAnno] = "cafebabe-forged-pvc-annotation"
+	require.NoError(t, reconciler.Update(ctx, pvc))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	degraded := requireAcceptedNetworkIdentityStatus(t, ctx, reconciler, network)
+	assert.Equal(t, baseline.NetworkFingerprint, degraded.NetworkFingerprint)
+	assert.Equal(t, "cafebabe-forged-pvc-annotation", degraded.LocalnetFingerprint)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
+
+	pvc = requirePrimaryPVC(t, ctx, reconciler, network)
+	pvc.Annotations[localnetFingerprintAnno] = baseline.LocalnetFingerprint
+	require.NoError(t, reconciler.Update(ctx, pvc))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	recovered := requireAcceptedNetworkIdentityStatus(t, ctx, reconciler, network)
+	assert.Equal(t, baseline, recovered)
+	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+}
+
 func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChangeAfterPVCDeletion(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("rejects-localnet-after-pvc-delete")
@@ -1714,6 +1778,11 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChangeAfterPVCDele
 	require.NoError(t, reconciler.Delete(ctx, pvc))
 
 	current := requireNetwork(t, ctx, reconciler, network)
+	current.Status.Network.NetworkFingerprint = ""
+	current.Status.Network.LocalnetFingerprint = ""
+	storeNetworkStatus(t, ctx, reconciler, current)
+
+	current = requireNetwork(t, ctx, reconciler, network)
 	current.Spec.Local.NetworkMagic = 43
 	require.NoError(t, reconciler.Update(ctx, current))
 
@@ -2686,6 +2755,25 @@ func requireAcceptedLocalnetFingerprint(
 	require.NotEmpty(t, current.Status.Network.LocalnetFingerprint)
 
 	return current.Status.Network.LocalnetFingerprint
+}
+
+func requireAcceptedNetworkIdentityStatus(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) acceptedNetworkIdentity {
+	t.Helper()
+
+	current := requireNetwork(t, ctx, reconciler, network)
+	require.NotNil(t, current.Status.Network)
+	require.NotEmpty(t, current.Status.Network.NetworkFingerprint)
+	require.NotEmpty(t, current.Status.Network.LocalnetFingerprint)
+
+	return acceptedNetworkIdentity{
+		NetworkFingerprint:  current.Status.Network.NetworkFingerprint,
+		LocalnetFingerprint: current.Status.Network.LocalnetFingerprint,
+	}
 }
 
 func requirePrimaryPVC(
