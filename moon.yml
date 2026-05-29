@@ -157,10 +157,11 @@ tasks:
       - '@group(chainsawSources)'
       - '@group(toolchainConfig)'
       - 'Dockerfile'
+      - '.dockerignore'
       - 'services/faucet/Dockerfile'
       - '.dev/scripts/deploy.sh'
       - '.dev/scripts/undeploy.sh'
       - '.dev/scripts/test-e2e.sh'
     options:
       cache: false
-      runInCI: false
+      runInCI: true
