@@ -12,9 +12,6 @@ import (
 const validConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: devnet
-  namespace: yacd-dev
 spec:
   network:
     mode: local
@@ -40,36 +37,62 @@ func TestCardanoNetworkRendersDeveloperConfig(t *testing.T) {
 	environment, err := devconfig.Load(strings.NewReader(validConfig))
 	require.NoError(t, err)
 
-	network, err := CardanoNetwork(environment, "override")
+	network, err := CardanoNetwork(environment, "devnet", "yacd-dev")
 	require.NoError(t, err)
 	assert.Equal(t, "yacd.meigma.io/v1alpha1", network.APIVersion)
 	assert.Equal(t, "CardanoNetwork", network.Kind)
 	assert.Equal(t, "devnet", network.Name)
-	assert.Equal(t, "override", network.Namespace)
+	assert.Equal(t, "yacd-dev", network.Namespace)
 	assert.Equal(t, int64(42), network.Spec.Local.NetworkMagic)
 }
 
-func TestNamespacePrecedence(t *testing.T) {
+func TestCardanoNetworkTrimsIdentity(t *testing.T) {
+	t.Parallel()
+
+	environment, err := devconfig.Load(strings.NewReader(validConfig))
+	require.NoError(t, err)
+
+	network, err := CardanoNetwork(environment, "  devnet  ", "  yacd-dev  ")
+	require.NoError(t, err)
+	assert.Equal(t, "devnet", network.Name)
+	assert.Equal(t, "yacd-dev", network.Namespace)
+}
+
+func TestCardanoNetworkRequiresIdentity(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		override   string
-		configured string
-		fallback   string
-		want       string
+		name      string
+		network   string
+		namespace string
+		wantErr   string
 	}{
-		{name: "override", override: "flag", configured: "config", fallback: "kube", want: "flag"},
-		{name: "configured", configured: "config", fallback: "kube", want: "config"},
-		{name: "fallback", fallback: "kube", want: "kube"},
-		{name: "default", want: "default"},
+		{name: "empty name", network: "", namespace: "yacd-dev", wantErr: "name is required"},
+		{name: "blank name", network: "   ", namespace: "yacd-dev", wantErr: "name is required"},
+		{name: "empty namespace", network: "devnet", namespace: "", wantErr: "namespace is required"},
+		{name: "blank namespace", network: "devnet", namespace: "  ", wantErr: "namespace is required"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, Namespace(tc.override, tc.configured, tc.fallback))
+			t.Parallel()
+
+			environment, err := devconfig.Load(strings.NewReader(validConfig))
+			require.NoError(t, err)
+
+			_, err = CardanoNetwork(environment, tc.network, tc.namespace)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
+}
+
+func TestCardanoNetworkRequiresEnvironment(t *testing.T) {
+	t.Parallel()
+
+	_, err := CardanoNetwork(nil, "devnet", "yacd-dev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "developer environment is required")
 }
 
 func TestManifestRendersInspectableYAML(t *testing.T) {
@@ -77,7 +100,7 @@ func TestManifestRendersInspectableYAML(t *testing.T) {
 
 	environment, err := devconfig.Load(strings.NewReader(validConfig))
 	require.NoError(t, err)
-	network, err := CardanoNetwork(environment, "")
+	network, err := CardanoNetwork(environment, "devnet", "yacd-dev")
 	require.NoError(t, err)
 
 	manifest, err := Manifest(network)

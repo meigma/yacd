@@ -13,14 +13,13 @@ import (
 )
 
 // testDevConfig is the canonical developer-environment YAML used across the
-// command tests. It exercises the metadata.namespace path, the storage
-// size requirement, and a one-pool localnet.
+// command tests. Identity (name/namespace) is supplied on the command line,
+// not in the file, so the document carries only the apiVersion/kind envelope
+// and the network spec; it exercises the storage size requirement and a
+// one-pool localnet.
 const testDevConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: devnet
-  namespace: config-ns
 spec:
   network:
     mode: local
@@ -43,9 +42,6 @@ spec:
 const testPublicMainnetDevConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: mainnet
-  namespace: config-ns
 spec:
   network:
     mode: public
@@ -61,9 +57,6 @@ spec:
 const testPublicPreviewDevConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: preview
-  namespace: config-ns
 spec:
   network:
     mode: public
@@ -79,9 +72,6 @@ spec:
 const testPublicCustomDevConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: custom
-  namespace: config-ns
 spec:
   network:
     mode: public

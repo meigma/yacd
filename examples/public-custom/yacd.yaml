@@ -1,8 +1,5 @@
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: custom-public
-  namespace: yacd-dev
 spec:
   network:
     mode: public

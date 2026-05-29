@@ -20,9 +20,9 @@ const (
 )
 
 // Environment is the local developer-facing YACD configuration document.
-// It mirrors the shape of a Kubernetes object so authors recognise the
-// metadata/spec layout, but the controllers consume the rendered
-// CardanoNetwork rather than this envelope.
+// It carries only the apiVersion/kind envelope and the network spec; the
+// environment's identity (name and namespace) is supplied on the command line,
+// not in the file, so one spec deploys cleanly under many names and namespaces.
 type Environment struct {
 	// APIVersion must equal the package APIVersion constant.
 	APIVersion string `json:"apiVersion"`
@@ -30,21 +30,8 @@ type Environment struct {
 	// Kind must equal the package Kind constant.
 	Kind string `json:"kind"`
 
-	// Metadata identifies the rendered Kubernetes object.
-	Metadata Metadata `json:"metadata"`
-
 	// Spec carries the CardanoNetwork inputs.
 	Spec EnvironmentSpec `json:"spec"`
-}
-
-// Metadata identifies the generated Kubernetes object.
-type Metadata struct {
-	// Name is the rendered CardanoNetwork's metadata.name; required.
-	Name string `json:"name"`
-
-	// Namespace is the rendered CardanoNetwork's metadata.namespace;
-	// empty defers to the CLI's namespace precedence.
-	Namespace string `json:"namespace,omitempty"`
 }
 
 // EnvironmentSpec wraps the network configuration. It is intentionally a thin
@@ -114,9 +101,6 @@ func (e Environment) Validate() error {
 	}
 	if strings.TrimSpace(e.Kind) != Kind {
 		return fmt.Errorf("kind must be %q", Kind)
-	}
-	if strings.TrimSpace(e.Metadata.Name) == "" {
-		return fmt.Errorf("metadata.name is required")
 	}
 	if strings.TrimSpace(e.Spec.Network.Node.Version) == "" {
 		return fmt.Errorf("spec.network.node.version is required")

@@ -41,12 +41,12 @@ func TestTopUpReadsSecretAndPostsToFaucet(t *testing.T) {
 	t.Cleanup(faucetServer.Close)
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
 	client.EXPECT().
-		GetCardanoNetwork(mock.Anything, "default-ns", "devnet").
-		Return(readyNetwork("default-ns"), nil)
+		GetCardanoNetwork(mock.Anything, "devnet", "devnet").
+		Return(readyNetwork("devnet"), nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	var stdout bytes.Buffer
@@ -77,14 +77,14 @@ func TestTopUpUsesStatusEndpointByDefault(t *testing.T) {
 	}))
 	t.Cleanup(faucetServer.Close)
 
-	network := readyNetwork("default-ns")
+	network := readyNetwork("devnet")
 	network.Status.Endpoints.Faucet.URL = faucetServer.URL
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(network, nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	root := NewRootCommand(Options{
@@ -99,14 +99,14 @@ func TestTopUpUsesStatusEndpointByDefault(t *testing.T) {
 func TestTopUpAllowsPublishedRemoteFaucetURLByDefault(t *testing.T) {
 	t.Parallel()
 
-	network := readyNetwork("default-ns")
-	network.Status.Endpoints.Faucet.URL = "http://devnet-faucet.default-ns.svc.cluster.local:8080"
+	network := readyNetwork("devnet")
+	network.Status.Endpoints.Faucet.URL = "http://devnet-faucet.devnet.svc.cluster.local:8080"
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(network, nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	httpMock := newHTTPMock(t)
@@ -124,7 +124,7 @@ func TestTopUpAllowsPublishedRemoteFaucetURLByDefault(t *testing.T) {
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	require.NotNil(t, capturedRequest)
-	assert.Equal(t, "devnet-faucet.default-ns.svc.cluster.local:8080", capturedRequest.URL.Host)
+	assert.Equal(t, "devnet-faucet.devnet.svc.cluster.local:8080", capturedRequest.URL.Host)
 }
 
 // TestTopUpRequiresTrustForRemoteCustomFaucetURLBeforeReadingSecret asserts
@@ -136,8 +136,8 @@ func TestTopUpRequiresTrustForRemoteCustomFaucetURLBeforeReadingSecret(t *testin
 	t.Parallel()
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(readyNetwork("default-ns"), nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 
 	root := NewRootCommand(Options{
 		Viper:             viper.New(),
@@ -147,7 +147,7 @@ func TestTopUpRequiresTrustForRemoteCustomFaucetURLBeforeReadingSecret(t *testin
 
 	err := root.ExecuteContext(context.Background())
 	require.Error(t, err)
-	for _, want := range []string{"default-ns/devnet-faucet-auth", "faucet.example.com", "--trust-faucet-url"} {
+	for _, want := range []string{"devnet/devnet-faucet-auth", "faucet.example.com", "--trust-faucet-url"} {
 		assert.Contains(t, err.Error(), want)
 	}
 	client.AssertNotCalled(t, "GetSecretValue", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -157,10 +157,10 @@ func TestTopUpAllowsTrustedRemoteHTTPSCustomFaucetURL(t *testing.T) {
 	t.Parallel()
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(readyNetwork("default-ns"), nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	httpMock := newHTTPMock(t)
@@ -186,8 +186,8 @@ func TestTopUpRequiresAllowInsecureForTrustedRemoteHTTPCustomFaucetURL(t *testin
 	t.Parallel()
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(readyNetwork("default-ns"), nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 
 	root := NewRootCommand(Options{
 		Viper:             viper.New(),
@@ -197,7 +197,7 @@ func TestTopUpRequiresAllowInsecureForTrustedRemoteHTTPCustomFaucetURL(t *testin
 
 	err := root.ExecuteContext(context.Background())
 	require.Error(t, err)
-	for _, want := range []string{"default-ns/devnet-faucet-auth", "faucet.example.com", "--allow-insecure-faucet-url"} {
+	for _, want := range []string{"devnet/devnet-faucet-auth", "faucet.example.com", "--allow-insecure-faucet-url"} {
 		assert.Contains(t, err.Error(), want)
 	}
 	client.AssertNotCalled(t, "GetSecretValue", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
@@ -207,10 +207,10 @@ func TestTopUpAllowsTrustedRemoteHTTPCustomFaucetURLWithInsecureFlag(t *testing.
 	t.Parallel()
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(readyNetwork("default-ns"), nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	httpMock := newHTTPMock(t)
@@ -242,10 +242,10 @@ func TestTopUpReportsFaucetErrors(t *testing.T) {
 	t.Cleanup(faucetServer.Close)
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(readyNetwork("default-ns"), nil)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 	client.EXPECT().
-		GetSecretValue(mock.Anything, "default-ns", testTopUpAuthSecret, faucetAuthTokenKey).
+		GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).
 		Return(testTopUpToken, nil)
 
 	root := NewRootCommand(Options{
@@ -313,12 +313,12 @@ func TestTopUpRejectsStaleOrNotReadyStatus(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			network := readyNetwork("default-ns")
+			network := readyNetwork("devnet")
 			tc.mutate(network)
 
 			client := newKubeMock(t)
-			client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-			client.EXPECT().GetCardanoNetwork(mock.Anything, "default-ns", "devnet").Return(network, nil)
+			client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+			client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 
 			root := NewRootCommand(Options{
 				Viper:             viper.New(),

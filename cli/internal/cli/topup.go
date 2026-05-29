@@ -26,6 +26,10 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
+			if err != nil {
+				return err
+			}
 
 			destinationAddress := strings.TrimSpace(commandContext.viper.GetString("address"))
 			lovelace := commandContext.viper.GetInt64("lovelace")
@@ -50,24 +54,19 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			namespace := runtimeConfig.Namespace
-			if strings.TrimSpace(namespace) == "" {
-				namespace = kubeClient.DefaultNamespace()
-			}
-
-			network, err := kubeClient.GetCardanoNetwork(cmd.Context(), namespace, args[0])
+			network, err := kubeClient.GetCardanoNetwork(cmd.Context(), namespace, name)
 			if err != nil {
 				return err
 			}
-			if err := requireFaucetReady(network, namespace, args[0]); err != nil {
+			if err := requireFaucetReady(network, namespace, name); err != nil {
 				return err
 			}
-			statusFaucetURL, err := publishedFaucetURL(network, namespace, args[0])
+			statusFaucetURL, err := publishedFaucetURL(network, namespace, name)
 			if err != nil {
 				return err
 			}
 			if network.Status.Faucet == nil || strings.TrimSpace(network.Status.Faucet.AuthSecretName) == "" {
-				return fmt.Errorf("cardanonetwork %s/%s does not publish a faucet auth Secret", namespace, args[0])
+				return fmt.Errorf("cardanonetwork %s/%s does not publish a faucet auth Secret", namespace, name)
 			}
 			// Security-relevant default: when the user did not pass
 			// --faucet-url, target the URL the cluster published. The

@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -13,18 +12,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newDeployCommand wires the `yacd deploy` subcommand. The command loads
-// the developer environment file, renders it into a CardanoNetwork through
-// the render package, and either prints the manifest (--dry-run) or
-// server-side-applies it through the kube.Client port. With --wait the
-// command then polls until the network is Ready or the timeout elapses.
-func newDeployCommand(commandContext *commandContext) *cobra.Command {
+// newUpCommand wires the `yacd up NAME` subcommand. The command loads the
+// developer environment file, renders it into a CardanoNetwork under the
+// CLI-supplied identity (NAME plus the namespace, which defaults to NAME),
+// and either prints the manifest (--dry-run) or auto-creates the namespace
+// and server-side-applies the network through the kube.Client port. Unless
+// --wait=false, it then polls until the network is Ready or the timeout
+// elapses.
+func newUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "deploy",
-		Short: "Render and deploy a YACD developer environment",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "up NAME",
+		Short: "Create or update a YACD environment and wait for readiness",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
+			if err != nil {
+				return err
+			}
+			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err
 			}
@@ -49,34 +54,7 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			kubeConfig := kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			}
-			var kubeClient kube.Client
-			fallbackNamespace := ""
-			needsKubeDefaultNamespace := strings.TrimSpace(runtimeConfig.Namespace) == "" &&
-				strings.TrimSpace(environment.Metadata.Namespace) == ""
-			// Two namespace-fallback paths share the same goal — derive the
-			// kubeconfig default — but only the apply path needs a live
-			// client. --dry-run resolves the namespace through the
-			// purpose-built resolver so it never dials the cluster.
-			if !dryRun {
-				kubeClient, err = commandContext.kubeClientFactory(kubeConfig)
-				if err != nil {
-					return err
-				}
-				if needsKubeDefaultNamespace {
-					fallbackNamespace = kubeClient.DefaultNamespace()
-				}
-			} else if needsKubeDefaultNamespace {
-				fallbackNamespace, err = commandContext.kubeNamespaceResolver(kubeConfig)
-				if err != nil {
-					return err
-				}
-			}
-
-			network, err := render.CardanoNetwork(environment, render.Namespace(runtimeConfig.Namespace, environment.Metadata.Namespace, fallbackNamespace))
+			network, err := render.CardanoNetwork(environment, name, namespace)
 			if err != nil {
 				return err
 			}
@@ -101,6 +79,17 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
+				Kubeconfig: runtimeConfig.Kubeconfig,
+				Context:    runtimeConfig.KubeContext,
+			})
+			if err != nil {
+				return err
+			}
+
+			if err := kubeClient.EnsureNamespace(cmd.Context(), namespace); err != nil {
+				return err
+			}
 			if err := kubeClient.ApplyCardanoNetwork(cmd.Context(), network); err != nil {
 				return err
 			}
@@ -128,8 +117,8 @@ func newDeployCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().StringP("file", "f", "", "Developer environment file")
 	cmd.Flags().Bool("dry-run", false, "Render the manifest without applying it")
 	cmd.Flags().Bool("allow-mainnet", false, "Allow applying a mainnet CardanoNetwork")
-	cmd.Flags().Bool("wait", false, "Wait for the CardanoNetwork to become ready")
-	cmd.Flags().Duration("timeout", 10*time.Minute, "Maximum time to wait for readiness")
+	cmd.Flags().Bool("wait", true, "Wait for the CardanoNetwork to become ready")
+	cmd.Flags().Duration("timeout", 12*time.Minute, "Maximum time to wait for readiness")
 
 	return cmd
 }

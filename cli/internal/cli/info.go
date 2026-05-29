@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/kube"
@@ -24,6 +23,10 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
+			if err != nil {
+				return err
+			}
 
 			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
 				Kubeconfig: runtimeConfig.Kubeconfig,
@@ -33,12 +36,7 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			namespace := runtimeConfig.Namespace
-			if strings.TrimSpace(namespace) == "" {
-				namespace = kubeClient.DefaultNamespace()
-			}
-
-			network, err := kubeClient.GetCardanoNetwork(cmd.Context(), namespace, args[0])
+			network, err := kubeClient.GetCardanoNetwork(cmd.Context(), namespace, name)
 			if err != nil {
 				return err
 			}
