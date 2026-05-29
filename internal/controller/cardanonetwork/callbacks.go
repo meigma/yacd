@@ -62,6 +62,7 @@ func validatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deplo
 // desired while delegating ObjectMeta merging and the cardanonetwork-owned
 // annotation overlay to the shared helper.
 func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deployment) error {
+	recoveryRolloutAt := current.Annotations[networkArtifactsRecoveryRolloutAtAnno]
 	ctrlresources.MutateDeployment(current, desired, mergeOwnedAnnotations, func(current *corev1.PodSpec, desired *corev1.PodSpec) {
 		current.ServiceAccountName = desired.ServiceAccountName
 		current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
@@ -70,6 +71,12 @@ func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deploym
 		current.Containers = desired.Containers
 		current.Volumes = desired.Volumes
 	})
+	if _, ok := desired.Annotations[networkArtifactsRecoveryRolloutAtAnno]; !ok && recoveryRolloutAt != "" {
+		if current.Annotations == nil {
+			current.Annotations = map[string]string{}
+		}
+		current.Annotations[networkArtifactsRecoveryRolloutAtAnno] = recoveryRolloutAt
+	}
 	if _, desiredDBSyncLabel := desired.Spec.Template.Labels[labelDBSync]; !desiredDBSyncLabel && current.Spec.Template.Labels != nil {
 		delete(current.Spec.Template.Labels, labelDBSync)
 		if len(current.Spec.Template.Labels) == 0 {

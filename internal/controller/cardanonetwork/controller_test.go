@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"testing"
+	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
@@ -703,7 +704,9 @@ func TestCardanoNetworkReconcilerReconcileRecoversDeletedNetworkArtifactsConfigM
 func TestCardanoNetworkReconcilerReconcileRecoversCorruptedNetworkArtifactsConfigMapWithRollout(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("artifact-corrupt")
+	recoveryTime := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
 	reconciler := newTestReconciler(t, network)
+	reconciler.Now = func() time.Time { return recoveryTime }
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
@@ -724,26 +727,91 @@ func TestCardanoNetworkReconcilerReconcileRecoversCorruptedNetworkArtifactsConfi
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 
-	deleted := &corev1.ConfigMap{}
-	err = reconciler.Get(ctx, client.ObjectKey{
-		Namespace: network.Namespace,
-		Name:      networkArtifactsConfigMapName(network),
-	}, deleted)
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact ConfigMap to be deleted, got %v", err)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Artifacts)
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-
 	recreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
 	assert.Empty(t, recreated.Data)
 	assert.NotEqual(t, "published-artifact-configmap", string(recreated.UID))
 	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
 	assert.NotEqual(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
+	current := requireNetwork(t, ctx, reconciler, network)
+	assert.Nil(t, current.Status.Artifacts)
+}
+
+func TestCardanoNetworkReconcilerReconcileThrottlesRepeatedNetworkArtifactRecovery(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("artifact-throttle")
+	recoveryTime := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
+	reconciler := newTestReconciler(t, network)
+	reconciler.Now = func() time.Time { return recoveryTime }
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	published := publishNetworkArtifacts(t, ctx, reconciler, network)
+	published.UID = types.UID("published-artifact-configmap")
+	require.NoError(t, reconciler.Update(ctx, published))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Empty(t, deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
+
+	corruptNetworkArtifacts(t, ctx, reconciler, network, "first-corruption")
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	recreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.Empty(t, recreated.Data)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.NotEqual(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+
+	recreated.UID = types.UID("recreated-artifact-configmap")
+	require.NoError(t, reconciler.Update(ctx, recreated))
+	published = publishNetworkArtifacts(t, ctx, reconciler, network)
+	require.Equal(t, types.UID("recreated-artifact-configmap"), published.UID)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
+
+	recoveryTime = recoveryTime.Add(30 * time.Second)
+	corruptNetworkArtifacts(t, ctx, reconciler, network, "second-corruption")
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: 30 * time.Second}, result)
+	stillCorrupted := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.Equal(t, types.UID("recreated-artifact-configmap"), stillCorrupted.UID)
+	assert.Equal(t, "second-corruption", stillCorrupted.Data[networkartifacts.PrimaryTopologyKey])
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Add(-30*time.Second).Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
+	current := requireNetwork(t, ctx, reconciler, network)
+	assert.Nil(t, current.Status.Artifacts)
+
+	recoveryTime = recoveryTime.Add(31 * time.Second)
+	result, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
+	secondRecreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	assert.Empty(t, secondRecreated.Data)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.NotEqual(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
+
+	secondRecreated.UID = types.UID("second-recreated-artifact-configmap")
+	require.NoError(t, reconciler.Update(ctx, secondRecreated))
+	published = publishNetworkArtifacts(t, ctx, reconciler, network)
+	require.Equal(t, types.UID("second-recreated-artifact-configmap"), published.UID)
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
+	assert.Equal(t, "second-recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
 }
 
 func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
@@ -2817,6 +2885,20 @@ func publishNetworkArtifacts(
 	require.NoError(t, reconciler.Update(ctx, configMap))
 
 	return configMap
+}
+
+func corruptNetworkArtifacts(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+	value string,
+) {
+	t.Helper()
+
+	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
+	configMap.Data[networkartifacts.PrimaryTopologyKey] = value
+	require.NoError(t, reconciler.Update(ctx, configMap))
 }
 
 func publishArtifactsAndAttachDBSyncSidecar(

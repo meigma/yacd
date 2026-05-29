@@ -1,16 +1,21 @@
 package cardanonetwork
 
 import (
+	"context"
 	"fmt"
 	"maps"
+	"strings"
+	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	cardanonetworkartifacts "github.com/meigma/yacd/internal/cardano/networkartifacts"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
+	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -233,7 +238,7 @@ func artifactConfigMapNeedsRecovery(configMap *corev1.ConfigMap, expectedFingerp
 }
 
 // setDeploymentArtifactConfigMapUID stamps the live artifact ConfigMap UID
-// onto the Deployment pod-template annotations. The UID changes after a
+// onto the Deployment pod-template annotations. The UID changes after a bounded
 // recovery delete+create, which rolls the primary Pod through the standard
 // Deployment hash-change path and forces the init container to re-publish.
 func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap *corev1.ConfigMap) {
@@ -241,4 +246,85 @@ func setDeploymentArtifactConfigMapUID(deployment *appsv1.Deployment, configMap 
 		deployment.Spec.Template.Annotations = map[string]string{}
 	}
 	deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] = string(configMap.UID)
+}
+
+func setDeploymentNetworkArtifactsRecoveryRolloutAt(deployment *appsv1.Deployment, at time.Time) {
+	if deployment.Annotations == nil {
+		deployment.Annotations = map[string]string{}
+	}
+	deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno] = at.UTC().Format(time.RFC3339)
+}
+
+func (r *CardanoNetworkReconciler) networkArtifactsRecoveryCooldownRemaining(
+	ctx context.Context,
+	desiredDeployment *appsv1.Deployment,
+	now time.Time,
+) (time.Duration, error) {
+	current, err := r.currentPrimaryDeployment(ctx, desiredDeployment)
+	if err != nil || current == nil {
+		return 0, err
+	}
+	last, ok := networkArtifactsRecoveryRolloutAt(current.Annotations)
+	if !ok {
+		return 0, nil
+	}
+	elapsed := now.Sub(last)
+	if elapsed < 0 {
+		return networkArtifactsRecoveryCooldown, nil
+	}
+	if elapsed >= networkArtifactsRecoveryCooldown {
+		return 0, nil
+	}
+	return networkArtifactsRecoveryCooldown - elapsed, nil
+}
+
+func (r *CardanoNetworkReconciler) preserveDeploymentArtifactConfigMapUID(
+	ctx context.Context,
+	desiredDeployment *appsv1.Deployment,
+) error {
+	current, err := r.currentPrimaryDeployment(ctx, desiredDeployment)
+	if err != nil || current == nil {
+		return err
+	}
+	uid := strings.TrimSpace(current.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
+	if uid == "" {
+		return nil
+	}
+	if desiredDeployment.Spec.Template.Annotations == nil {
+		desiredDeployment.Spec.Template.Annotations = map[string]string{}
+	}
+	desiredDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] = uid
+
+	return nil
+}
+
+func (r *CardanoNetworkReconciler) currentPrimaryDeployment(
+	ctx context.Context,
+	desiredDeployment *appsv1.Deployment,
+) (*appsv1.Deployment, error) {
+	current := &appsv1.Deployment{}
+	if err := r.Get(ctx, ctrlmetadata.ObjectKey(desiredDeployment), current); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if err := validateControllerOwner(current, desiredDeployment); err != nil {
+		return nil, err
+	}
+
+	return current, nil
+}
+
+func networkArtifactsRecoveryRolloutAt(annotations map[string]string) (time.Time, bool) {
+	value := strings.TrimSpace(annotations[networkArtifactsRecoveryRolloutAtAnno])
+	if value == "" {
+		return time.Time{}, false
+	}
+	rolloutAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	return rolloutAt, true
 }

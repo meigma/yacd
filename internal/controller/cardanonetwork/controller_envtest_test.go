@@ -54,10 +54,12 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		HealthProbeBindAddress: "0",
 	})
 	require.NoError(t, err)
+	envtestNow := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
 	require.NoError(t, (&CardanoNetworkReconciler{
 		Client: mgr.GetClient(),
 		Reader: mgr.GetAPIReader(),
 		Scheme: mgr.GetScheme(),
+		Now:    func() time.Time { return envtestNow },
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -400,6 +402,24 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.Eventually(t, func() bool {
 		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
+
+	recoverCorruptedNetworkArtifactsConfigMap(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey, envtestNow)
+	publishNetworkArtifactsWithClient(t, ctx, apiClient, network)
+
+	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
+	deployment.Status.ObservedGeneration = deployment.Generation
+	deployment.Status.Replicas = 1
+	deployment.Status.UpdatedReplicas = 1
+	deployment.Status.ReadyReplicas = 1
+	deployment.Status.AvailableReplicas = 1
+	require.NoError(t, apiClient.Status().Update(ctx, deployment))
+
+	require.Eventually(t, func() bool {
+		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	envtestNow = envtestNow.Add(30 * time.Second)
+	suppressCorruptedNetworkArtifactsConfigMapDuringCooldown(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey)
 }
 
 func TestCardanoNetworkControllerManagerHandlesCustomProfileSources(t *testing.T) {
@@ -945,6 +965,82 @@ func recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(
 		return got.UID != verifiedArtifactsConfigMapUID &&
 			len(got.Data) == 0 &&
 			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(got.UID) &&
+			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
+			currentNetwork.Status.Artifacts == nil
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func recoverCorruptedNetworkArtifactsConfigMap(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+	artifactsConfigMapKey client.ObjectKey,
+	deploymentKey client.ObjectKey,
+	rolloutAt time.Time,
+) {
+	t.Helper()
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
+	verifiedArtifactsConfigMapUID := configMap.UID
+	configMap.Data[networkartifacts.PrimaryTopologyKey] = "corrupted-before-cooldown"
+	require.NoError(t, apiClient.Update(ctx, configMap))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.ConfigMap{}
+		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
+			return false
+		}
+		gotDeployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
+			return false
+		}
+		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
+			return false
+		}
+		return got.UID != verifiedArtifactsConfigMapUID &&
+			len(got.Data) == 0 &&
+			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(got.UID) &&
+			gotDeployment.Annotations[networkArtifactsRecoveryRolloutAtAnno] == rolloutAt.UTC().Format(time.RFC3339) &&
+			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
+			currentNetwork.Status.Artifacts == nil
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func suppressCorruptedNetworkArtifactsConfigMapDuringCooldown(
+	t *testing.T,
+	ctx context.Context,
+	apiClient client.Client,
+	network *yacdv1alpha1.CardanoNetwork,
+	artifactsConfigMapKey client.ObjectKey,
+	deploymentKey client.ObjectKey,
+) {
+	t.Helper()
+
+	configMap := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
+	cooldownConfigMapUID := configMap.UID
+	configMap.Data[networkartifacts.PrimaryTopologyKey] = "corrupted-during-cooldown"
+	require.NoError(t, apiClient.Update(ctx, configMap))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.ConfigMap{}
+		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
+			return false
+		}
+		gotDeployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
+			return false
+		}
+		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
+			return false
+		}
+		return got.UID == cooldownConfigMapUID &&
+			got.Data[networkartifacts.PrimaryTopologyKey] == "corrupted-during-cooldown" &&
+			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(cooldownConfigMapUID) &&
 			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
 			currentNetwork.Status.Artifacts == nil
 	}, 10*time.Second, 100*time.Millisecond)
