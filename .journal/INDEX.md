@@ -36,3 +36,4 @@
 | 033 | 2026-05-29 | TEST_REPORT B1 derived identity fix | complete | Fixed TEST_REPORT finding B1 by deriving CardanoNetwork identity status from owned runtime material, manually validating recovery, and merging PR #51. |
 | 034 | 2026-05-29 | TEST_REPORT follow-through | complete | Fixed TEST_REPORT B2 by making CardanoDBSync accepted database identity authoritative from the owned state PVC annotation, merged PR #52, and cleaned up the dev stack/worktree. |
 | 035 | 2026-05-29 | B6 storage expansion status | complete | Fixed TEST_REPORT B6 by surfacing rejected PVC expansion as `StorageExpansionRejected` status, merged PR #53, and cleaned up the dev stack/worktree. |
+| 036 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session primed; awaiting the user's request, likely the next `.journal/TEST_REPORT.md` finding (D1, D2, D6, F0, or F2/F4) after B6 landed. |
