@@ -197,7 +197,7 @@ spec:
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
               kubectl create namespace yacd-smoke --dry-run=client -o yaml | kubectl apply -f -
               kubectl label --overwrite namespace yacd-smoke pod-security.kubernetes.io/enforce=restricted
-              go run ./cli/cmd/yacd deploy -f examples/local/yacd.yaml --namespace yacd-smoke --wait --timeout 10m
+              go run ./cli/cmd/yacd up phase4-smoke -n yacd-smoke -f examples/local/yacd.yaml --timeout 10m
         - assert:
             resource:
               apiVersion: v1

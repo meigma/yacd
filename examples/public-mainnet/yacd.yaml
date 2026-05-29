@@ -1,8 +1,5 @@
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: mainnet
-  namespace: yacd-mainnet
 spec:
   network:
     mode: public

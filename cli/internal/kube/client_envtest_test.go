@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -149,6 +150,111 @@ func TestWaitReadyTimesOutCleanly(t *testing.T) {
 	assert.Contains(t, err.Error(), "Reconciling")
 }
 
+func TestRuntimeClientDeletesCardanoNetwork(t *testing.T) {
+	ctx := context.Background()
+	kubeClient, apiClient := newEnvtestClient(t)
+	namespace := createNamespace(t, ctx, apiClient, "cli-delete")
+
+	network := localCardanoNetwork(namespace, "devnet")
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, network))
+
+	require.NoError(t, kubeClient.DeleteCardanoNetwork(ctx, namespace, "devnet"))
+
+	_, err := kubeClient.GetCardanoNetwork(ctx, namespace, "devnet")
+	require.Error(t, err)
+	assert.True(t, IsNotFound(err), "expected not-found after delete")
+
+	// Deleting an absent network is idempotent and reports success.
+	require.NoError(t, kubeClient.DeleteCardanoNetwork(ctx, namespace, "devnet"))
+}
+
+func TestRuntimeClientListsCardanoNetworks(t *testing.T) {
+	ctx := context.Background()
+	kubeClient, apiClient := newEnvtestClient(t)
+	nsA := createNamespace(t, ctx, apiClient, "cli-list-a")
+	nsB := createNamespace(t, ctx, apiClient, "cli-list-b")
+
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, localCardanoNetwork(nsA, "devnet")))
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, localCardanoNetwork(nsA, "preview")))
+	require.NoError(t, kubeClient.ApplyCardanoNetwork(ctx, localCardanoNetwork(nsB, "staging")))
+
+	scoped, err := kubeClient.ListCardanoNetworks(ctx, nsA)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"devnet", "preview"}, networkNames(scoped))
+
+	all, err := kubeClient.ListCardanoNetworks(ctx, "")
+	require.NoError(t, err)
+	names := networkNames(all)
+	assert.Contains(t, names, "devnet")
+	assert.Contains(t, names, "preview")
+	assert.Contains(t, names, "staging")
+}
+
+func TestRuntimeClientEnsureNamespaceCreatesWithOwnershipLabels(t *testing.T) {
+	ctx := context.Background()
+	kubeClient, apiClient := newEnvtestClient(t)
+
+	require.NoError(t, kubeClient.EnsureNamespace(ctx, "cli-ensure-new"))
+
+	ns := &corev1.Namespace{}
+	require.NoError(t, apiClient.Get(ctx, crclient.ObjectKey{Name: "cli-ensure-new"}, ns))
+	assert.Equal(t, "yacd", ns.Labels["app.kubernetes.io/managed-by"])
+	assert.Equal(t, "yacd-cli", ns.Labels["yacd.meigma.io/created-by"])
+
+	// Idempotent: re-applying succeeds and preserves the ownership labels.
+	require.NoError(t, kubeClient.EnsureNamespace(ctx, "cli-ensure-new"))
+	require.NoError(t, apiClient.Get(ctx, crclient.ObjectKey{Name: "cli-ensure-new"}, ns))
+	assert.Equal(t, "yacd", ns.Labels["app.kubernetes.io/managed-by"])
+}
+
+func TestRuntimeClientEnsureNamespaceIsIdempotentForExisting(t *testing.T) {
+	ctx := context.Background()
+	kubeClient, apiClient := newEnvtestClient(t)
+	createNamespace(t, ctx, apiClient, "cli-ensure-existing")
+
+	require.NoError(t, kubeClient.EnsureNamespace(ctx, "cli-ensure-existing"))
+
+	ns := &corev1.Namespace{}
+	require.NoError(t, apiClient.Get(ctx, crclient.ObjectKey{Name: "cli-ensure-existing"}, ns))
+	assert.Equal(t, "yacd", ns.Labels["app.kubernetes.io/managed-by"])
+	assert.Equal(t, "yacd-cli", ns.Labels["yacd.meigma.io/created-by"])
+}
+
+func TestWaitGoneReturnsWhenNetworkDisappears(t *testing.T) {
+	t.Parallel()
+
+	network := localCardanoNetwork("cli-gone", "devnet")
+	// The network is present on the first poll, then gone; the timeout must
+	// span more than one pollInterval so the second poll observes not-found.
+	client := &goneAfterClient{network: network, presentCalls: 1}
+
+	require.NoError(t, WaitGone(context.Background(), client, "cli-gone", "devnet", pollInterval+time.Second))
+	assert.GreaterOrEqual(t, client.calls, 2, "WaitGone did not observe the network disappear")
+}
+
+func TestWaitGoneTimesOutWhileTerminating(t *testing.T) {
+	t.Parallel()
+
+	network := localCardanoNetwork("cli-stuck", "devnet")
+	now := metav1.Now()
+	network.DeletionTimestamp = &now
+	network.Finalizers = []string{"yacd.meigma.io/cardanonetwork"}
+
+	err := WaitGone(context.Background(), &staticClient{network: network}, "cli-stuck", "devnet", 10*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "still terminating")
+	assert.Contains(t, err.Error(), "yacd.meigma.io/cardanonetwork")
+}
+
+func networkNames(networks []yacdv1alpha1.CardanoNetwork) []string {
+	names := make([]string, 0, len(networks))
+	for i := range networks {
+		names = append(names, networks[i].Name)
+	}
+
+	return names
+}
+
 func newEnvtestClient(t *testing.T) (*Adapter, crclient.Client) {
 	t.Helper()
 
@@ -240,4 +346,59 @@ func (s *staticClient) GetCardanoNetwork(context.Context, string, string) (*yacd
 
 func (s *staticClient) GetSecretValue(context.Context, string, string, string) (string, error) {
 	return "", nil
+}
+
+func (s *staticClient) DeleteCardanoNetwork(context.Context, string, string) error {
+	return nil
+}
+
+func (s *staticClient) ListCardanoNetworks(context.Context, string) ([]yacdv1alpha1.CardanoNetwork, error) {
+	return nil, nil
+}
+
+func (s *staticClient) EnsureNamespace(context.Context, string) error {
+	return nil
+}
+
+// goneAfterClient is a hand-rolled Client for the WaitGone present-then-gone
+// path. GetCardanoNetwork returns the network for the first presentCalls polls,
+// then a wrapped ErrNotFound, so the test exercises the polling loop without
+// per-call mock expectations.
+type goneAfterClient struct {
+	network      *yacdv1alpha1.CardanoNetwork
+	presentCalls int
+	calls        int
+}
+
+func (g *goneAfterClient) DefaultNamespace() string {
+	return "default"
+}
+
+func (g *goneAfterClient) ApplyCardanoNetwork(context.Context, *yacdv1alpha1.CardanoNetwork) error {
+	return nil
+}
+
+func (g *goneAfterClient) GetCardanoNetwork(_ context.Context, namespace string, name string) (*yacdv1alpha1.CardanoNetwork, error) {
+	g.calls++
+	if g.calls <= g.presentCalls {
+		return g.network.DeepCopy(), nil
+	}
+
+	return nil, fmt.Errorf("cardanonetwork %s/%s %w", namespace, name, ErrNotFound)
+}
+
+func (g *goneAfterClient) GetSecretValue(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (g *goneAfterClient) DeleteCardanoNetwork(context.Context, string, string) error {
+	return nil
+}
+
+func (g *goneAfterClient) ListCardanoNetworks(context.Context, string) ([]yacdv1alpha1.CardanoNetwork, error) {
+	return nil, nil
+}
+
+func (g *goneAfterClient) EnsureNamespace(context.Context, string) error {
+	return nil
 }

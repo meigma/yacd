@@ -52,3 +52,26 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 		assert.Contains(t, stdout.String(), want)
 	}
 }
+
+func TestInfoDefaultsNamespaceToName(t *testing.T) {
+	t.Setenv("YACD_NAMESPACE", "")
+
+	// resolveIdentity defaults the namespace to NAME, so info looks the
+	// network up in the devnet namespace rather than the kubeconfig default.
+	client := newKubeMock(t)
+	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
+	client.EXPECT().
+		GetCardanoNetwork(mock.Anything, "devnet", "devnet").
+		Return(readyNetwork("devnet"), nil)
+
+	var stdout bytes.Buffer
+	root := NewRootCommand(Options{
+		Out:               &stdout,
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+	})
+	root.SetArgs([]string{"info", "devnet", "--json"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.Contains(t, stdout.String(), `"namespace": "devnet"`)
+}

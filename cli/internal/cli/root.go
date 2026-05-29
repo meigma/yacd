@@ -14,7 +14,7 @@ import (
 
 // NewRootCommand creates the YACD developer CLI command tree, defaulting
 // any nil Options fields and wiring the persistent flags, viper binding,
-// logger construction, and the deploy/info/topup subcommands.
+// logger construction, and the up/down/list/info/topup subcommands.
 func NewRootCommand(options Options) *cobra.Command {
 	if options.In == nil {
 		options.In = strings.NewReader("")
@@ -33,23 +33,19 @@ func NewRootCommand(options Options) *cobra.Command {
 			return kube.NewClient(config)
 		}
 	}
-	if options.KubeNamespaceResolver == nil {
-		options.KubeNamespaceResolver = kube.DefaultNamespace
-	}
 	if options.HTTPClient == nil {
 		options.HTTPClient = http.DefaultClient
 	}
 	options.Build = options.Build.withDefaults()
 
 	ctx := &commandContext{
-		in:                    options.In,
-		out:                   options.Out,
-		err:                   options.Err,
-		viper:                 options.Viper,
-		kubeClientFactory:     options.KubeClientFactory,
-		kubeNamespaceResolver: options.KubeNamespaceResolver,
-		httpClient:            options.HTTPClient,
-		logger:                slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		in:                options.In,
+		out:               options.Out,
+		err:               options.Err,
+		viper:             options.Viper,
+		kubeClientFactory: options.KubeClientFactory,
+		httpClient:        options.HTTPClient,
+		logger:            slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
 	root := &cobra.Command{
@@ -81,7 +77,9 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	root.PersistentFlags().String("log-format", "text", "Log format: text, json")
 
-	root.AddCommand(newDeployCommand(ctx))
+	root.AddCommand(newUpCommand(ctx))
+	root.AddCommand(newDownCommand(ctx))
+	root.AddCommand(newListCommand(ctx))
 	root.AddCommand(newInfoCommand(ctx))
 	root.AddCommand(newTopUpCommand(ctx))
 

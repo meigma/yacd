@@ -55,11 +55,6 @@ type HTTPDoer interface {
 // a mock.
 type KubeClientFactory func(kube.Config) (kube.Client, error)
 
-// KubeNamespaceResolver resolves the kubeconfig default namespace without
-// opening a Kubernetes connection. It is split from KubeClientFactory so
-// the --dry-run path can derive a namespace without dialling the cluster.
-type KubeNamespaceResolver func(kube.Config) (string, error)
-
 // Options customises root command construction. All fields are optional;
 // nil fields are filled with the production defaults (stdin/stdout/stderr,
 // a fresh Viper, the real kube.NewClient, http.DefaultClient).
@@ -80,10 +75,6 @@ type Options struct {
 	// Tests inject a factory that returns a mock.
 	KubeClientFactory KubeClientFactory
 
-	// KubeNamespaceResolver resolves the default namespace for the
-	// --dry-run path, where no live client is constructed.
-	KubeNamespaceResolver KubeNamespaceResolver
-
 	// HTTPClient is the transport used by the topup faucet POST. Tests
 	// inject a mock to capture the request and shape the response.
 	HTTPClient HTTPDoer
@@ -93,12 +84,11 @@ type Options struct {
 // time. It is constructed once by NewRootCommand from the fully-defaulted
 // Options and passed by pointer to every command factory.
 type commandContext struct {
-	in                    io.Reader
-	out                   io.Writer
-	err                   io.Writer
-	viper                 *viper.Viper
-	kubeClientFactory     KubeClientFactory
-	kubeNamespaceResolver KubeNamespaceResolver
-	httpClient            HTTPDoer
-	logger                *slog.Logger
+	in                io.Reader
+	out               io.Writer
+	err               io.Writer
+	viper             *viper.Viper
+	kubeClientFactory KubeClientFactory
+	httpClient        HTTPDoer
+	logger            *slog.Logger
 }

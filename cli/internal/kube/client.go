@@ -2,16 +2,41 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+)
+
+// ErrNotFound is the sentinel a Client returns (wrapped, with namespace/name
+// context) when a requested object does not exist. Callers test for it with
+// IsNotFound rather than reaching for the apimachinery error helpers, so the
+// port stays the single source of not-found semantics.
+var ErrNotFound = errors.New("not found")
+
+// IsNotFound reports whether err indicates a requested object did not exist.
+// It matches both the port's wrapped ErrNotFound and raw apimachinery
+// NotFound status errors.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound) || apierrors.IsNotFound(err)
+}
+
+// Namespace ownership-stamp labels applied by EnsureNamespace, so a later
+// teardown can recognise namespaces the CLI created.
+const (
+	// managedByLabel marks the namespace as YACD-managed.
+	managedByLabel = "app.kubernetes.io/managed-by"
+
+	// createdByLabel records that the CLI created the namespace.
+	createdByLabel = "yacd.meigma.io/created-by"
 )
 
 // Client is the Kubernetes behaviour the CLI command layer depends on. It is
@@ -33,6 +58,20 @@ type Client interface {
 	// GetSecretValue reads a single key from a Secret. Missing Secret or
 	// missing key are surfaced as a typed error.
 	GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error)
+
+	// DeleteCardanoNetwork deletes the named CardanoNetwork. It is idempotent:
+	// a NotFound result returns nil so callers can treat "already gone" as
+	// success.
+	DeleteCardanoNetwork(ctx context.Context, namespace string, name string) error
+
+	// ListCardanoNetworks lists CardanoNetworks in the given namespace, or
+	// across all namespaces when namespace is empty.
+	ListCardanoNetworks(ctx context.Context, namespace string) ([]yacdv1alpha1.CardanoNetwork, error)
+
+	// EnsureNamespace creates the namespace if it does not exist and stamps it
+	// with the CLI ownership labels. It is idempotent and safe to call on a
+	// namespace the CLI did not create.
+	EnsureNamespace(ctx context.Context, namespace string) error
 }
 
 // Adapter is the controller-runtime-backed implementation of Client. It is
@@ -104,12 +143,73 @@ func (a *Adapter) GetCardanoNetwork(ctx context.Context, namespace string, name 
 	}
 	if err := a.client.Get(ctx, key, network); err != nil {
 		if apierrors.IsNotFound(err) {
-			return nil, fmt.Errorf("cardanonetwork %s/%s not found", namespace, name)
+			return nil, fmt.Errorf("cardanonetwork %s/%s %w", namespace, name, ErrNotFound)
 		}
 		return nil, fmt.Errorf("get cardanonetwork %s/%s: %w", namespace, name, err)
 	}
 
 	return network, nil
+}
+
+// DeleteCardanoNetwork deletes the named CardanoNetwork. A NotFound result is
+// treated as success so `down` is idempotent; other errors are wrapped with
+// namespace/name context.
+func (a *Adapter) DeleteCardanoNetwork(ctx context.Context, namespace string, name string) error {
+	network := &yacdv1alpha1.CardanoNetwork{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+	if err := a.client.Delete(ctx, network); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("delete cardanonetwork %s/%s: %w", namespace, name, err)
+	}
+
+	return nil
+}
+
+// ListCardanoNetworks lists CardanoNetworks in the given namespace. An empty
+// namespace lists across all namespaces.
+func (a *Adapter) ListCardanoNetworks(ctx context.Context, namespace string) ([]yacdv1alpha1.CardanoNetwork, error) {
+	list := &yacdv1alpha1.CardanoNetworkList{}
+	var opts []client.ListOption
+	if strings.TrimSpace(namespace) != "" {
+		opts = append(opts, client.InNamespace(namespace))
+	}
+	if err := a.client.List(ctx, list, opts...); err != nil {
+		return nil, fmt.Errorf("list cardanonetworks: %w", err)
+	}
+
+	return list.Items, nil
+}
+
+// EnsureNamespace server-side-applies the namespace with the CLI ownership
+// labels, creating it if absent. Apply is idempotent and only owns the labels
+// it sets, so it neither errors on a pre-existing namespace nor clobbers
+// labels owned by other field managers (for example a Pod Security label).
+func (a *Adapter) EnsureNamespace(ctx context.Context, namespace string) error {
+	ns := &corev1.Namespace{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Namespace",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: namespace,
+			Labels: map[string]string{
+				managedByLabel: "yacd",
+				createdByLabel: fieldOwner,
+			},
+		},
+	}
+	//nolint:staticcheck // client.Apply is still the practical SSA path for object structs without generated apply configurations, matching ApplyCardanoNetwork.
+	if err := a.client.Patch(ctx, ns, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
+		return fmt.Errorf("ensure namespace %s: %w", namespace, err)
+	}
+
+	return nil
 }
 
 // GetSecretValue reads a single key from a Secret. The returned error

@@ -74,3 +74,46 @@ func WaitReady(
 
 	return latest, nil
 }
+
+// WaitGone polls a CardanoNetwork through the Client port until it no longer
+// exists or the deadline expires. It is the teardown counterpart to WaitReady:
+// `down` calls it after deleting the network so it returns only once the
+// Kubernetes garbage collector has removed the object (and, by extension, its
+// owned children). A NotFound result is success. On timeout, if the object is
+// still terminating, the error names any finalizers blocking deletion.
+func WaitGone(
+	ctx context.Context,
+	client Client,
+	namespace string,
+	name string,
+	timeout time.Duration,
+) error {
+	if timeout <= 0 {
+		return fmt.Errorf("timeout must be greater than 0")
+	}
+
+	var latest *yacdv1alpha1.CardanoNetwork
+	err := wait.PollUntilContextTimeout(ctx, pollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		network, err := client.GetCardanoNetwork(ctx, namespace, name)
+		if err != nil {
+			if IsNotFound(err) {
+				return true, nil
+			}
+			return false, err
+		}
+		latest = network
+
+		return false, nil
+	})
+	if err != nil {
+		if latest != nil && latest.DeletionTimestamp != nil {
+			return fmt.Errorf(
+				"cardanonetwork %s/%s is still terminating after %s; deletion may be blocked by finalizers %v",
+				namespace, name, timeout, latest.Finalizers,
+			)
+		}
+		return fmt.Errorf("wait for cardanonetwork %s/%s to be deleted: %w", namespace, name, err)
+	}
+
+	return nil
+}

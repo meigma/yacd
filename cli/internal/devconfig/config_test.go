@@ -11,9 +11,6 @@ import (
 const validConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: devnet
-  namespace: yacd-dev
 spec:
   network:
     mode: local
@@ -36,9 +33,6 @@ spec:
 const validPublicPreviewConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: preview
-  namespace: yacd-dev
 spec:
   network:
     mode: public
@@ -54,9 +48,6 @@ spec:
 const validPublicCustomConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: custom
-  namespace: yacd-dev
 spec:
   network:
     mode: public
@@ -75,9 +66,6 @@ spec:
 const validPublicMainnetConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
-metadata:
-  name: mainnet
-  namespace: yacd-dev
 spec:
   network:
     mode: public
@@ -95,8 +83,8 @@ func TestLoadReadsEnvironmentConfig(t *testing.T) {
 
 	environment, err := Load(strings.NewReader(validConfig))
 	require.NoError(t, err)
-	assert.Equal(t, "devnet", environment.Metadata.Name)
-	assert.Equal(t, "yacd-dev", environment.Metadata.Namespace)
+	assert.Equal(t, APIVersion, environment.APIVersion)
+	assert.Equal(t, Kind, environment.Kind)
 	assert.Equal(t, int64(42), environment.Spec.Network.Local.NetworkMagic)
 }
 
@@ -111,7 +99,7 @@ func TestLoadReadsPublicEnvironmentConfig(t *testing.T) {
 		{name: "preview", config: validPublicPreviewConfig, wantProfile: "preview"},
 		{
 			name:        "preprod",
-			config:      strings.Replace(validPublicPreviewConfig, "name: preview", "name: preprod", 1),
+			config:      validPublicPreviewConfig,
 			wantProfile: "preprod",
 		},
 		{
@@ -297,9 +285,19 @@ func TestValidateRequiresEnvelope(t *testing.T) {
 			wantErr: "kind",
 		},
 		{
-			name:    "name",
-			config:  strings.Replace(validConfig, "name: devnet", "name: \"\"", 1),
-			wantErr: "metadata.name",
+			name:    "blank node version",
+			config:  strings.Replace(validConfig, "version: \"11.0.1\"", "version: \"\"", 1),
+			wantErr: "spec.network.node.version is required",
+		},
+		{
+			name:    "non-positive node port",
+			config:  strings.Replace(validConfig, "port: 3001", "port: 0", 1),
+			wantErr: "spec.network.node.port must be greater than 0",
+		},
+		{
+			name:    "unsupported mode",
+			config:  strings.Replace(validConfig, "mode: local", "mode: hybrid", 1),
+			wantErr: "spec.network.mode",
 		},
 	}
 

@@ -139,6 +139,126 @@ func (_c *Client_DefaultNamespace_Call) RunAndReturn(run func() string) *Client_
 	return _c
 }
 
+// DeleteCardanoNetwork provides a mock function for the type Client
+func (_mock *Client) DeleteCardanoNetwork(ctx context.Context, namespace string, name string) error {
+	ret := _mock.Called(ctx, namespace, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteCardanoNetwork")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+		r0 = returnFunc(ctx, namespace, name)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// Client_DeleteCardanoNetwork_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteCardanoNetwork'
+type Client_DeleteCardanoNetwork_Call struct {
+	*mock.Call
+}
+
+// DeleteCardanoNetwork is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+func (_e *Client_Expecter) DeleteCardanoNetwork(ctx interface{}, namespace interface{}, name interface{}) *Client_DeleteCardanoNetwork_Call {
+	return &Client_DeleteCardanoNetwork_Call{Call: _e.mock.On("DeleteCardanoNetwork", ctx, namespace, name)}
+}
+
+func (_c *Client_DeleteCardanoNetwork_Call) Run(run func(ctx context.Context, namespace string, name string)) *Client_DeleteCardanoNetwork_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_DeleteCardanoNetwork_Call) Return(err error) *Client_DeleteCardanoNetwork_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *Client_DeleteCardanoNetwork_Call) RunAndReturn(run func(ctx context.Context, namespace string, name string) error) *Client_DeleteCardanoNetwork_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// EnsureNamespace provides a mock function for the type Client
+func (_mock *Client) EnsureNamespace(ctx context.Context, namespace string) error {
+	ret := _mock.Called(ctx, namespace)
+
+	if len(ret) == 0 {
+		panic("no return value specified for EnsureNamespace")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) error); ok {
+		r0 = returnFunc(ctx, namespace)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// Client_EnsureNamespace_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'EnsureNamespace'
+type Client_EnsureNamespace_Call struct {
+	*mock.Call
+}
+
+// EnsureNamespace is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+func (_e *Client_Expecter) EnsureNamespace(ctx interface{}, namespace interface{}) *Client_EnsureNamespace_Call {
+	return &Client_EnsureNamespace_Call{Call: _e.mock.On("EnsureNamespace", ctx, namespace)}
+}
+
+func (_c *Client_EnsureNamespace_Call) Run(run func(ctx context.Context, namespace string)) *Client_EnsureNamespace_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_EnsureNamespace_Call) Return(err error) *Client_EnsureNamespace_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *Client_EnsureNamespace_Call) RunAndReturn(run func(ctx context.Context, namespace string) error) *Client_EnsureNamespace_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetCardanoNetwork provides a mock function for the type Client
 func (_mock *Client) GetCardanoNetwork(ctx context.Context, namespace string, name string) (*v1alpha1.CardanoNetwork, error) {
 	ret := _mock.Called(ctx, namespace, name)
@@ -287,6 +407,74 @@ func (_c *Client_GetSecretValue_Call) Return(s string, err error) *Client_GetSec
 }
 
 func (_c *Client_GetSecretValue_Call) RunAndReturn(run func(ctx context.Context, namespace string, name string, key string) (string, error)) *Client_GetSecretValue_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListCardanoNetworks provides a mock function for the type Client
+func (_mock *Client) ListCardanoNetworks(ctx context.Context, namespace string) ([]v1alpha1.CardanoNetwork, error) {
+	ret := _mock.Called(ctx, namespace)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListCardanoNetworks")
+	}
+
+	var r0 []v1alpha1.CardanoNetwork
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) ([]v1alpha1.CardanoNetwork, error)); ok {
+		return returnFunc(ctx, namespace)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) []v1alpha1.CardanoNetwork); ok {
+		r0 = returnFunc(ctx, namespace)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]v1alpha1.CardanoNetwork)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, namespace)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_ListCardanoNetworks_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListCardanoNetworks'
+type Client_ListCardanoNetworks_Call struct {
+	*mock.Call
+}
+
+// ListCardanoNetworks is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+func (_e *Client_Expecter) ListCardanoNetworks(ctx interface{}, namespace interface{}) *Client_ListCardanoNetworks_Call {
+	return &Client_ListCardanoNetworks_Call{Call: _e.mock.On("ListCardanoNetworks", ctx, namespace)}
+}
+
+func (_c *Client_ListCardanoNetworks_Call) Run(run func(ctx context.Context, namespace string)) *Client_ListCardanoNetworks_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_ListCardanoNetworks_Call) Return(cardanoNetworks []v1alpha1.CardanoNetwork, err error) *Client_ListCardanoNetworks_Call {
+	_c.Call.Return(cardanoNetworks, err)
+	return _c
+}
+
+func (_c *Client_ListCardanoNetworks_Call) RunAndReturn(run func(ctx context.Context, namespace string) ([]v1alpha1.CardanoNetwork, error)) *Client_ListCardanoNetworks_Call {
 	_c.Call.Return(run)
 	return _c
 }

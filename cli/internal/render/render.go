@@ -10,32 +10,23 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// defaultNamespace is the final fallback when no caller has supplied a namespace.
-const defaultNamespace = "default"
-
-// Namespace resolves the namespace for a rendered environment by walking the
-// precedence override > configured > fallback > "default" and returning the
-// first non-empty, trimmed value.
-func Namespace(override string, configured string, fallback string) string {
-	for _, candidate := range []string{override, configured, fallback, defaultNamespace} {
-		if trimmed := strings.TrimSpace(candidate); trimmed != "" {
-			return trimmed
-		}
-	}
-
-	return defaultNamespace
-}
-
 // CardanoNetwork renders the single CardanoNetwork described by a developer
-// environment configuration. The provided namespace is the resolved override
-// (typically from Namespace); validation is re-run defensively so callers
-// cannot bypass it by constructing the Environment by hand.
-func CardanoNetwork(environment *devconfig.Environment, namespace string) (*yacdv1alpha1.CardanoNetwork, error) {
+// environment configuration under the supplied identity. Name and namespace
+// are command-line concerns resolved by the caller (they are not read from the
+// file); validation is re-run defensively so callers cannot bypass it by
+// constructing the Environment by hand.
+func CardanoNetwork(environment *devconfig.Environment, name string, namespace string) (*yacdv1alpha1.CardanoNetwork, error) {
 	if environment == nil {
 		return nil, fmt.Errorf("developer environment is required")
 	}
 	if err := environment.Validate(); err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+	if strings.TrimSpace(namespace) == "" {
+		return nil, fmt.Errorf("namespace is required")
 	}
 
 	networkSpec := *environment.Spec.Network.DeepCopy()
@@ -45,8 +36,8 @@ func CardanoNetwork(environment *devconfig.Environment, namespace string) (*yacd
 			Kind:       "CardanoNetwork",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      strings.TrimSpace(environment.Metadata.Name),
-			Namespace: Namespace(namespace, environment.Metadata.Namespace, ""),
+			Name:      strings.TrimSpace(name),
+			Namespace: strings.TrimSpace(namespace),
 		},
 		Spec: networkSpec,
 	}
