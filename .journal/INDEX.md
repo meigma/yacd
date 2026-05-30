@@ -43,3 +43,4 @@
 | 040 | 2026-05-29 | TEST_REPORT F0 assessment | abandoned | Closed without implementation after determining F0 needs a public-profile materialization redesign rather than another raw ConfigMap workaround. |
 | 041 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session opened to continue the remaining `.journal/TEST_REPORT.md` findings (F0, F2/F4); awaiting user direction. |
 | 042 | 2026-05-29 | cardano-tools artifact utility container | complete | Built and merged (PR #64) the new `cardano-tools` container + binary (generate/fetch/serve/report) on a distroless/static slim image as the foundation for the F0 fix; controller rewiring deferred. |
+| 043 | 2026-05-30 | Session start — awaiting direction | in-progress | New session opened via session-new; primed and awaiting the user's task. |
