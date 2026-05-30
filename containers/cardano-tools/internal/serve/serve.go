@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -117,11 +118,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, part := range strings.Split(rel, "/") {
-		if artifactset.IsSecretComponent(part) {
-			http.NotFound(w, r)
-			return
-		}
+	if slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent) {
+		http.NotFound(w, r)
+		return
 	}
 
 	resolved, err := filepath.EvalSymlinks(filepath.Join(h.root, filepath.FromSlash(rel)))

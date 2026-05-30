@@ -73,7 +73,7 @@ func TestServeRejectsTraversal(t *testing.T) {
 func TestServeRefusesSecretComponents(t *testing.T) {
 	t.Parallel()
 	srv, _ := newServer(t, map[string]string{
-		"config.json":              "ok",
+		"config.json":               "ok",
 		"pools-keys/pool1/kes.skey": "SECRET",
 		"utxo-keys/utxo1.skey":      "SECRET",
 	})
