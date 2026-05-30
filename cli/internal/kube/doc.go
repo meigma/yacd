@@ -11,4 +11,13 @@
 // Client port for readiness and teardown completion respectively. Config and
 // the kubeconfig loader sit alongside the adapter because they are part of the
 // same construction surface.
+//
+// The host-access seam (access.go) extends the same Client port with
+// PrimaryPodName, Forward, and Exec for the run/connect/exec verbs. These reach
+// Pod subresources that the high-level controller-runtime client does not
+// expose, so the Adapter also retains the REST config and a core/v1 REST
+// client. PrimaryPodName resolves the target Pod from the operator's published
+// node-to-node Service rather than any controller-internal labels; Forward and
+// Exec require a live cluster (a kubelet) and are therefore proven by manual
+// and end-to-end runs rather than envtest.
 package kube

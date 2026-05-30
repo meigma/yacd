@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/meigma/yacd/api/v1alpha1"
+	"github.com/meigma/yacd/cli/internal/kube"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -259,6 +260,143 @@ func (_c *Client_EnsureNamespace_Call) RunAndReturn(run func(ctx context.Context
 	return _c
 }
 
+// Exec provides a mock function for the type Client
+func (_mock *Client) Exec(ctx context.Context, req kube.ExecRequest) error {
+	ret := _mock.Called(ctx, req)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Exec")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, kube.ExecRequest) error); ok {
+		r0 = returnFunc(ctx, req)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// Client_Exec_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Exec'
+type Client_Exec_Call struct {
+	*mock.Call
+}
+
+// Exec is a helper method to define mock.On call
+//   - ctx context.Context
+//   - req kube.ExecRequest
+func (_e *Client_Expecter) Exec(ctx interface{}, req interface{}) *Client_Exec_Call {
+	return &Client_Exec_Call{Call: _e.mock.On("Exec", ctx, req)}
+}
+
+func (_c *Client_Exec_Call) Run(run func(ctx context.Context, req kube.ExecRequest)) *Client_Exec_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 kube.ExecRequest
+		if args[1] != nil {
+			arg1 = args[1].(kube.ExecRequest)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_Exec_Call) Return(err error) *Client_Exec_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *Client_Exec_Call) RunAndReturn(run func(ctx context.Context, req kube.ExecRequest) error) *Client_Exec_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Forward provides a mock function for the type Client
+func (_mock *Client) Forward(ctx context.Context, namespace string, podName string, specs []kube.PortForwardSpec) (kube.ForwardSession, error) {
+	ret := _mock.Called(ctx, namespace, podName, specs)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Forward")
+	}
+
+	var r0 kube.ForwardSession
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, []kube.PortForwardSpec) (kube.ForwardSession, error)); ok {
+		return returnFunc(ctx, namespace, podName, specs)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string, []kube.PortForwardSpec) kube.ForwardSession); ok {
+		r0 = returnFunc(ctx, namespace, podName, specs)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(kube.ForwardSession)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string, []kube.PortForwardSpec) error); ok {
+		r1 = returnFunc(ctx, namespace, podName, specs)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_Forward_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Forward'
+type Client_Forward_Call struct {
+	*mock.Call
+}
+
+// Forward is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - podName string
+//   - specs []kube.PortForwardSpec
+func (_e *Client_Expecter) Forward(ctx interface{}, namespace interface{}, podName interface{}, specs interface{}) *Client_Forward_Call {
+	return &Client_Forward_Call{Call: _e.mock.On("Forward", ctx, namespace, podName, specs)}
+}
+
+func (_c *Client_Forward_Call) Run(run func(ctx context.Context, namespace string, podName string, specs []kube.PortForwardSpec)) *Client_Forward_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		var arg3 []kube.PortForwardSpec
+		if args[3] != nil {
+			arg3 = args[3].([]kube.PortForwardSpec)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_Forward_Call) Return(forwardSession kube.ForwardSession, err error) *Client_Forward_Call {
+	_c.Call.Return(forwardSession, err)
+	return _c
+}
+
+func (_c *Client_Forward_Call) RunAndReturn(run func(ctx context.Context, namespace string, podName string, specs []kube.PortForwardSpec) (kube.ForwardSession, error)) *Client_Forward_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetCardanoNetwork provides a mock function for the type Client
 func (_mock *Client) GetCardanoNetwork(ctx context.Context, namespace string, name string) (*v1alpha1.CardanoNetwork, error) {
 	ret := _mock.Called(ctx, namespace, name)
@@ -475,6 +613,78 @@ func (_c *Client_ListCardanoNetworks_Call) Return(cardanoNetworks []v1alpha1.Car
 }
 
 func (_c *Client_ListCardanoNetworks_Call) RunAndReturn(run func(ctx context.Context, namespace string) ([]v1alpha1.CardanoNetwork, error)) *Client_ListCardanoNetworks_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// PrimaryPodName provides a mock function for the type Client
+func (_mock *Client) PrimaryPodName(ctx context.Context, namespace string, networkName string) (string, error) {
+	ret := _mock.Called(ctx, namespace, networkName)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PrimaryPodName")
+	}
+
+	var r0 string
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (string, error)); ok {
+		return returnFunc(ctx, namespace, networkName)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) string); ok {
+		r0 = returnFunc(ctx, namespace, networkName)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, namespace, networkName)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_PrimaryPodName_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PrimaryPodName'
+type Client_PrimaryPodName_Call struct {
+	*mock.Call
+}
+
+// PrimaryPodName is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - networkName string
+func (_e *Client_Expecter) PrimaryPodName(ctx interface{}, namespace interface{}, networkName interface{}) *Client_PrimaryPodName_Call {
+	return &Client_PrimaryPodName_Call{Call: _e.mock.On("PrimaryPodName", ctx, namespace, networkName)}
+}
+
+func (_c *Client_PrimaryPodName_Call) Run(run func(ctx context.Context, namespace string, networkName string)) *Client_PrimaryPodName_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_PrimaryPodName_Call) Return(s string, err error) *Client_PrimaryPodName_Call {
+	_c.Call.Return(s, err)
+	return _c
+}
+
+func (_c *Client_PrimaryPodName_Call) RunAndReturn(run func(ctx context.Context, namespace string, networkName string) (string, error)) *Client_PrimaryPodName_Call {
 	_c.Call.Return(run)
 	return _c
 }

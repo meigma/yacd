@@ -12,7 +12,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -72,14 +74,34 @@ type Client interface {
 	// with the CLI ownership labels. It is idempotent and safe to call on a
 	// namespace the CLI did not create.
 	EnsureNamespace(ctx context.Context, namespace string) error
+
+	// PrimaryPodName resolves the Ready primary node Pod for a network from the
+	// node-to-node Service the operator publishes in status.
+	PrimaryPodName(ctx context.Context, namespace string, networkName string) (string, error)
+
+	// Forward establishes port-forwards from random local ports to the named
+	// Pod's container ports and returns a live session.
+	Forward(ctx context.Context, namespace string, podName string, specs []PortForwardSpec) (ForwardSession, error)
+
+	// Exec runs a command inside a Pod container, streaming the caller's stdio,
+	// and returns a util/exec ExitError on a non-zero remote exit.
+	Exec(ctx context.Context, req ExecRequest) error
 }
 
 // Adapter is the controller-runtime-backed implementation of Client. It is
 // returned as a concrete value from NewClient so the construction site holds
 // a typed lifecycle handle; the command layer holds the Client interface.
+//
+// restConfig and restClient back the host-access verbs only: port-forward and
+// exec need the raw REST config and a core/v1 REST client to reach the Pod
+// subresources, which the high-level controller-runtime client does not expose.
+// They are nil in unit tests that construct Adapter directly for the
+// controller-runtime-backed methods.
 type Adapter struct {
-	client    client.Client
-	namespace string
+	client     client.Client
+	namespace  string
+	restConfig *rest.Config
+	restClient rest.Interface
 }
 
 // NewClient constructs an Adapter from the user's kubeconfig. The returned
@@ -101,9 +123,18 @@ func NewClient(config Config) (*Adapter, error) {
 		return nil, fmt.Errorf("create Kubernetes client: %w", err)
 	}
 
+	// A core/v1 REST client backs the port-forward and exec subresource URLs;
+	// it shares restCfg with the high-level client above.
+	clientset, err := kubernetes.NewForConfig(restCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create Kubernetes core client: %w", err)
+	}
+
 	return &Adapter{
-		client:    kubeClient,
-		namespace: namespace,
+		client:     kubeClient,
+		namespace:  namespace,
+		restConfig: restCfg,
+		restClient: clientset.CoreV1().RESTClient(),
 	}, nil
 }
 
