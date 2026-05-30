@@ -1,0 +1,9 @@
+# The version subcommand prints the binary name and the linker-injected build
+# metadata. Source builds carry the dev/none/unknown defaults.
+exec yacd-cardano-tools version
+stdout '^yacd-cardano-tools dev \(none\) built unknown$'
+! stderr .
+
+# --version uses the same template.
+exec yacd-cardano-tools --version
+stdout '^yacd-cardano-tools dev \(none\) built unknown$'
