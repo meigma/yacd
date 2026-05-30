@@ -239,3 +239,22 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
   too; PR7 documents the whole surface). `root:check`+`root:test` green. PR #66
   opened; **paused.** Next: PR7 = WB10 wiring (done incrementally) + WB11
   contract-reference doc — the final PR.
+
+## 2026-05-30 — PR6 merged; PR7 (final) done & open: PR #67 (PAUSED)
+- "LGTM. Proceed." → #66 CI green (ci+e2e+Kusari) → squash-merged PR6 (master
+  7a9c66c). Removed topup-await worktree; created `docs/host-access`.
+- **PR7 = WB11** docs-only (commit bb9e7a4, PR #67). New `docs/host-access.md`
+  (YACD_* contract table, run-vs-exec rule, connect endpoints.json, topup
+  --await). README: verb list +run/connect/exec; replaced manual kubectl
+  port-forward example with the verb flow; linked the reference. (WB10 wiring
+  was done incrementally as each verb landed in PR3-6.)
+- Adversarial accuracy review (cross-checked every claim vs code): **ship**;
+  fixed 2 wording nits (network-magic publish condition is not local-only;
+  in-pod URL form). `root:check` green; `git diff --check` clean. PR #67 opened;
+  **paused.**
+- **Phase 2 COMPLETE pending PR7 merge.** All 7 PRs (#59 ports/exit, #60 env+
+  forward, #61 run, #62 exec, #63 connect, #66 topup --await, #67 docs) each:
+  focused adversarial review + (where live path) Kind proof + check/test green.
+  Full examples/e2e + GitHub Action are Phase 4/5 (future).
+- REMINDER at session close: `moon run root:dev-down` (dev stack still up in
+  `.run/yacd-dev`), close session 041.
