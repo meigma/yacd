@@ -101,6 +101,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.SetErr(options.Err)
 
 	root.AddCommand(newGenerateCommand(commandContext))
+	root.AddCommand(newFetchCommand(commandContext))
 	root.AddCommand(newReportCommand(commandContext))
 	root.AddCommand(newVersionCommand(options.Build))
 
