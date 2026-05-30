@@ -118,13 +118,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent) {
+	if containsSecretComponent(rel) {
 		http.NotFound(w, r)
 		return
 	}
 
 	resolved, err := filepath.EvalSymlinks(filepath.Join(h.root, filepath.FromSlash(rel)))
 	if err != nil || !underRoot(h.root, resolved) {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Re-check the resolved path: an in-root symlink with a benign name (e.g.
+	// /leak -> utxo-keys/pool.skey) passes the request-path check above and
+	// stays under root, so the secret-component denylist must also apply to
+	// where the path actually resolves.
+	resolvedRel := strings.TrimPrefix(strings.TrimPrefix(resolved, h.root), string(os.PathSeparator))
+	if containsSecretComponent(filepath.ToSlash(resolvedRel)) {
 		http.NotFound(w, r)
 		return
 	}
@@ -143,6 +153,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+}
+
+// containsSecretComponent reports whether any slash-separated component of a
+// relative path names Cardano key material.
+func containsSecretComponent(rel string) bool {
+	return slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent)
 }
 
 // underRoot reports whether resolved is root itself or a descendant of it.

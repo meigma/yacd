@@ -171,12 +171,14 @@ jobs:
         run: |
           set -euo pipefail
 
+          # The final image is distroless/static (no shell), so every probe runs
+          # a binary directly rather than via /bin/sh.
           docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" version >/tmp/cardano-tools-version.txt
           grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
 
           # The image embeds the upstream Cardano binaries the generate verb shims.
-          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /bin/sh "$IMAGE_REF" \
-            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli && test -x /opt/cardano/bin/cardano-testnet'
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /opt/cardano/bin/cardano-cli "$IMAGE_REF" --version >/dev/null
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /opt/cardano/bin/cardano-node "$IMAGE_REF" --version >/dev/null
 
           # generate --dry-run resolves the create-env invocation without running it.
           docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" generate --dry-run >/tmp/cardano-tools-generate.txt
@@ -305,10 +307,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # distroless/static has no shell; probe binaries directly.
           docker run --rm "${{ steps.manifest.outputs.tag }}" version >/tmp/cardano-tools-version.txt
           grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
-          docker run --rm --entrypoint /bin/sh "${{ steps.manifest.outputs.tag }}" \
-            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli'
+
+          # A real (offline) generate exercises cardano-testnet create-env + the
+          # cardano-cli genesis-hash enrichment shell-free, and proves /state is
+          # writable by the non-root run uid.
+          docker run --rm "${{ steps.manifest.outputs.tag }}" generate >/tmp/cardano-tools-generate.txt 2>&1
+          grep -Fq "generated localnet environment" /tmp/cardano-tools-generate.txt
 
           # fetch --dry-run resolves the trusted-source manifest without network access.
           docker run --rm "${{ steps.manifest.outputs.tag }}" fetch --profile preview --dry-run >/tmp/cardano-tools-fetch.txt

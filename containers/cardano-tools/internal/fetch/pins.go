@@ -71,17 +71,24 @@ func chainArtifacts(profile, configSHA256 string) []pinnedFile {
 func pinsFor(profile string) ([]pinnedFile, bool) {
 	switch profile {
 	case "preview":
+		// preview config.json references CheckpointsFile + CheckpointsFileHash,
+		// so checkpoints.json is required (unpinned here — cardano-node verifies
+		// it against the hash inside the pinned config.json). peer-snapshot is a
+		// best-effort bootstrap aid and stays optional.
 		return append(chainArtifacts("preview", previewConfigSHA256),
-			bookFile("preview", "checkpoints.json", "", true),
+			bookFile("preview", "checkpoints.json", "", false),
 			bookFile("preview", "peer-snapshot.json", "", true),
 		), true
 	case "preprod":
+		// preprod config.json does not reference a checkpoints file.
 		return append(chainArtifacts("preprod", preprodConfigSHA256),
 			bookFile("preprod", "peer-snapshot.json", "", true),
 		), true
 	case "mainnet":
+		// mainnet config.json references CheckpointsFile + CheckpointsFileHash,
+		// so checkpoints.json is required (verified downstream by that hash).
 		return append(chainArtifacts("mainnet", mainnetConfigSHA256),
-			bookFile("mainnet", "checkpoints.json", "", true),
+			bookFile("mainnet", "checkpoints.json", "", false),
 			bookFile("mainnet", "peer-snapshot.json", "", true),
 			pinnedFile{name: "mithril-genesis.vkey", url: mithrilBase + "genesis.vkey", expectedSHA256: mainnetMithrilGenesisSHA256},
 			pinnedFile{name: "mithril-ancillary.vkey", url: mithrilBase + "ancillary.vkey", expectedSHA256: mainnetMithrilAncillarySHA256},

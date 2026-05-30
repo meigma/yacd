@@ -487,10 +487,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          # distroless/static has no shell; probe binaries directly.
           docker run --rm cardano-tools:dry-run version >/tmp/cardano-tools-version.txt
           grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
-          docker run --rm --entrypoint /bin/sh cardano-tools:dry-run \
-            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli && test -x /opt/cardano/bin/cardano-testnet'
+          docker run --rm --entrypoint /opt/cardano/bin/cardano-cli cardano-tools:dry-run --version >/dev/null
+          docker run --rm --entrypoint /opt/cardano/bin/cardano-node cardano-tools:dry-run --version >/dev/null
 
           docker run --rm cardano-tools:dry-run generate --dry-run >/tmp/cardano-tools-generate.txt
           grep -Fq "would run: cardano-testnet create-env" /tmp/cardano-tools-generate.txt

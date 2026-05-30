@@ -101,6 +101,23 @@ func TestServeRefusesSymlinkEscapingRoot(t *testing.T) {
 	assert.NotContains(t, body, "SECRET")
 }
 
+func TestServeRefusesSymlinkToSecretWithinRoot(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on windows")
+	}
+
+	// A benignly-named symlink that stays under root but points at key material
+	// must still be refused: the secret-component check applies to the resolved
+	// path, not just the request path.
+	srv, root := newServer(t, map[string]string{"utxo-keys/pool.skey": "SECRET"})
+	require.NoError(t, os.Symlink(filepath.Join(root, "utxo-keys", "pool.skey"), filepath.Join(root, "leak")))
+
+	code, body := get(t, srv, "/leak")
+	assert.Equal(t, http.StatusNotFound, code)
+	assert.NotContains(t, body, "SECRET")
+}
+
 func TestServeRefusesDirectoryListing(t *testing.T) {
 	t.Parallel()
 	srv, _ := newServer(t, map[string]string{"sub/config.json": "ok"})

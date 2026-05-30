@@ -39,7 +39,9 @@ func digest(b []byte) string {
 }
 
 // previewBodies returns canned responses for the preview profile whose
-// config.json matches the pinned digest, leaving the optional files absent.
+// config.json matches the pinned digest. It includes every required file
+// (config, the four genesis files, topology, and checkpoints) and omits the
+// optional peer-snapshot.
 func previewBodies(t *testing.T, config []byte) map[string][]byte {
 	t.Helper()
 	require.Equal(t, previewConfigSHA256, digest(config), "test config must match the pinned preview digest")
@@ -50,6 +52,7 @@ func previewBodies(t *testing.T, config []byte) map[string][]byte {
 		bookBase + "preview/alonzo-genesis.json":  []byte(`{"alonzo":true}`),
 		bookBase + "preview/conway-genesis.json":  []byte(`{"conway":true}`),
 		bookBase + "preview/topology.json":        []byte(`{"Producers":[]}`),
+		bookBase + "preview/checkpoints.json":     []byte(`[]`),
 	}
 }
 
@@ -94,25 +97,34 @@ func TestRunFailsOnPinnedDigestMismatch(t *testing.T) {
 func TestRunFailsWhenRequiredFileMissing(t *testing.T) {
 	t.Parallel()
 
-	bodies := previewBodies(t, pinnedPreviewConfig(t))
-	delete(bodies, bookBase+"preview/byron-genesis.json")
+	// byron-genesis and checkpoints are both required for preview (preview
+	// config.json references CheckpointsFileHash), so a missing download fails
+	// the run rather than producing an incomplete artifact directory.
+	for _, missing := range []string{"byron-genesis.json", "checkpoints.json"} {
+		t.Run(missing, func(t *testing.T) {
+			t.Parallel()
+			bodies := previewBodies(t, pinnedPreviewConfig(t))
+			delete(bodies, bookBase+"preview/"+missing)
 
-	err := Run(t.Context(), Options{Profile: "preview", OutputDir: t.TempDir()},
-		fakeDoer{bodies: bodies}, io.Discard)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "byron-genesis.json")
+			err := Run(t.Context(), Options{Profile: "preview", OutputDir: t.TempDir()},
+				fakeDoer{bodies: bodies}, io.Discard)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), missing)
+		})
+	}
 }
 
 func TestRunToleratesMissingOptionalFile(t *testing.T) {
 	t.Parallel()
 
-	// The preview optional files (checkpoints, peer-snapshot) are absent from
-	// the canned bodies, so their downloads 404; the run still succeeds.
+	// peer-snapshot is the only optional preview file; it is absent from the
+	// canned bodies, so its download 404s and the run still succeeds.
 	dir := t.TempDir()
 	err := Run(t.Context(), Options{Profile: "preview", OutputDir: dir},
 		fakeDoer{bodies: previewBodies(t, pinnedPreviewConfig(t))}, io.Discard)
 	require.NoError(t, err)
-	assert.NoFileExists(t, filepath.Join(dir, "checkpoints.json"))
+	assert.NoFileExists(t, filepath.Join(dir, "peer-snapshot.json"))
+	assert.FileExists(t, filepath.Join(dir, "checkpoints.json"), "required checkpoints is written")
 }
 
 func TestRunRejectsUnknownProfile(t *testing.T) {
