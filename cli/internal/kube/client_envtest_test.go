@@ -373,6 +373,18 @@ func (s *staticClient) EnsureNamespace(context.Context, string) error {
 	return nil
 }
 
+func (s *staticClient) PrimaryPodName(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (s *staticClient) Forward(context.Context, string, string, []PortForwardSpec) (ForwardSession, error) {
+	return nil, nil
+}
+
+func (s *staticClient) Exec(context.Context, ExecRequest) error {
+	return nil
+}
+
 // goneAfterClient is a hand-rolled Client for the WaitGone present-then-gone
 // path. GetCardanoNetwork returns the network for the first presentCalls polls,
 // then a wrapped ErrNotFound, so the test exercises the polling loop without
@@ -413,5 +425,17 @@ func (g *goneAfterClient) ListCardanoNetworks(context.Context, string) ([]yacdv1
 }
 
 func (g *goneAfterClient) EnsureNamespace(context.Context, string) error {
+	return nil
+}
+
+func (g *goneAfterClient) PrimaryPodName(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (g *goneAfterClient) Forward(context.Context, string, string, []PortForwardSpec) (ForwardSession, error) {
+	return nil, nil
+}
+
+func (g *goneAfterClient) Exec(context.Context, ExecRequest) error {
 	return nil
 }

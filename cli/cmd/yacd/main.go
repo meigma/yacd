@@ -28,8 +28,10 @@ func main() {
 }
 
 // run installs a SIGINT/SIGTERM-cancelled context, builds the root command,
-// and executes it. A non-nil error is written to stderr; the exit status is
-// 0 on success and 1 on any error.
+// and executes it. The exit status comes from cli.ResolveExit so the run and
+// exec verbs can propagate a child or in-pod process's exit code; ordinary
+// errors are written to stderr and exit 1, while a code carried by an already-
+// reported process exit is returned without a duplicate message.
 func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -44,13 +46,12 @@ func run() int {
 		Out: os.Stdout,
 		Err: os.Stderr,
 	})
-	if err := root.ExecuteContext(ctx); err != nil {
-		if _, writeErr := fmt.Fprintln(os.Stderr, err); writeErr != nil {
-			return 1
-		}
 
-		return 1
+	err := root.ExecuteContext(ctx)
+	code, printErr := cli.ResolveExit(err)
+	if printErr {
+		_, _ = fmt.Fprintln(os.Stderr, err)
 	}
 
-	return 0
+	return code
 }
