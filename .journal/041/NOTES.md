@@ -82,3 +82,42 @@ synthesize → present via ExitPlanMode.
     main.go duplicate stderr.
   - `yacd env` **cut** from Phase 2.
 - Presenting plan for human review; NOT implementing until approved.
+
+## 2026-05-29 17:20 — Approved; PR-by-PR implementation with pre-merge pauses
+User approved the plan. Directive: complete each PR as described, **pause before
+each PR merge for human review**, then continue to the next.
+- Created impl worktree `feat/cli-host-access-ports` at
+  `.wt/feat-cli-host-access-ports` from `master` (c7825f8).
+- `moon run root:dev-up` succeeded (operator ready ~60s; Tilt bg, Kind
+  `kind-yacd-dev`, logs `.run/yacd-dev/tilt.log`). Stack stays warm for the
+  PR3/PR4 live-path proofs.
+- Verified client-go v0.36.1 call signatures I'll use directly: `spdy.NewDialer`,
+  `remotecommand.NewSPDYExecutor`, `StreamOptions{Stdin,Stdout,Stderr,Tty}`,
+  `util/exec.ExitError.ExitStatus()`, `scheme.ParameterCodec`.
+- Starting **PR1** (WB1 + WB9): extend `kube.Client` with
+  `PrimaryPodName`/`Forward`/`Exec` (+ access types), retain restConfig+REST
+  client on Adapter, regen mocks, add `ResolveExit`/`exitError` + main.go wiring,
+  envtest for PrimaryPodName. No live-path proof in PR1 (forward/exec adapters
+  are manual/e2e-only, proven in PR3/PR4).
+
+## 2026-05-29 17:50 — PR1 done & open: PR #59 (PAUSED for human review)
+Branch `feat/cli-host-access-ports` (commit 7464c27). Files: `kube/access.go`
+(+`access_test.go`, `access_envtest_test.go`), `kube/client.go` (Client iface +3
+methods, Adapter retains restConfig+restClient, NewClient builds clientset),
+`kube/doc.go`, `cli/exit.go` (+`exit_test.go`), `cmd/yacd/main.go` (ResolveExit),
+regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
+- `go mod tidy` was required: `transport/spdy`/`portforward` pull in
+  `moby/spdystream`, missing from go.sum. (Heads-up for future PRs touching new
+  k8s.io subpackages.)
+- Verified call signatures live (client-go v0.36.1): `portforward.New`/`GetPorts`
+  (NOT ForwardedPorts), `spdy.RoundTripperFor`+`NewDialer`, `remotecommand`
+  `StreamWithContext`/`StreamOptions{...,Tty}`, `util/exec.ExitError`.
+- `moon run root:check` + `root:test` green; new tests verified executing:
+  TestPrimaryPodName* (envtest), TestForwardSessionLifecycle, TestResolveExit,
+  TestExitErrorMessage.
+- Adversarial review of the diff (1 agent): verdict **ship**; addressed both
+  non-blockers (added forwardSession lifecycle test locking Done/Err ordering;
+  tightened Forward godoc re ctx cancel).
+- PR #59 opened against master; CI (`ci`+`e2e`) pending. Per user directive:
+  **paused before merge for human review.** Next on approval: PR2 = WB2 (env
+  contract) + WB3 (forward orchestration) from updated master.
