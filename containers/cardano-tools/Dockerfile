@@ -59,7 +59,18 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
       -o /out/bin/yacd-cardano-tools ./containers/cardano-tools/cmd/yacd-cardano-tools; \
     test -x /out/bin/yacd-cardano-tools
 
-FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
+# Stage an empty state directory for the final image. distroless/static has no
+# shell to mkdir/chown, so the writable /state owned by the run uid is copied
+# in from here.
+RUN mkdir -p /state
+
+# The IOG cardano-node release binaries are fully static musl builds (no
+# dynamic loader, no shared libraries) and yacd-cardano-tools is a static
+# CGO_ENABLED=0 Go binary, so the final image needs no glibc runtime. A
+# distroless static base supplies the only remaining runtime needs — a CA
+# bundle for the fetch verb's outbound HTTPS, a nonroot identity, /tmp, and
+# tzdata — with no shell, package manager, or libc.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e30dbadd3efe1310db061a14da60299baff8450a17fe0ccc514a16639
 
 ARG CARDANO_NODE_VERSION
 ARG YACD_CARDANO_TOOLS_VERSION
@@ -72,13 +83,11 @@ LABEL org.opencontainers.image.title="yacd-cardano-tools" \
       org.opencontainers.image.vendor="Meigma" \
       io.yacd.cardano-node.version="${CARDANO_NODE_VERSION}"
 
-RUN groupadd --gid 10001 cardano \
-    && useradd --uid 10001 --gid cardano --home-dir /nonexistent --no-create-home --shell /usr/sbin/nologin cardano \
-    && mkdir -p /state \
-    && chown cardano:cardano /state
-
-COPY --from=fetch /out/bin /opt/cardano/bin
+# Copy only the three binaries this tool uses. The release tarball ships ~14
+# binaries (~1.2 GB); the three we need are ~370 MB.
+COPY --from=fetch /out/bin/cardano-node /out/bin/cardano-cli /out/bin/cardano-testnet /opt/cardano/bin/
 COPY --from=build /out/bin/yacd-cardano-tools /opt/yacd/bin/yacd-cardano-tools
+COPY --from=build --chown=10001:10001 /state /state
 
 ENV PATH="/opt/yacd/bin:/opt/cardano/bin:${PATH}" \
     CARDANO_CLI="/opt/cardano/bin/cardano-cli" \
@@ -86,6 +95,10 @@ ENV PATH="/opt/yacd/bin:/opt/cardano/bin:${PATH}" \
 
 WORKDIR /state
 
-USER cardano:cardano
+# Keep the established uid/gid 10001 numerically (distroless/static has no
+# shadow utils to create a passwd entry, and these static binaries do not need
+# one). Using 10001 rather than the base's 65532 avoids changing /state volume
+# ownership expectations. In production /state is a mounted writable volume.
+USER 10001:10001
 
 ENTRYPOINT ["yacd-cardano-tools"]
