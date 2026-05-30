@@ -86,3 +86,52 @@ Next: awaiting user decision on embed-vs-download + consumer-fetch + whether to
 implement the minimal mainnet-only slice. Offered to write a file-by-file impl plan
 against `internal/controller/cardanonetwork`. NO worktree/dev-stack yet (design
 only).
+
+## 2026-05-30 10:23 — Built `cardano-tools` container + binary (PR #64)
+User answered the design forks (AskUserQuestion): name=`cardano-tools`, module=
+ROOT module (no go.mod), versioning=track cardano-node (`cardano-tools/vX.Y.Z-yacd.N`).
+Approved the plan (`.claude/plans/that-s-fine-can-you-enchanted-kay.md`). Built it in
+worktree `feat/cardano-tools` (`.wt/feat-cardano-tools`, from origin/master 45c44f8).
+No dev stack — this PR is binary/container/release only, no operator deploy.
+
+Delivered as 10 commits → **PR #64** (https://github.com/meigma/yacd/pull/64), open,
+NOT merged (awaiting human review + CI):
+- `containers/cardano-tools/` is part of the ROOT module (no go.mod) → imports the
+  shared contract directly (`networkartifacts`, `ctrlkit/artifacts.ComputeDataHash`,
+  `localnet`, `controller/annotations`), killing the publisher's cross-module
+  constant duplication. Confirmed via `go list` (no separate go.mod) + the
+  `report-dry-run` testscript reproduces the publisher's exact
+  `sha256:f1cd9ad83153…` data hash (locks controller-verifier compatibility).
+- Subcommands: `generate` (shim create-env + enrich + manifest), `fetch` (download
+  public artifacts; pins.go is the reviewed digest table — pin config.json + the 2
+  mithril vkeys, genesis/checkpoints verified downstream by cardano-node, hard-fail
+  on mismatch), `serve` (os.DirFS + symlink guard + `artifactset.IsSecretComponent`
+  denylist, no listings), `report` (publisher's job rebased on the shared contract),
+  `version`.
+- Packages: cli/config/generate/fetch/serve/artifactset/kube, each with doc.go.
+  Mockery SKIPPED — the 2 single-method interfaces (GenesisHasher, httpDoer) use
+  clearer inline fakes; kube.Client tested directly. Annotation keys NOT moved —
+  imported from existing `internal/controller/annotations` (cleaner than the plan's
+  move; zero controller changes).
+- Dockerfile = root-context 3-stage (fetch pinned cardano-node, build from root
+  module path `./containers/cardano-tools/cmd/yacd-cardano-tools`, nonroot final).
+  `cardano-tools` does NOT import publicnet → no embed in the build context.
+  Validated the build stage locally with `docker build --target build`.
+- Release: release-please package + manifest (`11.0.1-yacd.0`), parallel signed
+  `release-cardano-tools.yml`, dry-run jobs, moon goSources/check wiring. `moon run
+  root:check` + `root:test` green; new pkgs run under root `go test`.
+
+Verification quirks worth remembering:
+- Direct `go`/`go test` needs `PATH=/Users/josh/.proto/tools/go/1.26.3/bin:$PATH`
+  (the proto `go` shim word-splits a templated arg; gopls shows false
+  `malformed import path "{{context.Compiler}}"` diagnostics — ignore them).
+- client-go v0.36.1 `kubernetes.NewForConfig` reads the BearerTokenFile eagerly,
+  so kube.NewClient with a missing token path errors at construction.
+- localnet `Fingerprint.Value` is bare hex (no `sha256:` prefix).
+
+Downstream (explicit non-goals of #64, future sessions): wire the controller to use
+this image (remove manager `//go:embed`, init-container swap, serve sidecar, status
+manifest), CardanoDBSync consumer rewiring, manager flag/Helm value, repoint
+cardano-testnet. The minimal F0 slice (mainnet node reads from PVC) still pending.
+
+Next: human review of #64; watch CI (ci/e2e + the new dry-run jobs).
