@@ -24,7 +24,7 @@ func newServer(t *testing.T, files map[string]string) (*httptest.Server, string)
 	}
 	root, err := resolveDir(dir)
 	require.NoError(t, err)
-	srv := httptest.NewServer(&handler{root: root})
+	srv := httptest.NewServer(&handler{root: root, allow: artifactKeySet()})
 	t.Cleanup(srv.Close)
 	return srv, root
 }
@@ -47,18 +47,32 @@ func get(t *testing.T, srv *httptest.Server, urlPath string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
-func TestServeReturnsKnownFile(t *testing.T) {
+func TestServeReturnsAllowlistedArtifact(t *testing.T) {
 	t.Parallel()
-	srv, _ := newServer(t, map[string]string{"config.json": `{"ok":true}`})
+	// configuration.yaml is a known artifact key; it is served.
+	srv, _ := newServer(t, map[string]string{"configuration.yaml": `{"ok":true}`})
 
-	code, body := get(t, srv, "/config.json")
+	code, body := get(t, srv, "/configuration.yaml")
 	assert.Equal(t, http.StatusOK, code)
 	assert.Equal(t, `{"ok":true}`, body)
 }
 
+func TestServeRefusesNonArtifactFile(t *testing.T) {
+	t.Parallel()
+	// A file that is not an artifact key is refused by the default-deny
+	// allowlist even though it sits at the root with an innocuous name.
+	srv, _ := newServer(t, map[string]string{"backup.json": "ok", "configuration.yaml": "ok"})
+
+	code, _ := get(t, srv, "/backup.json")
+	assert.Equal(t, http.StatusNotFound, code)
+
+	code, _ = get(t, srv, "/configuration.yaml")
+	assert.Equal(t, http.StatusOK, code)
+}
+
 func TestServeRejectsTraversal(t *testing.T) {
 	t.Parallel()
-	srv, _ := newServer(t, map[string]string{"config.json": "x"})
+	srv, _ := newServer(t, map[string]string{"configuration.yaml": "x"})
 
 	// Traversal attempts that escape the root must 404. (A request like
 	// /%2e%2e/config.json cleans back to /config.json inside the root and is
@@ -91,38 +105,35 @@ func TestServeRefusesSymlinkEscapingRoot(t *testing.T) {
 		t.Skip("symlink semantics differ on windows")
 	}
 
-	srv, root := newServer(t, map[string]string{"config.json": "ok"})
+	// An allowlisted name (configuration.yaml) symlinked outside the root must
+	// still be refused by the underRoot check after resolution.
+	srv, root := newServer(t, nil)
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	require.NoError(t, os.WriteFile(outside, []byte("SECRET"), 0o600))
-	require.NoError(t, os.Symlink(outside, filepath.Join(root, "leak")))
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "configuration.yaml")))
 
-	code, body := get(t, srv, "/leak")
+	code, body := get(t, srv, "/configuration.yaml")
 	assert.Equal(t, http.StatusNotFound, code)
 	assert.NotContains(t, body, "SECRET")
 }
 
-func TestServeRefusesPrivateKeyByExtension(t *testing.T) {
+func TestServeRefusesKeyMaterial(t *testing.T) {
 	t.Parallel()
 
-	// Private-key material is refused by extension even when no path component
-	// is a denied directory name (e.g. node/seed.skey).
+	// Key-material files are not artifact keys, so the allowlist refuses them
+	// whether or not they sit under a key directory.
 	srv, _ := newServer(t, map[string]string{
-		"node/seed.skey":   "SECRET",
-		"node/op.cert":     "SECRET",
-		"node/op.counter":  "SECRET",
-		"node/cold.vkey":   "SECRET",
-		"public-data.json": "ok",
+		"cold.skey":      "SECRET",
+		"op.cert":        "SECRET",
+		"op.counter":     "SECRET",
+		"node/seed.skey": "SECRET",
 	})
 
-	for _, p := range []string{"/node/seed.skey", "/node/op.cert", "/node/op.counter", "/node/cold.vkey"} {
+	for _, p := range []string{"/cold.skey", "/op.cert", "/op.counter", "/node/seed.skey"} {
 		code, body := get(t, srv, p)
 		assert.Equal(t, http.StatusNotFound, code, "key material %s must be refused", p)
 		assert.NotContains(t, body, "SECRET")
 	}
-
-	code, body := get(t, srv, "/public-data.json")
-	assert.Equal(t, http.StatusOK, code)
-	assert.Equal(t, "ok", body)
 }
 
 func TestServeAllowsPublicMithrilVKeys(t *testing.T) {
@@ -150,13 +161,13 @@ func TestServeRefusesSymlinkToSecretWithinRoot(t *testing.T) {
 		t.Skip("symlink semantics differ on windows")
 	}
 
-	// A benignly-named symlink that stays under root but points at key material
-	// must still be refused: the secret-component check applies to the resolved
-	// path, not just the request path.
+	// An allowlisted name (configuration.yaml) symlinked to key material that
+	// stays under root must still be refused: the allowlist is re-checked
+	// against the resolved path, which is not an artifact key.
 	srv, root := newServer(t, map[string]string{"utxo-keys/pool.skey": "SECRET"})
-	require.NoError(t, os.Symlink(filepath.Join(root, "utxo-keys", "pool.skey"), filepath.Join(root, "leak")))
+	require.NoError(t, os.Symlink(filepath.Join(root, "utxo-keys", "pool.skey"), filepath.Join(root, "configuration.yaml")))
 
-	code, body := get(t, srv, "/leak")
+	code, body := get(t, srv, "/configuration.yaml")
 	assert.Equal(t, http.StatusNotFound, code)
 	assert.NotContains(t, body, "SECRET")
 }

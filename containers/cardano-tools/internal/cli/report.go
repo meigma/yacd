@@ -13,13 +13,15 @@ import (
 	"github.com/meigma/yacd/internal/controller/annotations"
 )
 
-// newReportCommand builds the "report" subcommand, which reads an artifact
-// directory produced by generate (or fetch) and publishes its manifest into
-// the network artifact ConfigMap the YACD controllers consume.
+// newReportCommand builds the "report" subcommand, which reads a localnet
+// artifact directory produced by generate and publishes its contents into the
+// network artifact ConfigMap the YACD controllers consume. It is localnet-only:
+// it requires the generate-written yacd-localnet-plan.json. Publishing public
+// (fetched) profiles is a separate, not-yet-implemented path.
 func newReportCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report",
-		Short: "Publish an artifact directory's manifest to the network artifact ConfigMap",
+		Short: "Publish a generated localnet artifact directory to the network artifact ConfigMap",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.LoadReport(commandContext.viper)

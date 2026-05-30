@@ -69,23 +69,21 @@ func validateSourcePath(key, relativePath string) error {
 	}
 
 	for part := range strings.SplitSeq(clean, "/") {
-		if IsSecretComponent(part) {
+		if isSecretComponent(part) {
 			return fmt.Errorf("source %s is under secret/key material", relativePath)
 		}
 	}
 
-	if IsSecretExtension(path.Ext(clean)) {
+	if isSecretExtension(path.Ext(clean)) {
 		return fmt.Errorf("source %s is key material", relativePath)
 	}
 
 	return nil
 }
 
-// IsSecretComponent reports whether a path component names a Cardano secret or
-// key directory that must never be published or served. The serve verb reuses
-// it to refuse requests that traverse key material even when the served
-// directory contains it.
-func IsSecretComponent(name string) bool {
+// isSecretComponent reports whether a path component names a Cardano secret or
+// key directory that must never be published.
+func isSecretComponent(name string) bool {
 	switch strings.ToLower(name) {
 	case "byron-gen-command", "delegate-keys", "drep-keys", "faucet-keys",
 		"genesis-keys", "keys", "pools-keys", "secrets", "stake-delegators",
@@ -96,12 +94,9 @@ func IsSecretComponent(name string) bool {
 	}
 }
 
-// IsSecretExtension reports whether a file extension marks Cardano key
-// material that must never be published or served. The serve verb reuses it to
-// refuse private-key files (e.g. node/seed.skey) that do not sit under a
-// denied directory; callers that legitimately serve public .vkey artifacts
-// (the Mithril verification keys) must allowlist those explicitly.
-func IsSecretExtension(ext string) bool {
+// isSecretExtension reports whether a file extension marks Cardano key
+// material that must never be published.
+func isSecretExtension(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".cert", ".counter", ".skey", ".vkey":
 		return true

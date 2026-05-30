@@ -6,7 +6,8 @@ stdout '^profile: preview$'
 # Destination is the YACD artifact key (configuration.yaml); the URL keeps the
 # upstream source name (config.json).
 stdout 'configuration\.yaml\thttps://book\.play\.dev\.cardano\.org/environments/preview/config\.json\tsha256:[0-9a-f]{64}'
-stdout 'primary-topology\.json\thttps://book\.play\.dev\.cardano\.org/environments/preview/topology\.json\tunpinned'
+stdout 'primary-topology\.json\thttps://book\.play\.dev\.cardano\.org/environments/preview/topology\.json\tsha256:[0-9a-f]{64}'
+# genesis files are unpinned here (verified downstream by config.json's hashes)
 stdout 'byron-genesis\.json\t.*\tunpinned'
 ! stderr .
 

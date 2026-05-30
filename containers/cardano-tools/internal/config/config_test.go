@@ -75,6 +75,7 @@ func TestLoadReportValidation(t *testing.T) {
 		{"missing artifact dir", func(vp *viper.Viper) { vp.Set("artifact-dir", "") }, "--artifact-dir"},
 		{"port out of range", func(vp *viper.Viper) { vp.Set("cardano-node-to-node-port", 70000) }, "--cardano-node-to-node-port"},
 		{"missing era", func(vp *viper.Viper) { vp.Set("cardano-network-era", "") }, "--cardano-network-era"},
+		{"non-https api url", func(vp *viper.Viper) { vp.Set("kubernetes-api-url", "http://api.internal") }, "--kubernetes-api-url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -13,6 +13,5 @@
 //
 // The package exports the artifact reading and assembly surface (ReadArtifacts,
 // ReadManifest, Sources, Input, Set, Manifest, NetworkIdentity, Annotations,
-// Build) plus IsSecretComponent and IsSecretExtension, which the serve verb
-// reuses to refuse requests for key material; everything else is unexported.
+// Build); everything else is unexported.
 package artifactset

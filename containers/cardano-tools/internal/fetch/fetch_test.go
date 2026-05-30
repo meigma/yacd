@@ -45,24 +45,32 @@ func digest(b []byte) string {
 func previewBodies(t *testing.T, config []byte) map[string][]byte {
 	t.Helper()
 	require.Equal(t, previewConfigSHA256, digest(config), "test config must match the pinned preview digest")
+	topology := embeddedProfileFile(t, "preview", "topology.json")
+	require.Equal(t, previewTopologySHA256, digest(topology), "test topology must match the pinned preview digest")
 	return map[string][]byte{
 		bookBase + "preview/config.json":          config,
 		bookBase + "preview/byron-genesis.json":   []byte(`{"byron":true}`),
 		bookBase + "preview/shelley-genesis.json": []byte(`{"shelley":true}`),
 		bookBase + "preview/alonzo-genesis.json":  []byte(`{"alonzo":true}`),
 		bookBase + "preview/conway-genesis.json":  []byte(`{"conway":true}`),
-		bookBase + "preview/topology.json":        []byte(`{"Producers":[]}`),
+		bookBase + "preview/topology.json":        topology,
 		bookBase + "preview/checkpoints.json":     []byte(`[]`),
 	}
+}
+
+// embeddedProfileFile loads a file from the checked-in public profile assets so
+// tests can verify against the real pinned digests.
+func embeddedProfileFile(t *testing.T, profile, name string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "internal", "cardano", "publicnet", "profiles", profile, name))
+	require.NoError(t, err)
+	return raw
 }
 
 // pinnedPreviewConfig loads the embedded preview config bytes whose digest the
 // pin table records, so the happy path verifies against the real pinned value.
 func pinnedPreviewConfig(t *testing.T) []byte {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "internal", "cardano", "publicnet", "profiles", "preview", "config.json"))
-	require.NoError(t, err)
-	return raw
+	return embeddedProfileFile(t, "preview", "config.json")
 }
 
 func TestRunWritesVerifiedArtifacts(t *testing.T) {

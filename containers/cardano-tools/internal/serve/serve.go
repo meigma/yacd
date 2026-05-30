@@ -10,11 +10,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
-	"github.com/meigma/yacd/containers/cardano-tools/internal/artifactset"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
 
@@ -52,7 +50,7 @@ func Run(ctx context.Context, opts Options, out io.Writer) error {
 	}
 
 	srv := &http.Server{
-		Handler:           &handler{root: root},
+		Handler:           &handler{root: root, allow: artifactKeySet()},
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
@@ -98,10 +96,14 @@ func resolveDir(dir string) (string, error) {
 	return resolved, nil
 }
 
-// handler serves files from root read-only, refusing traversal, key material,
-// directory listings, and symlinks that escape root.
+// handler serves files from root read-only. It is default-deny: a request is
+// served only when its path is exactly one of the known artifact keys
+// ([allow]), both as requested and after symlink resolution. This refuses
+// traversal, directory listings, key material, backup files, and any future
+// secret-shaped file by construction, rather than relying on a denylist.
 type handler struct {
-	root string
+	root  string
+	allow map[string]struct{}
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -114,12 +116,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// neutralizes traversal before we touch the filesystem.
 	clean := path.Clean("/" + r.URL.Path)
 	rel := strings.TrimPrefix(clean, "/")
-	if rel == "" {
-		http.NotFound(w, r) // no directory listing at the root
-		return
-	}
-
-	if forbiddenPath(rel) {
+	if !h.allowed(rel) {
 		http.NotFound(w, r)
 		return
 	}
@@ -130,12 +127,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-check the resolved path: an in-root symlink with a benign name (e.g.
-	// /leak -> utxo-keys/pool.skey) passes the request-path check above and
-	// stays under root, so the denylist must also apply to where the path
-	// actually resolves.
+	// Re-check the resolved path against the allowlist: an in-root symlink with
+	// an allowed name (e.g. configuration.yaml -> utxo-keys/pool.skey) would
+	// otherwise resolve to a non-artifact file that is still under root.
 	resolvedRel := strings.TrimPrefix(strings.TrimPrefix(resolved, h.root), string(os.PathSeparator))
-	if forbiddenPath(filepath.ToSlash(resolvedRel)) {
+	if !h.allowed(filepath.ToSlash(resolvedRel)) {
 		http.NotFound(w, r)
 		return
 	}
@@ -156,23 +152,22 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
-// forbiddenPath reports whether a slash-separated relative path must not be
-// served: any component names a secret/key directory, or the file carries a
-// private-key extension (.skey/.cert/.counter/.vkey). The public Mithril
-// verification keys are .vkey files but are legitimately public artifacts, so
-// they are allowlisted.
-func forbiddenPath(rel string) bool {
-	if slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent) {
-		return true
-	}
-	base := path.Base(rel)
-	return artifactset.IsSecretExtension(path.Ext(base)) && !publicArtifact(base)
+// allowed reports whether rel is exactly one allowlisted artifact key. Artifact
+// keys are flat filenames, so any path with a directory component is rejected.
+func (h *handler) allowed(rel string) bool {
+	_, ok := h.allow[rel]
+	return ok
 }
 
-// publicArtifact reports whether base is a known public artifact that is safe
-// to serve despite a key-material extension (the Mithril verification keys).
-func publicArtifact(base string) bool {
-	return base == networkartifacts.MithrilGenesisKey || base == networkartifacts.MithrilAncillaryKey
+// artifactKeySet returns the set of artifact filenames the server may expose:
+// the required and optional keys of the network artifact contract.
+func artifactKeySet() map[string]struct{} {
+	keys := append(networkartifacts.RequiredKeys(), networkartifacts.OptionalKeys()...)
+	set := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		set[key] = struct{}{}
+	}
+	return set
 }
 
 // underRoot reports whether resolved is root itself or a descendant of it.

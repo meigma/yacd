@@ -1,10 +1,13 @@
 package generate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"strings"
@@ -34,9 +37,24 @@ type Options struct {
 	DryRun bool
 }
 
+// envState describes how an existing output directory relates to the plan.
+type envState int
+
+const (
+	// envAbsent means there is no existing environment to preserve.
+	envAbsent envState = iota
+	// envMatches means a prior run already generated this exact plan.
+	envMatches
+	// envConflicts means the directory holds a different (or partial) env.
+	envConflicts
+)
+
 // Run builds the localnet plan from opts, and either prints it (DryRun) or
-// invokes cardano-testnet create-env, writes the plan manifest, and enriches
-// configuration.yaml with the genesis hashes cardano-node requires.
+// generates the environment. Generation is idempotent: if the output directory
+// already holds an environment matching this plan it re-runs only the
+// (idempotent) genesis-hash enrichment and returns; if it holds a different or
+// partial environment it refuses to overwrite, mirroring the init wrapper so a
+// pod restart on a populated PVC cannot re-run create-env and wedge.
 func Run(ctx context.Context, opts Options, out io.Writer) error {
 	plan, err := localnet.BuildPlan(opts.Spec)
 	if err != nil {
@@ -45,6 +63,21 @@ func Run(ctx context.Context, opts Options, out io.Writer) error {
 
 	if opts.DryRun {
 		return writeDryRun(out, plan)
+	}
+
+	switch state, err := inspectEnv(plan); {
+	case err != nil:
+		return err
+	case state == envMatches:
+		// Re-run enrichment idempotently in case a prior run died after
+		// create-env but before enriching, then report and stop.
+		if err := enrichConfigFile(ctx, plan, hasher(opts.CardanoCLI)); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out, "localnet environment at %s already matches the requested plan\n", plan.Layout.EnvDir)
+		return err
+	case state == envConflicts:
+		return fmt.Errorf("existing localnet environment at %s does not match the requested plan; refusing to overwrite", plan.Layout.EnvDir)
 	}
 
 	create := exec.CommandContext(ctx, plan.CreateEnv.Command, plan.CreateEnv.Args...)
@@ -67,6 +100,57 @@ func Run(ctx context.Context, opts Options, out io.Writer) error {
 	return err
 }
 
+// inspectEnv classifies the plan's output directory: absent (safe to
+// generate), matches (already generated for this plan), or conflicts (holds a
+// different or partial environment).
+func inspectEnv(plan localnet.Plan) (envState, error) {
+	existing, err := os.ReadFile(plan.Layout.ManifestFile)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// No plan manifest. If the env dir already holds other content we must
+		// not run create-env over it.
+		populated, perr := dirPopulated(plan.Layout.EnvDir)
+		if perr != nil {
+			return envAbsent, perr
+		}
+		if populated {
+			return envConflicts, nil
+		}
+		return envAbsent, nil
+	case err != nil:
+		return envAbsent, fmt.Errorf("read existing plan manifest: %w", err)
+	}
+
+	// A manifest without its configuration is an inconsistent leftover.
+	if _, err := os.Stat(plan.Layout.ConfigFile); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return envConflicts, nil
+		}
+		return envAbsent, fmt.Errorf("stat existing configuration: %w", err)
+	}
+
+	want, err := marshalManifest(plan)
+	if err != nil {
+		return envAbsent, err
+	}
+	if bytes.Equal(existing, want) {
+		return envMatches, nil
+	}
+	return envConflicts, nil
+}
+
+// dirPopulated reports whether dir exists and contains at least one entry.
+func dirPopulated(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return len(entries) > 0, nil
+}
+
 // hasher returns the genesis hasher for the configured cardano-cli binary,
 // falling back to the environment default when binary is empty.
 func hasher(binary string) GenesisHasher {
@@ -76,14 +160,24 @@ func hasher(binary string) GenesisHasher {
 	return CardanoCLIHasher{Binary: binary}
 }
 
+// marshalManifest renders the plan manifest exactly as it is written to disk,
+// so the bytes can be compared for the idempotency check.
+func marshalManifest(plan localnet.Plan) ([]byte, error) {
+	raw, err := json.MarshalIndent(plan.Manifest, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal localnet plan manifest: %w", err)
+	}
+	return append(raw, '\n'), nil
+}
+
 // writeManifest serializes the plan manifest into the environment directory so
 // downstream readers (the report verb, the node) can consume it.
 func writeManifest(plan localnet.Plan) error {
-	raw, err := json.MarshalIndent(plan.Manifest, "", "  ")
+	raw, err := marshalManifest(plan)
 	if err != nil {
-		return fmt.Errorf("marshal localnet plan manifest: %w", err)
+		return err
 	}
-	if err := os.WriteFile(plan.Layout.ManifestFile, append(raw, '\n'), manifestFilePerm); err != nil {
+	if err := os.WriteFile(plan.Layout.ManifestFile, raw, manifestFilePerm); err != nil {
 		return fmt.Errorf("write localnet plan manifest: %w", err)
 	}
 	return nil

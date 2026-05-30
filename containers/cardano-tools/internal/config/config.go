@@ -189,6 +189,12 @@ func (c ReportConfig) validate() error {
 	if c.KubernetesAPIURL == "" {
 		return fmt.Errorf("--kubernetes-api-url or pod-injected KUBERNETES_SERVICE_HOST/PORT is required")
 	}
+	// report sends the projected ServiceAccount bearer token to this URL, so it
+	// must be HTTPS; refuse a cleartext scheme that would leak the token. The
+	// pod-injected default is always https.
+	if !strings.HasPrefix(c.KubernetesAPIURL, "https://") {
+		return fmt.Errorf("--kubernetes-api-url must be an https:// URL, got %q", c.KubernetesAPIURL)
+	}
 	return nil
 }
 

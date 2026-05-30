@@ -24,6 +24,19 @@ const (
 	mainnetConfigSHA256 = "e3db8de7ec244b5fddc114e7249df9f4bda11e2193c367c2135a3a8612de2da7"
 )
 
+// Pinned topology.json digests. topology is not referenced by config.json, so
+// it carries its own pin: it selects bootstrap/relay peers, and pinning it
+// turns a silent upstream change (which would alter peer selection) into a
+// loud, reviewable fetch failure. peer-snapshot.json is deliberately NOT pinned
+// — it advances continuously with the chain, so any pin would be stale
+// immediately; it is optional, best-effort, and affects only peer hints, not
+// chain validity (the node verifies blocks against the pinned genesis).
+const (
+	previewTopologySHA256 = "77db913f4b605cd874c1cf3cea160f9b4227b15fc07e4cce72d622bdda946de6"
+	preprodTopologySHA256 = "bd18a5adaeaa926c0eeb5ae5cbc8f70c6f18e702b6cb079cfdee58d1206fc25c"
+	mainnetTopologySHA256 = "628fbf74cfe4e513c092d00b2937cdaf26c619ac2f7bf27aa6469505ad5f43c7"
+)
+
 // Pinned Mithril verification key digests. These keys are not referenced from
 // config.json, so they carry their own pins; they anchor Mithril snapshot
 // verification and must never be fetched unverified.
@@ -59,16 +72,17 @@ func bookFile(profile, sourceName, dest, sha256 string, optional bool) pinnedFil
 }
 
 // chainArtifacts returns the files common to every public profile: the pinned
-// config.json (written as configuration.yaml) plus the genesis and topology
-// files verified downstream (topology written as primary-topology.json).
-func chainArtifacts(profile, configSHA256 string) []pinnedFile {
+// config.json (written as configuration.yaml), the genesis files verified
+// downstream by config.json's hashes, and the pinned topology.json (written as
+// primary-topology.json).
+func chainArtifacts(profile, configSHA256, topologySHA256 string) []pinnedFile {
 	return []pinnedFile{
 		bookFile(profile, "config.json", networkartifacts.ConfigurationKey, configSHA256, false),
 		bookFile(profile, "byron-genesis.json", networkartifacts.ByronGenesisKey, "", false),
 		bookFile(profile, "shelley-genesis.json", networkartifacts.ShelleyGenesisKey, "", false),
 		bookFile(profile, "alonzo-genesis.json", networkartifacts.AlonzoGenesisKey, "", false),
 		bookFile(profile, "conway-genesis.json", networkartifacts.ConwayGenesisKey, "", false),
-		bookFile(profile, "topology.json", networkartifacts.PrimaryTopologyKey, "", false),
+		bookFile(profile, "topology.json", networkartifacts.PrimaryTopologyKey, topologySHA256, false),
 	}
 }
 
@@ -81,19 +95,19 @@ func pinsFor(profile string) ([]pinnedFile, bool) {
 		// so checkpoints.json is required (unpinned here — cardano-node verifies
 		// it against the hash inside the pinned config.json). peer-snapshot is a
 		// best-effort bootstrap aid and stays optional.
-		return append(chainArtifacts("preview", previewConfigSHA256),
+		return append(chainArtifacts("preview", previewConfigSHA256, previewTopologySHA256),
 			bookFile("preview", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
 			bookFile("preview", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
 		), true
 	case "preprod":
 		// preprod config.json does not reference a checkpoints file.
-		return append(chainArtifacts("preprod", preprodConfigSHA256),
+		return append(chainArtifacts("preprod", preprodConfigSHA256, preprodTopologySHA256),
 			bookFile("preprod", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
 		), true
 	case "mainnet":
 		// mainnet config.json references CheckpointsFile + CheckpointsFileHash,
 		// so checkpoints.json is required (verified downstream by that hash).
-		return append(chainArtifacts("mainnet", mainnetConfigSHA256),
+		return append(chainArtifacts("mainnet", mainnetConfigSHA256, mainnetTopologySHA256),
 			bookFile("mainnet", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
 			bookFile("mainnet", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
 			pinnedFile{dest: networkartifacts.MithrilGenesisKey, url: mithrilBase + "genesis.vkey", expectedSHA256: mainnetMithrilGenesisSHA256},

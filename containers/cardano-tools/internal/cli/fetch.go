@@ -31,7 +31,15 @@ func newFetchCommand(commandContext *commandContext) *cobra.Command {
 				OutputDir: vp.GetString("output-dir"),
 				DryRun:    vp.GetBool("dry-run"),
 			}
-			return fetch.Run(cmd.Context(), opts, &http.Client{Timeout: timeout}, cmd.OutOrStdout())
+			// Refuse redirects: the trusted sources serve artifacts directly,
+			// so a redirect would silently move a download to another host.
+			client := &http.Client{
+				Timeout: timeout,
+				CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+					return http.ErrUseLastResponse
+				},
+			}
+			return fetch.Run(cmd.Context(), opts, client, cmd.OutOrStdout())
 		},
 	}
 
