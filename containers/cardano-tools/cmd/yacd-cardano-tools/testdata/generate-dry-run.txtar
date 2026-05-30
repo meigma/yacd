@@ -1,0 +1,21 @@
+# generate --dry-run prints the create-env invocation and resolved layout that
+# Run would execute, without invoking cardano-testnet. With no overrides the
+# localnet defaults from internal/cardano/localnet apply.
+exec yacd-cardano-tools generate --dry-run
+stdout 'would run: cardano-testnet create-env'
+stdout '--testnet-magic 42'
+stdout '--num-pool-nodes 1'
+stdout '--output /state/env'
+stdout '^env-dir: /state/env$'
+stdout '^config-file: /state/env/configuration.yaml$'
+stdout '^manifest-file: /state/env/yacd-localnet-plan.json$'
+stdout '^fingerprint: [0-9a-f]{64}$'
+! stderr .
+
+# Flag overrides flow into the invocation; YACD_ env vars bind the same way.
+env YACD_NETWORK_MAGIC=99
+env YACD_OUTPUT_DIR=/tmp/net
+exec yacd-cardano-tools generate --dry-run
+stdout '--testnet-magic 99'
+stdout '--output /tmp/net'
+stdout '^env-dir: /tmp/net$'
