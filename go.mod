@@ -7,7 +7,7 @@ require (
 	github.com/SundaeSwap-finance/kugo v1.3.0
 	github.com/SundaeSwap-finance/ogmigo/v6 v6.2.1
 	github.com/alecthomas/kong v1.15.0
-	github.com/fxamacker/cbor/v2 v2.9.1
+	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/go-logr/logr v1.4.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/rogpeppe/go-internal v1.14.1
