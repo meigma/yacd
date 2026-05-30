@@ -135,17 +135,8 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 // (observedGeneration < generation), on a Degraded condition, and on a
 // missing or stale Ready / FaucetReady condition.
 func requireFaucetReady(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) error {
-	if network.Status.ObservedGeneration != network.Generation {
-		return fmt.Errorf(
-			"cardanonetwork %s/%s status is stale: observedGeneration=%d generation=%d",
-			namespace,
-			name,
-			network.Status.ObservedGeneration,
-			network.Generation,
-		)
-	}
-	if degraded := kube.FreshCondition(network, kube.ConditionDegraded); degraded != nil && degraded.Status == metav1.ConditionTrue {
-		return fmt.Errorf("cardanonetwork %s/%s is degraded: %s: %s", namespace, name, degraded.Reason, degraded.Message)
+	if err := requireFreshStatus(network, namespace, name); err != nil {
+		return err
 	}
 	for _, conditionType := range []kube.ConditionType{kube.ConditionReady, kube.ConditionFaucetReady} {
 		condition := kube.FreshCondition(network, conditionType)
