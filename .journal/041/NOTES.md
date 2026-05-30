@@ -258,3 +258,23 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
   Full examples/e2e + GitHub Action are Phase 4/5 (future).
 - REMINDER at session close: `moon run root:dev-down` (dev stack still up in
   `.run/yacd-dev`), close session 041.
+
+## 2026-05-30 16:45 — Close
+Phase 2 complete and merged. All 7 PRs squash-merged to `master` (now at
+`e45ad76`): #59 (kube access ports + exit carrier), #60 (YACD_* contract +
+forward orchestration), #61 (`run`), #62 (`exec`), #63 (`connect`), #66
+(`topup --await`), #67 (host-access docs). Each had a focused adversarial review
+and, where a runtime path existed, a live Kind proof; the local story is proven
+end to end.
+- PR #67 closeout: `ci` flaked twice (the known
+  `TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync` envtest,
+  docs-only PR) → passed on the 3rd rerun → merged. Recorded as a known flake in
+  TECH_NOTES.
+- Dev stack brought down (`moon run root:dev-down`: Kind cluster + registry
+  deleted, Tilt stopped). All session-041 worktrees removed; only `master` and
+  the journal worktree remain.
+- Wrote SUMMARY.md; set INDEX 041 → complete (corrected the stale
+  "TEST_REPORT follow-through" title to the real Phase 2 scope); added Phase 2
+  + flaky-test bullets to TECH_NOTES.
+- Hand-off: Phase 3 (release), 4 (`yacd-env` Action), 5 (examples/e2e + how-to)
+  remain. Session 043 is a separate in-progress session — left untouched.

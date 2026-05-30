@@ -167,8 +167,34 @@
   `TEST_HARNESS_PLAN.md` (phased work), `TEST_HARNESS_DESIGN.md` (the
   adversarial-workflow analysis and rejected alternatives, incl. why a bespoke
   snapshot format was deferred in favor of fresh-build), and
-  `TEST_HARNESS_PHASE0_RESULTS.md` (the Phase 0 go/no-go evidence). Phases 1–5
-  are not yet implemented.
+  `TEST_HARNESS_PHASE0_RESULTS.md` (the Phase 0 go/no-go evidence). Phases 0–2
+  are done; Phases 3 (release), 4 (the `yacd-env` Action), and 5 (examples +
+  how-to) remain.
+- Test-harness Phase 2 (session 041) added the host-access verbs and the
+  `YACD_*` contract. `yacd run NAME -- cmd` (scoped client-go port-forwards +
+  inject `YACD_*` + host exec, propagates the child exit code; no cmd ⇒
+  `$SHELL`), `yacd connect NAME` (foreground supervised forwards, writes
+  token-free `.yacd/<network>/endpoints.json` at 0600, re-establishes on the
+  next use after a drop), and `yacd exec NAME -- cmd` (in-pod, argv-only via an
+  `env KEY=VAL` prefix — never a shell, so `$VAR` is not expanded — for
+  socket-bound `cardano-cli`). `yacd topup --await` polls Kupo (vendored `kugo`)
+  for the funded UTxO; it requires `--kupo-url` or `YACD_KUPO_URL` and does not
+  self-forward. The verb docs + the versioned `YACD_*` table live in
+  `docs/host-access.md`. Key contracts: the CLI resolves the primary Pod from
+  the published node-to-node Service selector (no `internal/...` import) and
+  pins the node container name + `/ipc/node.socket` as CLI-local constants;
+  host URL schemes are parsed from the published status URL (Ogmios stays
+  `ws://`); `YACD_FAUCET_TOKEN` is host-only and never set in-pod or written to
+  `endpoints.json`. The host-access methods (`PrimaryPodName`/`Forward`/`Exec`)
+  hang off the existing `kube.Client` port; `Forward`/`Exec` need a live kubelet
+  so they are proven by manual/e2e, not envtest.
+- KNOWN FLAKE: `TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync`
+  (`internal/controller/cardanonetwork/controller_envtest_test.go`) is a
+  load-sensitive manager-backed envtest whose `Eventually` ("Condition never
+  satisfied") intermittently fails under CI load — it blocked merges on PR #61
+  (1×) and PR #67 (2× in a row, green on the 3rd). It is unrelated to the change
+  under test; rerun the `ci` job, and consider a de-flake (longer wait / sturdier
+  condition) as a standalone PR.
 - Test-harness Phase 0 is **done — GO** (session 036). A throwaway hosted-runner
   spike proved KinD + operator + a representative local `CardanoNetwork`
   (Ogmios+Kupo+faucet) cold-starts to `Ready` in ~27s (full pipeline ~112s) vs
