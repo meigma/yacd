@@ -215,3 +215,27 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
   while connect runs). `root:check`+`root:test` green. PR #63 opened; **paused.**
   Next: PR6 = WB7 (`topup --await`, poll Kupo via kugo). Last code PR; PR7 =
   docs/contract reference.
+
+## 2026-05-30 — PR5 merged; PR6 done & open: PR #66 (PAUSED)
+- "LGTM. Proceed." → #63 CI green → squash-merged PR5 (master a65f379). Removed
+  connect worktree; created `feat/cli-topup-await`.
+- **PR6 = WB7** `topup --await` (commit 029919f, PR #66). topup_await.go (+test;
+  kupoConfirmer wraps kugo w/ ogmigo.NopLogger; awaitConfirmation poll loop),
+  options.go (UTxOConfirmer port + factory), root.go (default factory),
+  topup.go (--await/--await-timeout/--kupo-url flags + integration), .mockery.yml
+  + generated mock.
+  - --kupo-url falls back to YACD_KUPO_URL via viper AutomaticEnv (verified by
+    test). No self-forward; --await prereq validated BEFORE cluster contact.
+    Await at validated --address (not faucet echo). Transient Kupo errors
+    swallowed, surfaced on timeout. txID match case-insensitive in command layer
+    (TransactionIDs port returns []string). Token never sent to Kupo.
+- **Live proof** (under `yacd run`): funded an exec-generated address (note:
+  container root FS is read-only → generate keys in writable /ipc), `topup
+  --await` printed "Confirmed on-chain." after Kupo matched=1 →
+  **faucet txId == Kupo transaction_id confirmed (residual risk #4 resolved)**.
+  Silenced kugo logger spam (ogmigo.NopLogger). Torn down.
+- Adversarial review: **ship** (2 minor + 2 nits). Folded await-at-validated-
+  address. Deferred README/verb docs to PR7 (README predates run/exec/connect
+  too; PR7 documents the whole surface). `root:check`+`root:test` green. PR #66
+  opened; **paused.** Next: PR7 = WB10 wiring (done incrementally) + WB11
+  contract-reference doc — the final PR.
