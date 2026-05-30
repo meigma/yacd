@@ -3,6 +3,7 @@
 .moon/cache/
 .moon/docker/
 .run/
+.yacd/
 .journal/
 .wt/
 
