@@ -187,6 +187,16 @@ minimal mainnet-node-reads-from-PVC slice. Consider also: enable the
 cardano-tools image build on PR CI (drop the release-please-- gate on its
 dry-run jobs) so the Dockerfile is exercised per-PR.
 
+## 2026-05-30 15:27 — Close
+Session closed. PR #64 squash-merged (`ad46e82`); `master` fast-forwarded to it;
+`feat/cardano-tools` worktree + local + remote branch removed. No dev stack was
+started this session (binary/container work only), so nothing to tear down.
+SUMMARY.md written (with the deferred Next Steps the user asked for), INDEX row
+set to complete, TECH_NOTES updated with the cardano-tools tool entry. release-
+please auto-opened a `cardano-tools` component release PR (unreleased). Session
+041 left in-progress/dormant (its `feat/cli-connect-verb` worktree untouched).
+Hand-off: the controller-side F0 wiring is the next phase — see SUMMARY Next Steps.
+
 ## 2026-05-30 — slim image detail (superseded smoke note; see R1 above)
 - APPLIED (commit 65f3c17 on feat/cardano-tools): final stage →
   `gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e…`, COPY only the 3

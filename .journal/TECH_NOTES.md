@@ -263,6 +263,24 @@
   if IOG ever ships glibc-dynamic, the base must change to distroless/cc. The
   existing `cardano-testnet` image is still debian-slim + all binaries and could
   get the same treatment later.
+- `containers/cardano-tools` (binary `yacd-cardano-tools`, merged in PR #64) is
+  the single utility for Cardano artifact operations and the foundation for the
+  F0 fix. It is part of the ROOT module (no `go.mod`), so it imports the shared
+  contract directly (`internal/cardano/{networkartifacts,localnet,publicnet}`,
+  `internal/ctrlkit/artifacts`, `internal/controller/annotations`) instead of
+  duplicating it like `cardano-testnet/publisher`. Subcommands: `generate`
+  (shim cardano-testnet create-env, idempotent: match→re-enrich, conflict→refuse),
+  `fetch` (download public profiles from the pinned operations book + Mithril
+  config; `config.json`+`topology.json` digest-pinned, genesis/checkpoints
+  verified downstream, peer-snapshot unpinned; writes artifact-contract names
+  config.json→configuration.yaml, topology.json→primary-topology.json; refuses
+  HTTP redirects), `serve` (default-deny allowlist of networkartifacts keys over
+  HTTP for out-of-cluster consumers), `report` (publish a localnet artifact dir
+  to the network ConfigMap — localnet-only; rebased on the shared contract, its
+  `report-dry-run` golden reproduces the publisher's sha256 to lock verifier
+  compatibility), `version`. The controller does NOT yet use this image; wiring
+  it (and removing the manager `//go:embed`) is the deferred F0 work — see
+  `.journal/042/SUMMARY.md` Next Steps.
 - The active `cardano-testnet` publisher enriches `configuration.yaml` with
   genesis hashes in `containers/cardano-testnet/publisher/internal/artifacts`.
   It shells out to the image-owned `cardano-cli` as a narrow adapter because

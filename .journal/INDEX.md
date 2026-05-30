@@ -42,4 +42,4 @@
 | 039 | 2026-05-29 | D6 managed Postgres auth recovery | complete | Fixed TEST_REPORT D6 by safely adopting restored generated managed Postgres auth Secrets that match the accepted identity, merged PR #57, and cleaned up the dev stack/worktree. |
 | 040 | 2026-05-29 | TEST_REPORT F0 assessment | abandoned | Closed without implementation after determining F0 needs a public-profile materialization redesign rather than another raw ConfigMap workaround. |
 | 041 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session opened to continue the remaining `.journal/TEST_REPORT.md` findings (F0, F2/F4); awaiting user direction. |
-| 042 | 2026-05-29 | New session | in-progress | Session opened via `session-new` alongside the still-active 041; awaiting user direction. |
+| 042 | 2026-05-29 | cardano-tools artifact utility container | complete | Built and merged (PR #64) the new `cardano-tools` container + binary (generate/fetch/serve/report) on a distroless/static slim image as the foundation for the F0 fix; controller rewiring deferred. |
