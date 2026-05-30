@@ -135,3 +135,25 @@ manifest), CardanoDBSync consumer rewiring, manager flag/Helm value, repoint
 cardano-testnet. The minimal F0 slice (mainnet node reads from PVC) still pending.
 
 Next: human review of #64; watch CI (ci/e2e + the new dry-run jobs).
+
+## 2026-05-30 (later) — Removed seeded CHANGELOG + slimmed image (PR #64 follow-ups)
+- User: "Do not start the CHANGELOG file, it messes with release-please." Removed
+  `containers/cardano-tools/CHANGELOG.md` (release-please creates+owns it; a seeded
+  file breaks the first component release). Config keeps `changelog-path` (just
+  tells RP where to write). Saved as a feedback memory.
+- Researched slimming the image toward near-scratch (workflow `wf_f2329cea` + 3
+  empirical docker probes). KEY FINDING: the IOG 11.0.1 cardano binaries are FULLY
+  STATIC musl (ldd "not a dynamic executable"; no PT_INTERP/PT_DYNAMIC/GLIBC_; zero
+  .so in tarball) — see TECH_NOTES. So near-scratch IS viable. Two levers: (1) drop
+  the 11 unused binaries — `/out/bin` is 1.2GB, the 3 we use are 372MB (~830MB win);
+  (2) base debian-slim→distroless/static (~78MB). create-env proven shell-less
+  (removed /bin/sh, entrypoint=cardano-testnet → exit 0) and works with only 3
+  binaries on distroless/static:nonroot.
+- APPLIED (commit 65f3c17 on feat/cardano-tools): final stage →
+  `gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e…`, COPY only the 3
+  binaries, dropped the groupadd/useradd/chown block (no shell), `USER 10001:10001`
+  numeric (keeps uid → no /state PVC ownership change), /state baked as a chowned
+  copy from a builder `mkdir`. Built full image end-to-end: **442MB** (was ~1.3GB);
+  real `generate` (create-env + enrich) exits 0 writing /state/env as uid 10001;
+  version/generate--dry-run/fetch--dry-run all work; /bin/sh confirmed absent.
+  `moon run root:check` green. Pushed to #64.

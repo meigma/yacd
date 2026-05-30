@@ -247,6 +247,22 @@
   `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4`. Future packaging-only
   fixes should bump `yacd.N`; future upstream Cardano bumps should move the
   base version and reset the YACD packaging revision.
+- The IOG cardano-node 11.0.1 Linux release binaries are **fully static musl**
+  builds (GHC 9.6.7): `ldd` says "not a dynamic executable", no `PT_INTERP`/
+  `PT_DYNAMIC`/`GLIBC_` symbols, and the tarball has zero `.so` files. So any
+  image embedding them needs no glibc/loader/libsodium/secp256k1/blst/etc., and
+  `gcr.io/distroless/static-debian12:nonroot` is a valid base (it supplies the
+  only remaining needs: a CA bundle for outbound HTTPS, a nonroot identity,
+  `/tmp`, tzdata). `cardano-testnet create-env` runs shell-less (it direct-execs
+  `cardano-cli` via the `CARDANO_CLI` env var, no `/bin/sh`). The release tarball
+  ships ~14 binaries (~1.2GB); cardano-tools only needs `cardano-node`/
+  `cardano-cli`/`cardano-testnet` (~370MB), so copy only those. `cardano-tools`'s
+  Dockerfile (PR #64 follow-up) does exactly this: distroless/static base + 3
+  binaries → ~442MB vs ~1.3GB. "Static release tarball" is a load-bearing
+  assumption — re-run the ELF check on both arches on every cardano-node bump;
+  if IOG ever ships glibc-dynamic, the base must change to distroless/cc. The
+  existing `cardano-testnet` image is still debian-slim + all binaries and could
+  get the same treatment later.
 - The active `cardano-testnet` publisher enriches `configuration.yaml` with
   genesis hashes in `containers/cardano-testnet/publisher/internal/artifacts`.
   It shells out to the image-owned `cardano-cli` as a narrow adapter because
