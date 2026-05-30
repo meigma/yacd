@@ -13,3 +13,4 @@ packages:
   github.com/meigma/yacd/cli/internal/cli:
     interfaces:
       HTTPDoer:
+      UTxOConfirmer:
