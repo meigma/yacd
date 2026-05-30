@@ -1,7 +1,7 @@
 // Package cli builds the YACD developer CLI command tree.
 //
 // NewRootCommand wires the cobra command tree (up, down, list, info, topup,
-// run) and the per-process dependencies into a commandContext that each
+// run, exec) and the per-process dependencies into a commandContext that each
 // subcommand reads at RunE time. Subcommands are side-effecting orchestrators:
 // they load the developer environment through devconfig, synthesise manifests
 // through render, and call into kube through the Client port. Environment
@@ -15,7 +15,9 @@
 // gates on readiness, resolves the primary Pod, forwards the published
 // chain-API endpoints, and returns a live session carrying that host
 // environment. run (run.go) execs a host command or shell with that
-// environment and propagates the command's exit code.
+// environment and propagates the command's exit code. exec (exec.go) runs a
+// command inside the primary node Pod instead, for socket-bound tools that
+// cannot use a forwarded TCP port.
 //
 // The package exports an Options struct for construction-time injection
 // (test seams for the kube client and HTTP transport),
