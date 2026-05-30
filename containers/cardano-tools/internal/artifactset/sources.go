@@ -69,7 +69,7 @@ func validateSourcePath(key, relativePath string) error {
 	}
 
 	for part := range strings.SplitSeq(clean, "/") {
-		if isSecretComponent(part) {
+		if IsSecretComponent(part) {
 			return fmt.Errorf("source %s is under secret/key material", relativePath)
 		}
 	}
@@ -81,9 +81,11 @@ func validateSourcePath(key, relativePath string) error {
 	return nil
 }
 
-// isSecretComponent reports whether a path component names a Cardano secret or
-// key directory that must never be published or served.
-func isSecretComponent(name string) bool {
+// IsSecretComponent reports whether a path component names a Cardano secret or
+// key directory that must never be published or served. The serve verb reuses
+// it to refuse requests that traverse key material even when the served
+// directory contains it.
+func IsSecretComponent(name string) bool {
 	switch strings.ToLower(name) {
 	case "byron-gen-command", "delegate-keys", "drep-keys", "faucet-keys",
 		"genesis-keys", "keys", "pools-keys", "secrets", "stake-delegators",

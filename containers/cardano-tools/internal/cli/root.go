@@ -102,6 +102,7 @@ func NewRootCommand(options Options) *cobra.Command {
 
 	root.AddCommand(newGenerateCommand(commandContext))
 	root.AddCommand(newFetchCommand(commandContext))
+	root.AddCommand(newServeCommand(commandContext))
 	root.AddCommand(newReportCommand(commandContext))
 	root.AddCommand(newVersionCommand(options.Build))
 

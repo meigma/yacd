@@ -1,0 +1,9 @@
+# serve refuses to start without an artifacts directory. The traversal,
+# secret-component, and symlink protections are covered by the serve package's
+# httptest unit tests.
+! exec yacd-cardano-tools serve
+stderr '--artifacts-dir is required'
+
+# A non-existent directory is rejected before any listener is opened.
+! exec yacd-cardano-tools serve --artifacts-dir $WORK/missing
+stderr 'resolve --artifacts-dir'
