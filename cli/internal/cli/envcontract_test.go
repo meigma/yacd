@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,6 +103,33 @@ func TestHostEnvSkipsUnforwardedEndpointsAndEmptyToken(t *testing.T) {
 		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
 	}, env)
 	assert.NotContains(t, env, "YACD_FAUCET_TOKEN=")
+}
+
+func TestNewEndpointsDocumentIsTokenFree(t *testing.T) {
+	t.Parallel()
+
+	network := readyNetwork("devnet")
+	local := map[int32]int{1337: 40001, 1442: 40002, 8080: 40003}
+	lookup := func(remote int32) (int, bool) {
+		port, ok := local[remote]
+
+		return port, ok
+	}
+
+	doc, err := newEndpointsDocument(network, lookup)
+	require.NoError(t, err)
+	assert.Equal(t, "devnet", doc.Network)
+	assert.Equal(t, "devnet", doc.Namespace)
+	require.NotNil(t, doc.NetworkMagic)
+	assert.Equal(t, int64(42), *doc.NetworkMagic)
+	assert.Equal(t, "ws://127.0.0.1:40001", doc.OgmiosURL)
+	assert.Equal(t, "http://127.0.0.1:40002", doc.KupoURL)
+	assert.Equal(t, "http://127.0.0.1:40003", doc.FaucetURL)
+
+	// The marshaled document carries no token field of any casing.
+	data, err := json.MarshalIndent(doc, "", "  ")
+	require.NoError(t, err)
+	assert.NotContains(t, strings.ToLower(string(data)), "token")
 }
 
 func TestPodEnvUsesClusterURLsAndOmitsToken(t *testing.T) {

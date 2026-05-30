@@ -11,11 +11,13 @@ import (
 )
 
 // connectedSession is a live host-access session shared by run and connect: the
-// chain-API port-forwards plus the YACD_* environment a host process consumes.
-// The caller owns its lifetime and must Close it.
+// chain-API port-forwards, the YACD_* environment a host process consumes (env,
+// which carries the faucet token), and the token-free document connect writes
+// and prints (endpoints). The caller owns its lifetime and must Close it.
 type connectedSession struct {
-	session kube.ForwardSession
-	env     []string
+	session   kube.ForwardSession
+	env       []string
+	endpoints endpointsDocument
 }
 
 // Close tears down the forwards and blocks until they stop.
@@ -69,8 +71,13 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 		_ = session.Close()
 		return nil, err
 	}
+	endpoints, err := newEndpointsDocument(network, session.LocalPort)
+	if err != nil {
+		_ = session.Close()
+		return nil, err
+	}
 
-	return &connectedSession{session: session, env: env}, nil
+	return &connectedSession{session: session, env: env, endpoints: endpoints}, nil
 }
 
 // forwardSpecs returns the port-forward specs for a network's published
@@ -78,28 +85,15 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 // equals the primary Pod's container port by construction. node-to-node is
 // intentionally excluded — host tooling does not speak that peer protocol.
 func forwardSpecs(network *yacdv1alpha1.CardanoNetwork) []kube.PortForwardSpec {
-	if network.Status.Endpoints == nil {
-		return nil
-	}
-	endpoints := network.Status.Endpoints
-
-	candidates := []struct {
-		name     string
-		endpoint *yacdv1alpha1.ServiceEndpointStatus
-	}{
-		{name: "ogmios", endpoint: endpoints.Ogmios},
-		{name: "kupo", endpoint: endpoints.Kupo},
-		{name: "faucet", endpoint: endpoints.Faucet},
-	}
-
 	var specs []kube.PortForwardSpec
-	for _, candidate := range candidates {
+	for _, chain := range chainEndpoints(network) {
 		// Require both a port to forward and a published URL, so the spec set
-		// stays in lockstep with the env hostEnv builds from the same endpoints.
-		if candidate.endpoint == nil || candidate.endpoint.Port == 0 || strings.TrimSpace(candidate.endpoint.URL) == "" {
+		// stays in lockstep with the env and document built from the same
+		// endpoints.
+		if chain.endpoint == nil || chain.endpoint.Port == 0 || strings.TrimSpace(chain.endpoint.URL) == "" {
 			continue
 		}
-		specs = append(specs, kube.PortForwardSpec{Remote: candidate.endpoint.Port, Name: candidate.name})
+		specs = append(specs, kube.PortForwardSpec{Remote: chain.endpoint.Port, Name: chain.name})
 	}
 
 	return specs
