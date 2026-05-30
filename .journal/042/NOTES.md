@@ -149,6 +149,45 @@ Next: human review of #64; watch CI (ci/e2e + the new dry-run jobs).
   (2) base debian-slim→distroless/static (~78MB). create-env proven shell-less
   (removed /bin/sh, entrypoint=cardano-testnet → exit 0) and works with only 3
   binaries on distroless/static:nonroot.
+## 2026-05-30 (later) — Stopping point: PR #64 through 3 review rounds, CI green
+PR #64 (feat/cardano-tools) is the deliverable: the new `cardano-tools` container
++ binary, the distroless/static slim image, and three rounds of review fixes.
+CI green: `ci` pass, `e2e` pass, Kusari pass (head 1365f72). The image dry-run
+jobs SKIP on non-release branches, so PR CI does NOT build the Dockerfile — I
+rebuilt/validated the image locally each round (build, real fetch vs live
+source, real generate + idempotency, serve allowlist). User called this a good
+stopping point; NOT merged (left for human review).
+
+Review fixes applied (all with tests + local image validation):
+- R1: shell-free release/dry-run smokes (distroless has no /bin/sh); checkpoints
+  required for preview/mainnet (config.json references CheckpointsFileHash);
+  serve re-checks secret components on the resolved symlink path; check.sh gofmt
+  roots include containers/cardano-tools.
+- R2: fetch writes artifact-contract dest names (config.json→configuration.yaml,
+  topology.json→primary-topology.json) via source/dest split in pins.go; serve
+  also denied key-material extensions (later superseded); bake 10001-owned
+  /profile so default non-root fetch works.
+- R3: report documented localnet-only (fetch→report not supported; public report
+  is downstream); generate is now idempotent (inspectEnv: match→re-enrich only,
+  conflict→refuse, absent→generate — mirrors the init wrapper); serve switched to
+  a DEFAULT-DENY allowlist of networkartifacts keys (request + resolved path),
+  replacing the denylist (reverted the IsSecret* exports to unexported);
+  topology.json pinned + fetch refuses HTTP redirects (peer-snapshot stays
+  unpinned by design — continuously moving, optional, non-chain-critical);
+  config requires https:// API URL (token never sent cleartext).
+
+Verification quirk still in play: direct go needs
+`PATH=/Users/josh/.proto/tools/go/1.26.3/bin:$PATH`; gopls shows false
+`malformed import path "{{context.Compiler}}"` diagnostics — ignore.
+
+Downstream (unchanged non-goals): wire the controller to this image (remove
+manager //go:embed, init-container swap, serve sidecar, status manifest),
+db-sync consumer rewiring, manager flag/Helm value, public report path, the F0
+minimal mainnet-node-reads-from-PVC slice. Consider also: enable the
+cardano-tools image build on PR CI (drop the release-please-- gate on its
+dry-run jobs) so the Dockerfile is exercised per-PR.
+
+## 2026-05-30 — slim image detail (superseded smoke note; see R1 above)
 - APPLIED (commit 65f3c17 on feat/cardano-tools): final stage →
   `gcr.io/distroless/static-debian12:nonroot@sha256:d093aa3e…`, COPY only the 3
   binaries, dropped the groupadd/useradd/chown block (no shell), `USER 10001:10001`
