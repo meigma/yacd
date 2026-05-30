@@ -18,7 +18,9 @@ local YACD environment from a checked-in config file.
   as the default chain API, Kupo as the default chain index API, and an opt-in
   token-protected faucet for local top-ups.
 - Developer CLI under `cli/` with `up`, `down`, `list`, `info`, and `topup`
-  commands.
+  lifecycle commands, plus `run`, `connect`, and `exec` host-access verbs that
+  bridge the network's chain APIs to your tests through the `YACD_*` environment
+  contract (see [docs/host-access.md](docs/host-access.md)).
 - Helm chart packaging for the manager deployment.
 - Moon tasks for generation, checks, tests, local deployment, and Kind smoke
   testing.
@@ -67,18 +69,39 @@ name and is auto-created, so one spec deploys under any name:
 go run ./cli/cmd/yacd up phase4-smoke -f examples/local/yacd.yaml
 go run ./cli/cmd/yacd list
 go run ./cli/cmd/yacd info phase4-smoke
-kubectl -n phase4-smoke port-forward svc/phase4-smoke-faucet 8080:8080
-# In another terminal:
-go run ./cli/cmd/yacd topup phase4-smoke --faucet-url http://127.0.0.1:8080 --address addr_test... --lovelace 1000000
+```
+
+Reach the network from the host through the `run`, `connect`, and `exec` verbs,
+which forward the chain APIs and wire the `YACD_*` environment so your tests
+read ordinary env vars instead of a YACD file:
+
+```sh
+# Run any command with the environment wired in (the primary test/CI path):
+go run ./cli/cmd/yacd run phase4-smoke -- go test ./e2e/...
+
+# Or hold the forwards open in one terminal and work in another:
+go run ./cli/cmd/yacd connect phase4-smoke
+
+# Fund a checked-in address and wait for on-chain confirmation:
+go run ./cli/cmd/yacd run phase4-smoke -- sh -c \
+  'yacd topup phase4-smoke --address addr_test... --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
+
+# cardano-cli reaches the node over its local socket, so use exec (in-pod):
+go run ./cli/cmd/yacd exec phase4-smoke -- cardano-cli query tip --testnet-magic 42
+
 go run ./cli/cmd/yacd down phase4-smoke
 ```
 
 The checked-in local example opts into the faucet. A minimal `CardanoNetwork`
 does not expose the faucet unless `spec.chainAPI.faucet.enabled` is set. The
-published faucet endpoint is an in-cluster Service URL; host-side top-ups need a
-local forwarded URL or another externally routable Service address. Custom
-non-loopback `--faucet-url` values require `--trust-faucet-url`; custom
-non-loopback `http://` values also require `--allow-insecure-faucet-url`.
+published chain-API endpoints are in-cluster Service URLs; the host-access verbs
+forward them to loopback so the `YACD_*` URLs are reachable from your tests, and
+the loopback faucet URL is exempt from the `topup` trust gate. Targeting the
+published in-cluster faucet URL directly from the host instead requires an
+externally routable address: custom non-loopback `--faucet-url` values require
+`--trust-faucet-url`, and custom non-loopback `http://` values also require
+`--allow-insecure-faucet-url`. See [docs/host-access.md](docs/host-access.md)
+for the full `YACD_*` contract and the `run`-versus-`exec` rule.
 
 Run the local development stack with Kind, ctlptl, Tilt, and ko:
 
