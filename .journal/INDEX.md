@@ -40,5 +40,5 @@
 | 037 | 2026-05-29 | TEST_REPORT issue follow-through | complete | Fixed TEST_REPORT D1 by reconciling owned faucet auth Secret events, stamping the Deployment with the live token hash, manually proving recovery, and merging PR #54. |
 | 038 | 2026-05-29 | TEST_REPORT continuation | complete | Fixed TEST_REPORT D2 by failing closed on terminating/lost primary PVC state, manually proving the path, and merging PR #56. |
 | 039 | 2026-05-29 | D6 managed Postgres auth recovery | complete | Fixed TEST_REPORT D6 by safely adopting restored generated managed Postgres auth Secrets that match the accepted identity, merged PR #57, and cleaned up the dev stack/worktree. |
-| 040 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session primed to continue fixing the remaining `.journal/TEST_REPORT.md` findings after D6 landed. |
+| 040 | 2026-05-29 | TEST_REPORT F0 assessment | abandoned | Closed without implementation after determining F0 needs a public-profile materialization redesign rather than another raw ConfigMap workaround. |
 | 041 | 2026-05-29 | TEST_REPORT follow-through | in-progress | Session opened to continue the remaining `.journal/TEST_REPORT.md` findings (F0, F2/F4); awaiting user direction. |

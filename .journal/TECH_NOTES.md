@@ -218,6 +218,15 @@
   faucet still rejected. Curated public profiles are embedded for preview,
   preprod, and mainnet; custom profiles come from same-namespace ConfigMap or
   Secret bundles.
+- TEST_REPORT F0 is still open: public mainnet cannot currently be created
+  because the public profile artifacts are copied into one raw
+  `<network>-network-artifacts` ConfigMap and mounted directly as `/profile`,
+  while the mainnet bundle exceeds Kubernetes' 1 MiB ConfigMap data cap. A
+  session-040 size check showed the checked-in mainnet profile files gzip below
+  the cap, but the preferred next direction is not a naive compressed ConfigMap:
+  make public networks materialize profile files in an init path closer to the
+  localnet artifact publisher, then publish only compact/non-secret artifact
+  metadata for consumers.
 - Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
   slice. The default Mithril client image is
   `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot
