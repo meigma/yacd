@@ -391,6 +391,113 @@ jobs:
 
           test -f "${state_dir}/env/yacd-localnet-plan.json"
 
+  cardano-tools-image-platform-dry-run:
+    name: cardano-tools Image Platform Dry Run (${{ matrix.platform }})
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build cardano-tools platform OCI archive
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: containers/cardano-tools/Dockerfile
+          push: false
+          platforms: ${{ matrix.platform }}
+          outputs: type=oci,dest=/tmp/cardano-tools-dry-run-${{ matrix.arch }}.oci
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=cardano-tools-release-dry-run-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=cardano-tools-release-dry-run-${{ matrix.arch }}
+          build-args: |
+            CARDANO_NODE_VERSION=11.0.1
+            YACD_CARDANO_TOOLS_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_CARDANO_TOOLS_COMMIT=${{ github.sha }}
+            YACD_CARDANO_TOOLS_DATE=dryrun
+
+      - name: Validate cardano-tools platform OCI archive
+        run: test -s /tmp/cardano-tools-dry-run-${{ matrix.arch }}.oci
+
+  cardano-tools-image-dry-run:
+    name: Cardano Tools Image Dry Run
+    needs:
+      - cardano-tools-image-platform-dry-run
+    if: ${{ always() && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--')) }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check cardano-tools platform dry-run result
+        env:
+          PLATFORM_RESULT: ${{ needs.cardano-tools-image-platform-dry-run.result }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PLATFORM_RESULT" != "success" ]; then
+            echo "cardano-tools platform dry-run result was $PLATFORM_RESULT" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Build local cardano-tools smoke-test image
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: containers/cardano-tools/Dockerfile
+          load: true
+          platforms: linux/amd64
+          tags: cardano-tools:dry-run
+          cache-from: type=gha,scope=cardano-tools-release-dry-run-amd64
+          cache-to: type=gha,mode=max,scope=cardano-tools-release-dry-run-amd64
+          build-args: |
+            CARDANO_NODE_VERSION=11.0.1
+            YACD_CARDANO_TOOLS_VERSION=11.0.1-yacd.${{ github.run_id }}.${{ github.run_attempt }}
+            YACD_CARDANO_TOOLS_COMMIT=${{ github.sha }}
+            YACD_CARDANO_TOOLS_DATE=dryrun
+
+      - name: Smoke test local cardano-tools image
+        run: |
+          set -euo pipefail
+
+          docker run --rm cardano-tools:dry-run version >/tmp/cardano-tools-version.txt
+          grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
+          docker run --rm --entrypoint /bin/sh cardano-tools:dry-run \
+            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli && test -x /opt/cardano/bin/cardano-testnet'
+
+          docker run --rm cardano-tools:dry-run generate --dry-run >/tmp/cardano-tools-generate.txt
+          grep -Fq "would run: cardano-testnet create-env" /tmp/cardano-tools-generate.txt
+
+          docker run --rm cardano-tools:dry-run fetch --profile preview --dry-run >/tmp/cardano-tools-fetch.txt
+          grep -Fq "config.json" /tmp/cardano-tools-fetch.txt
+
   helm-chart-dry-run:
     name: Helm Chart Dry Run
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-please--') }}

@@ -1,0 +1,355 @@
+# This workflow is tag-triggered by the cardano-tools Release Please train. It
+# publishes the YACD cardano-tools utility image to GHCR, attaches BuildKit
+# provenance/SBOM metadata, and publishes a GitHub-native attestation for the
+# final multi-platform OCI manifest. The image is built from the repository
+# ROOT context because the binary is part of the root Go module.
+
+name: Release cardano-tools Image
+
+on:
+  push:
+    tags:
+      - cardano-tools/v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  IMAGE_NAME: ghcr.io/meigma/yacd/cardano-tools
+
+jobs:
+  resolve-release:
+    name: Resolve cardano-tools Release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release-tag.outputs.tag }}
+      version: ${{ steps.release-tag.outputs.version }}
+      upstream-version: ${{ steps.release-tag.outputs.upstream-version }}
+    steps:
+      - name: Resolve release tag
+        id: release-tag
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$DISPATCH_TAG"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$tag" =~ ^cardano-tools/v[0-9]+\.[0-9]+\.[0-9]+-yacd\.[0-9]+$ ]]; then
+            echo "Release tag must match cardano-tools/vX.Y.Z-yacd.N: $tag" >&2
+            exit 1
+          fi
+
+          version="${tag#cardano-tools/v}"
+          upstream_version="${version%%-yacd.*}"
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "upstream-version=$upstream_version" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
+        run: |
+          for attempt in $(seq 1 30); do
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx true; then
+              exit 0
+            fi
+            echo "Draft release $RELEASE_TAG is not ready yet; retrying..."
+            sleep 10
+          done
+
+          echo "Draft release $RELEASE_TAG was not found or is not a draft." >&2
+          exit 1
+
+  cardano-tools-image-build:
+    name: cardano-tools Image Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - resolve-release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            arch: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check out requested tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+        run: git checkout --detach "$RELEASE_TAG"
+
+      - name: Resolve image metadata
+        id: image
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_NAME}:${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=${{ needs.resolve-release.outputs.version }}
+          labels: |
+            org.opencontainers.image.title=yacd-cardano-tools
+            org.opencontainers.image.description=YACD Cardano artifact utility (generate, fetch, serve, report) built with official IntersectMBO release artifacts
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.resolve-release.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.image.outputs.commit }}
+            io.yacd.cardano-node.version=${{ needs.resolve-release.outputs.upstream-version }}
+
+      - name: Build and push cardano-tools image
+        id: build
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7
+        with:
+          context: .
+          file: containers/cardano-tools/Dockerfile
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=cardano-tools-release-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=cardano-tools-release-${{ matrix.arch }}
+          build-args: |
+            CARDANO_NODE_VERSION=${{ needs.resolve-release.outputs.upstream-version }}
+            YACD_CARDANO_TOOLS_VERSION=${{ steps.image.outputs.version }}
+            YACD_CARDANO_TOOLS_COMMIT=${{ steps.image.outputs.commit }}
+            YACD_CARDANO_TOOLS_DATE=${{ steps.image.outputs.date }}
+
+      - name: Smoke test platform image
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" version >/tmp/cardano-tools-version.txt
+          grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
+
+          # The image embeds the upstream Cardano binaries the generate verb shims.
+          docker run --rm --platform "${{ matrix.platform }}" --entrypoint /bin/sh "$IMAGE_REF" \
+            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli && test -x /opt/cardano/bin/cardano-testnet'
+
+          # generate --dry-run resolves the create-env invocation without running it.
+          docker run --rm --platform "${{ matrix.platform }}" "$IMAGE_REF" generate --dry-run >/tmp/cardano-tools-generate.txt
+          grep -Fq "would run: cardano-testnet create-env" /tmp/cardano-tools-generate.txt
+
+      - name: Export platform digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "unexpected image digest: $DIGEST" >&2
+            exit 1
+          fi
+
+          mkdir -p /tmp/cardano-tools-digests
+          touch "/tmp/cardano-tools-digests/${DIGEST#sha256:}"
+
+      - name: Upload platform digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cardano-tools-digest-${{ matrix.arch }}
+          path: /tmp/cardano-tools-digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  cardano-tools-image-release:
+    name: cardano-tools Image Release
+    runs-on: ubuntu-24.04
+    needs:
+      - resolve-release
+      - cardano-tools-image-build
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    outputs:
+      image-name: ${{ steps.manifest.outputs.name }}
+      image-tag: ${{ steps.manifest.outputs.tag }}
+      image-digest: ${{ steps.manifest.outputs.digest }}
+    steps:
+      - name: Resolve image metadata
+        id: image
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          echo "name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_NAME}:${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4
+
+      - name: Download platform digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cardano-tools-digest-*
+          path: /tmp/cardano-tools-digests
+          merge-multiple: true
+
+      - name: Create multi-platform manifest
+        id: manifest
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          mapfile -t digest_files < <(find /tmp/cardano-tools-digests -maxdepth 1 -type f -print | sort)
+          if [ "${#digest_files[@]}" -ne 2 ]; then
+            echo "expected 2 platform digest files, found ${#digest_files[@]}" >&2
+            printf '%s\n' "${digest_files[@]}" >&2
+            exit 1
+          fi
+
+          refs=()
+          for digest_file in "${digest_files[@]}"; do
+            digest="$(basename "$digest_file")"
+            if [[ ! "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "unexpected digest artifact name: $digest" >&2
+              exit 1
+            fi
+            refs+=("${IMAGE_NAME}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create --tag "$IMAGE_TAG" "${refs[@]}"
+
+          manifest_json="$(docker buildx imagetools inspect "$IMAGE_TAG" --format '{{json .}}')"
+          manifest_digest="$(jq -r '.manifest.digest' <<< "$manifest_json")"
+          platforms="$(jq -r '
+            [
+              .manifest.manifests[]
+              | select(.platform.os == "linux" and (.platform.architecture == "amd64" or .platform.architecture == "arm64"))
+              | "\(.platform.os)/\(.platform.architecture)"
+            ]
+            | unique
+            | join(",")
+          ' <<< "$manifest_json")"
+
+          if [[ ! "$manifest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "unexpected manifest digest: $manifest_digest" >&2
+            exit 1
+          fi
+
+          if [ "$platforms" != "linux/amd64,linux/arm64" ]; then
+            echo "unexpected manifest platforms: $platforms" >&2
+            exit 1
+          fi
+
+          echo "name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "digest=${manifest_digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test release image
+        run: |
+          set -euo pipefail
+
+          docker run --rm "${{ steps.manifest.outputs.tag }}" version >/tmp/cardano-tools-version.txt
+          grep -Fq "yacd-cardano-tools" /tmp/cardano-tools-version.txt
+          docker run --rm --entrypoint /bin/sh "${{ steps.manifest.outputs.tag }}" \
+            -c 'test -x /opt/yacd/bin/yacd-cardano-tools && test -x /opt/cardano/bin/cardano-cli'
+
+          # fetch --dry-run resolves the trusted-source manifest without network access.
+          docker run --rm "${{ steps.manifest.outputs.tag }}" fetch --profile preview --dry-run >/tmp/cardano-tools-fetch.txt
+          grep -Fq "config.json" /tmp/cardano-tools-fetch.txt
+
+      - name: Attest cardano-tools image
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+        with:
+          subject-name: ${{ steps.manifest.outputs.name }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+
+  release-inspection-summary:
+    name: cardano-tools Release Inspection Summary
+    runs-on: ubuntu-24.04
+    needs:
+      - resolve-release
+      - cardano-tools-image-release
+    permissions: {}
+    steps:
+      - name: Write inspection summary
+        env:
+          RELEASE_TAG: ${{ needs.resolve-release.outputs.tag }}
+          IMAGE_NAME: ${{ needs.cardano-tools-image-release.outputs.image-name }}
+          IMAGE_TAG: ${{ needs.cardano-tools-image-release.outputs.image-tag }}
+          IMAGE_DIGEST: ${{ needs.cardano-tools-image-release.outputs.image-digest }}
+        run: |
+          {
+            echo "## cardano-tools utility image ready for inspection"
+            echo
+            echo "Release: $RELEASE_TAG"
+            echo "Image: $IMAGE_TAG"
+            echo
+            echo "Container verification commands:"
+            echo
+            echo '```sh'
+            echo "docker login ghcr.io"
+            echo "docker pull \"${IMAGE_TAG}\""
+            echo "docker run --rm \"${IMAGE_TAG}\" version"
+            echo "gh attestation verify \"oci://${IMAGE_NAME}@${IMAGE_DIGEST}\" --repo \"$GITHUB_REPOSITORY\" --signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release-cardano-tools.yml\" --source-ref \"refs/tags/$RELEASE_TAG\" --deny-self-hosted-runners"
+            echo '```'
+            echo
+            echo "Publish or reject the draft GitHub release manually after inspection. The GHCR image is already available because GHCR does not have a draft release state."
+          } >> "$GITHUB_STEP_SUMMARY"
