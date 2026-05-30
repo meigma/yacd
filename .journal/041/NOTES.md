@@ -121,3 +121,24 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
 - PR #59 opened against master; CI (`ci`+`e2e`) pending. Per user directive:
   **paused before merge for human review.** Next on approval: PR2 = WB2 (env
   contract) + WB3 (forward orchestration) from updated master.
+
+## 2026-05-29 18:25 — PR1 merged; PR2 done & open: PR #60 (PAUSED)
+- User: "LGTM. Proceed." → CI on #59 was green (ci/e2e/Kusari) → squash-merged
+  PR1 (master now 02710cd). Removed `feat/cli-host-access-ports` worktree.
+- Created `feat/cli-env-forward` from updated master for PR2.
+- **PR2 = WB2 + WB3** (commit ff54225, PR #60). Files: `cli/envcontract.go`
+  (+test), `cli/forward.go` (+test), `.mockery.yml` (+ForwardSession),
+  `mocks/forward_session.go` (gen), `cli/doc.go`, `cli/topup.go` (refactor).
+  - hostEnv derives scheme from published status URL (ws/http); podEnv omits
+    YACD_FAUCET_TOKEN; node-to-node excluded.
+  - connectNetwork: readiness gate → PrimaryPodName → Forward published
+    endpoints → faucet token only when FaucetReady → connectedSession.
+  - Factored `requireFreshStatus` shared by requireReady + topup's
+    requireFaucetReady (messages unchanged; topup tests green).
+- Adversarial review (1 agent): fix-then-ship; addressed all 4 (predicate
+  symmetry forwardSpecs↔hostEnv; requireFreshStatus extraction; gate token on
+  FaucetReady; loopbackURL godoc). unparam flagged connectNetwork name/namespace
+  (only test callers, same args) → varied identity in no-endpoints test (real
+  coverage win), not a nolint.
+- `root:check` + `root:test` green. PR #60 opened; **paused before merge.**
+  Next on approval: PR3 = WB4 (`yacd run`).
