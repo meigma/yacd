@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/kube"
@@ -39,11 +40,25 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			trustFaucetURL := commandContext.viper.GetBool("trust-faucet-url")
 			allowInsecureFaucetURL := commandContext.viper.GetBool("allow-insecure-faucet-url")
 			jsonOutput := commandContext.viper.GetBool("json")
+			awaitConfirm := commandContext.viper.GetBool("await")
+			awaitTimeout := commandContext.viper.GetDuration("await-timeout")
+			// kupo-url falls back to the YACD_KUPO_URL contract variable through
+			// viper's AutomaticEnv, so topup --await works unchanged under
+			// `yacd run` (which sets YACD_KUPO_URL).
+			kupoURL := strings.TrimSpace(commandContext.viper.GetString("kupo-url"))
 			if destinationAddress == "" {
 				return fmt.Errorf("--address is required")
 			}
 			if lovelace <= 0 {
 				return fmt.Errorf("--lovelace must be greater than 0")
+			}
+			if awaitConfirm {
+				if kupoURL == "" {
+					return fmt.Errorf("--await requires a Kupo URL: pass --kupo-url or run under `yacd run`, which sets YACD_KUPO_URL")
+				}
+				if awaitTimeout <= 0 {
+					return fmt.Errorf("--await-timeout must be greater than 0")
+				}
 			}
 
 			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
@@ -100,6 +115,16 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			if awaitConfirm {
+				// Await at the address we asked to fund (validated, non-empty),
+				// not the faucet's echoed value, so an empty echo cannot widen
+				// the Kupo query to all UTxOs.
+				confirmer := commandContext.utxoConfirmerFactory(kupoURL)
+				if err := awaitConfirmation(cmd.Context(), confirmer, destinationAddress, result.TxID, awaitTimeout); err != nil {
+					return err
+				}
+			}
+
 			if jsonOutput {
 				encoded, err := json.MarshalIndent(result, "", "  ")
 				if err != nil {
@@ -114,6 +139,11 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 			if _, err := fmt.Fprintf(commandContext.out, "Submitted top-up %s\nSource: %s\nLovelace: %d\nDestination: %s\n", result.TxID, result.Source, result.Lovelace, result.DestinationAddress); err != nil {
 				return fmt.Errorf("write top-up result: %w", err)
 			}
+			if awaitConfirm {
+				if _, err := fmt.Fprintf(commandContext.out, "Confirmed on-chain.\n"); err != nil {
+					return fmt.Errorf("write top-up confirmation: %w", err)
+				}
+			}
 
 			return nil
 		},
@@ -126,6 +156,9 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Bool("trust-faucet-url", false, "Allow sending the faucet auth token to a custom non-loopback URL")
 	cmd.Flags().Bool("allow-insecure-faucet-url", false, "Allow trusted custom non-loopback HTTP faucet URLs")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
+	cmd.Flags().Bool("await", false, "Wait for the funding transaction to be confirmed on-chain (requires Kupo)")
+	cmd.Flags().Duration("await-timeout", 2*time.Minute, "Maximum time to wait for --await confirmation")
+	cmd.Flags().String("kupo-url", "", "Kupo URL for --await (defaults to YACD_KUPO_URL)")
 
 	return cmd
 }

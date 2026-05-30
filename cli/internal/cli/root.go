@@ -36,16 +36,22 @@ func NewRootCommand(options Options) *cobra.Command {
 	if options.HTTPClient == nil {
 		options.HTTPClient = http.DefaultClient
 	}
+	if options.UTxOConfirmerFactory == nil {
+		options.UTxOConfirmerFactory = func(kupoURL string) UTxOConfirmer {
+			return newKupoConfirmer(kupoURL)
+		}
+	}
 	options.Build = options.Build.withDefaults()
 
 	ctx := &commandContext{
-		in:                options.In,
-		out:               options.Out,
-		err:               options.Err,
-		viper:             options.Viper,
-		kubeClientFactory: options.KubeClientFactory,
-		httpClient:        options.HTTPClient,
-		logger:            slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		in:                   options.In,
+		out:                  options.Out,
+		err:                  options.Err,
+		viper:                options.Viper,
+		kubeClientFactory:    options.KubeClientFactory,
+		httpClient:           options.HTTPClient,
+		utxoConfirmerFactory: options.UTxOConfirmerFactory,
+		logger:               slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
 	root := &cobra.Command{
