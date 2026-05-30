@@ -59,10 +59,10 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
       -o /out/bin/yacd-cardano-tools ./containers/cardano-tools/cmd/yacd-cardano-tools; \
     test -x /out/bin/yacd-cardano-tools
 
-# Stage an empty state directory for the final image. distroless/static has no
-# shell to mkdir/chown, so the writable /state owned by the run uid is copied
-# in from here.
-RUN mkdir -p /state
+# Stage empty writable directories for the final image. distroless/static has
+# no shell to mkdir/chown, so the run-uid-owned /state (generate output) and
+# /profile (fetch default output) are copied in from here.
+RUN mkdir -p /state /profile
 
 # The IOG cardano-node release binaries are fully static musl builds (no
 # dynamic loader, no shared libraries) and yacd-cardano-tools is a static
@@ -88,6 +88,7 @@ LABEL org.opencontainers.image.title="yacd-cardano-tools" \
 COPY --from=fetch /out/bin/cardano-node /out/bin/cardano-cli /out/bin/cardano-testnet /opt/cardano/bin/
 COPY --from=build /out/bin/yacd-cardano-tools /opt/yacd/bin/yacd-cardano-tools
 COPY --from=build --chown=10001:10001 /state /state
+COPY --from=build --chown=10001:10001 /profile /profile
 
 ENV PATH="/opt/yacd/bin:/opt/cardano/bin:${PATH}" \
     CARDANO_CLI="/opt/cardano/bin/cardano-cli" \

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/meigma/yacd/containers/cardano-tools/internal/artifactset"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
 
 // shutdownTimeout bounds graceful shutdown once the context is cancelled.
@@ -118,7 +119,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if containsSecretComponent(rel) {
+	if forbiddenPath(rel) {
 		http.NotFound(w, r)
 		return
 	}
@@ -131,10 +132,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Re-check the resolved path: an in-root symlink with a benign name (e.g.
 	// /leak -> utxo-keys/pool.skey) passes the request-path check above and
-	// stays under root, so the secret-component denylist must also apply to
-	// where the path actually resolves.
+	// stays under root, so the denylist must also apply to where the path
+	// actually resolves.
 	resolvedRel := strings.TrimPrefix(strings.TrimPrefix(resolved, h.root), string(os.PathSeparator))
-	if containsSecretComponent(filepath.ToSlash(resolvedRel)) {
+	if forbiddenPath(filepath.ToSlash(resolvedRel)) {
 		http.NotFound(w, r)
 		return
 	}
@@ -155,10 +156,23 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
 }
 
-// containsSecretComponent reports whether any slash-separated component of a
-// relative path names Cardano key material.
-func containsSecretComponent(rel string) bool {
-	return slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent)
+// forbiddenPath reports whether a slash-separated relative path must not be
+// served: any component names a secret/key directory, or the file carries a
+// private-key extension (.skey/.cert/.counter/.vkey). The public Mithril
+// verification keys are .vkey files but are legitimately public artifacts, so
+// they are allowlisted.
+func forbiddenPath(rel string) bool {
+	if slices.ContainsFunc(strings.Split(rel, "/"), artifactset.IsSecretComponent) {
+		return true
+	}
+	base := path.Base(rel)
+	return artifactset.IsSecretExtension(path.Ext(base)) && !publicArtifact(base)
+}
+
+// publicArtifact reports whether base is a known public artifact that is safe
+// to serve despite a key-material extension (the Mithril verification keys).
+func publicArtifact(base string) bool {
+	return base == networkartifacts.MithrilGenesisKey || base == networkartifacts.MithrilAncillaryKey
 }
 
 // underRoot reports whether resolved is root itself or a descendant of it.

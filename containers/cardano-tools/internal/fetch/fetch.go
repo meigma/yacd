@@ -58,20 +58,20 @@ func Run(ctx context.Context, opts Options, doer httpDoer, out io.Writer) error 
 		body, err := download(ctx, doer, file.url)
 		if err != nil {
 			if file.optional {
-				_, _ = fmt.Fprintf(out, "skipped optional %s: %v\n", file.name, err)
+				_, _ = fmt.Fprintf(out, "skipped optional %s: %v\n", file.dest, err)
 				continue
 			}
-			return fmt.Errorf("fetch %s: %w", file.name, err)
+			return fmt.Errorf("fetch %s: %w", file.dest, err)
 		}
 
 		if file.expectedSHA256 != "" {
 			actual := sha256Hex(body)
 			if actual != file.expectedSHA256 {
-				return fmt.Errorf("pinned digest mismatch for %s: got sha256:%s, want sha256:%s", file.name, actual, file.expectedSHA256)
+				return fmt.Errorf("pinned digest mismatch for %s: got sha256:%s, want sha256:%s", file.dest, actual, file.expectedSHA256)
 			}
 		}
 
-		if err := writeArtifact(opts.OutputDir, file.name, body); err != nil {
+		if err := writeArtifact(opts.OutputDir, file.dest, body); err != nil {
 			return err
 		}
 	}
@@ -136,7 +136,7 @@ func writeDryRun(out io.Writer, profile string, files []pinnedFile) error {
 		if file.expectedSHA256 != "" {
 			pin = "sha256:" + file.expectedSHA256
 		}
-		if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", file.name, file.url, pin); err != nil {
+		if _, err := fmt.Fprintf(out, "%s\t%s\t%s\n", file.dest, file.url, pin); err != nil {
 			return err
 		}
 	}

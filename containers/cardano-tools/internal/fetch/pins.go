@@ -1,5 +1,7 @@
 package fetch
 
+import "github.com/meigma/yacd/internal/cardano/networkartifacts"
+
 // Trusted source bases. config.json and the chain artifacts come from the
 // Cardano operations book; the Mithril verification keys come from the Mithril
 // release-mainnet configuration. These mirror the provenance recorded in
@@ -32,37 +34,41 @@ const (
 
 // pinnedFile describes one artifact to download for a profile.
 type pinnedFile struct {
-	// name is the file's name at the source and the filename written into the
-	// output directory.
-	name string
-	// url is the exact download URL.
+	// dest is the filename written into the output directory. It is the YACD
+	// artifact key (from networkartifacts), which can differ from the source
+	// filename: the book's config.json is written as configuration.yaml and
+	// topology.json as primary-topology.json so the result matches the
+	// artifact/runtime contract cardano-node and the controllers expect.
+	dest string
+	// url is the exact download URL (using the upstream source filename).
 	url string
 	// expectedSHA256 is the hex digest the downloaded bytes must match. Empty
 	// means the file is not pinned here: genesis and checkpoints files are
 	// verified downstream by cardano-node against the hashes inside the pinned
-	// config.json, and topology/peer-snapshot are operational, non-critical
-	// files.
+	// config.json, and topology/peer-snapshot are operational files.
 	expectedSHA256 string
 	// optional reports whether a download failure for this file is tolerated
 	// (the file may legitimately not exist for a profile).
 	optional bool
 }
 
-// bookFile builds a pinnedFile served from the operations book for profile.
-func bookFile(profile, name, sha256 string, optional bool) pinnedFile {
-	return pinnedFile{name: name, url: bookBase + profile + "/" + name, expectedSHA256: sha256, optional: optional}
+// bookFile builds a pinnedFile downloaded from the operations book, mapping the
+// upstream sourceName to the YACD dest artifact key.
+func bookFile(profile, sourceName, dest, sha256 string, optional bool) pinnedFile {
+	return pinnedFile{dest: dest, url: bookBase + profile + "/" + sourceName, expectedSHA256: sha256, optional: optional}
 }
 
 // chainArtifacts returns the files common to every public profile: the pinned
-// config.json plus the genesis and topology files verified downstream.
+// config.json (written as configuration.yaml) plus the genesis and topology
+// files verified downstream (topology written as primary-topology.json).
 func chainArtifacts(profile, configSHA256 string) []pinnedFile {
 	return []pinnedFile{
-		bookFile(profile, "config.json", configSHA256, false),
-		bookFile(profile, "byron-genesis.json", "", false),
-		bookFile(profile, "shelley-genesis.json", "", false),
-		bookFile(profile, "alonzo-genesis.json", "", false),
-		bookFile(profile, "conway-genesis.json", "", false),
-		bookFile(profile, "topology.json", "", false),
+		bookFile(profile, "config.json", networkartifacts.ConfigurationKey, configSHA256, false),
+		bookFile(profile, "byron-genesis.json", networkartifacts.ByronGenesisKey, "", false),
+		bookFile(profile, "shelley-genesis.json", networkartifacts.ShelleyGenesisKey, "", false),
+		bookFile(profile, "alonzo-genesis.json", networkartifacts.AlonzoGenesisKey, "", false),
+		bookFile(profile, "conway-genesis.json", networkartifacts.ConwayGenesisKey, "", false),
+		bookFile(profile, "topology.json", networkartifacts.PrimaryTopologyKey, "", false),
 	}
 }
 
@@ -76,22 +82,22 @@ func pinsFor(profile string) ([]pinnedFile, bool) {
 		// it against the hash inside the pinned config.json). peer-snapshot is a
 		// best-effort bootstrap aid and stays optional.
 		return append(chainArtifacts("preview", previewConfigSHA256),
-			bookFile("preview", "checkpoints.json", "", false),
-			bookFile("preview", "peer-snapshot.json", "", true),
+			bookFile("preview", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
+			bookFile("preview", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
 		), true
 	case "preprod":
 		// preprod config.json does not reference a checkpoints file.
 		return append(chainArtifacts("preprod", preprodConfigSHA256),
-			bookFile("preprod", "peer-snapshot.json", "", true),
+			bookFile("preprod", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
 		), true
 	case "mainnet":
 		// mainnet config.json references CheckpointsFile + CheckpointsFileHash,
 		// so checkpoints.json is required (verified downstream by that hash).
 		return append(chainArtifacts("mainnet", mainnetConfigSHA256),
-			bookFile("mainnet", "checkpoints.json", "", false),
-			bookFile("mainnet", "peer-snapshot.json", "", true),
-			pinnedFile{name: "mithril-genesis.vkey", url: mithrilBase + "genesis.vkey", expectedSHA256: mainnetMithrilGenesisSHA256},
-			pinnedFile{name: "mithril-ancillary.vkey", url: mithrilBase + "ancillary.vkey", expectedSHA256: mainnetMithrilAncillarySHA256},
+			bookFile("mainnet", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
+			bookFile("mainnet", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
+			pinnedFile{dest: networkartifacts.MithrilGenesisKey, url: mithrilBase + "genesis.vkey", expectedSHA256: mainnetMithrilGenesisSHA256},
+			pinnedFile{dest: networkartifacts.MithrilAncillaryKey, url: mithrilBase + "ancillary.vkey", expectedSHA256: mainnetMithrilAncillarySHA256},
 		), true
 	default:
 		return nil, false

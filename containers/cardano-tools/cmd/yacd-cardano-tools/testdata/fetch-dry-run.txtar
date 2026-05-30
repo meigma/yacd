@@ -3,7 +3,10 @@
 # pinned anchor for chain artifacts; mainnet additionally pins the Mithril keys.
 exec yacd-cardano-tools fetch --profile preview --dry-run
 stdout '^profile: preview$'
-stdout 'config\.json\thttps://book\.play\.dev\.cardano\.org/environments/preview/config\.json\tsha256:[0-9a-f]{64}'
+# Destination is the YACD artifact key (configuration.yaml); the URL keeps the
+# upstream source name (config.json).
+stdout 'configuration\.yaml\thttps://book\.play\.dev\.cardano\.org/environments/preview/config\.json\tsha256:[0-9a-f]{64}'
+stdout 'primary-topology\.json\thttps://book\.play\.dev\.cardano\.org/environments/preview/topology\.json\tunpinned'
 stdout 'byron-genesis\.json\t.*\tunpinned'
 ! stderr .
 

@@ -101,6 +101,49 @@ func TestServeRefusesSymlinkEscapingRoot(t *testing.T) {
 	assert.NotContains(t, body, "SECRET")
 }
 
+func TestServeRefusesPrivateKeyByExtension(t *testing.T) {
+	t.Parallel()
+
+	// Private-key material is refused by extension even when no path component
+	// is a denied directory name (e.g. node/seed.skey).
+	srv, _ := newServer(t, map[string]string{
+		"node/seed.skey":   "SECRET",
+		"node/op.cert":     "SECRET",
+		"node/op.counter":  "SECRET",
+		"node/cold.vkey":   "SECRET",
+		"public-data.json": "ok",
+	})
+
+	for _, p := range []string{"/node/seed.skey", "/node/op.cert", "/node/op.counter", "/node/cold.vkey"} {
+		code, body := get(t, srv, p)
+		assert.Equal(t, http.StatusNotFound, code, "key material %s must be refused", p)
+		assert.NotContains(t, body, "SECRET")
+	}
+
+	code, body := get(t, srv, "/public-data.json")
+	assert.Equal(t, http.StatusOK, code)
+	assert.Equal(t, "ok", body)
+}
+
+func TestServeAllowsPublicMithrilVKeys(t *testing.T) {
+	t.Parallel()
+
+	// The Mithril verification keys are .vkey files but legitimately public.
+	srv, _ := newServer(t, map[string]string{
+		"mithril-genesis.vkey":   "genesis-vkey",
+		"mithril-ancillary.vkey": "ancillary-vkey",
+	})
+
+	for name, want := range map[string]string{
+		"/mithril-genesis.vkey":   "genesis-vkey",
+		"/mithril-ancillary.vkey": "ancillary-vkey",
+	} {
+		code, body := get(t, srv, name)
+		assert.Equal(t, http.StatusOK, code, "%s should be served", name)
+		assert.Equal(t, want, body)
+	}
+}
+
 func TestServeRefusesSymlinkToSecretWithinRoot(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {

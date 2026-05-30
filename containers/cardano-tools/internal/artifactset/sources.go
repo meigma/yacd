@@ -74,7 +74,7 @@ func validateSourcePath(key, relativePath string) error {
 		}
 	}
 
-	if isSecretExtension(path.Ext(clean)) {
+	if IsSecretExtension(path.Ext(clean)) {
 		return fmt.Errorf("source %s is key material", relativePath)
 	}
 
@@ -96,9 +96,12 @@ func IsSecretComponent(name string) bool {
 	}
 }
 
-// isSecretExtension reports whether a file extension marks Cardano key
-// material that must never be published or served.
-func isSecretExtension(ext string) bool {
+// IsSecretExtension reports whether a file extension marks Cardano key
+// material that must never be published or served. The serve verb reuses it to
+// refuse private-key files (e.g. node/seed.skey) that do not sit under a
+// denied directory; callers that legitimately serve public .vkey artifacts
+// (the Mithril verification keys) must allowlist those explicitly.
+func IsSecretExtension(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".cert", ".counter", ".skey", ".vkey":
 		return true

@@ -74,10 +74,14 @@ func TestRunWritesVerifiedArtifacts(t *testing.T) {
 		fakeDoer{bodies: previewBodies(t, config)}, io.Discard)
 	require.NoError(t, err)
 
-	got, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	// The book's config.json is written under the YACD artifact key
+	// configuration.yaml (and source config.json is NOT left behind).
+	got, err := os.ReadFile(filepath.Join(dir, "configuration.yaml"))
 	require.NoError(t, err)
-	assert.Equal(t, config, got, "config.json is written verbatim after digest verification")
+	assert.Equal(t, config, got, "config bytes are written verbatim under configuration.yaml after digest verification")
+	assert.NoFileExists(t, filepath.Join(dir, "config.json"))
 	assert.FileExists(t, filepath.Join(dir, "byron-genesis.json"))
+	assert.FileExists(t, filepath.Join(dir, "primary-topology.json"), "topology.json is written under its artifact key")
 }
 
 func TestRunFailsOnPinnedDigestMismatch(t *testing.T) {
@@ -91,7 +95,7 @@ func TestRunFailsOnPinnedDigestMismatch(t *testing.T) {
 		fakeDoer{bodies: bodies}, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "pinned digest mismatch")
-	assert.NoFileExists(t, filepath.Join(dir, "config.json"), "no file is written when verification fails")
+	assert.NoFileExists(t, filepath.Join(dir, "configuration.yaml"), "no file is written when verification fails")
 }
 
 func TestRunFailsWhenRequiredFileMissing(t *testing.T) {
