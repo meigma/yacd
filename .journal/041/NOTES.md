@@ -191,3 +191,27 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
 - Adversarial review: **ship** (only nits; verified boundary consts match
   operator, exit-code extraction, no stdin hang). `root:check`+`root:test` green.
   PR #62 opened; **paused before merge.** Next: PR5 = WB5 (`yacd connect`).
+
+## 2026-05-29 21:30 — PR4 merged; PR5 done & open: PR #63 (PAUSED)
+- "LGTM. Proceed." → #62 CI green (ci+e2e+Kusari) → squash-merged PR4 (master
+  45c44f8). Removed exec worktree; created `feat/cli-connect-verb`.
+- Answered user Q: yes, each PR gets a focused adversarial reviewer (not the
+  5-lens workflow used for the plan); user said that's fine.
+- **PR5 = WB5** `yacd connect` (commit 97273ab, PR #63). connect.go (+test),
+  envcontract.go (refactor: chainEndpoint+name, hostBindings single rewrite
+  path, endpointsDocument+newEndpointsDocument), forward.go (forwardSpecs via
+  chainEndpoints; connectedSession+endpoints field), root.go, doc.go,
+  .gitignore (+.yacd/), envcontract_test (+doc test).
+  - Supervision loop: first failure fatal; drop→immediate re-establish (new
+    pod/ports); failed re-establish→capped backoff; NotFound→give up;
+    ctx-cancel→clean exit. endpointsDocument token-free; file 0600/dir 0700.
+- **Live proof** (examples/local): endpoints.json token-free 0600; curl Kupo via
+  forward OK; **deleted primary pod → drop detected LAZILY on next use** (idle
+  SPDY forward doesn't notice pod death until traffic flows — documented in
+  runConnect) → re-established new ports (56329→57032) in ~1s → file rewritten →
+  curl OK; SIGINT → clean "Disconnecting" exit 0. Torn down.
+- Adversarial review: **ship**; folded 3 findings (reflow over-width doc line;
+  clean SIGINT not exit-1 on stderr hiccup; help notes file ports live only
+  while connect runs). `root:check`+`root:test` green. PR #63 opened; **paused.**
+  Next: PR6 = WB7 (`topup --await`, poll Kupo via kugo). Last code PR; PR7 =
+  docs/contract reference.
