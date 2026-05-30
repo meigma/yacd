@@ -142,3 +142,23 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
   coverage win), not a nolint.
 - `root:check` + `root:test` green. PR #60 opened; **paused before merge.**
   Next on approval: PR3 = WB4 (`yacd run`).
+
+## 2026-05-29 19:10 — PR2 merged; PR3 done & open: PR #61 (PAUSED)
+- "LGTM. Proceed." → #60 CI green → squash-merged PR2 (master bd3159d). Removed
+  `feat/cli-env-forward` worktree; created `feat/cli-run-verb`.
+- **PR3 = WB4** `yacd run` (commit ddf9e4d, PR #61). `cli/run.go` (+test),
+  `root.go` (register), `doc.go`. runChild: derived cancel ctx + goroutine that
+  cancels on forward drop; exec child with os.Environ()+session.env, inherited
+  stdio; processExitCode = ExitCode() or 128+signal; drop reported over bare
+  exit. exitError carries child code (silent).
+- **First live-path proof** (dev stack, examples/local): `yacd up live-pr3`
+  reached Ready (~under 8m budget), then `yacd run` injected YACD_* (random
+  loopback ports), `curl $YACD_KUPO_URL/health` succeeded THROUGH the forward,
+  and `exit 42` → yacd exit 42. Torn down with `yacd down`. Cluster clean.
+- Adversarial review (1 agent): **ship** (verified concurrency under -race 10x,
+  30x runs, exit-code mapping, arg parsing). Applied both polish items (tie
+  comment; `--` help/examples) + added the signalled-exit unit test
+  (128+SIGINT) the reviewer flagged as missing.
+- `root:check` + `root:test` green. PR #61 opened; **paused before merge.**
+  Next on approval: PR4 = WB6 (`yacd exec`, in-pod, argv-only, socket env) —
+  carries the §1 socket-path/container-name CLI-local constants.
