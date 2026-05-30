@@ -18,6 +18,7 @@ fileGroups:
     - 'containers/cardano-testnet/go.mod'
     - 'containers/cardano-testnet/publisher/go.mod'
     - 'containers/cardano-testnet/publisher/go.sum'
+    - 'containers/cardano-tools/**/*.go'
     - 'internal/**/*.go'
     - 'internal/cardano/publicnet/profiles/**/*'
     - 'services/**/*.go'
@@ -66,6 +67,7 @@ tasks:
       - '.dev/scripts/check.sh'
       - 'containers/cardano-testnet/Dockerfile'
       - 'containers/cardano-testnet/yacd-cardano-testnet-init'
+      - 'containers/cardano-tools/Dockerfile'
     options:
       cache: false
 

@@ -14,7 +14,8 @@
       "include-component-in-tag": false,
       "changelog-path": "CHANGELOG.md",
       "exclude-paths": [
-        "containers/cardano-testnet"
+        "containers/cardano-testnet",
+        "containers/cardano-tools"
       ],
       "extra-files": [
         {
@@ -26,6 +27,26 @@
     "containers/cardano-testnet": {
       "release-type": "go",
       "package-name": "cardano-testnet",
+      "include-component-in-tag": true,
+      "tag-separator": "/",
+      "versioning": "prerelease",
+      "prerelease": true,
+      "prerelease-type": "yacd",
+      "initial-version": "11.0.1-yacd.0",
+      "changelog-path": "CHANGELOG.md",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "build", "section": "Build" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "deps", "section": "Dependencies" },
+        { "type": "docs", "section": "Documentation", "hidden": true },
+        { "type": "chore", "section": "Chores", "hidden": true }
+      ]
+    },
+    "containers/cardano-tools": {
+      "release-type": "go",
+      "package-name": "cardano-tools",
       "include-component-in-tag": true,
       "tag-separator": "/",
       "versioning": "prerelease",
