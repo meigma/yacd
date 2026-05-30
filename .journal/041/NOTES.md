@@ -162,3 +162,32 @@ regenerated `mocks/client.go`, `go.mod` (+moby/spdystream indirect via tidy).
 - `root:check` + `root:test` green. PR #61 opened; **paused before merge.**
   Next on approval: PR4 = WB6 (`yacd exec`, in-pod, argv-only, socket env) —
   carries the §1 socket-path/container-name CLI-local constants.
+
+## 2026-05-29 20:15 — PR3 merged (after CI flake); PR4 done & open: PR #62 (PAUSED)
+- "LGTM. Proceed." on PR3 → CI `ci` job FAILED on first run, but it was the
+  **flaky** `TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync`
+  envtest (controller pkg, untouched by PR3; passed 3/3 locally). Re-ran the
+  failed job → green. Did NOT merge red. Squash-merged PR3 (master a94afe5).
+  Removed `feat/cli-run-verb`; created `feat/cli-exec-verb`.
+  - NOTE: that controller envtest is a known CI flake — expect occasional reruns
+    on future PRs even when the change is CLI-only.
+- Answered a user curiosity Q (run failure modes) with live demos: unreachable
+  cluster → "get cardanonetwork …: dial …" exit 1; missing → "… not found";
+  not-healthy → "status is stale"/"is not ready"/"is degraded". All exit 1
+  printed (CLI errors), distinct from a child's silent propagated code. All
+  caught in connectNetwork before any forward/child.
+- **PR4 = WB6** `yacd exec` (commit 7c61723, PR #62). `cli/exec.go` (+test),
+  root.go, doc.go, go.mod (x/term → direct). wrapExecCommand = ["env",KEY=VAL…,
+  argv…] argv-only; podEnv(socket=/ipc/node.socket) omits token; container +
+  socket pinned as CLI-local consts (Option A); TTY only for terminal stdin;
+  remote exit via utilexec.ExitError → exitError. requireReady gate (consistent
+  with run).
+- **Live proof** (examples/local): `cardano-cli query tip --testnet-magic 42`
+  → real tip (block 22, Conway, 100%); `sh -c 'echo $CARDANO_NODE_SOCKET_PATH…'`
+  → env set, **token=<unset>** (confirms in-pod token omission). Torn down.
+- Live proof caught a **doc bug**: original --help Example showed
+  `--socket-path "$CARDANO_NODE_SOCKET_PATH"` as a direct arg, but argv-only
+  doesn't expand $VAR. Fixed Long/Example (direct env-read form + sh -c form).
+- Adversarial review: **ship** (only nits; verified boundary consts match
+  operator, exit-code extraction, no stdin hang). `root:check`+`root:test` green.
+  PR #62 opened; **paused before merge.** Next: PR5 = WB5 (`yacd connect`).
