@@ -44,6 +44,7 @@ func registerControllers(mgr manager.Manager, options managerOptions) error {
 		Scheme:                     mgr.GetScheme(),
 		DefaultFaucetImage:         options.DefaultFaucetImage,
 		DefaultCardanoTestnetImage: options.DefaultCardanoTestnetImage,
+		DefaultCardanoToolsImage:   options.DefaultCardanoToolsImage,
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err
@@ -54,6 +55,7 @@ func registerControllers(mgr manager.Manager, options managerOptions) error {
 		Reader:                     mgr.GetAPIReader(),
 		Scheme:                     mgr.GetScheme(),
 		DefaultCardanoTestnetImage: options.DefaultCardanoTestnetImage,
+		DefaultCardanoToolsImage:   options.DefaultCardanoToolsImage,
 	}).SetupWithManager(mgr)
 	if err != nil {
 		return err

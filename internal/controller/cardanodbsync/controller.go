@@ -56,6 +56,11 @@ type CardanoDBSyncReconciler struct {
 	// "<repo>:<networkNodeVersion>-<revision>" formula in place.
 	DefaultCardanoTestnetImage string
 
+	// DefaultCardanoToolsImage overrides the cardano-tools container image
+	// used for artifact staging. Empty leaves the built-in
+	// "<repo>:<networkNodeVersion>-<revision>" formula in place.
+	DefaultCardanoToolsImage string
+
 	// runtimeProberOverride lets tests avoid requiring real Postgres/Ogmios.
 	runtimeProberOverride runtimeProber
 }

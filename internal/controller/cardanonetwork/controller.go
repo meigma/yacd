@@ -59,6 +59,12 @@ type CardanoNetworkReconciler struct {
 	// "<repo>:<toolVersion>-<revision>" formula in place.
 	DefaultCardanoTestnetImage string
 
+	// DefaultCardanoToolsImage overrides the cardano-tools container image
+	// used for artifact staging (public profile fetch and artifact serve).
+	// Empty leaves the built-in "<repo>:<toolVersion>-<revision>" formula
+	// in place.
+	DefaultCardanoToolsImage string
+
 	// Now returns the current time. Tests override this to exercise
 	// time-bounded recovery behavior deterministically.
 	Now func() time.Time

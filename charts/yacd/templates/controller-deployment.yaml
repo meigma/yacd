@@ -67,6 +67,9 @@ spec:
             {{- with (include "yacd.cardanoTestnetImage" .) }}
             - {{ printf "--default-cardano-testnet-image=%s" . | quote }}
             {{- end }}
+            {{- with (include "yacd.cardanoToolsImage" .) }}
+            - {{ printf "--default-cardano-tools-image=%s" . | quote }}
+            {{- end }}
             {{- if .Values.metrics.tls.secretName }}
             - {{ printf "--metrics-cert-path=%s" .Values.metrics.tls.certPath | quote }}
             - {{ printf "--metrics-cert-name=%s" .Values.metrics.tls.certName | quote }}

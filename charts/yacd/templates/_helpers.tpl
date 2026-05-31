@@ -129,6 +129,25 @@ fall back to its built-in versioned reference.
 {{- end -}}
 {{- end -}}
 
+{{/*
+yacd.cardanoToolsImage renders the optional cardano-tools image override
+passed to the manager via --default-cardano-tools-image. Like the
+cardano-testnet helper it returns the empty string when no repository is set
+so the deployment template can omit the flag and let the operator fall back
+to its built-in versioned reference.
+*/}}
+{{- define "yacd.cardanoToolsImage" -}}
+{{- with .Values.cardanoTools.image.repository -}}
+{{- if $.Values.cardanoTools.image.digest -}}
+{{- printf "%s@%s" . $.Values.cardanoTools.image.digest -}}
+{{- else if $.Values.cardanoTools.image.tag -}}
+{{- printf "%s:%s" . $.Values.cardanoTools.image.tag -}}
+{{- else -}}
+{{- . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "yacd.validateValues" -}}
 {{- $reservedLabels := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/managed-by" "app.kubernetes.io/version" "helm.sh/chart" "control-plane" -}}
 {{- range $source, $labels := dict "commonLabels" .Values.commonLabels "podLabels" .Values.podLabels -}}
