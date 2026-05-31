@@ -656,3 +656,30 @@ Resume checklist for the coupled rewrite (do interactively w/ dev stack up):
    builder_test + chainsaw preview-public smoke.
 
 Loop -> long heartbeat; remaining PR2 work is user-driven.
+
+## 2026-05-30 22:38 — Close
+Session closed (user: "LGTM, please merge and close the session down"). Both
+work-streams are at rest.
+
+Stream B (session-041 review fixes) — all four PRs squash-merged to `master`:
+- #69 fix(cli): bound port-forward dial so cancellation returns promptly
+- #70 test(cli): cover connect reconnect, backoff, and fatal-NotFound paths
+- #71 fix(cli): announce topup --await polling and pin the await-address invariant
+- #72 feat(cli): make yacd exec interactive with raw mode and window resize
+`master` is at the #72 commit (`dbaa886`); local default fast-forwarded. #70 and
+#68 each flaked once on the known pre-existing issues (the load-sensitive
+cardanonetwork envtest; Docker Hub 429 on ogmios/kupo) and went green on a
+`ci`-job rerun. #72 was stacked on #69, then rebased onto master + retargeted so
+its squash diff was PR-3-only. My four worktrees were `wt remove`d.
+
+Stream A (cardano-tools / F0) — items 7/8/9/10 done+merged (#68, #65; image
+published `@sha256:9ca9e033…`). F0 PR2 (transport redesign) remains BANKED,
+NOT merged: slices 1+3 on `feat/f0-public-profile-pvc`, controller-rewrite
+slices deferred. See SUMMARY Open Threads + the resume checklist in the prior
+NOTES entries. The cardano-tools worktrees (`feat-f0-public-profile-pvc`,
+`feat-cardano-tools-image-foundation`) and the `kind-yacd-dev` dev stack were
+LEFT IN PLACE / RUNNING — they belong to that parallel stream; do NOT assume the
+stack was torn down at this close.
+
+SUMMARY.md + INDEX (043 → complete) written; TECH_NOTES updated for the
+cardano-tools seam + published digest. Resume F0 in a NEW session.

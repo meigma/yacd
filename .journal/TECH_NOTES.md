@@ -304,9 +304,21 @@
   HTTP for out-of-cluster consumers), `report` (publish a localnet artifact dir
   to the network ConfigMap — localnet-only; rebased on the shared contract, its
   `report-dry-run` golden reproduces the publisher's sha256 to lock verifier
-  compatibility), `version`. The controller does NOT yet use this image; wiring
-  it (and removing the manager `//go:embed`) is the deferred F0 work — see
-  `.journal/042/SUMMARY.md` Next Steps.
+  compatibility), `version`. As of session 043 the image SEAM is wired
+  (PR #68): shared `internal/cardano/toolsimage` (Repository/Revision/Reference),
+  a `--default-cardano-tools-image` manager flag + Helm `cardanoTools.image.*`
+  value on both reconcilers, a single-arch `cardano-tools-image` PR-CI job, and a
+  static-musl guard in the Dockerfile fetch stage. The first release shipped
+  (PR #65): `ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.4`
+  `@sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e`.
+  The controllers still do NOT FETCH with it — the F0 transport redesign (PVC
+  staging at `/state/profile`, manifest-only ConfigMap, dropping the manager
+  `//go:embed`) is banked unmerged on branch `feat/f0-public-profile-pvc`
+  (`internal/cardano/publicpins` + the fetch adapter) with the controller-rewrite
+  slices deferred. See `.journal/043/SUMMARY.md` Open Threads + the session-043
+  NOTES resume checklist; locked design: pin only config/topology/mithril (trust
+  remote for genesis), fingerprint over pinned-digests+magic, custom profiles
+  stay byte-based.
 - The active `cardano-testnet` publisher enriches `configuration.yaml` with
   genesis hashes in `containers/cardano-testnet/publisher/internal/artifacts`.
   It shells out to the image-owned `cardano-cli` as a narrow adapter because
