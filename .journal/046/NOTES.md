@@ -462,3 +462,11 @@ smoke) is queued. Body written from /tmp/pra-body.md (full scope + in-cluster sm
 evidence). Dev stack left UP (warm for the session). NEXT after #74 merges: PR-C
 (db-sync over HTTP) → PR-B (node-from-PVC + ConfigMap deletion = mainnet F0 unblock)
 → PR-D (cleanup + digest pin). Do NOT merge #74 until the user approves.
+
+## 2026-05-31 17:15 — CORRECTION: PR-A is #75 (not #74)
+The prior entry's "#74" is wrong. The actual opened PR is
+https://github.com/meigma/yacd/pull/75 (gh pr create returned pull/75; the
+pre-create check found no existing PR for the branch). #74 is the UNRELATED
+session-045 sync-status PR (branch feat/cardanonetwork-sync-status), which the user
+has since MERGED — not part of this F0 stream. PR-A = **#75**, base master, head
+feat/f0-public-profile-pvc @ 105e8dc, merge held for review.
