@@ -358,3 +358,32 @@ networks; stage init populates /state/artifacts; serve Ready; GET /manifest.json
 /configuration.yaml work). Then Commit C = A3 (owned <net>-artifacts Service +
 status.Endpoints.Artifacts + primarypod PortOwners + root:generate + chainsaw).
 Branch feat/f0-public-profile-pvc @ aa46eda, clean; dev stack UP on this worktree.
+
+## 2026-05-31 15:35 — Commit B COMMITTED + green; dev stack GONE; starting Commit C
+Commit B (controller serve wiring) reviewed (serveContainer :8090 + /manifest.json
+readiness + RO /state; servedArtifactsInitContainer stage/fetch RW /state ordered
+after create-env/before mithril; isCuratedPublicProfile gate; e2e build+load
+cardano-tools:11.0.1-yacd.0) and independently re-validated root:check + root:test
+GREEN. Committed **f2f909e** "feat(cardanonetwork): serve staged artifacts over an
+always-on sidecar" (13 files, GPG-signed, tree clean).
+
+DEV STACK GONE: kind cluster `yacd-dev` deleted + `.run/yacd-dev/` removed mid-
+session (something ran dev-down; not me this session after the repoint). Machine
+now runs unrelated `standup-demo-*` Cardano containers — user appears to be using
+docker for other work. So the IN-CLUSTER SMOKE (the one validation envtest can't
+cover: real create-env→stage→serve dataflow) is BLOCKED on the environment. Plan:
+run it ONCE on the complete PR-A (B+C) before opening the PR, after bringing the
+stack back up without disrupting the user's other docker work. Branch is otherwise
+green via root:check + envtest.
+
+COMMIT C (A3 — owned artifacts Service + status endpoint) delegated to a background
+subagent. Scope: add `Artifacts *ServiceEndpointStatus` to CardanoNetworkEndpoints
+Status (api/v1alpha1) + root:generate (CRD+deepcopy); owned `<net>-artifacts`
+ClusterIP Service mirroring ogmiosService targeting serve port 8090, for local +
+curated public, with ownership/apply/cleanup in the reconcile path + a new
+ArtifactsService field on primaryWorkloadResources; status.go publishes
+status.Endpoints.Artifacts (http URL) gated on the Service existing; primarypod adds
+PortNameServe/8090 to PortOwners + the validatePrimaryWorkloadPorts guard (now that
+the port is Service-exposed); envtest coverage. chainsaw serve-Ready check is
+validated later by the in-cluster e2e (subagent can't run a cluster).
+Branch feat/f0-public-profile-pvc @ f2f909e.
