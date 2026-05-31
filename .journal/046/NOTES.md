@@ -470,26 +470,3 @@ pre-create check found no existing PR for the branch). #74 is the UNRELATED
 session-045 sync-status PR (branch feat/cardanonetwork-sync-status), which the user
 has since MERGED — not part of this F0 stream. PR-A = **#75**, base master, head
 feat/f0-public-profile-pvc @ 105e8dc, merge held for review.
-
-## 2026-05-31 17:40 — PR #75 was DIRTY (conflict w/ #74); rebased onto master, resolved, re-pushed
-PR #75 showed mergeStateStatus=DIRTY: session-045's PR #74 `bfadcf6
-feat(cardanonetwork): publish node sync status` merged to master AFTER our base
-(+1507 lines) and touches the same files as PR-A Commit C
-(cardanonetwork_types.go, status.go, controller.go, zz_generated.deepcopy.go, the
-CRD, controller_test.go, controller_envtest_test.go) plus new conditions.go +
-sync_probe.go. The two changesets are ORTHOGONAL (node SYNC status vs ARTIFACTS
-serve), so resolution is additive.
-(First rebase attempt's follow-up commands were CANCELLED because I referenced a
-wrong commit SHA `21bb8d3`; that batch fail-safed — no rebase/push/journal write
-happened. Real master tip is bfadcf6. Redone correctly below.)
-Rebased feat/f0-public-profile-pvc onto origin/master bfadcf6: git 3-way AUTO-merged
-with ZERO conflicts (changes in different regions; 0 conflict markers). New HEAD
-54895c9, attached, 7 ahead / 0 behind, master is ancestor. VERIFIED sound (not just
-compiling): root:generate idempotent (0 dirty → merged deepcopy/CRD carry BOTH the
-sync and artifacts status fields); root:check exit 0; root:test exit 0 / 0 failures
-(cardanonetwork ok 37.6s — 045's sync_probe tests AND PR-A's artifacts tests pass
-together); greps confirm both features coexist (Artifacts field=1,
-deletePrimaryArtifactsService=1, Endpoints.Artifacts=1, Sync field=1,
-sync_probe.go present). Force-pushed (--force-with-lease); remote==local==54895c9;
-PR #75 head=54895c9, OPEN, mergeStateStatus BLOCKED (DIRTY gone). CI re-running on
-the rebased head. Merge still HELD for user review.
