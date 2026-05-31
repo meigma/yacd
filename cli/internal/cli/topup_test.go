@@ -28,13 +28,26 @@ const (
 func TestTopUpReadsSecretAndPostsToFaucet(t *testing.T) {
 	t.Parallel()
 
-	var gotAuth, gotContentType string
-	var gotPayload topUpHTTPPayload
+	type faucetRequest struct {
+		path        string
+		auth        string
+		contentType string
+		payload     topUpHTTPPayload
+		err         error
+	}
+	requests := make(chan faucetRequest, 1)
 	faucetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/topups", r.URL.Path)
-		gotAuth = r.Header.Get("Authorization")
-		gotContentType = r.Header.Get("Content-Type")
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&gotPayload))
+		got := faucetRequest{
+			path:        r.URL.Path,
+			auth:        r.Header.Get("Authorization"),
+			contentType: r.Header.Get("Content-Type"),
+		}
+		got.err = json.NewDecoder(r.Body).Decode(&got.payload)
+		requests <- got
+		if got.err != nil {
+			http.Error(w, got.err.Error(), http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprint(w, `{"txId":"abc123","source":"utxo2","sourceAddress":"addr_test1source","destinationAddress":"addr_test1dest","lovelace":2000000}`)
 	}))
@@ -58,11 +71,14 @@ func TestTopUpReadsSecretAndPostsToFaucet(t *testing.T) {
 	root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000", "--source", "utxo2", "--faucet-url", faucetServer.URL, "--json"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
-	assert.Equal(t, "Bearer "+testTopUpToken, gotAuth)
-	assert.Equal(t, "application/json", gotContentType)
-	assert.Equal(t, "addr_test1dest", gotPayload.Address)
-	assert.Equal(t, int64(2000000), gotPayload.Lovelace)
-	assert.Equal(t, "utxo2", gotPayload.Source)
+	got := <-requests
+	require.NoError(t, got.err)
+	assert.Equal(t, "/v1/topups", got.path)
+	assert.Equal(t, "Bearer "+testTopUpToken, got.auth)
+	assert.Equal(t, "application/json", got.contentType)
+	assert.Equal(t, "addr_test1dest", got.payload.Address)
+	assert.Equal(t, int64(2000000), got.payload.Lovelace)
+	assert.Equal(t, "utxo2", got.payload.Source)
 	for _, want := range []string{`"txId": "abc123"`, `"source": "utxo2"`, `"lovelace": 2000000`} {
 		assert.Contains(t, stdout.String(), want)
 	}

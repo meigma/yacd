@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,6 +18,11 @@ import (
 // hammering Kupo.
 const topUpAwaitPollInterval = 1 * time.Second
 
+const (
+	kupoHTTPURLScheme  = "http"
+	kupoHTTPSURLScheme = "https"
+)
+
 // kupoConfirmer is the production UTxOConfirmer: it queries Kupo for the
 // unspent outputs at an address through the vendored kugo client, rather than
 // hand-rolling the HTTP/JSON contract.
@@ -29,6 +35,21 @@ type kupoConfirmer struct {
 // pollute the CLI's output; the CLI surfaces its own confirmation status.
 func newKupoConfirmer(kupoURL string) *kupoConfirmer {
 	return &kupoConfirmer{client: kugo.New(kugo.WithEndpoint(kupoURL), kugo.WithLogger(ogmigo.NopLogger))}
+}
+
+func validateKupoURL(kupoURL string) error {
+	parsed, err := url.Parse(strings.TrimSpace(kupoURL))
+	if err != nil {
+		return fmt.Errorf("--kupo-url must be an absolute http or https URL with a host: %w", err)
+	}
+	if !parsed.IsAbs() || parsed.Host == "" {
+		return fmt.Errorf("--kupo-url must be an absolute http or https URL with a host")
+	}
+	if parsed.Scheme != kupoHTTPURLScheme && parsed.Scheme != kupoHTTPSURLScheme {
+		return fmt.Errorf("--kupo-url must use http or https")
+	}
+
+	return nil
 }
 
 // TransactionIDs returns the transaction IDs of the unspent outputs currently

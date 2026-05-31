@@ -78,10 +78,25 @@ is deliberately **never** set in the in-pod (`exec`) environment: a Bearer token
 in the exec command line would leak into apiserver audit logs, and in-pod
 tooling does not need it.
 
-## `connect` and `.yacd/<network>/endpoints.json`
+## `connect` and endpoint state files
 
-`connect` writes the loopback URLs to a gitignored, per-network file for other
-host processes (a dApp dev server, a REPL, repeated IDE test runs) to read:
+`connect` writes the loopback URLs to a gitignored endpoint state file for
+other host processes (a dApp dev server, a REPL, repeated IDE test runs) to
+read. When `--namespace` is not set and the namespace defaults to the network
+name, the path stays:
+
+```text
+.yacd/<network>/endpoints.json
+```
+
+When `--namespace` is set, the path includes both identity parts so networks
+with the same name in different namespaces do not collide:
+
+```text
+.yacd/<namespace>/<network>/endpoints.json
+```
+
+The document shape is the same in either location:
 
 ```json
 {
@@ -94,10 +109,10 @@ host processes (a dApp dev server, a REPL, repeated IDE test runs) to read:
 }
 ```
 
-The file is created `0600` under a `0700` `.yacd/` directory and **never
-contains the faucet token**. Its ports are only live while `connect` is
-running; a dropped forward is re-established on next use, which reassigns the
-local ports and rewrites the file.
+The file is created `0600` under `0700` state directories and **never contains
+the faucet token**. Its ports are only live while `connect` is running. A clean
+disconnect removes the file, and a dropped forward removes the stale file before
+re-establishing, reassigning local ports, and writing a fresh document.
 
 ## Funding with `topup --await`
 

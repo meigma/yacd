@@ -59,6 +59,9 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 				if awaitTimeout <= 0 {
 					return fmt.Errorf("--await-timeout must be greater than 0")
 				}
+				if err := validateKupoURL(kupoURL); err != nil {
+					return err
+				}
 			}
 
 			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
