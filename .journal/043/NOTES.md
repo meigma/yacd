@@ -180,3 +180,36 @@ backlog.
 Correction to an earlier worry: there was NO stray `cardanonetwork/toolsimage.go`
 file — that was a misread of a delayed/batched diff; the file never existed.
 Final PR1 changeset is 15 files (confirmed via numstat), whitespace clean.
+
+## 2026-05-30 18:30 — PR #68 fully green, review-ready
+
+Both flakes cleared on re-run; PR #68 is now green end-to-end:
+- ci: PASS (attempt 2). Attempt 1 flaked on the pre-existing envtest
+  TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync
+  ("Condition never satisfied", 17.65s) — present on master, NOT in PR1's
+  changeset, and the same commit 7e8f609 passed ci in the sibling run + twice
+  locally. Classic envtest eventual-consistency timeout under CI load. Re-run
+  green (all packages ok, cardanonetwork 34.967s).
+- e2e: PASS (re-run). Attempt 1 flaked on Docker Hub 429 (anonymous pull-rate
+  limit) for cardanosolutions/ogmios + /kupo — third-party images PR1 doesn't
+  touch. The TECH_NOTES-flagged jitter.
+- cardano-tools-image (new PR-CI job): PASS.
+- Kusari Inspector: PASS. Release dry-runs: correctly skipped (release-please
+  branch gate).
+
+PR #68 is READY TO MERGE pending human review. Everything downstream is
+user-blocked:
+  1. human reviews/merges PR #68
+  2. item 9 first cardano-tools release (user merges the release-please PR;
+     record the published @sha256 digest)
+  3. PR2 (F0 transport redesign) — can't start until #68 merges AND the digest
+     exists, so not starting it speculatively.
+
+Two flake patterns to fold into the e2e-hardening backlog (NOT PR1):
+- Docker Hub 429 on ogmios/kupo → authenticated pulls or preload/mirror in the
+  e2e job (also relevant to the future yacd-env action, per TECH_NOTES).
+- Flaky TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync envtest
+  timeout → worth a longer Eventually timeout / poll interval.
+
+Loop standing down to a long heartbeat — nothing autonomous to advance until
+the user acts on #68.
