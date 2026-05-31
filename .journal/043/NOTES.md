@@ -158,3 +158,25 @@ Process notes / gotchas this session:
 
 Next: wait for PR #65 review/merge. Then item 9 (user merges release-please PR;
 record published cardano-tools @sha256 digest), then PR2 (F0 transport redesign).
+
+## 2026-05-30 18:14 — PR #68 e2e flake (Docker Hub 429), re-running
+
+PR #68 CI: `ci` + ALL release dry-runs green (including the new cardano-tools
+amd64/arm64 dry-runs and the Cardano Tools Image Dry Run smoke). The `e2e`
+(KinD+Chainsaw manager-smoke) job FAILED — root cause is a Docker Hub
+unauthenticated pull rate limit (HTTP 429 / `toomanyrequests`) on the
+third-party `cardanosolutions/ogmios:v6.14.0` and `cardanosolutions/kupo:v2.11.0`
+images, NOT anything in PR1:
+- the operator deployed fine; cardano-node + create-env init + faucet all pulled
+  and ran (ghcr/example images), only the Docker Hub sidecars 429'd.
+- PR1 touches no ogmios/kupo image references; it's no-runtime-behavior.
+- This is the exact "Docker Hub rate-limit jitter" flake TECH_NOTES already
+  flags for the e2e / future yacd-env action (preload ogmios/kupo).
+Action: `gh run rerun --failed` on the e2e job. If it recurs, it's still infra,
+not the PR. Durable fix (later, not PR1): authenticated Docker Hub pulls or
+mirror/preload ogmios+kupo in the e2e job — candidate add to the e2e-hardening
+backlog.
+
+Correction to an earlier worry: there was NO stray `cardanonetwork/toolsimage.go`
+file — that was a misread of a delayed/batched diff; the file never existed.
+Final PR1 changeset is 15 files (confirmed via numstat), whitespace clean.
