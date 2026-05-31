@@ -213,3 +213,21 @@ Two flake patterns to fold into the e2e-hardening backlog (NOT PR1):
 
 Loop standing down to a long heartbeat — nothing autonomous to advance until
 the user acts on #68.
+
+## 2026-05-30 (later) — User LGTM on PR #68; enqueued for merge
+
+User reviewed PR #68 and said "LGTM. Proceed." Repo requires the GitHub merge
+queue, so plain `gh pr merge --squash` is rejected; used
+`gh pr merge 68 --squash --auto` → auto-merge enabled, PR will merge via the
+merge queue once queue CI passes (~15 min, e2e dominates). Not merged yet.
+
+Next once it lands (blocked on the queue):
+- Item 9 (user-gated): the release-please PR for cardano-tools should
+  open/update on the merge-to-master push. Surface it for the user to merge;
+  do NOT merge it myself (their explicit decision: "you merge it"). After the
+  release workflow publishes, record the `@sha256` digest.
+- PR2 (F0 transport redesign, items 1/2/3/6): branch fresh off post-merge
+  master (PR2 needs PR1's `internal/cardano/toolsimage` + builder wiring to
+  compile, so it must wait for the squash merge to land on master).
+- Dev stack still up on the PR1 worktree; will need to repoint at the PR2
+  worktree when PR2 reaches in-cluster testing.
