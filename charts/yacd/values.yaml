@@ -25,6 +25,16 @@ cardanoTestnet:
     tag: ""
     digest: ""
 
+# cardanoTools.image overrides the cardano-tools utility image used by the
+# operator for artifact staging containers (public profile fetch and the
+# artifact serve sidecar). Leave repository empty to let the operator use its
+# built-in ghcr.io/meigma/yacd/cardano-tools:<nodeVersion>-yacd.N reference.
+cardanoTools:
+  image:
+    repository: ""
+    tag: ""
+    digest: ""
+
 imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""

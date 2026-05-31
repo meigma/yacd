@@ -34,6 +34,7 @@ func TestParseManagerOptions(t *testing.T) {
 				assert.Equal(t, "info", options.LogLevel)
 				assert.Equal(t, "ghcr.io/meigma/yacd/faucet:dev", options.DefaultFaucetImage)
 				assert.Empty(t, options.DefaultCardanoTestnetImage)
+				assert.Empty(t, options.DefaultCardanoToolsImage)
 			},
 		},
 		{
@@ -83,6 +84,13 @@ func TestParseManagerOptions(t *testing.T) {
 			args: []string{"--default-cardano-testnet-image=example.com/yacd-cardano-testnet:tilt"},
 			assert: func(t *testing.T, options managerOptions) {
 				assert.Equal(t, "example.com/yacd-cardano-testnet:tilt", options.DefaultCardanoTestnetImage)
+			},
+		},
+		{
+			name: "accepts default cardano-tools image override",
+			args: []string{"--default-cardano-tools-image=example.com/yacd-cardano-tools:tilt"},
+			assert: func(t *testing.T, options managerOptions) {
+				assert.Equal(t, "example.com/yacd-cardano-tools:tilt", options.DefaultCardanoToolsImage)
 			},
 		},
 	}

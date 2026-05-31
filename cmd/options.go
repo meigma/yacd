@@ -77,6 +77,12 @@ type managerOptions struct {
 	// "<repo>:<toolVersion>-<revision>" formula in place.
 	//nolint:lll // Kong option tags are intentionally kept on a single struct field line.
 	DefaultCardanoTestnetImage string `name:"default-cardano-testnet-image" default:"" help:"Override the cardano-testnet image used for init/source-address containers and the default cardano-node container; empty uses the built-in versioned reference."`
+
+	// DefaultCardanoToolsImage overrides the cardano-tools container image used
+	// for artifact staging (fetch/generate/serve) in both controllers. Empty
+	// leaves the built-in "<repo>:<toolVersion>-<revision>" formula in place.
+	//nolint:lll // Kong option tags are intentionally kept on a single struct field line.
+	DefaultCardanoToolsImage string `name:"default-cardano-tools-image" default:"" help:"Override the cardano-tools image used for artifact staging containers; empty uses the built-in versioned reference."`
 }
 
 // newManagerParser constructs the Kong parser bound to the supplied options

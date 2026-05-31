@@ -3,6 +3,7 @@ NAMESPACE = 'yacd-system'
 IMAGE = 'ghcr.io/meigma/yacd'
 FAUCET_IMAGE = 'ghcr.io/meigma/yacd/faucet'
 CARDANO_TESTNET_IMAGE = 'ghcr.io/meigma/yacd/cardano-testnet'
+CARDANO_TOOLS_IMAGE = 'ghcr.io/meigma/yacd/cardano-tools'
 CHART = 'charts/yacd'
 
 allow_k8s_contexts(EXPECTED_CONTEXT)
@@ -43,6 +44,16 @@ local_resource(
     deps=['containers/cardano-testnet', '.dev/build-cardano-testnet.sh'],
 )
 
+# Build the cardano-tools utility image from local source so the operator can
+# stage network artifacts with post-release tool changes. The Dockerfile builds
+# the yacd-cardano-tools binary from the root Go module, so the deps span the
+# shared source and the build context is the repo root.
+local_resource(
+    name='cardano-tools-image',
+    cmd='EXPECTED_REF=%s:tilt ./.dev/build-cardano-tools.sh && kind load docker-image --name yacd-dev %s:tilt' % (CARDANO_TOOLS_IMAGE, CARDANO_TOOLS_IMAGE),
+    deps=['containers/cardano-tools', 'internal', 'go.mod', 'go.sum', '.dev/build-cardano-tools.sh'],
+)
+
 k8s_yaml(helm(
     CHART,
     name='yacd',
@@ -55,6 +66,8 @@ k8s_yaml(helm(
         'faucet.image.tag=tilt',
         'cardanoTestnet.image.repository=%s' % CARDANO_TESTNET_IMAGE,
         'cardanoTestnet.image.tag=tilt',
+        'cardanoTools.image.repository=%s' % CARDANO_TOOLS_IMAGE,
+        'cardanoTools.image.tag=tilt',
         'leaderElection.enabled=false',
         'manager.logLevel=debug',
     ],
@@ -63,5 +76,5 @@ k8s_yaml(helm(
 k8s_resource(
     workload='yacd-controller-manager',
     new_name='controller',
-    resource_deps=['faucet-image', 'cardano-testnet-image'],
+    resource_deps=['faucet-image', 'cardano-testnet-image', 'cardano-tools-image'],
 )

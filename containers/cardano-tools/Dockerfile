@@ -19,6 +19,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates=20230311+deb12u1 \
         curl=7.88.1-10+deb12u14 \
+        binutils=2.40-2 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
@@ -37,6 +38,27 @@ RUN case "${TARGETARCH}" in \
     test -x /out/bin/cardano-testnet; \
     test -x /out/bin/cardano-cli; \
     test -x /out/bin/cardano-node
+
+# Static-linkage guard. The final image is distroless/static, which ships no
+# dynamic loader or libc, so every embedded cardano binary must be fully
+# static. The IntersectMBO cardano-node release binaries are static musl builds
+# today; if a future CARDANO_NODE_VERSION ships glibc-dynamic binaries this
+# fails the build loudly instead of producing an image that crashes at runtime
+# with a missing-loader error. When bumping CARDANO_NODE_VERSION and this
+# fails, re-evaluate the base image (for example distroless/cc) rather than
+# silently relaxing the check.
+RUN set -eu; \
+    for bin in /out/bin/cardano-node /out/bin/cardano-cli /out/bin/cardano-testnet; do \
+        echo "Verifying static linkage: ${bin}"; \
+        if readelf -l "${bin}" | grep -q 'Requesting program interpreter'; then \
+            echo "FATAL: ${bin} is dynamically linked (PT_INTERP present); the distroless/static base cannot run it. IntersectMBO may have switched to glibc-dynamic builds." >&2; \
+            exit 1; \
+        fi; \
+        if readelf -d "${bin}" 2>/dev/null | grep -q 'NEEDED'; then \
+            echo "FATAL: ${bin} has NEEDED shared-library entries; not fully static." >&2; \
+            exit 1; \
+        fi; \
+    done
 
 FROM --platform=$BUILDPLATFORM golang:1.26.3-bookworm@sha256:386d475a660466863d9f8c766fec64d7fdad3edac2c6a05020c09534d71edb4b AS build
 
