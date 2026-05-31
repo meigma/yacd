@@ -403,3 +403,35 @@ after the pinning decision. Dev stack still up on the PR1 worktree.
 
 Loop -> long heartbeat; PR2 activation slices are now user-blocked on the pinning
 decision (like the earlier PR-review waits).
+
+## 2026-05-31 (later) — Genesis-pinning decision RESOLVED: trust remote source
+
+User decided: "divert more trust to the remote source... intended for test
+environments... what most node operators do." => behavior-preserving model.
+
+Revised PR2 slice 1 accordingly (amended commit 464a960, force-pushed to
+origin/feat/f0-public-profile-pvc, branch in sync, clean):
+- publicpins now pins ONLY config.json + topology.json + Mithril keys (8 pinned
+  digests total: 3 config + 3 topology + 2 mithril). genesis + checkpoints are
+  downloaded but UNPINNED — authenticated downstream by cardano-node against
+  config.json's inline hashes. peer-snapshot unpinned/optional. This matches the
+  already-merged fetch/pins.go posture exactly.
+- File.Pinned now means "verify at fetch time"; doc comment rewritten to explain
+  the trust anchor model.
+- Cross-check test (publicnet) still recomputes the pinned digests vs embedded
+  bytes and PASSES — now covers only the pinned set, which is the correct scope.
+- build/test/vet/golangci-lint all green.
+
+This unblocks the PR2 activation slices (no new genesis failure mode; faithful
+refactor of existing fetch behavior). Resume at slice 2:
+  2. publicnet BuildPlan -> source file list/metadata from publicpins; DROP
+     //go:embed + delete profiles/*/ tree; manifest fingerprint still over the
+     pinned-file digests from publicpins (NOT contentHash of genesis bytes the
+     manager no longer has). BEFORE deleting embed, convert the cross-check test
+     to a frozen-golden of the publicpins pinned digests (else safety net dies
+     with the embed). Update .dockerignore (drop profiles re-include).
+  3. cardano-tools fetch: pins.go -> adapter over publicpins; add
+     --verify-manifest; fetch-dry-run.txtar URLs/pins unchanged.
+  4. controller manifest-only ConfigMap + /state/profile fetch init + node mount.
+  5. mode-aware dataContract.
+  6. public report + manager digest pin (sha256:9ca9e033...) + tests + chainsaw.
