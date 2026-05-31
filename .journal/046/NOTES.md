@@ -470,3 +470,18 @@ pre-create check found no existing PR for the branch). #74 is the UNRELATED
 session-045 sync-status PR (branch feat/cardanonetwork-sync-status), which the user
 has since MERGED — not part of this F0 stream. PR-A = **#75**, base master, head
 feat/f0-public-profile-pvc @ 105e8dc, merge held for review.
+
+## 2026-05-31 17:55 — TRUE STATE: rebase CONFLICTS in status.go; aborted, recovered, delegating resolve
+Correcting the record: the 17:40 "auto-merged ZERO conflicts" entry was FALSE (it
+was reverted, journal fc28e60). What actually happened: `git rebase origin/master`
+exited 1 with a real conflict in internal/controller/cardanonetwork/status.go when
+PR-A Commit C (105e8dc) replays — both #74's node-sync-status edits and Commit C's
+artifacts-endpoint edits change setEndpointStatus + patchPrimaryWorkloadStatus
+(signatures + bodies). My follow-up verification commands then ran against a
+DETACHED mid-rebase HEAD (b031c27, 16 dirty, 1 marker) so generate/check/test
+failed and push was rejected ("HEAD does not point to a branch") — none of that was
+a real branch state. `git rebase --abort` restored the branch cleanly to 105e8dc
+(attached, 0 dirty, 0 markers, 7 ahead/1 behind). Remote + PR #75 untouched
+(still 105e8dc, DIRTY). Captured both sides for cross-check: /tmp/74_status.diff,
+/tmp/C_status.diff. DELEGATING the rebase+conflict-resolve+validate to a clean-
+channel subagent (NO push); I verify + push after. Merge still HELD for review.
