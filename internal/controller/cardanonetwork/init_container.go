@@ -10,6 +10,7 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
 	"github.com/meigma/yacd/internal/cardano/publicnet"
+	"github.com/meigma/yacd/internal/cardano/toolsimage"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -20,9 +21,11 @@ const (
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	mithrilBootstrapInitContainerName    = "mithril-bootstrap"
 	faucetSourceAddressInitContainerName = "faucet-source-addresses"
+	servedArtifactsInitContainerName     = "served-artifacts"
 	localnetStateVolumeName              = "localnet-state"
 	mithrilTmpVolumeName                 = "mithril-tmp"
 	localnetCreateEnvCommand             = "/opt/yacd/bin/yacd-cardano-testnet-init"
+	cardanoToolsCommand                  = "/opt/yacd/bin/yacd-cardano-tools"
 	mithrilBootstrapCommand              = "/bin/sh"
 	faucetSourceAddressCommand           = "/bin/sh"
 	faucetVerificationKeyFileName        = "utxo.vkey"
@@ -233,6 +236,108 @@ rm -rf "${staging_root}"
 	}
 }
 
+// servedArtifactsInitContainer builds the init container that populates the
+// flat served-artifact directory (servedArtifactsDir) on the node-state PVC
+// before the always-on serve sidecar starts.
+//
+// For LOCAL networks it runs cardano-tools "stage", flattening the
+// cardano-testnet create-env directory (localnetEnvDir) into the served
+// directory; it therefore must be ordered after the create-env init container.
+// For CURATED PUBLIC networks (public profile other than "custom") it runs
+// cardano-tools "fetch", downloading the profile's pinned artifacts into the
+// served directory; it must be ordered before any Mithril bootstrap init
+// container. Custom-public networks are out of scope for this additive PR and
+// must not reach this builder.
+//
+// The container reuses the hardened uid/gid 10001 security context shared by
+// the other tools init containers and mounts the node-state PVC read-write at
+// localnetStateDir so it can write servedArtifactsDir.
+func (b primaryWorkloadBuilder) servedArtifactsInitContainer(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (corev1.Container, error) {
+	args, toolVersion, err := b.servedArtifactsInitArgs(network, plan)
+	if err != nil {
+		return corev1.Container{}, err
+	}
+
+	return corev1.Container{
+		Name:            servedArtifactsInitContainerName,
+		Image:           b.cardanoToolsImage(toolVersion),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{cardanoToolsCommand},
+		Args:            args,
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: localnetStateDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}, nil
+}
+
+// servedArtifactsInitArgs returns the cardano-tools subcommand args and the
+// tool version used to resolve the cardano-tools image for the served-artifact
+// init container. LOCAL produces "stage" args carrying the network identity the
+// stage config requires; CURATED PUBLIC produces "fetch" args for the resolved
+// profile.
+func (b primaryWorkloadBuilder) servedArtifactsInitArgs(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) ([]string, string, error) {
+	switch {
+	case plan.isLocal():
+		if plan.Localnet == nil {
+			return nil, "", fmt.Errorf("localnet plan is required for served-artifact staging")
+		}
+		era := ""
+		if plan.Era != nil {
+			era = string(*plan.Era)
+		}
+		args := []string{
+			"stage",
+			"--state-dir", plan.Localnet.Layout.EnvDir,
+			"--output-dir", servedArtifactsDir,
+			"--cardano-network-name", network.Name,
+			"--cardano-network-namespace", network.Namespace,
+			"--cardano-network-mode", string(network.Spec.Mode),
+			"--cardano-network-era", era,
+			"--cardano-node-to-node-host", nodeToNodeHost(network),
+			"--cardano-node-to-node-port", strconv.Itoa(int(network.Spec.Node.Port)),
+		}
+		return args, strings.TrimSpace(plan.Localnet.Spec.Tool.Version), nil
+	case plan.isPublic() && isCuratedPublicProfile(plan):
+		args := []string{
+			"fetch",
+			"--profile", string(*plan.Profile),
+			"--output-dir", servedArtifactsDir,
+		}
+		return args, strings.TrimSpace(network.Spec.Node.Version), nil
+	default:
+		return nil, "", fmt.Errorf("served-artifact staging is not supported for this network plan")
+	}
+}
+
+// isCuratedPublicProfile reports whether the plan targets a curated public
+// profile (preview, preprod, mainnet) rather than the custom profile. Curated
+// profiles have pinned, fetchable artifacts; the custom profile is supplied by
+// the user and is intentionally out of scope for served-artifact staging in
+// this additive PR.
+func isCuratedPublicProfile(plan primaryNetworkPlan) bool {
+	return plan.isPublic() &&
+		plan.Profile != nil &&
+		*plan.Profile != yacdv1alpha1.PublicNetworkProfileCustom
+}
+
 // cardanoTestnetImage returns the cardano-testnet container image reference
 // used for the create-env init container, the faucet source-address init
 // container, and the default cardano-node container. The
@@ -247,6 +352,16 @@ func (b primaryWorkloadBuilder) cardanoTestnetImage(toolVersion string) string {
 		return override
 	}
 	return fmt.Sprintf("%s:%s-%s", cardanoTestnetImageRepository, toolVersion, cardanoTestnetImageRevision)
+}
+
+// cardanoToolsImage returns the cardano-tools utility image reference used by
+// the served-artifact stage/fetch init container and the always-on serve
+// sidecar. The Reconciler-injected defaultCardanoToolsImage takes precedence
+// so the local dev stack can substitute a freshly built tools image; the
+// built-in formula is owned by the shared toolsimage package so both the
+// CardanoNetwork and CardanoDBSync controllers agree on the same reference.
+func (b primaryWorkloadBuilder) cardanoToolsImage(toolVersion string) string {
+	return toolsimage.Reference(b.defaultCardanoToolsImage, toolVersion)
 }
 
 func validateLocalnetInitContainerPlan(plan localnet.Plan) error {

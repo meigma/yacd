@@ -403,7 +403,8 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		if err := apiClient.Get(ctx, deploymentKey, got); err != nil {
 			return false
 		}
-		return len(got.Spec.Template.Spec.Containers) == 3
+		// node + ogmios + kupo + the always-on serve sidecar (faucet disabled).
+		return len(got.Spec.Template.Spec.Containers) == 4
 	}, 10*time.Second, 100*time.Millisecond)
 
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))

@@ -32,6 +32,16 @@ const (
 	// DefaultFaucetPort is the faucet sidecar port default.
 	DefaultFaucetPort int32 = 8080
 
+	// DefaultServePort is the cardano-tools serve sidecar port default. It is
+	// deliberately not 8080 (the faucet default) so the always-on serve
+	// container can coexist with the faucet on the primary Pod.
+	//
+	// 8090 is intentionally NOT registered in PortOwners yet: PortOwners feeds
+	// the CardanoDBSync sidecar placement collision check, and folding serve
+	// into that check is deferred to the A3 follow-up so this additive PR does
+	// not change db-sync placement behavior.
+	DefaultServePort int32 = 8090
+
 	// LabelAppName is the Kubernetes recommended application name label key.
 	LabelAppName = "app.kubernetes.io/name"
 
@@ -67,6 +77,9 @@ const (
 
 	// PortNameFaucet is the faucet container port name.
 	PortNameFaucet = "faucet"
+
+	// PortNameServe is the cardano-tools serve container port name.
+	PortNameServe = "serve"
 )
 
 // WorkloadName returns the DNS-label name of the primary node Deployment and

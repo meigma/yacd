@@ -37,6 +37,13 @@ const (
 	// effective working directory for the localnet chain bootstrap fragment.
 	localnetEnvDir = "/state/env"
 
+	// servedArtifactsDir is the flat served-artifact directory the
+	// stage/fetch init container populates on the node PVC and the always-on
+	// cardano-tools serve sidecar exposes over HTTP. It is a subdirectory of
+	// localnetStateDir ("/state"), so it rides the existing node-state PVC and
+	// needs no additional top-level volume.
+	servedArtifactsDir = "/state/artifacts"
+
 	// defaultOgmiosImage is the ogmios sidecar image used when the
 	// CardanoNetwork spec does not specify one.
 	defaultOgmiosImage = "cardanosolutions/ogmios:v6.14.0"

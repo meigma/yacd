@@ -112,7 +112,7 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, artifactPublisherServiceAccount.Name, deployment.Spec.Template.Spec.ServiceAccountName)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 3)
 	assert.Contains(t, deployment.Spec.Template.Spec.InitContainers[0].VolumeMounts, artifactPublisherVolumeMount())
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		assert.NotContains(t, container.VolumeMounts, artifactPublisherVolumeMount())
@@ -179,10 +179,19 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	// Preview is a curated public profile: it gets the cardano-tools fetch
+	// init container and the always-on serve sidecar.
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, servedArtifactsInitContainerName, deployment.Spec.Template.Spec.InitContainers[0].Name)
+	assert.Equal(t, []string{
+		"fetch",
+		"--profile", "preview",
+		"--output-dir", "/state/artifacts",
+	}, deployment.Spec.Template.Spec.InitContainers[0].Args)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, serveContainerName, deployment.Spec.Template.Spec.Containers[2].Name)
 	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, kupoContainerName)
 	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
 	assert.Equal(t, "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29", deployment.Spec.Template.Annotations[networkFingerprintAnno])
@@ -264,10 +273,15 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicMainnetWorkload(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
-	assert.Equal(t, mithrilBootstrapInitContainerName, deployment.Spec.Template.Spec.InitContainers[0].Name)
-	assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", deployment.Spec.Template.Spec.InitContainers[0].Image)
+	// Mainnet is a curated public profile, so the fetch init container is
+	// ordered before the Mithril bootstrap, and the serve sidecar runs.
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+	assert.Equal(t, servedArtifactsInitContainerName, deployment.Spec.Template.Spec.InitContainers[0].Name)
+	assert.Equal(t, "fetch", deployment.Spec.Template.Spec.InitContainers[0].Args[0])
+	assert.Equal(t, mithrilBootstrapInitContainerName, deployment.Spec.Template.Spec.InitContainers[1].Name)
+	assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", deployment.Spec.Template.Spec.InitContainers[1].Image)
 	require.NotNil(t, requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName).EmptyDir)
+	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, serveContainerName)
 	nodeContainer := requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, cardanoNodeContainerName)
 	assert.Equal(t, defaultMainnetNodeResources(), nodeContainer.Resources)
 
@@ -298,10 +312,13 @@ func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkload(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
+	// Custom public is scoped out of the served-artifact PR-A: no fetch init
+	// container and no serve sidecar.
 	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
 	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
 	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, kupoContainerName)
 	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
+	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, serveContainerName)
 
 	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
 	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
@@ -400,7 +417,7 @@ func TestCardanoNetworkReconcilerReconcileLeavesFaucetDisabledByDefault(t *testi
 	require.NoError(t, err)
 
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 4)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
 	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled)
@@ -990,8 +1007,9 @@ func TestCardanoNetworkReconcilerReconcileDisablesOgmios(t *testing.T) {
 	require.NoError(t, err)
 
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 1)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, serveContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
 	assertNoPrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
@@ -1074,9 +1092,10 @@ func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
 	require.NoError(t, err)
 
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, serveContainerName, deployment.Spec.Template.Spec.Containers[2].Name)
 	requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
@@ -1177,10 +1196,11 @@ func TestCardanoNetworkReconcilerReconcileDisablesFaucet(t *testing.T) {
 	require.NoError(t, err)
 
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 4)
 	assert.Equal(t, cardanoNodeContainerName, deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.Equal(t, kupoContainerName, deployment.Spec.Template.Spec.Containers[2].Name)
+	assert.Equal(t, serveContainerName, deployment.Spec.Template.Spec.Containers[3].Name)
 	requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	requirePrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)

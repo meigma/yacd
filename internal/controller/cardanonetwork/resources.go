@@ -76,9 +76,26 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if b.dbSyncAttachment != nil {
 		containers = append(containers, b.dbSyncAttachment.Container)
 	}
-	initContainers := make([]corev1.Container, 0, 3)
+	// The served-artifact producer (stage/fetch init) and the always-on serve
+	// sidecar are wired for LOCAL and CURATED PUBLIC networks only;
+	// custom-public is deferred out of this additive PR.
+	serveArtifacts := plan.isLocal() || isCuratedPublicProfile(plan)
+	if serveArtifacts {
+		containers = append(containers, b.serveContainer(network, plan))
+	}
+	initContainers := make([]corev1.Container, 0, 4)
 	if initContainer != nil {
 		initContainers = append(initContainers, *initContainer)
+	}
+	// Order matters: the LOCAL stage init reads the create-env output appended
+	// above, and the CURATED PUBLIC fetch init must run before any Mithril
+	// bootstrap appended below.
+	if serveArtifacts {
+		servedArtifactsInit, err := b.servedArtifactsInitContainer(network, plan)
+		if err != nil {
+			return nil, err
+		}
+		initContainers = append(initContainers, servedArtifactsInit)
 	}
 	if mithril := plan.mithrilBootstrap(); mithril != nil {
 		initContainers = append(initContainers, b.mithrilBootstrapInitContainer(*mithril))

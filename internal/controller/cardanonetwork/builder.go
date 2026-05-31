@@ -72,6 +72,16 @@ type primaryWorkloadBuilder struct {
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
 
+	// defaultCardanoToolsImage is the Reconciler-injected override for the
+	// cardano-tools utility image. When non-empty it replaces the computed
+	// "<repo>:<toolVersion>-<revision>" reference (see
+	// internal/cardano/toolsimage) used by the served-artifact stage/fetch
+	// init container and the always-on serve sidecar. The local dev stack's
+	// docker-built image flows in through here so manual testing picks up
+	// post-release producer changes the published cardano-tools tag does not
+	// yet contain.
+	defaultCardanoToolsImage string
+
 	// acceptedIdentity is the already-accepted network identity read from
 	// owned runtime material. It is used only to preserve the primary
 	// UnsupportedNetworkChange error when later spec edits also introduce

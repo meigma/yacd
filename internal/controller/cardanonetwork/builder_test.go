@@ -638,7 +638,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.Equal(t, "devnet-artifact-publisher", deployment.Spec.Template.Spec.ServiceAccountName)
 
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 3)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
 	assert.Equal(t, localnetCreateEnvInitContainerName, initContainer.Name)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
@@ -655,7 +655,30 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, "devnet-node.default.svc.cluster.local", initEnv[artifactNodeToNodeHostEnv])
 	assert.Equal(t, "3001", initEnv[artifactNodeToNodePortEnv])
 	assert.Equal(t, "tcp://devnet-node.default.svc.cluster.local:3001", initEnv[artifactNodeToNodeURLEnv])
-	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
+
+	// The stage init container is ordered after create-env so it can flatten
+	// the generated env dir onto the served-artifact PVC subdirectory.
+	stageInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
+	assert.Equal(t, servedArtifactsInitContainerName, stageInitContainer.Name)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", stageInitContainer.Image)
+	assert.Equal(t, []string{cardanoToolsCommand}, stageInitContainer.Command)
+	assert.Equal(t, []string{
+		"stage",
+		"--state-dir", "/state/env",
+		"--output-dir", "/state/artifacts",
+		"--cardano-network-name", "devnet",
+		"--cardano-network-namespace", "default",
+		"--cardano-network-mode", "local",
+		"--cardano-network-era", "conway",
+		"--cardano-node-to-node-host", "devnet-node.default.svc.cluster.local",
+		"--cardano-node-to-node-port", "3001",
+	}, stageInitContainer.Args)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state"},
+	}, stageInitContainer.VolumeMounts)
+	assertRestrictedContainerSecurityContext(t, stageInitContainer.SecurityContext)
+
+	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[2]
 	assert.Equal(t, faucetSourceAddressInitContainerName, addressInitContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", addressInitContainer.Image)
 	assert.Equal(t, []string{faucetSourceAddressCommand}, addressInitContainer.Command)
@@ -668,7 +691,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: localnetStateVolumeName, MountPath: "/state"},
 	}, addressInitContainer.VolumeMounts)
 
-	require.Len(t, deployment.Spec.Template.Spec.Containers, 4)
+	require.Len(t, deployment.Spec.Template.Spec.Containers, 5)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", nodeContainer.Image)
@@ -797,6 +820,33 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		{Name: localnetStateVolumeName, MountPath: "/state/env/utxo-keys", SubPath: "env/utxo-keys", ReadOnly: true},
 		{Name: faucetAuthVolumeName, MountPath: "/var/run/yacd-faucet", ReadOnly: true},
 	}, faucetContainer.VolumeMounts)
+
+	// The always-on serve sidecar is appended last; it exposes the staged
+	// served-artifact directory read-only over HTTP on port 8090.
+	serveContainer := deployment.Spec.Template.Spec.Containers[4]
+	assert.Equal(t, serveContainerName, serveContainer.Name)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
+	assert.Equal(t, []string{cardanoToolsCommand}, serveContainer.Command)
+	assert.Equal(t, []string{
+		"serve",
+		"--artifacts-dir", "/state/artifacts",
+		"--listen", ":8090",
+	}, serveContainer.Args)
+	assert.Equal(t, []corev1.ContainerPort{
+		{
+			Name:          servePortName,
+			ContainerPort: 8090,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}, serveContainer.Ports)
+	require.NotNil(t, serveContainer.ReadinessProbe)
+	require.NotNil(t, serveContainer.ReadinessProbe.HTTPGet)
+	assert.Equal(t, "/manifest.json", serveContainer.ReadinessProbe.HTTPGet.Path)
+	assert.Equal(t, intstr.FromInt(8090), serveContainer.ReadinessProbe.HTTPGet.Port)
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
+	}, serveContainer.VolumeMounts)
+	assertRestrictedContainerSecurityContext(t, serveContainer.SecurityContext)
 
 	require.Len(t, deployment.Spec.Template.Spec.Volumes, 6)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
@@ -938,6 +988,10 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 		wantFingerprint      string
 		wantMissingArtifacts []string
 		mithrilBootstrap     bool
+		// curated is true for the curated public profiles (preview, preprod,
+		// mainnet) that get the fetch init container + serve sidecar, and
+		// false for the custom profile that gets neither in this additive PR.
+		curated bool
 	}{
 		{
 			name:              "preview",
@@ -945,6 +999,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			wantNetworkMagic:  2,
 			wantRequiresMagic: true,
 			wantFingerprint:   "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29",
+			curated:           true,
 		},
 		{
 			name:                 "preprod",
@@ -952,6 +1007,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			wantNetworkMagic:     1,
 			wantRequiresMagic:    true,
 			wantMissingArtifacts: []string{networkartifacts.CheckpointsKey},
+			curated:              true,
 		},
 		{
 			name:              "mainnet",
@@ -959,6 +1015,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			wantNetworkMagic:  764824073,
 			wantRequiresMagic: false,
 			mithrilBootstrap:  true,
+			curated:           true,
 		},
 		{
 			name:              "custom",
@@ -1012,9 +1069,32 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 			assert.Equal(t, resources.NetworkPlan.Fingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
 			assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
+			if tc.curated {
+				// Curated public profiles get a fetch init container first;
+				// mainnet additionally gets the Mithril bootstrap ordered
+				// after fetch.
+				wantInitCount := 1
+				if tc.mithrilBootstrap {
+					wantInitCount = 2
+				}
+				require.Len(t, deployment.Spec.Template.Spec.InitContainers, wantInitCount)
+
+				fetchInit := deployment.Spec.Template.Spec.InitContainers[0]
+				assert.Equal(t, servedArtifactsInitContainerName, fetchInit.Name)
+				assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", fetchInit.Image)
+				assert.Equal(t, []string{cardanoToolsCommand}, fetchInit.Command)
+				assert.Equal(t, []string{
+					"fetch",
+					"--profile", string(tc.profile),
+					"--output-dir", "/state/artifacts",
+				}, fetchInit.Args)
+				assert.Equal(t, []corev1.VolumeMount{
+					{Name: localnetStateVolumeName, MountPath: "/state"},
+				}, fetchInit.VolumeMounts)
+				assertRestrictedContainerSecurityContext(t, fetchInit.SecurityContext)
+			}
 			if tc.mithrilBootstrap {
-				require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
-				mithril := deployment.Spec.Template.Spec.InitContainers[0]
+				mithril := deployment.Spec.Template.Spec.InitContainers[1]
 				assert.Equal(t, mithrilBootstrapInitContainerName, mithril.Name)
 				assert.Equal(t, "ghcr.io/input-output-hk/mithril-client:main-2478748", mithril.Image)
 				assert.Equal(t, []string{mithrilBootstrapCommand}, mithril.Command)
@@ -1031,10 +1111,37 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 				assert.Equal(t, "latest", mithrilEnv[mithrilSnapshotEnvName])
 				assert.NotEmpty(t, mithrilEnv[mithrilGenesisVerificationKeyEnvName])
 				assert.NotEmpty(t, mithrilEnv[mithrilAncillaryVerificationKeyEnvName])
-			} else {
+			}
+			if !tc.curated {
 				assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
 			}
-			require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+
+			// Curated public profiles add the always-on serve sidecar (node,
+			// ogmios, serve); custom adds neither (node, ogmios).
+			if tc.curated {
+				require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+				serveContainer := deployment.Spec.Template.Spec.Containers[2]
+				assert.Equal(t, serveContainerName, serveContainer.Name)
+				assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
+				assert.Equal(t, []string{
+					"serve",
+					"--artifacts-dir", "/state/artifacts",
+					"--listen", ":8090",
+				}, serveContainer.Args)
+				require.Len(t, serveContainer.Ports, 1)
+				assert.Equal(t, int32(8090), serveContainer.Ports[0].ContainerPort)
+				assert.Equal(t, servePortName, serveContainer.Ports[0].Name)
+				require.NotNil(t, serveContainer.ReadinessProbe)
+				require.NotNil(t, serveContainer.ReadinessProbe.HTTPGet)
+				assert.Equal(t, "/manifest.json", serveContainer.ReadinessProbe.HTTPGet.Path)
+				assert.Equal(t, []corev1.VolumeMount{
+					{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
+				}, serveContainer.VolumeMounts)
+				assertRestrictedContainerSecurityContext(t, serveContainer.SecurityContext)
+			} else {
+				require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
+				assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, serveContainerName)
+			}
 
 			nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 			assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
@@ -1133,11 +1240,14 @@ func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	assert.Equal(t, serveContainerName, resources.Deployment.Spec.Template.Spec.Containers[3].Name)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
+	assert.Equal(t, localnetCreateEnvInitContainerName, resources.Deployment.Spec.Template.Spec.InitContainers[0].Name)
+	assert.Equal(t, servedArtifactsInitContainerName, resources.Deployment.Spec.Template.Spec.InitContainers[1].Name)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
 	assert.NotNil(t, resources.NetworkArtifactsConfigMap)
 	assert.NotNil(t, resources.ArtifactPublisherServiceAccount)
@@ -1255,7 +1365,7 @@ func TestPrimaryWorkloadBuilderAppliesOgmiosOverrides(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, resources.OgmiosService)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 5)
 	ogmiosContainer := resources.Deployment.Spec.Template.Spec.Containers[1]
 	assert.Equal(t, "example.com/ogmios:v6.14.0", ogmiosContainer.Image)
 	assert.Contains(t, ogmiosContainer.Args, "1444")
@@ -1287,7 +1397,7 @@ func TestPrimaryWorkloadBuilderAppliesKupoPortAndResourceOverrides(t *testing.T)
 	require.NoError(t, err)
 
 	require.NotNil(t, resources.KupoService)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 5)
 	kupoContainer := resources.Deployment.Spec.Template.Spec.Containers[2]
 	assert.Equal(t, defaultKupoImage, kupoContainer.Image)
 	assert.Contains(t, kupoContainer.Args, "2442")
@@ -1321,7 +1431,7 @@ func TestPrimaryWorkloadBuilderAppliesFaucetOverrides(t *testing.T) {
 
 	require.NotNil(t, resources.FaucetService)
 	require.NotNil(t, resources.FaucetAuthSecret)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 5)
 	faucetContainer := resources.Deployment.Spec.Template.Spec.Containers[3]
 	assert.Equal(t, image, faucetContainer.Image)
 	assert.Contains(t, faucetContainer.Args, "0.0.0.0:18080")
@@ -1344,8 +1454,9 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
+	assert.Equal(t, serveContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.Nil(t, resources.OgmiosService)
 	assert.Nil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
@@ -1364,14 +1475,15 @@ func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 2)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
+	assert.Equal(t, serveContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
 	assert.NotNil(t, resources.OgmiosService)
 	assert.Nil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 3)
 }
 
@@ -1386,15 +1498,16 @@ func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Containers, 4)
 	assert.Equal(t, cardanoNodeContainerName, resources.Deployment.Spec.Template.Spec.Containers[0].Name)
 	assert.Equal(t, ogmiosContainerName, resources.Deployment.Spec.Template.Spec.Containers[1].Name)
 	assert.Equal(t, kupoContainerName, resources.Deployment.Spec.Template.Spec.Containers[2].Name)
+	assert.Equal(t, serveContainerName, resources.Deployment.Spec.Template.Spec.Containers[3].Name)
 	assert.NotNil(t, resources.OgmiosService)
 	assert.NotNil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 1)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
 }
 

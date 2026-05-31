@@ -120,6 +120,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			scheme:                     r.Scheme,
 			defaultFaucetImage:         r.DefaultFaucetImage,
 			defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+			defaultCardanoToolsImage:   r.DefaultCardanoToolsImage,
 			acceptedIdentity:           acceptedIdentity,
 			dbSyncAttachment:           dbSyncAttachment.Attachment,
 			publicCustomBundle:         publicCustomBundle,

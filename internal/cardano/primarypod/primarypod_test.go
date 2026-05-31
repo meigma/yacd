@@ -78,6 +78,19 @@ func TestPortOwners(t *testing.T) {
 	}
 }
 
+// TestServePortIsNotOwnedYet documents that the cardano-tools serve port is
+// defined for primary Pod rendering but intentionally excluded from PortOwners
+// so it does not yet participate in the CardanoDBSync placement collision
+// check (deferred to the A3 follow-up).
+func TestServePortIsNotOwnedYet(t *testing.T) {
+	assert.Equal(t, int32(8090), DefaultServePort)
+	assert.Equal(t, "serve", PortNameServe)
+
+	owners := PortOwners(localNetwork("serveport"))
+	_, ok := owners[DefaultServePort]
+	assert.False(t, ok, "serve port must not be registered in PortOwners yet")
+}
+
 func localNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 	return &yacdv1alpha1.CardanoNetwork{
 		ObjectMeta: metav1.ObjectMeta{

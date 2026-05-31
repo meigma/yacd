@@ -82,6 +82,40 @@ func TestCardanoTestnetImageHonorsInjectedOverride(t *testing.T) {
 	assert.Equal(t, override, builder.cardanoNodeImage(network))
 }
 
+// TestCardanoToolsImageHonorsInjectedOverride verifies the Reconciler-injected
+// defaultCardanoToolsImage replaces the built-in toolsimage reference on both
+// the served-artifact init container and the always-on serve sidecar, and that
+// the built-in formula resolves to "<repo>:<toolVersion>-<revision>" with no
+// override. This is the seam the local dev stack uses to substitute a freshly
+// built cardano-tools image.
+func TestCardanoToolsImageHonorsInjectedOverride(t *testing.T) {
+	const override = "ghcr.io/meigma/yacd/cardano-tools:tilt"
+
+	network := localCardanoNetwork("devnet")
+
+	builder := newTestPrimaryWorkloadBuilder(t)
+	defaultResources, err := builder.Build(network)
+	require.NoError(t, err)
+	defaultStage := requireContainerNamed(t, defaultResources.Deployment.Spec.Template.Spec.InitContainers, servedArtifactsInitContainerName)
+	defaultServe := requireContainerNamed(t, defaultResources.Deployment.Spec.Template.Spec.Containers, serveContainerName)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", defaultStage.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", defaultServe.Image)
+
+	overrideBuilder := newTestPrimaryWorkloadBuilder(t)
+	overrideBuilder.defaultCardanoToolsImage = override
+	overrideResources, err := overrideBuilder.Build(network)
+	require.NoError(t, err)
+	overrideStage := requireContainerNamed(t, overrideResources.Deployment.Spec.Template.Spec.InitContainers, servedArtifactsInitContainerName)
+	overrideServe := requireContainerNamed(t, overrideResources.Deployment.Spec.Template.Spec.Containers, serveContainerName)
+	assert.Equal(t, override, overrideStage.Image)
+	assert.Equal(t, override, overrideServe.Image)
+
+	// The cardano-tools override must not bleed into the cardano-testnet
+	// images, which are governed by their own override.
+	nodeContainer := requireContainerNamed(t, overrideResources.Deployment.Spec.Template.Spec.Containers, cardanoNodeContainerName)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", nodeContainer.Image)
+}
+
 // TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips verifies the
 // idempotency manifest is carried as compact JSON in the container environment.
 func TestLocalnetCreateEnvInitContainerManifestEnvRoundTrips(t *testing.T) {

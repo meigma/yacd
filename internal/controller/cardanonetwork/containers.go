@@ -53,6 +53,12 @@ const (
 	faucetKupoURLScheme     = "http"
 	faucetHealthPath        = "/healthz"
 	faucetReadinessPath     = "/readyz"
+
+	// serve sidecar.
+	serveContainerName = "serve"
+	servePortName      = primarypod.PortNameServe
+	serveListenAddress = ":8090"
+	serveManifestPath  = "/manifest.json"
 )
 
 // cardanoNodeImage returns the resolved cardano-node container image
@@ -351,6 +357,89 @@ func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios 
 	}
 
 	return container
+}
+
+// serveContainer builds the always-on cardano-tools serve sidecar. It exposes
+// the flat served-artifact directory (servedArtifactsDir) read-only over HTTP
+// on serve port 8090 (8080 collides with the faucet). The directory is
+// populated on the node-state PVC by the served-artifact init container, so
+// serve mounts that PVC read-only at localnetStateDir. Unlike the producer it
+// is a regular always-on container (not a RestartPolicy:Always init container),
+// and it reuses the hardened uid/gid 10001 security context shared by the node
+// and ogmios containers.
+func (b primaryWorkloadBuilder) serveContainer(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) corev1.Container {
+	port := primarypod.DefaultServePort
+
+	return corev1.Container{
+		Name:            serveContainerName,
+		Image:           b.cardanoToolsImage(servedToolVersion(network, plan)),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{cardanoToolsCommand},
+		Args: []string{
+			"serve",
+			"--artifacts-dir", servedArtifactsDir,
+			"--listen", serveListenAddress,
+		},
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          servePortName,
+				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		ReadinessProbe: serveManifestProbe(port, 5, 2, 3),
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: localnetStateDir,
+				ReadOnly:  true,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
+}
+
+// servedToolVersion resolves the Cardano tool version used to pin the
+// cardano-tools image for the serve sidecar. LOCAL uses the create-env plan's
+// tool version (the same version that generated the served artifacts); public
+// profiles use the spec node version.
+func servedToolVersion(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) string {
+	if plan.isLocal() && plan.Localnet != nil {
+		return strings.TrimSpace(plan.Localnet.Spec.Tool.Version)
+	}
+
+	return strings.TrimSpace(network.Spec.Node.Version)
+}
+
+// serveManifestProbe builds an HTTP GET probe against the serve sidecar's
+// manifest endpoint, the cheapest served object that proves the artifact
+// directory is being served.
+func serveManifestProbe(port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			HTTPGet: &corev1.HTTPGetAction{
+				Path: serveManifestPath,
+				Port: intstr.FromInt(int(port)),
+			},
+		},
+		PeriodSeconds:    periodSeconds,
+		TimeoutSeconds:   timeoutSeconds,
+		FailureThreshold: failureThreshold,
+	}
 }
 
 // faucetHTTPProbe builds an HTTP GET probe against the faucet's health or
