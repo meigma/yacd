@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/transport/spdy"
@@ -103,6 +105,12 @@ func (a *Adapter) PrimaryPodName(ctx context.Context, namespace string, networkN
 	return "", fmt.Errorf("cardanonetwork %s/%s has no ready primary pod (matched %d pods)", namespace, networkName, len(pods.Items))
 }
 
+// forwardDialTimeout bounds establishing the SPDY port-forward connection (TCP
+// connect, TLS handshake, and the upgrade request). It does not bound the
+// long-lived forwarded stream, which lives on the hijacked connection once the
+// upgrade succeeds.
+const forwardDialTimeout = 10 * time.Second
+
 // Forward establishes port-forwards from random local ports to the given Pod's
 // container ports using client-go's SPDY port-forwarder (not a shelled-out
 // kubectl). It blocks only until the forwards are ready, fail to start, or the
@@ -116,7 +124,32 @@ func (a *Adapter) Forward(ctx context.Context, namespace string, podName string,
 		return nil, fmt.Errorf("port-forwarding requires a cluster-backed client")
 	}
 
-	transport, upgrader, err := spdy.RoundTripperFor(a.restConfig)
+	// Bound establishing the SPDY connection by the caller's context and a hard
+	// ceiling. spdy.RoundTripperFor ignores rest.Config.Dial, but the SPDY
+	// round-tripper honors the request context across TCP connect and the TLS
+	// handshake, so wrapping the transport to inject a bounded context is what
+	// makes a cancel during the dial return promptly instead of hanging until
+	// the OS timeout. The copy keeps the shared rest.Config (also used by the
+	// high-level client) free of this per-call wrapping, and the forwarded
+	// stream is unaffected because it rides the hijacked connection after the
+	// upgrade completes.
+	cfg := rest.CopyConfig(a.restConfig)
+	dialCtx, dialCancel := context.WithCancel(ctx)
+	defer dialCancel()
+	previousWrap := cfg.WrapTransport
+	cfg.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		if previousWrap != nil {
+			rt = previousWrap(rt)
+		}
+
+		return roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			dialReqCtx, cancel := context.WithTimeout(dialCtx, forwardDialTimeout)
+			defer cancel()
+
+			return rt.RoundTrip(req.WithContext(dialReqCtx))
+		})
+	}
+	transport, upgrader, err := spdy.RoundTripperFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("build port-forward transport: %w", err)
 	}
@@ -163,7 +196,10 @@ func (a *Adapter) Forward(ctx context.Context, namespace string, podName string,
 	case <-session.done:
 		return nil, fmt.Errorf("port-forward to %s/%s failed to start: %w", namespace, podName, session.err)
 	case <-ctx.Done():
-		_ = session.Close()
+		// Signal the forwarder to stop but do not block on it: the dial may
+		// still be parked in the goroutine, and Close would wait for it. The
+		// bounded dial above lets that goroutine reap itself shortly after.
+		session.requestStop()
 		return nil, ctx.Err()
 	}
 
@@ -258,11 +294,27 @@ func (s *forwardSession) Err() error {
 	return s.err
 }
 
-func (s *forwardSession) Close() error {
+// requestStop signals the forwarder to stop without waiting for it to exit. It
+// is safe to call repeatedly and concurrently. Forward's cancellation path uses
+// it to return promptly: the ForwardPorts goroutine reaps itself (closing done)
+// once the bounded dial fails, so the orphaned session needs no blocking wait.
+func (s *forwardSession) requestStop() {
 	s.closeOnce.Do(func() {
 		close(s.stopChan)
 	})
+}
+
+func (s *forwardSession) Close() error {
+	s.requestStop()
 	<-s.done
 
 	return s.err
+}
+
+// roundTripperFunc adapts a function to http.RoundTripper so Forward can wrap
+// the SPDY transport with a per-request, context-bounded round trip.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
