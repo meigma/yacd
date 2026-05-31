@@ -270,3 +270,45 @@ PR; dev stack UP on this worktree (kind-yacd-dev, controller Running); design
 fork resolved = Option A (build+load cardano-tools in e2e). Items 7/8/9/10 done+
 merged; cardano-tools yacd.4 published (pre-A1). Session 045 sync-status stream
 untouched.
+
+## 2026-05-31 14:30 — CORRECTION: Commit A actually SUCCEEDED (prior "blocked" note was wrong)
+Retract the 14:05 entry's claim that the implementation subagent was blocked and
+left the tree clean. That conclusion was drawn from a garbled/early-flushed
+partial result. GROUND TRUTH (verified directly): the general-purpose subagent
+(addeb55ea4a0e3329) ran ~55 min and COMPLETED "Commit A" successfully; results
+flushed late. The F0 worktree now has 12 changed files (UNCOMMITTED) on branch
+feat/f0-public-profile-pvc @ 09285ea:
+- M fetch/fetch.go, fetch/fetch_test.go, fetch/pins.go (fetch now writes
+  connection.json + manifest.json; pins carry per-file connection keys + static
+  magic/requiresNetworkMagic from publicpins).
+- M cli/root.go, cmd/.../main.go (register `stage`).
+- NEW artifactset/publicconnection.go(+test) — RenderPublicConnection.
+- NEW internal/stage/ (stage.go, doc.go, stage_test.go) — `stage` reuses
+  artifactset.ReadManifest/ReadArtifacts/Build (report's flatten+connection) to
+  turn a create-env dir into a flat served dir + connection.json + manifest.json.
+- NEW cli/stage.go, config/config_stage.go(+test), testdata/stage-dry-run.txtar.
+Subagent reported root:check + root:test + `docker build` cardano-tools all GREEN;
+report-dry-run.txtar (sha f1cd9ad8) + fetch-dry-run.txtar UNCHANGED (report path
+untouched).
+
+ALSO CORRECT the 14:05 factual errors: `containers/cardano-tools/internal/
+artifactset` DOES exist (it IS report's flatten+connection package — connection.go,
+sources.go, read.go, artifactset.go). `internal/cardano/networkartifacts/
+connection.go` does NOT exist; the connection.json shape lives in artifactset +
+is validated by `internal/controller/networkartifacts/connection.go`. The shared
+manifest/contract helpers in `internal/cardano/networkartifacts` (manifest.go,
+contract.go) DO exist and are reused.
+
+ROOT CAUSE of the whole confusion: not "corruption/fabrication" but EXTREME
+tool-result delivery DELAY/batching this session — subagent + Read results
+arrived tens of minutes late and out of order, which I misread as garbled/blocked.
+
+NEXT: independently re-run root:check + root:test to confirm green; review the
+Commit A diff (esp. artifactset/publicconnection.go + fetch.go + stage.go) and vet
+the public connection.json design (subagent flagged: it records static
+profile/networkMagic/requiresNetworkMagic/files but OMITS cluster-runtime fields
+name/namespace/era/primaryNodeToNode/fingerprint, since fetch runs before cluster
+identity — runtime endpoint enrichment is a controller/PR-C concern, likely fine
+for the producer commit). If good, commit Commit A (user present for GPG). Then
+Commit B (controller threading + stage init + serve sidecar) and Commit C (A3
+Service/status). Working tree NOT clean — do not branch/rebase until committed.
