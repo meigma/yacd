@@ -683,3 +683,70 @@ stack was torn down at this close.
 
 SUMMARY.md + INDEX (043 → complete) written; TECH_NOTES updated for the
 cardano-tools seam + published digest. Resume F0 in a NEW session.
+
+## 2026-05-31 (later) — PR2 RE-SCOPED: F0 fix is controller-only; embed removal deferred
+
+User said proceed (twice). Did slice 2a (fe2bb6c: publicpins static identity,
+cross-checked vs embedded). Then realized a risk-reducing decomposition:
+
+KEY INSIGHT: removing //go:embed (old item 3) is NOT required to fix F0. F0 =
+the *ConfigMap* exceeds etcd ~1MiB (mainnet byron-genesis ~1MB). Fixed entirely
+by items 1+2: manifest-only ConfigMap + fetch-init stages bytes to PVC. The
+MANAGER can keep embedding profiles (manager image isn't size-constrained like a
+ConfigMap). So the F0 fix is CONTROLLER-ONLY and:
+  - publicnet.BuildPlan stays UNCHANGED (byte-based fingerprint preserved -> NO
+    stored-identity churn, NO plan_test golden changes, NO custom-fixture
+    migration).
+  - Far smaller blast radius. Nothing landed is wasted (fetch-init uses
+    cardano-tools fetch -> publicpins).
+
+Re-scoped tasks:
+  2b (was "BuildPlan+embed"): now CONTROLLER-ONLY F0 fix, embed KEPT.
+     publicPrimaryNetworkPlan curated ArtifactData = connection.json +
+     yacd-public-profile.json ONLY (drop genesis/config/topology/checkpoints
+     bytes from ConfigMap); add publicProfileFetchInitContainer (cardanoToolsImage,
+     `fetch --profile <p> --output-dir /state/profile [--verify-manifest]`, before
+     mithril); node mount /profile -> /state/profile for CURATED; custom keeps
+     ConfigMap mount. Update builder_test/envtest.
+  2c folded into 2b.
+  2d mode-aware dataContract (manifest-only public ConfigMap passes producer/
+     consumer validation; local+custom keep full required set).
+  2e DEFERRED FOLLOW-UP (old item 3): drop embed, switch publicnet fingerprint to
+     publicpins digests+magic, migrate custom test fixtures to testdata, narrow
+     .dockerignore; + public report path + golden; + manager digest pin
+     sha256:9ca9e033...; + chainsaw preview-public smoke.
+
+IMPORTANT nuance for 2b: custom public profiles ALSO currently dump their bytes
+into the ConfigMap via the same ArtifactData path. Custom bundles are small
+(size-bounded) so they DON'T hit the 1MiB cap -> custom keeps the ConfigMap-bytes
++ ConfigMap mount path UNCHANGED. So the manifest-only shrink + PVC fetch-init is
+CURATED-ONLY; the controller branches on curated-vs-custom. (Curated detectable
+via plan.Public.Spec.Profile != "custom", or a plan flag.)
+
+Deferring execution of 2b to a FRESH context (not avoidance): the controller
+change is delicate (plan/artifacts/resources/containers/init_container + contract
++ envtest + an in-cluster preview-network smoke as first real validation) and
+this context is very large; quality needs a clean window. Branch clean at
+fe2bb6c, 0/0, nothing half-written.
+
+Resume 2b checklist (fresh context):
+1. Distinguish curated vs custom in primaryNetworkPlan (add isCuratedPublic flag
+   or check plan.Public profile name).
+2. publicPrimaryNetworkPlan: curated -> data = {connection.json, manifest};
+   custom -> data = all bundle bytes + connection (unchanged). ArtifactDataHash
+   over whatever's in data.
+3. new publicProfileFetchInitContainer in init_container.go (mirror
+   cardanoTestnetInitContainer security ctx; image b.cardanoToolsImage(version);
+   args fetch --profile <profile> --output-dir <ProfileDir>; mount localnet-state
+   PVC at localnetStateDir; ProfileDir becomes /state/profile for curated).
+4. resources.go deployment(): add the fetch init for curated public (before
+   mithril); for curated drop the publicProfileVolume ConfigMap volume + its
+   node mount; custom keeps it.
+5. containers.go cardanoNodeContainer: curated reads config/topology from
+   /state/profile (already on the state PVC mount); custom unchanged.
+6. plan.go: ProfileDir for curated = path.Join(localnetStateDir,"profile").
+7. 2d: networkartifacts dataContract mode-aware.
+8. Validate: root:generate, root:check, root:test (envtest), then dev-up +
+   apply a preview public CardanoNetwork on Kind, confirm fetch-init stages
+   /state/profile, node boots, Ready, ConfigMap < 1MiB; mainnet render assertion
+   for the >1MiB unblock. Open PR after green.
