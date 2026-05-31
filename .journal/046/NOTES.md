@@ -432,3 +432,22 @@ Proceeding to the in-cluster serve smoke. The one real PR-A risk that still need
 live proof: the chainsaw local network now carries the always-on serve container,
 whose readiness probe (GET /manifest.json) gates pod-Ready — so serve must actually
 work in-cluster for both the smoke AND the chainsaw e2e to pass.
+
+## 2026-05-31 16:55 — IN-CLUSTER SMOKE PASSED; PR-A validated end-to-end
+Applied a minimal local CardanoNetwork (serve-smoke) on the recreated dev stack
+(operator runs --default-cardano-tools-image=ghcr.io/meigma/yacd/cardano-tools:tilt;
+the :tilt image, 443MB, built from current source incl. Commit A's `stage`, is
+loaded in kind). Results (two independent polls, both clean):
+- served-artifacts init (the new `stage`) Completed exit 0; create-env init exit 0.
+- serve sidecar container ready:true → its GET /manifest.json readiness probe passes.
+- Explicit curl via throwaway pod through the Service: GET
+  http://serve-smoke-artifacts.serve-smoke.svc.cluster.local:8090/manifest.json
+  → HTTP 200, body = {"schemaVersion":"yacd.meigma.io/cardano-network-artifacts/
+  v1alpha1","files":{"alonzo-genesis.json":"sha256:c4ad34d2...",...}} (well-formed
+  manifest: schema + per-file sha256).
+- status.endpoints.artifacts published: url .../:8090, port 8090, serviceName
+  serve-smoke-artifacts; artifacts Service ClusterIP 8090->serve; ArtifactsReady=True;
+  Degraded=False (no port collision — confirms the retraction).
+This proves the full create-env→stage→/state/artifacts→serve→/manifest.json dataflow
+in a real cluster. Cleaned up the serve-smoke namespace. PR-A (7 commits) is ready
+to open; merge held for user review. NEXT: open PR-A; do NOT merge until approved.
