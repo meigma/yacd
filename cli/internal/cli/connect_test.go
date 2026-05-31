@@ -32,7 +32,7 @@ func TestWriteEndpointsFile(t *testing.T) {
 		FaucetURL:    "http://127.0.0.1:40003",
 	}
 
-	path, err := writeEndpointsFile("devnet", doc)
+	path, err := writeEndpointsFile("devnet", "devnet", doc)
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(".yacd", "devnet", "endpoints.json"), path)
 
@@ -48,6 +48,31 @@ func TestWriteEndpointsFile(t *testing.T) {
 	assert.Contains(t, string(data), `"ogmiosUrl": "ws://127.0.0.1:40001"`)
 	assert.Contains(t, string(data), `"networkMagic": 42`)
 	assert.NotContains(t, string(data), "oken", "the endpoints file must never carry the faucet token")
+}
+
+func TestWriteEndpointsFileUsesNamespaceQualifiedPath(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	magic := int64(42)
+	doc := endpointsDocument{
+		Network:      "devnet",
+		Namespace:    "team-a",
+		NetworkMagic: &magic,
+		OgmiosURL:    "ws://127.0.0.1:40001",
+	}
+
+	path, err := writeEndpointsFile("team-a", "devnet", doc)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(".yacd", "team-a", "devnet", "endpoints.json"), path)
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "endpoints file must be 0600")
+	for _, dir := range []string{filepath.Join(".yacd", "team-a"), filepath.Join(".yacd", "team-a", "devnet")} {
+		dirInfo, err := os.Stat(dir)
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o700), dirInfo.Mode().Perm(), "state dir must be 0700")
+	}
 }
 
 func TestPrintConnectStatus(t *testing.T) {
@@ -113,6 +138,11 @@ func TestRunConnectWritesFileAndExitsOnCancel(t *testing.T) {
 		return err == nil
 	}, 2*time.Second, 10*time.Millisecond, "connect did not write the endpoints file")
 
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"ogmiosUrl": "ws://127.0.0.1:40001"`)
+	assert.NotContains(t, string(data), "faucet-token", "the endpoints file must never carry the token")
+
 	cancel()
 	select {
 	case err := <-done:
@@ -121,10 +151,8 @@ func TestRunConnectWritesFileAndExitsOnCancel(t *testing.T) {
 		t.Fatal("runConnect did not return after the context was cancelled")
 	}
 
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), `"ogmiosUrl": "ws://127.0.0.1:40001"`)
-	assert.NotContains(t, string(data), "faucet-token", "the endpoints file must never carry the token")
+	_, err = os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "connect should remove stale endpoint state on clean disconnect")
 }
 
 func TestNextBackoff(t *testing.T) {
@@ -200,6 +228,8 @@ func TestRunConnectReEstablishesAfterDrop(t *testing.T) {
 	// buffer here is free of the goroutine's writes.
 	assert.Contains(t, stderr.String(), "dropped")
 	assert.Contains(t, stderr.String(), "re-establishing")
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "connect should remove stale endpoint state on clean disconnect")
 }
 
 // TestRunConnectBacksOffThenRecovers exercises the backoff branch: after a
@@ -268,6 +298,8 @@ func TestRunConnectBacksOffThenRecovers(t *testing.T) {
 
 	assert.Contains(t, stderr.String(), "Reconnect to devnet/devnet failed")
 	assert.Contains(t, stderr.String(), "retrying in 1s")
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "connect should remove stale endpoint state on clean disconnect")
 }
 
 // TestRunConnectReturnsWhenNetworkDeletedDuringReconnect covers the fatal
@@ -314,4 +346,6 @@ func TestRunConnectReturnsWhenNetworkDeletedDuringReconnect(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("runConnect did not return after the network was deleted")
 	}
+	_, err := os.Stat(path)
+	assert.True(t, os.IsNotExist(err), "connect should remove stale endpoint state after a dropped forward")
 }

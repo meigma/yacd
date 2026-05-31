@@ -249,6 +249,212 @@ func TestLoadRejectsUnsupportedPublicConfigs(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsUnsupportedRuntimeConfigs(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantErr string
+	}{
+		{
+			name:    "local babbage era",
+			config:  strings.Replace(validConfig, "era: conway", "era: babbage", 1),
+			wantErr: "spec.network.local.era",
+		},
+		{
+			name: "local genesis tuning",
+			config: strings.Replace(validConfig, `      topology:
+        pools:
+          count: 1
+`, `      topology:
+        pools:
+          count: 1
+      genesis:
+        profile: default
+`, 1),
+			wantErr: "spec.network.local.genesis",
+		},
+		{
+			name:    "local pool count",
+			config:  strings.Replace(validConfig, "count: 1", "count: 2", 1),
+			wantErr: "spec.network.local.topology.pools.count",
+		},
+		{
+			name: "local pool defaults",
+			config: strings.Replace(validConfig, `        pools:
+          count: 1
+`, `        pools:
+          count: 1
+          defaults:
+            costLovelace: 0
+`, 1),
+			wantErr: "spec.network.local.topology.pools.defaults",
+		},
+		{
+			name:    "node port too high",
+			config:  strings.Replace(validConfig, "port: 3001", "port: 70000", 1),
+			wantErr: "spec.network.node.port",
+		},
+		{
+			name: "blank node image override",
+			config: strings.Replace(validConfig, `      version: "11.0.1"
+      port: 3001
+`, `      version: "11.0.1"
+      image: " "
+      port: 3001
+`, 1),
+			wantErr: "spec.network.node.image",
+		},
+		{
+			name:    "public mainnet storage too small",
+			config:  strings.Replace(validPublicMainnetConfig, "      port: 3001\n", "      port: 3001\n      storage:\n        size: 20Gi\n", 1),
+			wantErr: "spec.network.node.storage.size",
+		},
+		{
+			name: "public kupo explicitly enabled",
+			config: validPublicPreviewConfig + `    chainAPI:
+      kupo:
+        enabled: true
+        image: cardanosolutions/kupo:v2.11.0
+        port: 1442
+`,
+			wantErr: "spec.network.chainAPI.kupo.enabled=true is not supported for public networks",
+		},
+		{
+			name: "public faucet explicitly enabled",
+			config: validPublicPreviewConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.enabled=true is not supported for public networks",
+		},
+		{
+			name: "kupo without ogmios",
+			config: validConfig + `    chainAPI:
+      ogmios:
+        enabled: false
+        image: cardanosolutions/ogmios:v6.14.0
+        port: 1337
+      kupo:
+        enabled: true
+        image: cardanosolutions/kupo:v2.11.0
+        port: 1442
+`,
+			wantErr: "spec.network.chainAPI.kupo.enabled=true requires spec.network.chainAPI.ogmios.enabled=true",
+		},
+		{
+			name: "faucet without kupo",
+			config: validConfig + `    chainAPI:
+      kupo:
+        enabled: false
+        image: cardanosolutions/kupo:v2.11.0
+        port: 1442
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.enabled=true requires spec.network.chainAPI.kupo.enabled=true",
+		},
+		{
+			name: "unsupported kupo image",
+			config: validConfig + `    chainAPI:
+      kupo:
+        enabled: true
+        image: cardanosolutions/kupo:v2.12.0
+        port: 1442
+`,
+			wantErr: "spec.network.chainAPI.kupo.image",
+		},
+		{
+			name: "unsupported ogmios tag",
+			config: validConfig + `    chainAPI:
+      ogmios:
+        enabled: true
+        image: cardanosolutions/ogmios:v6.15.0
+        port: 1337
+`,
+			wantErr: "spec.network.chainAPI.ogmios.image tag",
+		},
+		{
+			name:    "incompatible ogmios node version",
+			config:  strings.Replace(validConfig, `version: "11.0.1"`, `version: "10.1.4"`, 1),
+			wantErr: "is not supported with spec.network.node.version",
+		},
+		{
+			name: "invalid faucet source",
+			config: validConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: wallet1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.defaultSource",
+		},
+		{
+			name: "invalid faucet range",
+			config: validConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 2000000
+        maxTopUpLovelace: 1000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.minTopUpLovelace",
+		},
+		{
+			name: "blank faucet image override",
+			config: validConfig + `    chainAPI:
+      faucet:
+        enabled: true
+        image: " "
+        port: 8080
+        defaultSource: utxo1
+        minTopUpLovelace: 1000000
+        maxTopUpLovelace: 10000000000
+`,
+			wantErr: "spec.network.chainAPI.faucet.image",
+		},
+		{
+			name:    "node port conflicts with default ogmios",
+			config:  strings.Replace(validConfig, "port: 3001", "port: 1337", 1),
+			wantErr: "conflicts with spec.network.node.port",
+		},
+		{
+			name: "sidecar port conflict",
+			config: validConfig + `    chainAPI:
+      ogmios:
+        enabled: true
+        image: cardanosolutions/ogmios:v6.14.0
+        port: 1337
+      kupo:
+        enabled: true
+        image: cardanosolutions/kupo:v2.11.0
+        port: 1337
+`,
+			wantErr: "spec.network.chainAPI.kupo.port 1337 conflicts",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(strings.NewReader(tc.config))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 func TestLoadAllowsFaucetWithoutImageOverride(t *testing.T) {
 	t.Parallel()
 

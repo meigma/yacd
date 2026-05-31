@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,20 +29,23 @@ const (
 
 // newConnectCommand wires `yacd connect NAME`. It establishes supervised
 // port-forwards to the network's chain-API endpoints, writes the loopback URLs
-// to .yacd/<network>/endpoints.json for other host processes to read, prints
-// them, and holds the forwards open until interrupted. Run it in one terminal
-// and your tools in another. If the forwards drop (pod restart, idle timeout)
-// it re-establishes them — re-resolving the primary Pod — until the network is
+// to .yacd/<network>/endpoints.json, or .yacd/<namespace>/<network>/endpoints.json
+// for namespace overrides, for other host processes to read, prints them, and
+// holds the forwards open until interrupted. Run it in one terminal and your
+// tools in another. If the forwards drop (pod restart, idle timeout) it
+// re-establishes them — re-resolving the primary Pod — until the network is
 // deleted or the user interrupts.
 func newConnectCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connect NAME",
 		Short: "Forward a YACD network's endpoints and hold them open until interrupted",
 		Long: `Establish supervised port-forwards to a network's chain-API endpoints, write
-the loopback URLs to .yacd/<network>/endpoints.json, and hold them open until
-interrupted (Ctrl-C). Run it in one terminal and your tools in another. Dropped
-forwards are re-established automatically. The endpoints file never contains the
-faucet token, and its ports are only live while connect is running.`,
+the loopback URLs to .yacd/<network>/endpoints.json (or
+.yacd/<namespace>/<network>/endpoints.json when --namespace is set), and hold
+them open until interrupted (Ctrl-C). Run it in one terminal and your tools in
+another. Dropped forwards are re-established automatically. The endpoints file
+never contains the faucet token, and its ports are only live while connect is
+running.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
@@ -104,7 +108,7 @@ func runConnect(ctx context.Context, commandContext *commandContext, kubeClient 
 		connectedBefore = true
 		backoff = connectReconnectInitialBackoff
 
-		path, err := writeEndpointsFile(name, connected.endpoints)
+		path, err := writeEndpointsFile(namespace, name, connected.endpoints)
 		if err != nil {
 			_ = connected.Close()
 			return err
@@ -117,6 +121,7 @@ func runConnect(ctx context.Context, commandContext *commandContext, kubeClient 
 		select {
 		case <-ctx.Done():
 			_ = connected.Close()
+			warnRemoveEndpointsFile(commandContext.err, path)
 			// Best-effort status: a clean interrupt must not become a failure
 			// exit code over a stderr write hiccup.
 			_, _ = fmt.Fprintf(commandContext.err, "Disconnecting from %s/%s.\n", namespace, name)
@@ -125,6 +130,7 @@ func runConnect(ctx context.Context, commandContext *commandContext, kubeClient 
 		case <-connected.Done():
 			reason := connected.Err()
 			_ = connected.Close()
+			warnRemoveEndpointsFile(commandContext.err, path)
 			if _, err := fmt.Fprintf(commandContext.err, "Forwards to %s/%s dropped (%v); re-establishing...\n", namespace, name, reason); err != nil {
 				return err
 			}
@@ -141,12 +147,13 @@ func nextBackoff(current time.Duration) time.Duration {
 	return connectReconnectMaxBackoff
 }
 
-// writeEndpointsFile writes the token-free endpoints document to
-// .yacd/<network>/endpoints.json with a 0700 directory and 0600 file, and
-// returns the path. The directory mirrors the repo's gitignored .run/yacd-dev
-// runtime state.
-func writeEndpointsFile(name string, doc endpointsDocument) (string, error) {
-	dir := filepath.Join(yacdStateDir, name)
+// writeEndpointsFile writes the token-free endpoints document with a 0700
+// directory and 0600 file, then returns the path. The default namespace path
+// stays .yacd/<network>/endpoints.json for compatibility; namespace overrides
+// use .yacd/<namespace>/<network>/endpoints.json to avoid collisions.
+func writeEndpointsFile(namespace string, name string, doc endpointsDocument) (string, error) {
+	path := endpointsFilePath(namespace, name)
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", dir, err)
 	}
@@ -157,12 +164,25 @@ func writeEndpointsFile(name string, doc endpointsDocument) (string, error) {
 	}
 	data = append(data, '\n')
 
-	path := filepath.Join(dir, "endpoints.json")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return "", fmt.Errorf("write %s: %w", path, err)
 	}
 
 	return path, nil
+}
+
+func endpointsFilePath(namespace string, name string) string {
+	if namespace == name {
+		return filepath.Join(yacdStateDir, name, "endpoints.json")
+	}
+
+	return filepath.Join(yacdStateDir, namespace, name, "endpoints.json")
+}
+
+func warnRemoveEndpointsFile(errw io.Writer, path string) {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_, _ = fmt.Fprintf(errw, "Warning: remove endpoint state %s: %v\n", path, err)
+	}
 }
 
 // printConnectStatus prints the forwarded loopback endpoints and the file path

@@ -77,6 +77,44 @@ func TestTopUpAwaitRequiresKupoURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "--await requires a Kupo URL")
 }
 
+func TestTopUpAwaitRejectsMalformedKupoURLBeforeClusterContact(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		kupoURL string
+	}{
+		{name: "relative", kupoURL: "kupo.local:1442"},
+		{name: "missing host", kupoURL: "http://"},
+		{name: "unsupported scheme", kupoURL: "ws://127.0.0.1:1442"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// The mock has no expectations. Any cluster contact would fail the
+			// test, which also proves no faucet POST can be attempted.
+			client := newKubeMock(t)
+
+			root := NewRootCommand(Options{
+				Err:               &bytes.Buffer{},
+				Viper:             viper.New(),
+				KubeClientFactory: kubeClientFactory(client),
+			})
+			root.SetArgs([]string{
+				"topup", "devnet",
+				"--address", "addr_test1dest", "--lovelace", "2000000",
+				"--await", "--kupo-url", tc.kupoURL,
+			})
+
+			err := root.ExecuteContext(context.Background())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--kupo-url")
+		})
+	}
+}
+
 func TestTopUpAwaitConfirmsOnChain(t *testing.T) {
 	t.Parallel()
 

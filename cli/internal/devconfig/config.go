@@ -159,7 +159,7 @@ func (e Environment) Validate() error {
 		return fmt.Errorf("spec.network.mode must be %q or %q", yacdv1alpha1.CardanoNetworkModeLocal, yacdv1alpha1.CardanoNetworkModePublic)
 	}
 
-	return nil
+	return validateRuntimeSupport(e.Spec.Network)
 }
 
 // validateExplicitFields enforces that certain CRD-defaulted fields are
