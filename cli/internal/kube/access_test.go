@@ -12,7 +12,41 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 )
+
+// fakeSizeQueue is a scripted TerminalSizeQueue for the adapter shim test.
+type fakeSizeQueue struct {
+	sizes []TerminalSize
+	index int
+}
+
+func (q *fakeSizeQueue) Next() (TerminalSize, bool) {
+	if q.index >= len(q.sizes) {
+		return TerminalSize{}, false
+	}
+	size := q.sizes[q.index]
+	q.index++
+
+	return size, true
+}
+
+// TestRemoteSizeQueueMapsSizesThenTerminates checks the adapter shim maps the
+// port-local TerminalSizeQueue to client-go's remotecommand.TerminalSizeQueue:
+// each size becomes a *remotecommand.TerminalSize, and end-of-stream (ok=false)
+// becomes the nil pointer that tells client-go to stop reading sizes.
+func TestRemoteSizeQueueMapsSizesThenTerminates(t *testing.T) {
+	t.Parallel()
+
+	queue := remoteSizeQueue{queue: &fakeSizeQueue{sizes: []TerminalSize{
+		{Width: 80, Height: 24},
+		{Width: 100, Height: 40},
+	}}}
+
+	assert.Equal(t, &remotecommand.TerminalSize{Width: 80, Height: 24}, queue.Next())
+	assert.Equal(t, &remotecommand.TerminalSize{Width: 100, Height: 40}, queue.Next())
+	assert.Nil(t, queue.Next(), "end-of-stream maps to a nil pointer")
+}
 
 // TestForwardSessionLifecycle locks the forwardSession contract that Forward
 // relies on: LocalPort resolves forwarded remotes, Close stops the forwards and

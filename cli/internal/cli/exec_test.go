@@ -39,6 +39,7 @@ func TestExecRunsInPodWithArgvOnlyEnv(t *testing.T) {
 	assert.Equal(t, "devnet-node-abcde", captured.PodName)
 	assert.Equal(t, "cardano-node", captured.Container)
 	assert.False(t, captured.TTY, "non-terminal stdin must not request a TTY")
+	assert.Nil(t, captured.SizeQueue, "non-interactive exec must not attach a terminal size queue")
 	assert.Equal(t, []string{
 		"env",
 		"YACD_NETWORK=devnet",

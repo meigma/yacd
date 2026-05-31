@@ -48,6 +48,22 @@ type ForwardSession interface {
 	Close() error
 }
 
+// TerminalSize is a terminal's character dimensions. It mirrors
+// remotecommand.TerminalSize so the CLI command layer can drive interactive
+// resizes without importing client-go's remotecommand package across the port
+// boundary.
+type TerminalSize struct {
+	Width  uint16
+	Height uint16
+}
+
+// TerminalSizeQueue yields terminal resize events for an interactive Exec. Next
+// blocks until the next size is available and returns ok=false once the session
+// is ending, mirroring remotecommand's nil-terminated queue contract.
+type TerminalSizeQueue interface {
+	Next() (TerminalSize, bool)
+}
+
 // ExecRequest carries an in-pod command invocation with kubectl-exec
 // semantics. Command is an argv array executed directly (no shell); callers
 // that need environment variables prepend the `env` binary to Command rather
@@ -61,6 +77,10 @@ type ExecRequest struct {
 	Stdout    io.Writer
 	Stderr    io.Writer
 	TTY       bool
+
+	// SizeQueue, when non-nil and TTY is true, drives remote PTY resizes from
+	// the host terminal. It is nil for non-interactive (piped) invocations.
+	SizeQueue TerminalSizeQueue
 }
 
 // PrimaryPodName resolves the primary node Pod for a network by consuming the
@@ -246,12 +266,34 @@ func (a *Adapter) Exec(ctx context.Context, req ExecRequest) error {
 		return fmt.Errorf("create executor for %s/%s: %w", req.Namespace, req.PodName, err)
 	}
 
-	return executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+	options := remotecommand.StreamOptions{
 		Stdin:  req.Stdin,
 		Stdout: req.Stdout,
 		Stderr: req.Stderr,
 		Tty:    req.TTY,
-	})
+	}
+	if req.TTY && req.SizeQueue != nil {
+		options.TerminalSizeQueue = remoteSizeQueue{queue: req.SizeQueue}
+	}
+
+	return executor.StreamWithContext(ctx, options)
+}
+
+// remoteSizeQueue adapts a port-local TerminalSizeQueue to client-go's
+// remotecommand.TerminalSizeQueue: a nil *remotecommand.TerminalSize signals
+// end-of-stream, which maps to the port's ok=false. It keeps the remotecommand
+// type from leaking past the kube adapter.
+type remoteSizeQueue struct {
+	queue TerminalSizeQueue
+}
+
+func (q remoteSizeQueue) Next() *remotecommand.TerminalSize {
+	size, ok := q.queue.Next()
+	if !ok {
+		return nil
+	}
+
+	return &remotecommand.TerminalSize{Width: size.Width, Height: size.Height}
 }
 
 // isPodReady reports whether a Pod is schedulable for host access: not being
