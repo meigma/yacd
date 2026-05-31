@@ -23,7 +23,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	acceptedIdentity acceptedNetworkIdentity,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -82,14 +82,17 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 			conditionMessageArtifactsReady,
 		)
 	}
+	syncStatus, nodeSynchronized, nodeProgressing := r.primaryNodeSyncStatusConditions(ctx, network, ogmiosService, networkArtifactsConfigMap, artifactResult.Ready, artifactResult.Message)
 	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, syncStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
 		dbSyncAttachmentReady,
 		nodeReady,
+		nodeSynchronized,
+		nodeProgressing,
 		ogmiosReady,
 		kupoReady,
 		faucetReady,
@@ -115,6 +118,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	faucetService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
 	artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus,
+	syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus,
 	clearFaucet bool,
 	conditions ...metav1.Condition,
 ) error {
@@ -127,9 +131,11 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
 		setFaucetStatus(network, faucetAuthSecret)
 		setArtifactsStatus(network, artifactsStatus)
+		setSyncStatus(network, syncStatus)
 	} else if clearFaucet {
 		clearFaucetStatus(network)
 		clearArtifactsStatus(network)
+		clearSyncStatus(network)
 	}
 	ctrlstatus.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
 
@@ -149,6 +155,18 @@ func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1a
 	network.Status.Artifacts = &copied
 }
 
+// setSyncStatus copies the node sync payload onto the CardanoNetwork or clears
+// it when nil. The payload is deep-copied so the caller can mutate the source
+// freely.
+func setSyncStatus(network *yacdv1alpha1.CardanoNetwork, syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus) {
+	if syncStatus == nil {
+		network.Status.Sync = nil
+		return
+	}
+
+	network.Status.Sync = syncStatus.DeepCopy()
+}
+
 // clearFaucetStatus removes the faucet endpoint and auth secret name from
 // CardanoNetwork status. Used on the Degraded path to ensure the faucet
 // status does not lag the live faucet revocation.
@@ -163,6 +181,12 @@ func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
 // CardanoNetwork status. Used on the Degraded path.
 func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
 	network.Status.Artifacts = nil
+}
+
+// clearSyncStatus removes the sync payload from CardanoNetwork status. Used on
+// failure paths where retaining the previous probe result would be stale.
+func clearSyncStatus(network *yacdv1alpha1.CardanoNetwork) {
+	network.Status.Sync = nil
 }
 
 // setNetworkIdentityStatus publishes the resolved network identity to

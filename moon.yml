@@ -90,7 +90,7 @@ tasks:
       set -euo pipefail
       if [ -d api ]; then
         controller-gen object paths="./..."
-        controller-gen crd paths="./..." output:crd:artifacts:config=charts/yacd/crds
+        controller-gen crd:allowDangerousTypes=true paths="./..." output:crd:artifacts:config=charts/yacd/crds
       fi
       # Mockery v3 reads `go list` output via x/tools/go/packages. The proto
       # `go` shim mangles the templated `-f` argument it passes, so prepend

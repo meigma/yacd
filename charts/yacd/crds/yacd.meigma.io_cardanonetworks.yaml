@@ -714,6 +714,8 @@ spec:
                   - "Ready": the network is usable through its published endpoints
                   - "DBSyncAttachmentReady": the primary-sidecar db-sync attachment is not blocking the primary Pod
                   - "NodeReady": the primary node container is running
+                  - "NodeSynchronized": the primary node is caught up to its inferred network tip
+                  - "NodeProgressing": the primary node tip is advancing or already synchronized
                   - "ArtifactsReady": the non-secret network artifact bundle is published
                   - "OgmiosReady": Ogmios is enabled and connected to the primary node
                   - "KupoReady": Kupo is enabled and synchronized enough to serve its API
@@ -905,6 +907,77 @@ spec:
                   controller.
                 format: int64
                 type: integer
+              sync:
+                description: |-
+                  sync reports the primary node's chain synchronization status as inferred
+                  from in-cluster sources.
+                properties:
+                  connectionStatus:
+                    description: connectionStatus is the Ogmios health connection
+                      status.
+                    type: string
+                  inferredTipSlot:
+                    description: |-
+                      inferredTipSlot is the wall-clock network slot inferred from the
+                      published Shelley genesis timing.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  lagSeconds:
+                    description: |-
+                      lagSeconds is lagSlots converted through slotLength and rounded up to a
+                      whole number of seconds.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  lagSlots:
+                    description: lagSlots is max(inferredTipSlot - tip.slot, 0).
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  lastTipUpdate:
+                    description: |-
+                      lastTipUpdate is the timestamp Ogmios reported for the last known tip
+                      update.
+                    format: date-time
+                    type: string
+                  networkSynchronization:
+                    description: |-
+                      networkSynchronization is Ogmios' 0..1 synchronization estimate, rounded
+                      to five decimals when reported.
+                    maximum: 1
+                    minimum: 0
+                    type: number
+                  observedAt:
+                    description: observedAt is the controller time when this sync
+                      status was probed.
+                    format: date-time
+                    type: string
+                  source:
+                    description: source identifies the probe source that produced
+                      this sync status.
+                    enum:
+                    - ogmios
+                    type: string
+                  tip:
+                    description: tip is the last known chain tip reported by Ogmios.
+                    properties:
+                      blockHeight:
+                        description: blockHeight is the tip block height reported
+                          by Ogmios.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      hash:
+                        description: hash is the tip hash reported by Ogmios.
+                        type: string
+                      slot:
+                        description: slot is the tip slot reported by Ogmios.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                type: object
             type: object
         required:
         - spec
