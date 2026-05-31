@@ -373,3 +373,33 @@ Remaining PR2 slices (resume here, fresh context):
 
 Dev stack still up (PR1 worktree). Will repoint to PR2 worktree at slice 4+
 in-cluster testing.
+
+## 2026-05-31 (later) — PR2 HELD at slice 1 pending genesis-pinning decision
+
+Stopped advancing PR2 autonomously. Reasoning: slices 2-3 activate publicpins in
+the fetch path, which forces plan open-item #1 (genesis pinning) — a decision the
+approved plan explicitly flagged "confirm during implementation," and which I had
+resolved unilaterally toward the riskier "pin everything" option in slice 1.
+
+The risk that stopped me: pinning genesis means `fetch` verifies each downloaded
+genesis file's sha256 against my pin at DOWNLOAD time (new failure mode). I pinned
+against the repo's embedded bytes (cross-check PASSED), but cannot validate against
+the LIVE operations-book source without a network fetch while the user is away. If
+the book serves genesis with different bytes than the checked-in copies, public
+fetches break. Reaching for "the embedded copies probably came from the book" was
+the signal to wait, not push.
+
+Recommendation surfaced to user: switch to the BEHAVIOR-PRESERVING model — pin only
+config.json + topology + Mithril (what fetch pins today), let cardano-node verify
+genesis transitively via config.json inline hashes (proven model, no new failure
+mode). If accepted, slice 1 needs a small revision (un-pin genesis in publicpins +
+adjust the cross-check test to only the pinned set). If user keeps complete-
+integrity, validate genesis pins against the live book FIRST.
+
+State: items 7/8/9/10 done+merged. PR2 slice 1 (publicpins, commit 17025c3) pushed
+to origin/feat/f0-public-profile-pvc, NO PR opened, inert/tested/safe to leave or
+revise. Embed removal (item #3, destructive but git-recoverable) deferred until
+after the pinning decision. Dev stack still up on the PR1 worktree.
+
+Loop -> long heartbeat; PR2 activation slices are now user-blocked on the pinning
+decision (like the earlier PR-review waits).
