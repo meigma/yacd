@@ -117,6 +117,16 @@ type Profile struct {
 	Name string
 	// SourceURL is the human-facing provenance URL recorded in the manifest.
 	SourceURL string
+	// NetworkMagic is the Cardano network magic for the profile. It is a static
+	// per-profile fact recorded here (rather than parsed from shelley-genesis at
+	// build time) so the operator can build the profile plan without holding the
+	// genesis bytes, which it no longer embeds.
+	NetworkMagic int64
+	// RequiresNetworkMagic mirrors the RequiresNetworkMagic value in the
+	// profile's node config (RequiresMagic vs RequiresNoMagic). Like
+	// NetworkMagic it is recorded statically so the operator need not parse
+	// config.json.
+	RequiresNetworkMagic bool
 	// Files lists the profile's files in deterministic order: the required
 	// chain files first (config, byron, shelley, alonzo, conway, topology),
 	// then the per-profile optional files. This order is stable so any
@@ -156,8 +166,10 @@ func peerSnapshotFile() File {
 //nolint:gochecknoglobals // immutable curated profile registry.
 var profiles = map[string]Profile{
 	previewName: {
-		Name:      previewName,
-		SourceURL: bookBase + "preview/",
+		Name:                 previewName,
+		SourceURL:            bookBase + "preview/",
+		NetworkMagic:         2,
+		RequiresNetworkMagic: true,
 		// preview config.json references CheckpointsFile + CheckpointsFileHash,
 		// so checkpoints.json is required (verified downstream by that hash).
 		Files: append(
@@ -170,8 +182,10 @@ var profiles = map[string]Profile{
 		),
 	},
 	preprodName: {
-		Name:      preprodName,
-		SourceURL: bookBase + "preprod/",
+		Name:                 preprodName,
+		SourceURL:            bookBase + "preprod/",
+		NetworkMagic:         1,
+		RequiresNetworkMagic: true,
 		// preprod config.json does not reference a checkpoints file.
 		Files: append(
 			chainFiles(
@@ -182,8 +196,10 @@ var profiles = map[string]Profile{
 		),
 	},
 	mainnetName: {
-		Name:      mainnetName,
-		SourceURL: bookBase + "mainnet/",
+		Name:                 mainnetName,
+		SourceURL:            bookBase + "mainnet/",
+		NetworkMagic:         764824073,
+		RequiresNetworkMagic: false,
 		// mainnet config.json references CheckpointsFile + CheckpointsFileHash,
 		// so checkpoints.json is required (verified downstream by that hash).
 		Files: append(
