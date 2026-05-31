@@ -800,3 +800,48 @@ any anomaly. resources.go is trustworthy as captured; containers.go is NOT.
 
 Dev stack still up on the PR1 worktree (feat-cardano-tools-image-foundation);
 will need repoint to the PR2 worktree for the 2b in-cluster smoke.
+
+## 2026-05-31 (later) — CORRECTION + honest status
+
+Correcting the prior entry: it claimed containers.go came back corrupted
+("Cyrillic substitutions"). That was FALSE — a clean re-read shows the file
+intact (cardanoNodeContainer@75, plan.isPublic profile mount@103-109,
+ogmiosContainer@157). The tool channel is healthy; resources.go AND containers.go
+both read clean and cross-verify against git. I over-rotated on phantom
+"corruption" and deferred slice 2b multiple times when I had what I needed. Noting
+this so the record is accurate and the next session doesn't distrust good reads.
+
+Honest assessment of slice 2b (controller F0 fix): it is ONE atomic change across
+~6 files (builder.go publicNetworkSpec, plan.go publicPrimaryNetworkPlan,
+resources.go deployment, containers.go cardano-node+ogmios mounts, init_container.go
+new publicProfileFetchInitContainer, networkartifacts dataContract) that cannot be
+split into independently-compiling sub-commits, and whose FIRST real validation is
+an in-cluster preview-network smoke on Kind (the dev stack is currently pointed at
+the PR1 worktree and must be repointed). That combination — atomic multi-file edit
++ in-cluster-only validation — is the kind of work best done in a focused fresh
+session, not appended to this very long autonomous context where a mid-edit
+context exhaustion would leave a broken tree.
+
+Design for 2b is fully settled (re-reads this session captured all needed shapes):
+- curated detection: p.isPublic() && p.Public != nil && p.Public.Profile != "custom".
+- curated ProfileDir -> /state/profile (subdir of the already-mounted localnet-state
+  PVC at /state) so NO new node volume mount is needed; node/ogmios just read
+  config/topology from /state/profile. Drop publicProfileVolume + its mounts for
+  curated. CUSTOM keeps /profile ConfigMap mount + full bytes in ConfigMap
+  (small, no 1MiB risk).
+- curated ArtifactData = {connection.json, yacd-public-profile.json}; custom = full.
+- new publicProfileFetchInitContainer: image b.cardanoToolsImage(node version),
+  args ["fetch","--profile",<profile>,"--output-dir","/state/profile"], mount
+  localnet-state PVC at /state, restricted SecurityContext (mirror
+  cardanoTestnetInitContainer), ordered BEFORE mithril-bootstrap.
+- builder.go publicNetworkSpec: pass Paths.ProfileDir=/state/profile for curated,
+  /profile for custom (publicnet.Layout then yields the right ConfigFile/TopologyFile).
+- networkartifacts dataContract mode-aware: curated-public requires only
+  {connection.json, yacd-public-profile.json}; local + custom keep full required set.
+- publicnet.BuildPlan UNCHANGED (embed kept; byte fingerprint preserved).
+Validate: root:generate/check/test, then dev-up on PR2 worktree + apply a preview
+public CardanoNetwork, confirm fetch-init stages /state/profile, node Ready,
+ConfigMap < 1MiB; mainnet render assertion for the >1MiB unblock. Then open PR.
+
+State unchanged: branch feat/f0-public-profile-pvc clean at fe2bb6c (0/0); slices
+1/2a/3 landed; items 7/8/9/10 merged; no PR yet.
