@@ -110,6 +110,15 @@
   defaults, port names, and port ownership rules live in
   `internal/cardano/primarypod`; do not duplicate that vocabulary inside either
   controller.
+- `CardanoNetwork.status.sync` is the non-external primary-node sync visibility
+  surface. It is derived from the verified network artifact ConfigMap's
+  `shelley-genesis.json` timing plus the owned Ogmios `/health` endpoint, and
+  publishes source/connection status, tip, last tip update, observedAt, Ogmios
+  `networkSynchronization`, inferred tip slot, and lag slots/seconds.
+  `NodeSynchronized` and `NodeProgressing` are visibility-only for now and do
+  not feed aggregate `Ready`. Ogmios health HTTP 500 can still carry a useful
+  disconnected body; `lastKnownTip`, `lastTipUpdate`, and
+  `networkSynchronization` may be null during startup or unknown-tip states.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - `CardanoNetwork` owns the primary faucet auth Secret when faucet is enabled

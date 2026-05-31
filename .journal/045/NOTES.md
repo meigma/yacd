@@ -55,3 +55,16 @@ Next: If we add this to `CardanoNetwork`, name it carefully as node/network sync
   health`.
 - Validation passed: `moon run root:test`, `moon run root:check`, and
   `git diff --check`.
+
+## 2026-05-31 13:45 — Close
+
+- PR #74 (`feat(cardanonetwork): publish node sync status`) was approved,
+  squash-merged to `master` as `bfadcf6`, and the remote feature branch was
+  deleted.
+- Local `master` was fast-forwarded to `bfadcf6`; the session worktree
+  `.wt/feat-cardanonetwork-sync-status` and local branch were removed.
+- The YACD dev stack was shut down successfully with `moon run root:dev-down`.
+- GitHub CI checks passed for PR #74, including `ci`, `e2e`,
+  `cardano-tools-image`, and `Kusari Inspector`; release dry-run jobs were
+  skipped as expected.
+- Session 046 / `feat/f0-public-profile-pvc` remains active and untouched.
