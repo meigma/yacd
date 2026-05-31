@@ -966,3 +966,30 @@ NEXT (PR-A continued):
   + DefaultServePort=8090 + PortOwners; root:generate for CRD/deepcopy.
 - A is additive (node/db-sync still ConfigMap) so build + chainsaw stay green.
 Then PR-C (db-sync HTTP), PR-B (delete ConfigMap+publisher+RBAC, F0 unblock), PR-D.
+
+## 2026-05-31 — PR-A A1 COMPLETE (manifest contract), golden fixed
+
+A1 done: amended commit 0bc7e35 (pushed, HEAD attached, clean, all green).
+- internal/cardano/networkartifacts/manifest.go: Manifest{schemaVersion,files{name:sha256}}
+  + BuildManifest/Verify/JSON/FileDigest; ManifestKey="manifest.json" added to optional
+  contract keys (serve allowlist now exposes GET /manifest.json by construction).
+- Fixed the existing TestKeys golden (contract_test.go) which pins OptionalKeys() — added
+  ManifestKey. Intentional contract change.
+- REAL Read-tool corruption hit on contract_test.go (rendered ~10895 blank lines for a
+  31-line file). Worked around via `git show HEAD:<file>` for ground truth + an
+  asserted exact-match Python edit (count==1) instead of Edit tool. Lesson: when Read
+  output looks structurally wrong, cross-check with git show before acting; don't trust
+  the render.
+
+PR-A remaining (additive; ConfigMap still present so build+chainsaw stay green):
+- A2: stage init writes manifest.json into staged dir (generate=local, fetch=public) +
+  always-on cardano-tools `serve` native sidecar wired into the primary Deployment
+  (DefaultServePort=8090, restricted SC). cardano-tools fetch/generate need a
+  `--write-manifest`/equivalent step; or controller writes it. serve reads the staged dir.
+- A3: owned <net>-artifacts ClusterIP Service (mirror ogmiosService) + primarypod
+  PortNameArtifacts/DefaultServePort=8090 + PortOwners; status.Endpoints.Artifacts
+  (new ServiceEndpointStatus field) gated on Service exists; root:generate (CRD+deepcopy).
+Then PR-C (db-sync HTTP) -> PR-B (delete ConfigMap+publisher+RBAC, F0 unblock) -> PR-D.
+
+Branch feat/f0-public-profile-pvc @ 0bc7e35 on origin. Plan A->C->B->D in
+.claude/plans/ok-please-propose-a-curious-toucan.md. Surface map walf31hi2.
