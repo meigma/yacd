@@ -29,3 +29,8 @@ Plan: Keep changes scoped to CLI developer-config validation, topup await URL pr
 What changed: Added CLI-side developer-config runtime support validation, `topup --await` Kupo URL preflight before cluster/faucet side effects, namespace-qualified `connect` endpoint state paths with stale-file cleanup, host-access docs updates, and focused test coverage. Also replaced the `require.*` assertions inside the topup HTTP handler with request capture asserted from the test goroutine.
 Validation: `go test ./cli/internal/devconfig`, `go test ./cli/internal/cli`, `moon run root:test --summary minimal`, `moon run root:check --summary minimal`, and `git diff --check` all passed. A plain `go test ./cli/...` was intentionally not used as the validation gate because it failed on missing ambient envtest assets at `/usr/local/kubebuilder/bin/etcd`; the Moon test task wires those assets correctly.
 Next: Commit the implementation on `feat/cli-review-fixes` and checkpoint this journal note.
+
+## 2026-05-31 09:18 — Close
+Merged PRs: https://github.com/meigma/yacd/pull/73 (`fix(cli): harden review findings`, squash-merged as `2f28360`).
+Final state: The YACD dev stack was stopped with `moon run root:dev-down`, local `master` was fast-forwarded to `origin/master`, the `feat/cli-review-fixes` worktree was removed, and the remote feature branch was deleted after the `gh pr merge` local cleanup path left it behind.
+Hand-off: `feat/f0-public-profile-pvc` remains unrelated active work and was not changed. Session postmortem is recorded in `.journal/044/SUMMARY.md`.

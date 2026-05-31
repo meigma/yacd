@@ -174,12 +174,16 @@
   `YACD_*` contract. `yacd run NAME -- cmd` (scoped client-go port-forwards +
   inject `YACD_*` + host exec, propagates the child exit code; no cmd ⇒
   `$SHELL`), `yacd connect NAME` (foreground supervised forwards, writes
-  token-free `.yacd/<network>/endpoints.json` at 0600, re-establishes on the
-  next use after a drop), and `yacd exec NAME -- cmd` (in-pod, argv-only via an
+  token-free endpoint state at 0600 under `.yacd/<network>/endpoints.json` for
+  the default `namespace == name` case or `.yacd/<namespace>/<network>/endpoints.json`
+  for namespace overrides, removes stale state on clean disconnect/drop, then
+  re-establishes with fresh ports after a drop), and `yacd exec NAME -- cmd`
+  (in-pod, argv-only via an
   `env KEY=VAL` prefix — never a shell, so `$VAR` is not expanded — for
   socket-bound `cardano-cli`). `yacd topup --await` polls Kupo (vendored `kugo`)
   for the funded UTxO; it requires `--kupo-url` or `YACD_KUPO_URL` and does not
-  self-forward. The verb docs + the versioned `YACD_*` table live in
+  self-forward; malformed Kupo URLs fail before cluster reads or faucet
+  submission. The verb docs + the versioned `YACD_*` table live in
   `docs/host-access.md`. Key contracts: the CLI resolves the primary Pod from
   the published node-to-node Service selector (no `internal/...` import) and
   pins the node container name + `/ipc/node.socket` as CLI-local constants;
@@ -462,8 +466,9 @@
   carries paragraph + per-check comments. Tests preserve the invariant
   via `mock.AssertNotCalled(t, "GetSecretValue", ...)` — do not delete
   this assertion when touching the trust gate.
-- `devconfig.Load` runs a two-pass validation. Pass 1 (`Validate`)
-  checks the decoded Go envelope; pass 2 (`validateExplicitFields`)
+- `devconfig.Load` runs validation in layers. `Validate` checks the decoded Go
+  envelope, mode shape, and CLI-side runtime support for deterministic
+  controller rejections knowable from the config; `validateExplicitFields`
   re-decodes the raw YAML into a map and enforces that
   surprising-when-defaulted fields are spelled out explicitly. Both
   are required because the typed decoder cannot distinguish "absent"
