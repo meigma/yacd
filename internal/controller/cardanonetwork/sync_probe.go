@@ -75,9 +75,9 @@ type cardanoNetworkOgmiosHealth struct {
 	// ConnectionStatus is the Ogmios health connectionStatus value.
 	ConnectionStatus string
 	// Tip is the last known tip reported by Ogmios health.
-	Tip cardanoNetworkOgmiosTip
+	Tip *cardanoNetworkOgmiosTip
 	// LastTipUpdate is the last known tip update timestamp.
-	LastTipUpdate time.Time
+	LastTipUpdate *time.Time
 	// NetworkSynchronization is Ogmios' optional 0..1 synchronization estimate.
 	NetworkSynchronization *float64
 }
@@ -182,6 +182,11 @@ func cardanoNetworkSyncConditions(
 		return nodeSynchronizedCondition(metav1.ConditionTrue, conditionReasonNodeSynchronized, conditionMessageNodeSynchronized),
 			nodeProgressingCondition(metav1.ConditionTrue, conditionReasonNodeSynchronized, conditionMessageNodeProgressing)
 	}
+	if health.Tip == nil {
+		message := "Ogmios has not reported a node tip yet"
+		return nodeSynchronizedCondition(metav1.ConditionFalse, conditionReasonNodeCatchingUp, message),
+			nodeProgressingCondition(metav1.ConditionTrue, conditionReasonNodeCatchingUp, message)
+	}
 
 	lagSlots := int64(0)
 	if syncStatus.LagSlots != nil {
@@ -192,8 +197,8 @@ func cardanoNetworkSyncConditions(
 		lagSeconds = *syncStatus.LagSeconds
 	}
 
-	if observedAt.Sub(health.LastTipUpdate) > nodeSyncStalledAfter {
-		stalledFor := observedAt.Sub(health.LastTipUpdate).Round(time.Second)
+	if health.LastTipUpdate != nil && observedAt.Sub(*health.LastTipUpdate) > nodeSyncStalledAfter {
+		stalledFor := observedAt.Sub(*health.LastTipUpdate).Round(time.Second)
 		message := fmt.Sprintf("Primary node is %d slots (%ds) behind the inferred network tip and has not advanced for %s", lagSlots, lagSeconds, stalledFor)
 		return nodeSynchronizedCondition(metav1.ConditionFalse, conditionReasonNodeSyncStalled, message),
 			nodeProgressingCondition(metav1.ConditionFalse, conditionReasonNodeSyncStalled, message)
@@ -212,25 +217,28 @@ func cardanoNetworkSyncStatusFromHealth(
 	observedAt time.Time,
 ) *yacdv1alpha1.CardanoNetworkSyncStatus {
 	observed := metav1TimePtr(observedAt)
-	lastTipUpdate := metav1TimePtr(health.LastTipUpdate)
-	tipSlot := health.Tip.Slot
 	inferredTipSlot := timing.inferredTipSlot(observedAt)
-	lagSlots := max(inferredTipSlot-tipSlot, 0)
-	lagSeconds := int64(math.Ceil(float64(lagSlots) * timing.SlotLengthSeconds))
 
 	status := &yacdv1alpha1.CardanoNetworkSyncStatus{
 		Source:           nodeSyncSourceOgmios,
 		ConnectionStatus: health.ConnectionStatus,
-		Tip: &yacdv1alpha1.CardanoNetworkTipStatus{
+		ObservedAt:       observed,
+		InferredTipSlot:  &inferredTipSlot,
+	}
+	if health.Tip != nil {
+		tipSlot := health.Tip.Slot
+		lagSlots := max(inferredTipSlot-tipSlot, 0)
+		lagSeconds := int64(math.Ceil(float64(lagSlots) * timing.SlotLengthSeconds))
+		status.Tip = &yacdv1alpha1.CardanoNetworkTipStatus{
 			Slot:        &tipSlot,
 			BlockHeight: health.Tip.BlockHeight,
 			Hash:        health.Tip.Hash,
-		},
-		LastTipUpdate:   lastTipUpdate,
-		ObservedAt:      observed,
-		InferredTipSlot: &inferredTipSlot,
-		LagSlots:        &lagSlots,
-		LagSeconds:      &lagSeconds,
+		}
+		status.LagSlots = &lagSlots
+		status.LagSeconds = &lagSeconds
+	}
+	if health.LastTipUpdate != nil {
+		status.LastTipUpdate = metav1TimePtr(*health.LastTipUpdate)
 	}
 	if health.NetworkSynchronization != nil {
 		networkSynchronization := roundFloat(*health.NetworkSynchronization, 5)
@@ -355,7 +363,7 @@ func (p defaultCardanoNetworkSyncProber) Probe(ctx context.Context, ogmiosURL st
 	defer func() {
 		_ = response.Body.Close()
 	}()
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
+	if !ogmiosHealthStatusUsable(response.StatusCode) {
 		return cardanoNetworkOgmiosHealth{}, fmt.Errorf("ogmios returned HTTP %d", response.StatusCode)
 	}
 
@@ -368,6 +376,17 @@ func (p defaultCardanoNetworkSyncProber) Probe(ctx context.Context, ogmiosURL st
 	}
 
 	return parseOgmiosHealth(health)
+}
+
+// ogmiosHealthStatusUsable reports whether an HTTP status can carry a useful
+// Ogmios health payload.
+func ogmiosHealthStatusUsable(statusCode int) bool {
+	switch statusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusInternalServerError:
+		return true
+	default:
+		return false
+	}
 }
 
 // ogmiosHTTPURL converts an Ogmios websocket URL into the matching HTTP URL
@@ -426,34 +445,18 @@ func parseOgmiosHealth(data json.RawMessage) (cardanoNetworkOgmiosHealth, error)
 		return cardanoNetworkOgmiosHealth{}, errors.New("ogmios health response missing connectionStatus")
 	}
 
-	lastTipUpdateValue, ok := jsonString(raw["lastTipUpdate"])
-	if !ok || strings.TrimSpace(lastTipUpdateValue) == "" {
-		return cardanoNetworkOgmiosHealth{}, errors.New("ogmios health response missing lastTipUpdate")
-	}
-	lastTipUpdate, err := time.Parse(time.RFC3339Nano, lastTipUpdateValue)
+	lastTipUpdate, err := parseOgmiosLastTipUpdate(raw["lastTipUpdate"])
 	if err != nil {
-		return cardanoNetworkOgmiosHealth{}, fmt.Errorf("ogmios lastTipUpdate is invalid: %w", err)
+		return cardanoNetworkOgmiosHealth{}, err
 	}
 
-	tipRaw, ok := raw["lastKnownTip"].(map[string]any)
-	if !ok {
-		return cardanoNetworkOgmiosHealth{}, errors.New("ogmios health response missing lastKnownTip")
-	}
-	slot, ok := jsonInt64(tipRaw["slot"])
-	if !ok {
-		return cardanoNetworkOgmiosHealth{}, errors.New("ogmios lastKnownTip missing slot")
-	}
-	var blockHeight *int64
-	if height, ok := firstJSONInt64(tipRaw, "height", "blockHeight"); ok {
-		blockHeight = &height
-	}
-	hash := ""
-	if value, ok := firstJSONString(tipRaw, "hash", "id"); ok {
-		hash = value
+	tip, err := parseOgmiosHealthTip(raw["lastKnownTip"])
+	if err != nil {
+		return cardanoNetworkOgmiosHealth{}, err
 	}
 
 	var networkSynchronization *float64
-	if rawNetworkSynchronization, ok := raw["networkSynchronization"]; ok {
+	if rawNetworkSynchronization, ok := raw["networkSynchronization"]; ok && rawNetworkSynchronization != nil {
 		value, ok := jsonFloat64(rawNetworkSynchronization)
 		if !ok {
 			return cardanoNetworkOgmiosHealth{}, errors.New("ogmios networkSynchronization must be a number")
@@ -465,14 +468,56 @@ func parseOgmiosHealth(data json.RawMessage) (cardanoNetworkOgmiosHealth, error)
 	}
 
 	return cardanoNetworkOgmiosHealth{
-		ConnectionStatus: connectionStatus,
-		Tip: cardanoNetworkOgmiosTip{
-			Slot:        slot,
-			BlockHeight: blockHeight,
-			Hash:        hash,
-		},
+		ConnectionStatus:       connectionStatus,
+		Tip:                    tip,
 		LastTipUpdate:          lastTipUpdate,
 		NetworkSynchronization: networkSynchronization,
+	}, nil
+}
+
+// parseOgmiosLastTipUpdate parses a nullable Ogmios lastTipUpdate value.
+func parseOgmiosLastTipUpdate(value any) (*time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	lastTipUpdateValue, ok := jsonString(value)
+	if !ok || strings.TrimSpace(lastTipUpdateValue) == "" {
+		return nil, errors.New("ogmios lastTipUpdate must be a string or null")
+	}
+	lastTipUpdate, err := time.Parse(time.RFC3339Nano, lastTipUpdateValue)
+	if err != nil {
+		return nil, fmt.Errorf("ogmios lastTipUpdate is invalid: %w", err)
+	}
+
+	return &lastTipUpdate, nil
+}
+
+// parseOgmiosHealthTip parses a nullable Ogmios lastKnownTip value.
+func parseOgmiosHealthTip(value any) (*cardanoNetworkOgmiosTip, error) {
+	if value == nil {
+		return nil, nil
+	}
+	tipRaw, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("ogmios lastKnownTip must be an object or null")
+	}
+	slot, ok := jsonInt64(tipRaw["slot"])
+	if !ok {
+		return nil, errors.New("ogmios lastKnownTip missing slot")
+	}
+	var blockHeight *int64
+	if height, ok := firstJSONInt64(tipRaw, "height", "blockHeight"); ok {
+		blockHeight = &height
+	}
+	hash := ""
+	if value, ok := firstJSONString(tipRaw, "hash", "id"); ok {
+		hash = value
+	}
+
+	return &cardanoNetworkOgmiosTip{
+		Slot:        slot,
+		BlockHeight: blockHeight,
+		Hash:        hash,
 	}, nil
 }
 

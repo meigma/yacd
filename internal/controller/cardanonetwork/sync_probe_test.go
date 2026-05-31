@@ -51,6 +51,7 @@ func TestParseOgmiosHealthAcceptsTipFieldVariants(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, ogmiosConnectionStatusConnected, health.ConnectionStatus)
+			require.NotNil(t, health.Tip)
 			assert.Equal(t, int64(123), health.Tip.Slot)
 			require.NotNil(t, health.Tip.BlockHeight)
 			assert.Equal(t, tt.wantBlockHeight, *health.Tip.BlockHeight)
@@ -61,14 +62,34 @@ func TestParseOgmiosHealthAcceptsTipFieldVariants(t *testing.T) {
 	}
 }
 
+func TestParseOgmiosHealthAcceptsNullableTipFields(t *testing.T) {
+	health, err := parseOgmiosHealth(json.RawMessage(`{
+		"connectionStatus": "connected",
+		"lastKnownTip": null,
+		"lastTipUpdate": null,
+		"networkSynchronization": null
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, ogmiosConnectionStatusConnected, health.ConnectionStatus)
+	assert.Nil(t, health.Tip)
+	assert.Nil(t, health.LastTipUpdate)
+	assert.Nil(t, health.NetworkSynchronization)
+}
+
 func TestDefaultCardanoNetworkSyncProberUsesOgmiosHealthEndpoint(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		wantErr    bool
+		name                 string
+		statusCode           int
+		connectionStatus     string
+		nullableProgress     bool
+		wantErr              bool
+		wantTip              bool
+		wantNetworkSyncValue bool
 	}{
-		{name: "http 200", statusCode: http.StatusOK},
-		{name: "http 202", statusCode: http.StatusAccepted},
+		{name: "http 200", statusCode: http.StatusOK, connectionStatus: "connected", wantTip: true, wantNetworkSyncValue: true},
+		{name: "http 202", statusCode: http.StatusAccepted, connectionStatus: "connected", wantTip: true, wantNetworkSyncValue: true},
+		{name: "http 500 disconnected", statusCode: http.StatusInternalServerError, connectionStatus: "disconnected", nullableProgress: true},
 		{name: "http 204", statusCode: http.StatusNoContent, wantErr: true},
 	}
 
@@ -78,7 +99,16 @@ func TestDefaultCardanoNetworkSyncProberUsesOgmiosHealthEndpoint(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				path = r.URL.Path
 				w.WriteHeader(tt.statusCode)
-				if tt.statusCode == http.StatusOK || tt.statusCode == http.StatusAccepted {
+				if ogmiosHealthStatusUsable(tt.statusCode) {
+					if tt.nullableProgress {
+						_, _ = w.Write(fmt.Appendf(nil, `{
+								"connectionStatus": %q,
+								"lastKnownTip": null,
+								"lastTipUpdate": null,
+								"networkSynchronization": null
+							}`, tt.connectionStatus))
+						return
+					}
 					_, _ = w.Write([]byte(`{
 						"connectionStatus": "connected",
 						"lastKnownTip": {"slot": 1, "height": 1, "hash": "hash"},
@@ -97,7 +127,18 @@ func TestDefaultCardanoNetworkSyncProberUsesOgmiosHealthEndpoint(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, "/health", path)
-			assert.Equal(t, int64(1), health.Tip.Slot)
+			assert.Equal(t, tt.connectionStatus, health.ConnectionStatus)
+			if tt.wantTip {
+				require.NotNil(t, health.Tip)
+				assert.Equal(t, int64(1), health.Tip.Slot)
+			} else {
+				assert.Nil(t, health.Tip)
+			}
+			if tt.wantNetworkSyncValue {
+				assert.NotNil(t, health.NetworkSynchronization)
+			} else {
+				assert.Nil(t, health.NetworkSynchronization)
+			}
 		})
 	}
 }
@@ -148,10 +189,10 @@ func TestCardanoNetworkSyncStatusComputesInferredSlotAndLag(t *testing.T) {
 			networkSynchronization := 0.987654
 			status := cardanoNetworkSyncStatusFromHealth(cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
-				Tip: cardanoNetworkOgmiosTip{
+				Tip: &cardanoNetworkOgmiosTip{
 					Slot: tt.tipSlot,
 				},
-				LastTipUpdate:          tt.observedAt,
+				LastTipUpdate:          new(tt.observedAt),
 				NetworkSynchronization: &networkSynchronization,
 			}, timing, tt.observedAt)
 
@@ -173,10 +214,10 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 	artifacts := syncTestArtifactsConfigMap()
 	caughtUpHealth := cardanoNetworkOgmiosHealth{
 		ConnectionStatus: ogmiosConnectionStatusConnected,
-		Tip: cardanoNetworkOgmiosTip{
+		Tip: &cardanoNetworkOgmiosTip{
 			Slot: 43195,
 		},
-		LastTipUpdate: now.Add(-time.Minute),
+		LastTipUpdate: new(now.Add(-time.Minute)),
 	}
 	syncedByOgmios := 0.99999
 
@@ -212,8 +253,8 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus:       ogmiosConnectionStatusConnected,
-				Tip:                    cardanoNetworkOgmiosTip{Slot: 100},
-				LastTipUpdate:          now.Add(-11 * time.Minute),
+				Tip:                    &cardanoNetworkOgmiosTip{Slot: 100},
+				LastTipUpdate:          new(now.Add(-11 * time.Minute)),
 				NetworkSynchronization: &syncedByOgmios,
 			},
 			wantSync:              true,
@@ -229,8 +270,22 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
-				Tip:              cardanoNetworkOgmiosTip{Slot: 42000},
-				LastTipUpdate:    now.Add(-time.Minute),
+				Tip:              &cardanoNetworkOgmiosTip{Slot: 42000},
+				LastTipUpdate:    new(now.Add(-time.Minute)),
+			},
+			wantSync:              true,
+			wantSynchronized:      conditionReasonNodeCatchingUp,
+			wantSynchronizedState: metav1.ConditionFalse,
+			wantProgressing:       conditionReasonNodeCatchingUp,
+			wantProgressingState:  metav1.ConditionTrue,
+		},
+		{
+			name:           "connected without tip yet",
+			service:        service,
+			artifacts:      artifacts,
+			artifactsReady: true,
+			health: cardanoNetworkOgmiosHealth{
+				ConnectionStatus: ogmiosConnectionStatusConnected,
 			},
 			wantSync:              true,
 			wantSynchronized:      conditionReasonNodeCatchingUp,
@@ -245,8 +300,8 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
-				Tip:              cardanoNetworkOgmiosTip{Slot: 42000},
-				LastTipUpdate:    now.Add(-11 * time.Minute),
+				Tip:              &cardanoNetworkOgmiosTip{Slot: 42000},
+				LastTipUpdate:    new(now.Add(-11 * time.Minute)),
 			},
 			wantSync:              true,
 			wantSynchronized:      conditionReasonNodeSyncStalled,
@@ -261,8 +316,8 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: "disconnected",
-				Tip:              cardanoNetworkOgmiosTip{Slot: 43195},
-				LastTipUpdate:    now.Add(-time.Minute),
+				Tip:              &cardanoNetworkOgmiosTip{Slot: 43195},
+				LastTipUpdate:    new(now.Add(-time.Minute)),
 			},
 			wantSync:              true,
 			wantSynchronized:      conditionReasonOgmiosDisconnected,
@@ -343,10 +398,10 @@ func TestCardanoNetworkReconcilerReconcilePublishesNodeSyncStatusWhenCaughtUp(t 
 		networkSynchronization := 0.999994
 		return cardanoNetworkOgmiosHealth{
 			ConnectionStatus: ogmiosConnectionStatusConnected,
-			Tip: cardanoNetworkOgmiosTip{
+			Tip: &cardanoNetworkOgmiosTip{
 				Slot: 43195,
 			},
-			LastTipUpdate:          now.Add(-time.Minute),
+			LastTipUpdate:          new(now.Add(-time.Minute)),
 			NetworkSynchronization: &networkSynchronization,
 		}, nil
 	})
@@ -377,8 +432,8 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeCatchingUp(t *testing.T) {
 	reconciler.syncProberOverride = cardanoNetworkSyncProberFunc(func(context.Context, string) (cardanoNetworkOgmiosHealth, error) {
 		return cardanoNetworkOgmiosHealth{
 			ConnectionStatus: ogmiosConnectionStatusConnected,
-			Tip:              cardanoNetworkOgmiosTip{Slot: 42000},
-			LastTipUpdate:    now.Add(-time.Minute),
+			Tip:              &cardanoNetworkOgmiosTip{Slot: 42000},
+			LastTipUpdate:    new(now.Add(-time.Minute)),
 		}, nil
 	})
 
@@ -406,8 +461,8 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeSyncStalled(t *testing.T) {
 	reconciler.syncProberOverride = cardanoNetworkSyncProberFunc(func(context.Context, string) (cardanoNetworkOgmiosHealth, error) {
 		return cardanoNetworkOgmiosHealth{
 			ConnectionStatus: ogmiosConnectionStatusConnected,
-			Tip:              cardanoNetworkOgmiosTip{Slot: 42000},
-			LastTipUpdate:    now.Add(-11 * time.Minute),
+			Tip:              &cardanoNetworkOgmiosTip{Slot: 42000},
+			LastTipUpdate:    new(now.Add(-11 * time.Minute)),
 		}, nil
 	})
 
@@ -539,8 +594,8 @@ func syncedNodeSyncProber() cardanoNetworkSyncProber {
 	return cardanoNetworkSyncProberFunc(func(context.Context, string) (cardanoNetworkOgmiosHealth, error) {
 		return cardanoNetworkOgmiosHealth{
 			ConnectionStatus:       ogmiosConnectionStatusConnected,
-			Tip:                    cardanoNetworkOgmiosTip{Slot: 0},
-			LastTipUpdate:          time.Now(),
+			Tip:                    &cardanoNetworkOgmiosTip{Slot: 0},
+			LastTipUpdate:          new(time.Now()),
 			NetworkSynchronization: &networkSynchronization,
 		}, nil
 	})
