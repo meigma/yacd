@@ -553,10 +553,12 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	ogmiosService := resources.OgmiosService
 	kupoService := resources.KupoService
 	faucetService := resources.FaucetService
+	artifactsService := resources.ArtifactsService
 	faucetAuthSecret := resources.FaucetAuthSecret
 	require.NotNil(t, ogmiosService)
 	require.NotNil(t, kupoService)
 	require.NotNil(t, faucetService)
+	require.NotNil(t, artifactsService)
 	require.NotNil(t, faucetAuthSecret)
 	require.NotNil(t, networkArtifactsConfigMap)
 	require.NotNil(t, artifactPublisherServiceAccount)
@@ -612,6 +614,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, faucetServiceController)
 	assert.Equal(t, "devnet", faucetServiceController.Name)
 	assert.Equal(t, "CardanoNetwork", faucetServiceController.Kind)
+	artifactsServiceController := metav1.GetControllerOf(artifactsService)
+	require.NotNil(t, artifactsServiceController)
+	assert.Equal(t, "devnet", artifactsServiceController.Name)
+	assert.Equal(t, "CardanoNetwork", artifactsServiceController.Kind)
 	faucetSecretController := metav1.GetControllerOf(faucetAuthSecret)
 	require.NotNil(t, faucetSecretController)
 	assert.Equal(t, "devnet", faucetSecretController.Name)
@@ -966,6 +972,20 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 		},
 	}, faucetService.Spec.Ports)
 
+	assert.Equal(t, "devnet-artifacts", artifactsService.Name)
+	assert.Equal(t, "default", artifactsService.Namespace)
+	assert.Equal(t, "yacd", artifactsService.Labels[labelAppManagedBy])
+	assert.Equal(t, corev1.ServiceTypeClusterIP, artifactsService.Spec.Type)
+	assert.Equal(t, expectedSelector, artifactsService.Spec.Selector)
+	assert.Equal(t, []corev1.ServicePort{
+		{
+			Name:       servePortName,
+			Protocol:   corev1.ProtocolTCP,
+			Port:       defaultServePort,
+			TargetPort: intstr.FromString(servePortName),
+		},
+	}, artifactsService.Spec.Ports)
+
 	assert.Equal(t, "devnet-faucet-auth", faucetAuthSecret.Name)
 	assert.Equal(t, "default", faucetAuthSecret.Namespace)
 	assert.Equal(t, "yacd", faucetAuthSecret.Labels[labelAppManagedBy])
@@ -1061,6 +1081,25 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			assert.Nil(t, resources.KupoService)
 			assert.Nil(t, resources.FaucetService)
 			assert.Nil(t, resources.FaucetAuthSecret)
+			// The artifacts Service fronts the serve sidecar: present for the
+			// curated public profiles, absent for custom-public.
+			if tc.curated {
+				require.NotNil(t, resources.ArtifactsService)
+				assert.Equal(t, tc.name+"-artifacts", resources.ArtifactsService.Name)
+				assert.Equal(t, "default", resources.ArtifactsService.Namespace)
+				assert.Equal(t, corev1.ServiceTypeClusterIP, resources.ArtifactsService.Spec.Type)
+				assert.Equal(t, primaryWorkloadSelectorLabels(network), resources.ArtifactsService.Spec.Selector)
+				assert.Equal(t, []corev1.ServicePort{
+					{
+						Name:       servePortName,
+						Protocol:   corev1.ProtocolTCP,
+						Port:       defaultServePort,
+						TargetPort: intstr.FromString(servePortName),
+					},
+				}, resources.ArtifactsService.Spec.Ports)
+			} else {
+				assert.Nil(t, resources.ArtifactsService)
+			}
 
 			deployment := resources.Deployment
 			assert.Equal(t, tc.name+"-node", deployment.Name)

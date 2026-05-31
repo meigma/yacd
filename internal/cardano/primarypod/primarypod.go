@@ -36,10 +36,10 @@ const (
 	// deliberately not 8080 (the faucet default) so the always-on serve
 	// container can coexist with the faucet on the primary Pod.
 	//
-	// 8090 is intentionally NOT registered in PortOwners yet: PortOwners feeds
-	// the CardanoDBSync sidecar placement collision check, and folding serve
-	// into that check is deferred to the A3 follow-up so this additive PR does
-	// not change db-sync placement behavior.
+	// 8090 IS registered in PortOwners now that the serve sidecar is exposed
+	// on an owned Service: PortOwners feeds the CardanoDBSync sidecar placement
+	// collision check, so a db-sync metrics port set to 8090 is correctly
+	// rejected as a primary Pod conflict.
 	DefaultServePort int32 = 8090
 
 	// LabelAppName is the Kubernetes recommended application name label key.
@@ -112,6 +112,10 @@ func PortOwners(network *yacdv1alpha1.CardanoNetwork) map[int32]string {
 	}
 	ports := map[int32]string{
 		nodePort: PortNameNodeToNode,
+		// The cardano-tools serve sidecar is always-on for the network modes
+		// where it runs (local and curated public) and binds a fixed port, so
+		// it permanently owns DefaultServePort in the primary Pod.
+		DefaultServePort: PortNameServe,
 	}
 	if ogmiosEnabled(network) {
 		ports[ogmiosPort(network)] = PortNameOgmios

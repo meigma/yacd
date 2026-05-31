@@ -120,6 +120,11 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return apiClient.Get(ctx, faucetServiceKey, &corev1.Service{}) == nil
 	}, 10*time.Second, 100*time.Millisecond)
 
+	artifactsServiceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryArtifactsServiceName(network)}
+	require.Eventually(t, func() bool {
+		return apiClient.Get(ctx, artifactsServiceKey, &corev1.Service{}) == nil
+	}, 10*time.Second, 100*time.Millisecond)
+
 	faucetAuthSecretKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}
 	require.Eventually(t, func() bool {
 		secret := &corev1.Secret{}
@@ -213,6 +218,17 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		got := &corev1.Service{}
 		err := apiClient.Get(ctx, faucetServiceKey, got)
 		return err == nil && got.UID != originalFaucetServiceUID
+	}, 10*time.Second, 100*time.Millisecond)
+
+	artifactsService := &corev1.Service{}
+	require.NoError(t, apiClient.Get(ctx, artifactsServiceKey, artifactsService))
+	originalArtifactsServiceUID := artifactsService.UID
+	require.NoError(t, apiClient.Delete(ctx, artifactsService))
+
+	require.Eventually(t, func() bool {
+		got := &corev1.Service{}
+		err := apiClient.Get(ctx, artifactsServiceKey, got)
+		return err == nil && got.UID != originalArtifactsServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
 	artifactsConfigMap := &corev1.ConfigMap{}
@@ -933,6 +949,7 @@ func statusHasProgressingEndpoints(
 		ogmiosEndpointMatches(current, network) &&
 		kupoEndpointMatches(current, network) &&
 		faucetEndpointMatches(current, network) &&
+		artifactsEndpointMatches(current, network) &&
 		faucetStatusMatches(current, network)
 }
 
@@ -1054,6 +1071,16 @@ func faucetEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1
 	return current.Status.Endpoints.Faucet.ServiceName == primaryFaucetServiceName(network) &&
 		current.Status.Endpoints.Faucet.Port == defaultFaucetPort &&
 		current.Status.Endpoints.Faucet.URL == "http://manager-owned-faucet.cardanonetwork-envtest.svc.cluster.local:8080"
+}
+
+func artifactsEndpointMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
+	if current.Status.Endpoints == nil || current.Status.Endpoints.Artifacts == nil {
+		return false
+	}
+
+	return current.Status.Endpoints.Artifacts.ServiceName == primaryArtifactsServiceName(network) &&
+		current.Status.Endpoints.Artifacts.Port == defaultServePort &&
+		current.Status.Endpoints.Artifacts.URL == "http://manager-owned-artifacts.cardanonetwork-envtest.svc.cluster.local:8090"
 }
 
 func faucetStatusMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {

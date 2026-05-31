@@ -22,11 +22,21 @@ func validateKupoImage(settings kupoSettings) error {
 }
 
 // validatePrimaryWorkloadPorts rejects port conflicts across the primary
-// node and the optional chain API sidecars. Each enabled sidecar must claim
-// a distinct port.
-func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) error {
+// node, the optional chain API sidecars, and the always-on cardano-tools
+// serve sidecar. Each must claim a distinct port. serveEnabled reserves the
+// fixed serve port only for the networks that run the serve sidecar.
+func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings, serveEnabled bool) error {
 	seen := map[int32]string{
 		nodePort: cardanoNodePortName,
+	}
+	// The serve sidecar binds a fixed port whenever it runs, so it is reserved
+	// up front and a user-set node or sidecar port that collides with it is
+	// rejected.
+	if serveEnabled {
+		if nodePort == defaultServePort {
+			return unsupportedSpec("node port %d conflicts with %s port", nodePort, servePortName)
+		}
+		seen[defaultServePort] = servePortName
 	}
 	if ogmios.enabled {
 		if owner, ok := seen[ogmios.port]; ok {

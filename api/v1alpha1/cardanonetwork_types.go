@@ -613,6 +613,11 @@ type CardanoNetworkEndpointsStatus struct {
 	// faucet is the local development faucet HTTP endpoint.
 	// +optional
 	Faucet *ServiceEndpointStatus `json:"faucet,omitempty"`
+
+	// artifacts is the cardano-tools serve HTTP endpoint that exposes the
+	// staged network artifact files and manifest.json.
+	// +optional
+	Artifacts *ServiceEndpointStatus `json:"artifacts,omitempty"`
 }
 
 // FaucetStatus reports faucet-specific runtime details.

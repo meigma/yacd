@@ -108,6 +108,14 @@ const (
 	// faucetServiceURLType is the scheme published on the faucet endpoint
 	// status.
 	faucetServiceURLType = "http"
+
+	// defaultServePort is the cardano-tools serve container port used for the
+	// artifacts Service.
+	defaultServePort = primarypod.DefaultServePort
+
+	// serveServiceURLType is the scheme published on the artifacts endpoint
+	// status. The cardano-tools serve sidecar speaks plain HTTP.
+	serveServiceURLType = "http"
 )
 
 // supportedOgmiosNodeVersions maps the recognized ogmios major.minor tag to

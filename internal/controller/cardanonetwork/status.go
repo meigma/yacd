@@ -23,7 +23,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	acceptedIdentity acceptedNetworkIdentity,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -39,6 +39,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
 	faucetService *corev1.Service,
+	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
 	networkArtifactsConfigMap *corev1.ConfigMap,
 	dbSyncAttached bool,
@@ -85,7 +86,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	syncStatus, nodeSynchronized, nodeProgressing := r.primaryNodeSyncStatusConditions(ctx, network, ogmiosService, networkArtifactsConfigMap, artifactResult.Ready, artifactResult.Message)
 	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, faucetAuthSecret, artifactsStatus, syncStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, artifactsService, faucetAuthSecret, artifactsStatus, syncStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -116,6 +117,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	ogmiosService *corev1.Service,
 	kupoService *corev1.Service,
 	faucetService *corev1.Service,
+	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
 	artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus,
 	syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus,
@@ -128,7 +130,7 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 		setNetworkIdentityStatus(network, networkPlan, acceptedIdentity)
 	}
 	if nodeService != nil {
-		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService)
+		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService, artifactsService)
 		setFaucetStatus(network, faucetAuthSecret)
 		setArtifactsStatus(network, artifactsStatus)
 		setSyncStatus(network, syncStatus)
@@ -225,7 +227,7 @@ func setNetworkIdentityStatus(network *yacdv1alpha1.CardanoNetwork, plan primary
 
 // setEndpointStatus publishes the in-cluster endpoint URLs for the primary
 // node-to-node Service and any enabled chain API sidecars.
-func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service, faucetService *corev1.Service) {
+func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1.Service, ogmiosService *corev1.Service, kupoService *corev1.Service, faucetService *corev1.Service, artifactsService *corev1.Service) {
 	if network.Status.Endpoints == nil {
 		network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{}
 	}
@@ -256,13 +258,23 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 
 	if faucetService == nil {
 		network.Status.Endpoints.Faucet = nil
+	} else {
+		network.Status.Endpoints.Faucet = &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: faucetService.Name,
+			Port:        faucetService.Spec.Ports[0].Port,
+			URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", faucetServiceURLType, faucetService.Name, faucetService.Namespace, faucetService.Spec.Ports[0].Port),
+		}
+	}
+
+	if artifactsService == nil {
+		network.Status.Endpoints.Artifacts = nil
 		return
 	}
 
-	network.Status.Endpoints.Faucet = &yacdv1alpha1.ServiceEndpointStatus{
-		ServiceName: faucetService.Name,
-		Port:        faucetService.Spec.Ports[0].Port,
-		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", faucetServiceURLType, faucetService.Name, faucetService.Namespace, faucetService.Spec.Ports[0].Port),
+	network.Status.Endpoints.Artifacts = &yacdv1alpha1.ServiceEndpointStatus{
+		ServiceName: artifactsService.Name,
+		Port:        artifactsService.Spec.Ports[0].Port,
+		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", serveServiceURLType, artifactsService.Name, artifactsService.Namespace, artifactsService.Spec.Ports[0].Port),
 	}
 }
 

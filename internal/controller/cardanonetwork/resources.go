@@ -380,6 +380,38 @@ func (b primaryWorkloadBuilder) faucetService(network *yacdv1alpha1.CardanoNetwo
 	return service, nil
 }
 
+// artifactsService builds the artifacts ClusterIP Service that exposes the
+// always-on cardano-tools serve sidecar. It mirrors the chain API Services:
+// the selector targets the primary node Pod labels and the single port maps to
+// the serve container port.
+func (b primaryWorkloadBuilder) artifactsService(network *yacdv1alpha1.CardanoNetwork) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryArtifactsServiceName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       servePortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       defaultServePort,
+					TargetPort: intstr.FromString(servePortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set artifacts Service owner reference: %w", err)
+	}
+
+	return service, nil
+}
+
 // faucetAuthSecret builds the opaque Secret that carries the faucet's auth
 // token. The data map is populated by the apply phase (the builder cannot
 // generate random material since it must stay pure).

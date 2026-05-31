@@ -30,6 +30,7 @@ type primaryWorkloadResources struct {
 	OgmiosService                   *corev1.Service
 	KupoService                     *corev1.Service
 	FaucetService                   *corev1.Service
+	ArtifactsService                *corev1.Service
 	FaucetAuthSecret                *corev1.Secret
 	DBSyncAttached                  bool
 }
@@ -171,6 +172,16 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	// The artifacts Service fronts the always-on serve sidecar, which is wired
+	// for LOCAL and CURATED PUBLIC networks only (the same gate the Deployment
+	// uses to add the serve container); custom-public has neither.
+	var artifactsService *corev1.Service
+	if networkPlan.isLocal() || isCuratedPublicProfile(networkPlan) {
+		artifactsService, err = b.artifactsService(network)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &primaryWorkloadResources{
 		NetworkPlan:                     networkPlan,
@@ -184,6 +195,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		OgmiosService:                   ogmiosService,
 		KupoService:                     kupoService,
 		FaucetService:                   faucetService,
+		ArtifactsService:                artifactsService,
 		FaucetAuthSecret:                faucetAuthSecret,
 		DBSyncAttached:                  b.dbSyncAttachment != nil,
 	}, nil
@@ -263,7 +275,10 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	if err := validateKupoImage(kupo); err != nil {
 		return chainAPISettings{}, err
 	}
-	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet); err != nil {
+	// The serve sidecar runs (and owns its fixed port) only for LOCAL and
+	// CURATED PUBLIC networks; custom-public has no serve port to reserve.
+	serveEnabled := plan.isLocal() || isCuratedPublicProfile(plan)
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet, serveEnabled); err != nil {
 		return chainAPISettings{}, err
 	}
 
