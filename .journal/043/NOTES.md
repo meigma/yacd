@@ -993,3 +993,150 @@ Then PR-C (db-sync HTTP) -> PR-B (delete ConfigMap+publisher+RBAC, F0 unblock) -
 
 Branch feat/f0-public-profile-pvc @ 0bc7e35 on origin. Plan A->C->B->D in
 .claude/plans/ok-please-propose-a-curious-toucan.md. Surface map walf31hi2.
+
+---
+
+# ►► HANDOFF — START HERE (next agent, fresh context) ◄◄
+_Written 2026-05-31. Read this whole section before doing anything._
+
+## What this work is
+Fixing TEST_REPORT **F0** (public mainnet `CardanoNetwork` can't be created: the
+`<net>-network-artifacts` ConfigMap exceeds etcd's ~1 MiB cap) — but reframed by
+the user into a larger, correct redesign: **the manager must not be an
+authoritative source of network config, and the artifact ConfigMap is removed
+entirely (both modes).**
+
+Target architecture (DECIDED, do not relitigate):
+- Manager holds **no** configs — only metadata (`internal/cardano/publicpins`:
+  source URLs, pinned digests, static magic).
+- **Local** configs are GENERATED (`cardano-testnet create-env`) onto the node
+  state PVC; **public** configs are FETCHED from the operations book onto the PVC
+  (config/topology/Mithril pinned; genesis trusted-then-verified-downstream by
+  cardano-node via config.json inline hashes — the user explicitly chose "trust
+  the remote source," matching normal node-operator practice).
+- `cardano-node` reads config from the PVC (`/state/profile`). **No ConfigMap.**
+- EVERY other consumer (db-sync follower, CLI, out-of-cluster) fetches over HTTP
+  from an always-on cardano-tools **`serve`** sidecar + owned ClusterIP Service.
+- Integrity/discovery = a served **`manifest.json`** (schemaVersion + per-file
+  sha256); `status.Endpoints.Artifacts.url` advertises the serve URL,
+  `status.Artifacts.DataHash` = sha256 of the manifest.
+
+## Current state (all verified green)
+- Branch: **`feat/f0-public-profile-pvc`** @ `41def22`, attached, clean, in sync
+  with origin. Rebased onto current `origin/master` (so `internal/cardano/toolsimage`
+  from PR #68 IS present). **No PR opened yet** (correct — incoherent until the
+  controller wiring lands).
+- 4 commits on top of master: publicpins registry, publicpins static identity,
+  fetch→publicpins adapter, and **A1** `feat(networkartifacts): add served
+  artifact manifest contract` (manifest.go + ManifestKey + golden fix).
+- `moon run root:test` and `moon run root:check` both EXIT 0 at 41def22.
+- Items 7/8/9/10 of the original 11 are DONE+merged on master (cardano-tools
+  image seam, PR-CI build, static-musl guard, published
+  `cardano-tools:11.0.1-yacd.4` @ `sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e`).
+
+## The plan: PRs A → C → B → D (ORDER MATTERS)
+Full detail in `.claude/plans/ok-please-propose-a-curious-toucan.md` (the
+"A→C→B→D" section). An 8-agent surface-map + adversarial-verify workflow
+(`walf31hi2`; full output `/private/tmp/claude-501/-Users-josh-code-meigma-yacd/059f50a3-0e0d-45a6-b523-466d6d95d673/tasks/walf31hi2.output`,
+verdicts in `/tmp/wf_verify.txt` — may be gone, regenerate by re-reading the
+task output) proved the original A→B→C→D order BRICKS db-sync. Use A→C→B→D:
+- **PR-A** (IN PROGRESS): serve sidecar + manifest + status endpoint. ADDITIVE —
+  ConfigMap stays, node/db-sync unchanged, so build+chainsaw stay green.
+  - **A1 DONE** (41def22): `internal/cardano/networkartifacts/manifest.go` —
+    `Manifest{SchemaVersion, Files{name:sha256}}` + `BuildManifest`/`Verify`/
+    `JSON`/`FileDigest`; `ManifestKey="manifest.json"` added to optional contract
+    keys so `serve`'s allowlist exposes `GET /manifest.json` by construction.
+  - **A2 NEXT** (see "Immediate next step").
+  - **A3**: owned `<net>-artifacts` ClusterIP Service (mirror `ogmiosService` in
+    `internal/controller/cardanonetwork/resources.go`); add `PortNameArtifacts`
+    + `DefaultServePort=8090` to `internal/cardano/primarypod/primarypod.go` and
+    include it in `PortOwners` (8080 collides with faucet — verification flagged
+    this, and the collision propagates to db-sync placement validation); add
+    `Artifacts *ServiceEndpointStatus` to `CardanoNetworkEndpointsStatus`
+    (`api/v1alpha1/cardanonetwork_types.go:526-542`), publish it in
+    `status.go:setEndpointStatus` gated on the Service existing (mirror the
+    ogmios nil-gate); run `moon run root:generate` (CRD + deepcopy).
+- **PR-C**: db-sync consumes configs over HTTP from the primary serve endpoint
+  (replace the ConfigMap mount with a cardano-tools fetch init → emptyDir +
+  manifest verify). Reworks ~6 cardanodbsync files + cross-controller edit to
+  `internal/controller/cardanonetwork/dbsync_sidecar.go:103,113`. MUST land
+  before PR-B.
+- **PR-B**: node reads from PVC; DELETE the ConfigMap + artifact-publisher
+  RBAC/SA + the `containers/cardano-testnet/publisher` binary + its txtar
+  goldens + `networkartifacts` ProducerConfigMap path + remove
+  `Status.Artifacts.NetworkConfigMapName`. RBAC marker drop MUST be mirrored in
+  `charts/yacd/templates/rbac-manager.yaml` in the SAME PR
+  (`TestManagerRBACMatchesControllerGen` enforces byte-equivalence). This is the
+  mainnet unblock. NOTE: "manager embed" was a misnomer — public node config
+  comes from the ConfigMap **volume mount** (`resources.go:45-54` +
+  `containers.go:104-105`), NOT the `//go:embed` (that stays as the byte source).
+- **PR-D**: remove cardano-tools `report` verb + its golden + report-only
+  packages; pin manager default cardano-tools image to the `@sha256:9ca9e03...`
+  digest; rewrite `DESIGN.md` ConfigMap prose; rewrite
+  `test/chainsaw/manager-smoke/chainsaw-test.yaml` (~20 assertions). NOTE:
+  chainsaw asserts the OLD shape and runs on EVERY PR's `root:test-e2e`, so each
+  of PR-A/C/B must keep chainsaw green as it goes — don't defer all chainsaw to D.
+
+## Immediate next step: PR-A / A2
+Add the always-on serve sidecar + make a manifest.json get written into the
+staged dir. Concretely:
+1. The serve sidecar runs `yacd-cardano-tools serve --artifacts-dir <stagedDir>
+   --listen :8090` (flags confirmed in
+   `containers/cardano-tools/internal/cli/serve.go`: `--artifacts-dir`,
+   `--listen`, `--read-header-timeout`). Wire it as a **native sidecar**
+   (initContainer with `RestartPolicy: Always`) in
+   `internal/controller/cardanonetwork/resources.go:deployment()` using
+   `b.cardanoToolsImage(version)` (see how `toolsimage.Reference` is used; note
+   the builder may still need a `defaultCardanoToolsImage` field threaded from
+   the reconciler — verify, it was flagged as a GAP on this branch). Restricted
+   SecurityContext (uid 10001, drop ALL, RO root, seccomp RuntimeDefault) —
+   mirror `cardanoTestnetInitContainer`.
+2. A manifest.json must exist in the served dir. Decide: simplest is the
+   controller/init writes it, OR add a step to cardano-tools generate/fetch.
+   Since A is additive and the ConfigMap still feeds the node, A2 can stage a
+   parallel served dir; or defer the real write to align with PR-B's PVC staging
+   and have A2 just stand up serve against the existing artifact dir. Use
+   `networkartifacts.BuildManifest` (from A1) wherever the write lands.
+3. Keep it ADDITIVE: do not remove the ConfigMap or change node mounts in A.
+4. Validate: `moon run root:test` + `moon run root:check` (NOT plain `go test` —
+   see gotchas). Then commit (signing — see gotchas) and continue to A3.
+
+## CRITICAL GOTCHAS (these burned the previous agent — heed them)
+1. **Commit signing**: `commit.gpgsign=true`; commits trigger an interactive GPG
+   pinentry. In an unattended/autonomous context this CANCELS and the commit
+   fails (`gpg: signing failed`). Only commit when the USER is present, OR ask
+   them to allow `git -c commit.gpgsign=false` on this branch. Do NOT silently
+   skip validation because a commit "didn't take" — verify HEAD moved.
+2. **Read-tool corruption is REAL and intermittent this session**: the Read tool
+   sometimes returns garbled/blank/duplicated content (e.g. rendered a 31-line
+   file as ~10k blank lines; Cyrillic substitutions once). Before editing any
+   file, if the Read looks structurally wrong, cross-check with
+   `git show HEAD:<path>`. For risky edits, prefer an asserted exact-match
+   (Edit tool fails closed on mismatch) and ALWAYS re-run the test after, before
+   committing. (Previous agent amended+pushed once with a silently-failed edit.)
+3. **`go test ./...` ≠ authoritative**: plain `go test` fails with
+   `/usr/local/kubebuilder/bin/etcd: no such file or directory` on every
+   envtest package — that's missing assets, NOT your bug. Use `moon run root:test`
+   (sets KUBEBUILDER_ASSETS via setup-envtest). For direct go commands prepend
+   `PATH="$(ls -d /Users/josh/.proto/tools/go/*/bin|head -1):$PATH"` and ignore
+   gopls `malformed import path "{{context.Compiler}}"` diagnostics (proto shim
+   false positive).
+4. **HEAD detach risk**: after a rebase/amend the worktree HEAD has gone detached
+   while the branch ref lagged. Run `git symbolic-ref -q HEAD` before/after
+   commits; if detached but fast-forward-safe, `git checkout -B
+   feat/f0-public-profile-pvc` reattaches without losing commits.
+5. **Dev stack is owned by the WRONG worktree**: `.run/yacd-dev/worktree` points
+   at `.wt/feat-cardano-tools-image-foundation` (the old PR1 worktree), context
+   `kind-yacd-dev` is up. For an in-cluster smoke from THIS branch, repoint:
+   `moon run root:dev-down` then `moon run root:dev-up` from
+   `.wt/feat-f0-public-profile-pvc`.
+
+## Don't-relitigate decisions (already settled with the user)
+- Trust the remote source for genesis (no genesis pinning). publicpins pins only
+  config/topology/Mithril.
+- No ConfigMap in EITHER mode; serve-over-HTTP for all non-node consumers.
+- Served manifest.json is the integrity model (not status-only digests).
+- PR order A→C→B→D.
+- Custom public profiles: out of the curated-fetch path; they keep their small
+  user-supplied bytes (today via ConfigMap) — handle in PR-B/PR-C carefully, the
+  redesign's fetch path is curated-only.
