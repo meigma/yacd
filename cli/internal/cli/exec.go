@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/spf13/cobra"
@@ -47,12 +51,19 @@ automatically.
 Put -- before the command so its flags are passed through to it. The command is
 run directly, not through a shell, so $VAR references in arguments are NOT
 expanded; wrap the command in a shell (sh -c '...') to interpolate the YACD_*
-variables into arguments.`,
+variables into arguments.
+
+When stdin and stdout are a terminal, exec attaches an interactive TTY (raw
+mode), so "yacd exec my-net -- sh" opens an interactive shell in the node Pod;
+piped or non-terminal invocations (CI) stream without a TTY.`,
 		Example: `  # cardano-cli reads CARDANO_NODE_SOCKET_PATH from the pod environment:
   yacd exec my-net -- cardano-cli query tip --testnet-magic 42
 
   # To interpolate YACD_* variables into arguments, run a shell explicitly:
-  yacd exec my-net -- sh -c 'cardano-cli query tip --testnet-magic "$YACD_NETWORK_MAGIC"'`,
+  yacd exec my-net -- sh -c 'cardano-cli query tip --testnet-magic "$YACD_NETWORK_MAGIC"'
+
+  # From a terminal, open an interactive shell in the node Pod:
+  yacd exec my-net -- sh`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
@@ -88,7 +99,11 @@ variables into arguments.`,
 				return err
 			}
 
-			stdin, tty := execStdin(commandContext.in)
+			stdin, stdinFile, stdinIsTTY := execStdin(commandContext.in)
+			// Drive an interactive TTY only when both stdin and stdout are real
+			// terminals: requesting a remote PTY while stdout is redirected would
+			// garble the captured output.
+			interactive := stdinIsTTY && isTerminalWriter(commandContext.out)
 			request := kube.ExecRequest{
 				Namespace: namespace,
 				PodName:   podName,
@@ -97,7 +112,15 @@ variables into arguments.`,
 				Stdin:     stdin,
 				Stdout:    commandContext.out,
 				Stderr:    commandContext.err,
-				TTY:       tty,
+				TTY:       interactive,
+			}
+			if interactive {
+				restore, sizeQueue, err := enterRawTerminal(cmd.Context(), stdinFile)
+				if err != nil {
+					return fmt.Errorf("prepare interactive terminal: %w", err)
+				}
+				defer restore()
+				request.SizeQueue = sizeQueue
 			}
 			if err := kubeClient.Exec(cmd.Context(), request); err != nil {
 				return execExitError(err)
@@ -125,15 +148,141 @@ func wrapExecCommand(env []string, command []string) []string {
 	return wrapped
 }
 
-// execStdin attaches the caller's stdin and requests a TTY only when stdin is a
-// real terminal, so interactive sessions get a TTY while scripted or piped
-// invocations (CI) stream without one.
-func execStdin(in io.Reader) (io.Reader, bool) {
-	if file, ok := in.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
-		return in, true
+// execStdin attaches the caller's stdin and, when stdin is a real terminal,
+// surfaces the underlying *os.File so the caller can enter raw mode and read the
+// terminal size. isTTY is true only when a terminal file was found; scripted or
+// piped invocations (CI) stream without one.
+func execStdin(in io.Reader) (stdin io.Reader, file *os.File, isTTY bool) {
+	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		return in, f, true
 	}
 
-	return in, false
+	return in, nil, false
+}
+
+// isTerminalWriter reports whether w is backed by a terminal file descriptor.
+func isTerminalWriter(w io.Writer) bool {
+	file, ok := w.(*os.File)
+
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+// enterRawTerminal puts the terminal into raw mode and returns a restore
+// function plus a TerminalSizeQueue seeded with the current size and refreshed
+// on SIGWINCH. restore is idempotent and safe to defer: it stops SIGWINCH
+// delivery, ends the size queue (so the adapter's resize stream terminates),
+// and restores the cooked terminal state — on normal return, on the exec error
+// path, and during a panic unwind. SIGWINCH is unix-only; releases target
+// darwin/linux, so a Windows build would need this wiring behind a build tag.
+func enterRawTerminal(ctx context.Context, file *os.File) (func(), kube.TerminalSizeQueue, error) {
+	fd := int(file.Fd())
+	oldState, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	queue := newTerminalSizeQueue(fd)
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+
+	go func() {
+		for {
+			select {
+			case <-winch:
+				queue.refresh()
+			case <-queue.done:
+				return
+			case <-ctx.Done():
+				queue.close()
+
+				return
+			}
+		}
+	}()
+
+	var once sync.Once
+	restore := func() {
+		once.Do(func() {
+			signal.Stop(winch)
+			queue.close()
+			_ = term.Restore(fd, oldState)
+		})
+	}
+
+	return restore, queue, nil
+}
+
+// terminalSizeQueue implements kube.TerminalSizeQueue from the host terminal. It
+// seeds the current size and coalesces SIGWINCH-driven updates through a
+// capacity-one channel so a burst never blocks the signal goroutine; closing it
+// makes Next return ok=false so the adapter ends the resize stream.
+type terminalSizeQueue struct {
+	fd        int
+	sizes     chan kube.TerminalSize
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newTerminalSizeQueue(fd int) *terminalSizeQueue {
+	queue := &terminalSizeQueue{
+		fd:    fd,
+		sizes: make(chan kube.TerminalSize, 1),
+		done:  make(chan struct{}),
+	}
+	queue.refresh() // seed the initial size so the remote PTY starts correctly sized
+
+	return queue
+}
+
+// Next returns the next terminal size, or ok=false once the queue is closed.
+func (q *terminalSizeQueue) Next() (kube.TerminalSize, bool) {
+	select {
+	case size := <-q.sizes:
+		return size, true
+	case <-q.done:
+		return kube.TerminalSize{}, false
+	}
+}
+
+// refresh reads the current terminal size and enqueues it, dropping any stale
+// pending size so the newest one wins. It never blocks: there is a single
+// producer (the seed call, then the SIGWINCH goroutine), so the
+// drain-then-send keeps the capacity-one channel holding the latest size.
+func (q *terminalSizeQueue) refresh() {
+	width, height, err := term.GetSize(q.fd)
+	if err != nil {
+		return
+	}
+	size := kube.TerminalSize{Width: clampDimension(width), Height: clampDimension(height)}
+	select {
+	case q.sizes <- size:
+	default:
+		select {
+		case <-q.sizes:
+		default:
+		}
+		select {
+		case q.sizes <- size:
+		default:
+		}
+	}
+}
+
+func (q *terminalSizeQueue) close() {
+	q.closeOnce.Do(func() { close(q.done) })
+}
+
+// clampDimension narrows a terminal dimension to the uint16 the remote PTY
+// protocol uses, guarding the conversion against absurd values.
+func clampDimension(value int) uint16 {
+	if value < 0 {
+		return 0
+	}
+	if value > 65535 {
+		return 65535
+	}
+
+	return uint16(value)
 }
 
 // execExitError maps a remote exec failure to an exitError carrying the remote

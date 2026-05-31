@@ -44,6 +44,15 @@ To interpolate `YACD_*` variables into arguments, run a shell explicitly:
 yacd exec my-net -- sh -c 'cardano-cli query tip --testnet-magic "$YACD_NETWORK_MAGIC"'
 ```
 
+When stdin and stdout are a terminal, `exec` attaches an interactive TTY (raw
+mode, with window resizes forwarded), so this opens an interactive shell inside
+the node Pod; piped or non-terminal invocations (for example in CI) stream
+without a TTY:
+
+```sh
+yacd exec my-net -- sh
+```
+
 ## The `YACD_*` environment variables
 
 The variable **names are identical** whether a command runs on the host
