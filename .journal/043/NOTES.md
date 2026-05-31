@@ -337,7 +337,7 @@ sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e
 Reads came back clean this tick; earlier "delivery corruption" was overcautious
 (intermittent display garble, not file corruption). Proceeded with PR2 slice 1.
 
-Committed on feat/f0-public-profile-pvc (3f8d9c2, pushed to origin; NO PR yet —
+Committed on feat/f0-public-profile-pvc (17025c3, pushed to origin; NO PR yet —
 push to a non-master branch w/o PR doesn't trigger ci.yml):
 - internal/cardano/publicpins/publicpins.go — shared curated profile registry
   (File{ArtifactKey,SourceName,ConnectionKey,Source,SHA256,Optional,Pinned},
