@@ -313,3 +313,21 @@ PR2 build order (committed slices on feat/f0-public-profile-pvc):
   4. controller: manifest-only public ConfigMap + /state/profile fetch init + node mount repoint
   5. mode-aware dataContract (public requires connection.json+yacd-public-profile.json)
   6. public report path + goldens; toolsimage digest pin; tests + chainsaw preview
+
+## 2026-05-31 (later) — PR2 coding DEFERRED: tool-result delivery corruption
+
+Started PR2 reads to build internal/cardano/publicpins but BOTH Read and
+`git show` results came back garbled this turn (truncated <64-hex digests,
+phantom lines like `mainnetConfigSHA256Hash = ""` and `func pinsFor( placeholder`,
+non-rendering grep counts). The on-disk files are the merged PR #64 code (CI
+passed) and are fine — the corruption is in tool-result DELIVERY, intermittent
+all session. Refusing to author publicpins (must reproduce exact 64-char
+digests + pinsFor structure) from unreliable reads.
+
+State is clean to resume: nothing written to the PR2 branch yet (only journal
+commits on journal branch). Resume plan unchanged — start at slice 1
+(publicpins) per the build order above, re-reading pins.go + publicnet/{plan,
+types,fingerprint}.go cleanly first. Published digest for the toolsimage pin:
+sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e
+(tag 11.0.1-yacd.4). Profile file digests captured in /tmp/profile_hashes.txt
+(ephemeral — recompute with shasum -a 256 on the profiles/ tree if gone).
