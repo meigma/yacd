@@ -1,7 +1,8 @@
 // Command yacd-cardano-tools is the single utility YACD uses for Cardano
 // network artifact operations: generating localnet artifacts, fetching public
-// network artifacts from trusted sources, serving an artifact directory over
-// HTTP, and reporting an artifact set's manifest into the network ConfigMap.
+// network artifacts from trusted sources, staging a localnet state directory
+// into a flat served directory, serving an artifact directory over HTTP, and
+// reporting an artifact set's manifest into the network ConfigMap.
 package main
 
 import (

@@ -1,0 +1,42 @@
+# stage --dry-run flattens a create-env state directory into the list of files
+# it would write to the served directory, without touching disk. The served set
+# is the flattened contract keys plus the synthesized connection.json and the
+# integrity manifest.json. The nested node-data/node1/topology.json is flattened
+# to its contract key primary-topology.json.
+
+env YACD_STATE_DIR=$WORK/env
+env YACD_OUTPUT_DIR=$WORK/served
+env YACD_CARDANO_NETWORK_NAME=demo
+env YACD_CARDANO_NETWORK_NAMESPACE=dev
+env YACD_CARDANO_NETWORK_MODE=local
+env YACD_CARDANO_NETWORK_ERA=conway
+env YACD_CARDANO_NODE_TO_NODE_HOST=demo-node.dev.svc.cluster.local
+env YACD_CARDANO_NODE_TO_NODE_PORT=3001
+
+exec yacd-cardano-tools stage --dry-run
+stdout '^output directory: '
+stdout '^would write configuration\.yaml$'
+stdout '^would write primary-topology\.json$'
+stdout '^would write connection\.json$'
+stdout '^would write manifest\.json$'
+stdout '^would write yacd-localnet-plan\.json$'
+! stderr .
+
+# The served directory is never created by a dry run.
+! exists $WORK/served
+
+-- env/configuration.yaml --
+ConwayGenesisFile: conway-genesis.json
+ConwayGenesisHash: hash-conway-genesis
+-- env/byron-genesis.json --
+{"byron":true}
+-- env/shelley-genesis.json --
+{"shelley":true}
+-- env/alonzo-genesis.json --
+{"alonzo":true}
+-- env/conway-genesis.json --
+{"conway":true}
+-- env/node-data/node1/topology.json --
+{"Producers":[]}
+-- env/yacd-localnet-plan.json --
+{"schemaVersion":"test","inputs":{"networkMagic":42},"fingerprint":{"algorithm":"sha256","value":"abc123"}}

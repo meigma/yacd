@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	"github.com/meigma/yacd/internal/cardano/publicpins"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,76 @@ func TestRunRejectsUnknownProfile(t *testing.T) {
 	err := Run(context.Background(), Options{Profile: "nope", OutputDir: t.TempDir()}, fakeDoer{}, io.Discard)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown profile")
+}
+
+// TestRunWritesConnectionAndManifest verifies that after the pinned files are
+// downloaded, Run completes the served directory with connection.json and a
+// manifest.json that covers every served file (itself excluded) and verifies.
+func TestRunWritesConnectionAndManifest(t *testing.T) {
+	t.Parallel()
+
+	config := pinnedPreviewConfig(t)
+	dir := t.TempDir()
+	err := Run(t.Context(), Options{Profile: "preview", OutputDir: dir},
+		fakeDoer{bodies: previewBodies(t, config)}, io.Discard)
+	require.NoError(t, err)
+
+	// connection.json is a public document: it records the profile and the
+	// static network magic, omits cluster-runtime identity, and maps connection
+	// keys to served filenames.
+	connRaw, err := os.ReadFile(filepath.Join(dir, networkartifacts.ConnectionKey))
+	require.NoError(t, err)
+	var conn struct {
+		SchemaVersion string `json:"schemaVersion"`
+		Network       struct {
+			Mode         string `json:"mode"`
+			Profile      string `json:"profile"`
+			NetworkMagic int64  `json:"networkMagic"`
+		} `json:"network"`
+		Files map[string]string `json:"files"`
+	}
+	require.NoError(t, json.Unmarshal(connRaw, &conn))
+	assert.Equal(t, networkartifacts.SchemaVersion, conn.SchemaVersion)
+	assert.Equal(t, "public", conn.Network.Mode)
+	assert.Equal(t, "preview", conn.Network.Profile)
+	assert.EqualValues(t, 2, conn.Network.NetworkMagic, "preview network magic from publicpins")
+	assert.Equal(t, networkartifacts.ConfigurationKey, conn.Files["configuration"])
+	assert.Equal(t, networkartifacts.PrimaryTopologyKey, conn.Files["primaryTopology"])
+	// The skipped optional peer-snapshot is not referenced.
+	assert.NotContains(t, conn.Files, "peerSnapshot")
+
+	// manifest.json verifies every served file, including connection.json, and
+	// excludes itself.
+	manifestRaw, err := os.ReadFile(filepath.Join(dir, networkartifacts.ManifestKey))
+	require.NoError(t, err)
+	var manifest networkartifacts.Manifest
+	require.NoError(t, json.Unmarshal(manifestRaw, &manifest))
+	assert.Equal(t, networkartifacts.SchemaVersion, manifest.SchemaVersion)
+	assert.NotContains(t, manifest.Files, networkartifacts.ManifestKey, "manifest never lists itself")
+
+	for _, name := range manifest.SortedFileNames() {
+		content, readErr := os.ReadFile(filepath.Join(dir, name))
+		require.NoErrorf(t, readErr, "manifest names an unreadable file %s", name)
+		assert.NoErrorf(t, manifest.Verify(name, content), "manifest digest must match %s", name)
+	}
+	// connection.json is one of the verified files.
+	assert.Contains(t, manifest.Files, networkartifacts.ConnectionKey)
+	assert.NoError(t, manifest.Verify(networkartifacts.ConnectionKey, connRaw))
+}
+
+// TestRunDryRunWritesNothing confirms dry-run prints the manifest and leaves the
+// output directory empty: no artifacts, no connection.json, no manifest.json.
+func TestRunDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	var out bytes.Buffer
+	err := Run(t.Context(), Options{Profile: "preview", OutputDir: dir, DryRun: true},
+		fakeDoer{}, &out)
+	require.NoError(t, err)
+
+	assert.Contains(t, out.String(), "profile: preview")
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "dry-run writes no files")
 }
