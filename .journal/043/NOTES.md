@@ -525,3 +525,51 @@ ground truth -> must convert that test to a frozen-golden of the publicpins
 pinned digests in the SAME slice.
 
 Dev stack still up (PR1 worktree). Will surface Q1/Q2 to user next.
+
+## 2026-05-31 (later) — Slice 2 design Qs ANSWERED
+
+Q1 fingerprint -> "Pinned digests + magic": curated public fingerprint becomes
+sha256(json{schemaVersion, profile, networkMagic, requiresNetworkMagic,
+files:[config, topology, mithril vkeys -- pinned set only]}). Genesis/checkpoints
+EXCLUDED (manager no longer has bytes; node verifies downstream). Fingerprint
+value+algorithm changes; OK pre-1.0 (no persisted public networks). plan_test.go
+golden fingerprints WILL change intentionally -> recompute + update goldens.
+Q2 custom -> "Curated-only; custom unchanged": PVC-fetch + manifest-only ConfigMap
+applies to curated preview/preprod/mainnet ONLY. Custom keeps byte-based path:
+user-supplied bytes stay in the artifacts ConfigMap mounted directly (no fetch,
+no pins). So BuildPlan keeps two paths: curated (metadata/digests from publicpins,
+no embed) vs custom (bytes from CustomBundle, fingerprint over those bytes as
+today).
+
+Slice 2 concrete plan (this is the F0 core, controller wiring follows in slice 4):
+- publicnet/plan.go: delete //go:embed + profileAssets; loadCuratedArtifacts no
+  longer reads bytes. Curated path now produces, from publicpins.Lookup(profile):
+  the file list (ArtifactKey/ConnectionKey/SourceName/Pinned/SHA256/Optional),
+  the manifest (Files map + per-pinned-file sha256), and fingerprint over the
+  pinned-set digests + magic. networkMagic/requiresNetworkMagic are no longer
+  parsed from genesis bytes the manager lacks -> move them into publicpins as
+  static per-profile facts (preview magic=2 RequiresMagic; preprod=1 RequiresMagic;
+  mainnet=764824073 RequiresNoMagic -- captured from embed before deletion).
+  Mithril vkeys: manager no longer has the .vkey bytes; MithrilPlan.{Genesis,
+  Ancillary}VerificationKey were sourced from artifacts[...] -> now must come
+  from publicpins (the vkeys are tiny + pinned; safe to carry their CONTENT in
+  publicpins? NO -- publicpins has digests, not bytes). DECISION NEEDED in-slice:
+  either (a) vkeys move to fetch-staged files + MithrilPlan references the staged
+  path, or (b) keep the two .vkey files embedded (they are 223B/221B, trivial)
+  while dropping the big genesis embed. Lean (b): keep mithril vkeys embedded
+  (tiny, and Mithril bootstrap needs their content as env/args), drop only the
+  large genesis/config/topology/checkpoints embed. Re-confirm against init
+  container usage in slice 4.
+- Custom path unchanged (still reads CustomBundle.Files, fingerprints over bytes).
+- Manifest gains per-file sha256 for pinned files (yacd-public-profile.json).
+- Convert publicpins_crosscheck_test.go: it currently reads embedded bytes; after
+  embed removal of genesis it can still read config/topology (if those stay
+  embedded?) -- but plan says drop the whole curated embed. So convert the
+  cross-check to a frozen golden of publicpins pinned digests in THIS slice.
+- .dockerignore: drop the profiles re-include for the deleted tree (but KEEP it
+  if mithril vkeys remain embedded -> adjust to the narrower path).
+- plan_test.go: update golden fingerprints (intentional change).
+
+OPEN micro-decision for slice 2 (vkeys embed-or-fetch) noted above; will resolve
+by reading init_container.go mithril usage in slice 4 prep, leaning keep-vkeys-
+embedded. This does not need a user round-trip (reversible, internal).
