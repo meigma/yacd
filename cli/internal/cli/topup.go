@@ -120,6 +120,11 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 				// not the faucet's echoed value, so an empty echo cannot widen
 				// the Kupo query to all UTxOs.
 				confirmer := commandContext.utxoConfirmerFactory(kupoURL)
+				// One-time notice so the otherwise-silent poll does not look
+				// hung. It goes to stderr (not stdout) to keep --json output
+				// clean, and is best-effort: the funding transaction is already
+				// submitted, so a stderr hiccup must not fail the command.
+				_, _ = fmt.Fprintf(commandContext.err, "Waiting up to %s for %s to confirm on-chain...\n", awaitTimeout, result.TxID)
 				if err := awaitConfirmation(cmd.Context(), confirmer, destinationAddress, result.TxID, awaitTimeout); err != nil {
 					return err
 				}

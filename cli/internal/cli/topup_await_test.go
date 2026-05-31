@@ -95,9 +95,10 @@ func TestTopUpAwaitConfirmsOnChain(t *testing.T) {
 	confirmer.EXPECT().TransactionIDs(mock.Anything, "addr_test1dest").Return([]string{"abc123"}, nil)
 	var gotKupoURL string
 
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	root := NewRootCommand(Options{
 		Out:               &stdout,
+		Err:               &stderr,
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 		UTxOConfirmerFactory: func(kupoURL string) UTxOConfirmer {
@@ -117,6 +118,51 @@ func TestTopUpAwaitConfirmsOnChain(t *testing.T) {
 	assert.Equal(t, "http://127.0.0.1:1442", gotKupoURL)
 	assert.Contains(t, stdout.String(), "Submitted top-up abc123")
 	assert.Contains(t, stdout.String(), "Confirmed on-chain.")
+	// The poll is otherwise silent, so it announces the wait on stderr (keeping
+	// stdout/--json clean).
+	assert.Contains(t, stderr.String(), "Waiting up to")
+	assert.Contains(t, stderr.String(), "abc123")
+}
+
+// TestTopUpAwaitQueriesRequestedAddressNotEcho pins the security invariant that
+// --await polls the address we asked to fund, not the faucet's echoed value:
+// the faucet here echoes a different destination, and the confirmer must still
+// be queried with the requested --address. A regression to result.Destination-
+// Address would query the echoed value and fail the mock's expectation.
+func TestTopUpAwaitQueriesRequestedAddressNotEcho(t *testing.T) {
+	t.Parallel()
+
+	faucetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Echoes a destination that differs from the requested --address.
+		_, _ = fmt.Fprint(w, `{"txId":"abc123","source":"utxo1","sourceAddress":"addr_test1source","destinationAddress":"addr_test1echoed","lovelace":2000000}`)
+	}))
+	t.Cleanup(faucetServer.Close)
+
+	client := newKubeMock(t)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
+	client.EXPECT().GetSecretValue(mock.Anything, "devnet", testTopUpAuthSecret, faucetAuthTokenKey).Return(testTopUpToken, nil)
+
+	confirmer := mocks.NewUTxOConfirmer(t)
+	// The invariant: queried with the requested address, never the echoed one.
+	confirmer.EXPECT().TransactionIDs(mock.Anything, "addr_test1dest").Return([]string{"abc123"}, nil)
+
+	root := NewRootCommand(Options{
+		Out:                  &bytes.Buffer{},
+		Err:                  &bytes.Buffer{},
+		Viper:                viper.New(),
+		KubeClientFactory:    kubeClientFactory(client),
+		UTxOConfirmerFactory: func(string) UTxOConfirmer { return confirmer },
+	})
+	root.SetArgs([]string{
+		"topup", "devnet",
+		"--address", "addr_test1dest", "--lovelace", "2000000",
+		"--faucet-url", faucetServer.URL,
+		"--await", "--kupo-url", "http://127.0.0.1:1442",
+	})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
 }
 
 func TestTopUpAwaitReadsKupoURLFromEnv(t *testing.T) {
