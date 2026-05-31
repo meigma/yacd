@@ -312,3 +312,49 @@ identity — runtime endpoint enrichment is a controller/PR-C concern, likely fi
 for the producer commit). If good, commit Commit A (user present for GPG). Then
 Commit B (controller threading + stage init + serve sidecar) and Commit C (A3
 Service/status). Working tree NOT clean — do not branch/rebase until committed.
+
+## 2026-05-31 14:45 — Commit A COMMITTED + green; starting Commit B (controller)
+Reviewed the producer diff (publicconnection.go reuses networkartifacts.SchemaVersion
++ validates inputs + documents the static-only fields; stage.go reuses
+artifactset.ReadManifest/ReadArtifacts/Build with a path-sep safety guard + manifest
+last; fetch.go accumulates written bytes, renders public connection.json from
+per-file connection keys + static magic, writes manifest last; report path/golden
+untouched). Independently re-ran root:check + root:test — GREEN. Committed as
+**aa46eda** "feat(cardano-tools): stage flat served artifact dir with connection +
+manifest" (GPG-signed, tree clean).
+
+COMMIT B (controller, additive — the serve wiring) scope + decisions:
+- Threading: add `defaultCardanoToolsImage` field + `cardanoToolsImage(toolVersion)`
+  method (returns toolsimage.Reference(override, version)) to primaryWorkloadBuilder;
+  pass r.DefaultCardanoToolsImage at the builder construction in controller.go.
+  (Must land WITH a consumer or it trips the `unused` linter — so threading + serve
+  container land together.)
+- defaults.go: servedArtifactsDir = "/state/artifacts" (subdir of the /state PVC).
+- init_container.go: stageArtifactsInitContainer (image cardanoToolsImage; hardened
+  SC mirrored from cardanoTestnetInitContainer; mount localnet-state PVC at /state).
+  LOCAL: `stage --state-dir /state/env --output-dir /state/artifacts` + identity
+  flags (read cli/stage.go + config/config_stage.go for exact flags). CURATED
+  PUBLIC: `fetch --profile <p> --output-dir /state/artifacts`. Ordered after
+  create-env/mithril.
+- containers.go: serveContainer (image cardanoToolsImage; `serve --artifacts-dir
+  /state/artifacts --listen :8090`; ContainerPort 8090 "serve"; RO /state mount;
+  hardened SC; readiness GET /manifest.json :8090). Regular always-on container.
+- resources.go: append stage init + serve container for LOCAL + CURATED public only.
+  Keep ConfigMap volume + node/ogmios/faucet mounts UNCHANGED (additive).
+- primarypod.go: PortNameServe + DefaultServePort=8090 (NOT in PortOwners yet; A3).
+- .dev/scripts/test-e2e.sh: build+load cardano-tools tagged to the manager default
+  ref (so e2e's serve/stage containers carry Commit A's code), mirroring the
+  existing cardano-testnet build+load 3 lines (cardano-tools uses ROOT build context
+  + -f containers/cardano-tools/Dockerfile).
+- builder_test/envtest: assert serve container + stage init present for local +
+  curated public; image resolves via override/default.
+SCOPING DECISIONS (mine, within the decided architecture; not user forks):
+  (1) custom-public DEFERRED from serve in PR-A (keeps its ConfigMap; off the
+      chainsaw path) — revisit later. (2) connection.json stays artifact-map +
+      network-identity; node endpoint discovered via status.Endpoints (unchanged),
+      so the served connection.json need not carry a runtime endpoint.
+Validate: root:test (envtest) THEN dev-stack in-cluster smoke (apply local + preview
+networks; stage init populates /state/artifacts; serve Ready; GET /manifest.json +
+/configuration.yaml work). Then Commit C = A3 (owned <net>-artifacts Service +
+status.Endpoints.Artifacts + primarypod PortOwners + root:generate + chainsaw).
+Branch feat/f0-public-profile-pvc @ aa46eda, clean; dev stack UP on this worktree.
