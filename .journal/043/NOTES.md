@@ -95,3 +95,66 @@ pin the await-at-requested-address security invariant in a test; make
 `topup --await` observable/parseable; tidy connect's stale endpoints.json;
 batch the doc/contract drift fixes. Full report delivered in-session; not yet
 acted on — awaiting user direction on which (if any) to implement.
+
+## 2026-05-30 18:10 — PR1 opened (items 7, 8, 10)
+
+Goal locked in after planning: complete all 11 session-042 next steps across
+~5 PRs with human review before each merge. Plan file:
+`.claude/plans/ok-please-propose-a-curious-toucan.md`.
+
+Key planning decisions (from the user via AskUserQuestion):
+- Profile staging (F0): reuse node state PVC at `/state/profile`, idempotent
+  cardano-tools fetch init.
+- serve: always-on sidecar + owned ClusterIP Service + always-advertised
+  status.Endpoints (PR3).
+- Fewer/larger PRs (~5-6).
+- First cardano-tools release (item 9) cut mid-sequence; user merges the
+  release-please PR, then the manager default pins the published digest.
+- Dependency correction: image foundation (7/8/10) lands BEFORE the F0 redesign
+  because the fetch init needs the image to exist/be buildable/be released.
+
+PR mapping: PR1=7+8+10; release step=9; PR2=1+2+3+6; PR3=4; PR4=5; PR5=11.
+
+Implementation worktree: `.wt/feat-cardano-tools-image-foundation` (off master).
+Dev stack: `moon run root:dev-up` succeeded; operator Running in yacd-system on
+kind-yacd-dev. Stack kept warm for the session.
+
+PR1 (branch feat/cardano-tools-image-foundation, commit 1c1f31a) -> **PR #65**:
+- New `internal/cardano/toolsimage` shared package (Repository/Revision/Reference
+  + unit tests). Both controllers consume the same default; existing
+  cardano-testnet seam left as-is (retiring it is out of scope — cardano-tools
+  lacks the `yacd-cardano-testnet-init` entrypoint, uses `generate`).
+- `--default-cardano-tools-image` flag (cmd/options.go + options_test.go) ->
+  cmd/setup.go -> exported field on BOTH reconcilers. Builder method/field
+  deliberately NOT added yet (would trip the `unused` linter; lands in PR2 when
+  fetch/serve consume it). So PR1 is genuinely no-behavior-change.
+- Helm cardanoTools.image.{repository,tag,digest}: values.yaml,
+  values.schema.json, _helpers.tpl `yacd.cardanoToolsImage` (digest>tag>repo,
+  empty omits flag), controller-deployment.yaml arg. helm lint + template OK.
+- Dev seam: `.dev/build-cardano-tools.sh` (ROOT build context, unlike
+  cardano-testnet which builds from its own dir) + Tiltfile `cardano-tools-image`
+  local_resource + chart set values + resource_deps.
+- Item 8: single-arch amd64 `cardano-tools-image` job in ci.yml (buildx gha
+  cache scope cardano-tools-ci-amd64, distroless smoke version + generate
+  --dry-run). Pinned to the same action SHAs as release-dry-run.yml.
+- Item 10: static-linkage guard in containers/cardano-tools/Dockerfile fetch
+  stage (binutils=2.40-2; readelf PT_INTERP + NEEDED checks; FATAL on dynamic).
+  Scoped to cardano-tools only (distroless/static = load-bearing); cardano-testnet
+  is debian-slim so a guard there would be advisory — left out to keep PR focused.
+
+Validation: root:check OK, root:test OK (cmd/toolsimage/cardanonetwork/
+cardanodbsync envtest green), local `docker build` of cardano-tools rebuilt the
+fetch stage (binutils invalidated cache) so the guard genuinely ran against the
+real IOG 11.0.1 binaries and passed.
+
+Process notes / gotchas this session:
+- Heavy tool-result batching/delivery lag again; several Edit calls reported
+  "string not found" against stale buffers — re-grepped exact bytes before each
+  retry. One phantom "stray file" (cardanonetwork/toolsimage.go) was a misread of
+  a delayed diff; the file never existed (git rm failed "did not match").
+- gopls shows false `malformed import path "{{context.Compiler}}"` diagnostics
+  (proto go-shim word-split) — ignore; direct `go build` with
+  PATH=~/.proto/tools/go/<ver>/bin is the source of truth.
+
+Next: wait for PR #65 review/merge. Then item 9 (user merges release-please PR;
+record published cardano-tools @sha256 digest), then PR2 (F0 transport redesign).
