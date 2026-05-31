@@ -43,6 +43,7 @@ var optionalKeys = []string{
 	PeerSnapshotKey,
 	MithrilGenesisKey,
 	MithrilAncillaryKey,
+	ManifestKey,
 }
 
 // RequiredKeys returns the required artifact data keys.
