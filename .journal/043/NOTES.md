@@ -573,3 +573,27 @@ Slice 2 concrete plan (this is the F0 core, controller wiring follows in slice 4
 OPEN micro-decision for slice 2 (vkeys embed-or-fetch) noted above; will resolve
 by reading init_container.go mithril usage in slice 4 prep, leaning keep-vkeys-
 embedded. This does not need a user round-trip (reversible, internal).
+
+## 2026-05-31 (later) — Slice 2 NOT started: corrupted source reads
+
+Both design answers are in (fingerprint=pinned-digests+magic; custom=unchanged),
+so slice 2 is unblocked in principle. But the reads needed to author it came back
+corrupted this tick: plan_test.go showed garbled line-number prefixes (33/32/31
+where 53/82/93/101 belong) and init_container.go mithril read truncated. Slice 2
+is the F0 core — deletes //go:embed, CHANGES the public fingerprint goldens
+(stored-identity input), and reworks Mithril vkey sourcing — too high-blast-radius
+to write from corrupted reads. Held.
+
+State is clean: slices 1 (publicpins, 464a960) + 3 (fetch adapter, eb96db9) on
+origin/feat/f0-public-profile-pvc, branch 0/0, worktree clean, no PR yet. Nothing
+partial written. Resume slice 2 with fresh reads of: publicnet/plan.go,
+plan_test.go (golden fingerprints to recompute), internal/controller/cardanonetwork/
+init_container.go (mithril vkey usage -> resolve the embed-vkeys-or-fetch micro-
+decision, leaning keep-vkeys-embedded since they're 223B/221B and Mithril needs
+their content), and .dockerignore.
+
+Captured-before-deletion facts (safe to reuse): per-profile static identity is
+preview{magic=2,RequiresMagic}, preprod{magic=1,RequiresMagic},
+mainnet{magic=764824073,RequiresNoMagic}; profile file digests in
+/tmp/profile_hashes.txt (recompute via shasum if gone). Manager cardano-tools
+digest pin (slice 6): sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e.
