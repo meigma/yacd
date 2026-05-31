@@ -913,3 +913,56 @@ NOTE on fetch-on-restart: current publicProfileFetchInitContainer re-downloads
 every pod start (no idempotent skip yet) — bounded (preview ~70KB, mainnet
 ~1.5MB) but a brief book outage blocks RESTART (steady state unaffected; node DB
 persists on PVC). Idempotent skip + --verify-manifest is the task #9 follow-up.
+
+## 2026-05-31 (resumed, user present for signing) — redesign underway, PR-A started
+
+Unblocked both blockers: user present for GPG popups; branch rebased onto
+origin/master dbaa886 then force-pushed (cd87128); toolsimage now available.
+Superseded manifest-only-ConfigMap WIP discarded (saved /tmp/superseded-slice2b-
+manifest-configmap.patch).
+
+REDESIGN locked (user reframed the defect): the manager must not be an
+authoritative config source. Remove the network-artifacts ConfigMap ENTIRELY
+(both modes); local generates onto PVC, public fetches onto PVC; node reads from
+/state/profile; ALL other consumers (db-sync, CLI, external) fetch over HTTP from
+an always-on `serve` sidecar + owned Service. Integrity = served manifest.json
+(schemaVersion + per-file sha256 + connection.json), status.Endpoints.Artifacts.url
++ status.Artifacts.DataHash. Manager keeps only publicpins metadata.
+
+Ran an 8-agent surface-map + adversarial-verify workflow (walf31hi2, ~2M tokens).
+CRITICAL finding: approved A->B->C->D order is a hazard — deleting the ConfigMap
+(B) before db-sync consumes over HTTP (C) bricks every CardanoDBSync (controller
+GETs CM by name -> wedges NetworkArtifactsPending; won't compile). REORDERED to
+**A -> C -> B -> D** (user approved). Other caught-early items folded into plan:
+containers/cardano-testnet/publisher binary + txtar goldens break on env-contract
+deletion; TestManagerRBACMatchesControllerGen forces marker+chart edits atomic;
+chainsaw asserts old shape in ~20 places + runs every PR's e2e (can't defer all to
+D); cardanonetwork/dbsync_sidecar.go:103,113 is cross-controller compile coupling
+for PR-C; serve had no manifest route (allowlist=contract keys); serve port 8080
+collides with faucet -> needs 8090 + PortOwners. Full map + verdicts:
+/private/tmp/.../tasks/walf31hi2.output and /tmp/wf_verify.txt. Plan rewritten in
+.claude/plans/ok-please-propose-a-curious-toucan.md (A->C->B->D section).
+
+PR-A (serve + manifest + status endpoint; ADDITIVE, ConfigMap still present) in
+sub-slices on feat/f0-public-profile-pvc:
+- A1 DONE (commit 7d9af3a, pushed): internal/cardano/networkartifacts/manifest.go
+  — typed Manifest{schemaVersion,files{name:sha256}} + BuildManifest/Verify/JSON/
+  FileDigest; ManifestKey="manifest.json" added to optional contract keys so serve
+  exposes GET /manifest.json by construction. build/test/vet/lint green. Additive.
+
+GOTCHA caught: after the A1 commit HEAD was DETACHED (branch ref lagged at
+cd87128 while commit landed at 7d9af3a). Fast-forwarded branch to HEAD + reattached
+(git checkout -B); no commits lost; pushed. Likely the earlier rebase left HEAD
+detached — re-verify `git symbolic-ref HEAD` before each commit this session.
+
+NEXT (PR-A continued):
+- A2: stage-init writes manifest.json into the staged dir (generate for local,
+  fetch for public) + always-on serve sidecar (cardano-tools image,
+  DefaultServePort=8090, restricted SC, native sidecar) wired into the primary
+  Deployment; serve reads the staged dir.
+- A3: owned <net>-artifacts ClusterIP Service (mirror ogmiosService) +
+  status.Endpoints.Artifacts (new ServiceEndpointStatus field on
+  CardanoNetworkEndpointsStatus) gated on Service exists; primarypod PortNameArtifacts
+  + DefaultServePort=8090 + PortOwners; root:generate for CRD/deepcopy.
+- A is additive (node/db-sync still ConfigMap) so build + chainsaw stay green.
+Then PR-C (db-sync HTTP), PR-B (delete ConfigMap+publisher+RBAC, F0 unblock), PR-D.
