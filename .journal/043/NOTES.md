@@ -265,3 +265,26 @@ When #65 merges: release-cardano-tools.yml fires on tag
 `cardano-tools/v11.0.1-yacd.4` → publishes multi-arch manifest + attests. Grab
 the `@sha256` digest from the release job output, then start PR2 (worktree off
 fresh master) and set toolsimage.Revision/digest accordingly.
+
+## 2026-05-31 (later) — Release PR #65 merged; PR2 started
+
+User approved ("LGTM. Please proceed."). Merged release PR #65 (squash). Tag
+`cardano-tools/v11.0.1-yacd.4` pushed; `release-cardano-tools.yml` run
+26702435140 in progress (~8 min to publish multi-arch manifest + attest digest).
+Item 9 effectively DONE pending the workflow publishing the image; need to grab
+the `@sha256` digest from the release job output for PR2's toolsimage pin.
+
+PR2 (F0 transport redesign, items 1/2/3/6) worktree created:
+`.wt/feat-f0-public-profile-pvc` off fresh master (has PR1's toolsimage).
+Approach per plan: public profiles staged on node state PVC at /state/profile
+via idempotent cardano-tools fetch init; manifest-only ConfigMap (connection.json
++ yacd-public-profile.json w/ per-file sha256); drop manager //go:embed + share
+pins via internal/cardano/publicpins; public report path. Building the bulk now
+(independent of the digest); will set toolsimage.Revision=yacd.4 (or digest pin)
+at the end once the release publishes.
+
+Open decision to resolve during PR2 (flagged in plan): whether to promote
+genesis/checkpoints to pinned digests in publicpins (complete manifest
+integrity) vs rely on cardano-node config.json hash verification. Will pick the
+pinned-digest route for a complete integrity contract unless it proves
+impractical.
