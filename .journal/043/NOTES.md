@@ -483,3 +483,45 @@ File.Pinned. Drop the per-profile SHA consts + bookBase/bookFile/chainArtifacts
 + the txtar golden + golangci-lint, commit, push (no PR yet).
 
 Resume: re-read pins.go + fetch_test.go cleanly, then write slice 3.
+
+## 2026-05-31 (later) — PR2 slice 3 landed (fetch -> publicpins adapter)
+
+Delivery recovered; proceeded with slice 3 (behavior-preserving, golden-locked).
+Committed 3c3a253 on origin/feat/f0-public-profile-pvc (branch 0/0, clean):
+- containers/cardano-tools/internal/fetch/pins.go collapsed to a thin adapter
+  over publicpins (pinsFor + knownProfiles derive from publicpins.Lookup/Known;
+  dropped the duplicated digest consts + bookBase/bookFile/chainArtifacts).
+  pinnedFile shape + Run/writeDryRun unchanged.
+- fetch_test.go sources URLs/digests from publicpins (single source of truth);
+  fixed an unparam lint (helpers are preview-only -> previewProfile const).
+Validated: whole-module go build, cardano-tools tests incl. fetch-dry-run.txtar
+golden (byte-identical), vet, golangci-lint — all green. publicpins now has its
+first consumer; slice 1 is no longer inert.
+
+PR2 progress: slice 1 (publicpins) + slice 3 (fetch adapter) DONE on branch, no
+PR opened yet. Remaining: slice 2 (drop //go:embed + reshape BuildPlan), 4
+(controller manifest-only ConfigMap + /state/profile fetch init), 5 (mode-aware
+dataContract), 6 (public report + manager digest pin + tests + chainsaw).
+
+NEXT = slice 2, but it has TWO design questions I should put to the user rather
+than decide solo (both flow from the manager losing genesis bytes when the embed
+is removed):
+  Q1 fingerprint: today the public fingerprint = sha256 over per-file
+     contentHash(genesis+config+topology bytes). With the embed gone the manager
+     no longer has genesis/checkpoints bytes, so it can only fingerprint over the
+     files it still knows digests for (config+topology+mithril, from publicpins)
+     plus networkMagic + requiresNetworkMagic. That CHANGES the fingerprint value
+     + algorithm (a stored-identity input). Need to confirm that's acceptable
+     (it is pre-1.0, no persisted public networks yet) vs. keeping a byte-level
+     fingerprint sourced differently.
+  Q2 custom profiles: custom public profiles are user-supplied bytes via
+     ConfigMap/Secret (no fetch, no pins). Their artifact+fingerprint path must
+     stay byte-based and is orthogonal to the curated-fetch redesign — confirm
+     custom keeps mounting its bytes (likely still via a ConfigMap since custom
+     bundles are small + already size-bounded), i.e. the PVC-fetch model applies
+     to CURATED public profiles only.
+Also slice 2 deletes the embed which kills the publicpins cross-check test's
+ground truth -> must convert that test to a frozen-golden of the publicpins
+pinned digests in the SAME slice.
+
+Dev stack still up (PR1 worktree). Will surface Q1/Q2 to user next.
