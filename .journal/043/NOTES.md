@@ -331,3 +331,45 @@ types,fingerprint}.go cleanly first. Published digest for the toolsimage pin:
 sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e
 (tag 11.0.1-yacd.4). Profile file digests captured in /tmp/profile_hashes.txt
 (ephemeral — recompute with shasum -a 256 on the profiles/ tree if gone).
+
+## 2026-05-31 (later) — PR2 slice 1 committed: publicpins foundation
+
+Reads came back clean this tick; earlier "delivery corruption" was overcautious
+(intermittent display garble, not file corruption). Proceeded with PR2 slice 1.
+
+Committed on feat/f0-public-profile-pvc (3f8d9c2, pushed to origin; NO PR yet —
+push to a non-master branch w/o PR doesn't trigger ci.yml):
+- internal/cardano/publicpins/publicpins.go — shared curated profile registry
+  (File{ArtifactKey,SourceName,ConnectionKey,Source,SHA256,Optional,Pinned},
+  Profile, Mithril; Lookup/Known/MithrilAggregatorEndpoint). Pins EVERY chain
+  file digest (complete-integrity route), peer-snapshot unpinned/optional.
+- internal/cardano/publicnet/publicpins_crosscheck_test.go — recomputes every
+  pinned digest against the still-embedded profile bytes; PASSED, so the
+  hand-transcribed digests are proven correct vs ground truth before slice 2
+  deletes the embed. (Defends against the delivery flakiness.)
+Validated: go build + vet + test + golangci-lint all green. No behavior change
+(publicpins has no consumers yet; embed + fetch pins untouched).
+
+Remaining PR2 slices (resume here, fresh context):
+  2. publicnet BuildPlan: source from publicpins, DROP //go:embed + delete
+     profiles/*/ tree (keep SOURCE.md? no — provenance now in publicpins.SourceURL);
+     manifest per-file sha256 from publicpins (not contentHash of bytes).
+     Update .dockerignore (drop the profiles re-include). Keep cross-check test
+     working: it relies on the embed — must convert it to assert publicpins
+     digests another way (e.g. pin a golden, or move the byte check into a
+     fetch integration test) BEFORE deleting the embed, else the safety net and
+     the embed vanish together. Plan: in slice 2, replace the embed-based
+     cross-check with a frozen-golden test of the publicpins digests.
+  3. cardano-tools fetch: pins.go -> thin adapter over publicpins; add
+     --verify-manifest; keep fetch-dry-run.txtar (URLs/pins identical).
+  4. controller: manifest-only public ConfigMap (connection.json +
+     yacd-public-profile.json) + /state/profile fetch init (cardanoToolsImage,
+     before mithril) + node mount repoint to /state/profile.
+  5. mode-aware dataContract (public requires only connection + public-profile
+     manifest; local unchanged so report-dry-run golden sha256:f1cd9ad8 stays).
+  6. public report path + goldens; pin manager default to
+     sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e
+     (toolsimage Revision yacd.4 + digest); builder_test + chainsaw preview.
+
+Dev stack still up (PR1 worktree). Will repoint to PR2 worktree at slice 4+
+in-cluster testing.
