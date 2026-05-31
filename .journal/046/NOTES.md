@@ -387,3 +387,28 @@ PortNameServe/8090 to PortOwners + the validatePrimaryWorkloadPorts guard (now t
 the port is Service-exposed); envtest coverage. chainsaw serve-Ready check is
 validated later by the in-cluster e2e (subagent can't run a cluster).
 Branch feat/f0-public-profile-pvc @ f2f909e.
+
+## 2026-05-31 16:20 — Commits A/B/C all landed+pushed+green; FOUND serve/faucet 8090 collision
+All three PR-A commits committed, pushed, green (root:check + root:test + idempotent
+root:generate): branch feat/f0-public-profile-pvc @ 105e8dc, 6 commits over master
+(4 foundation + aa46eda A producer + f2f909e B serve wiring + 105e8dc C Service/
+status). Reviewed each diff; clean, additive, mirrors ogmios/faucet patterns.
+
+CRITICAL PRE-PR FINDING (the in-cluster smoke's reason to exist): the chainsaw
+smoke fixture test/chainsaw/manager-smoke/cardano-network.yaml sets
+`chainAPI.faucet.port: 8090`, which now COLLIDES with the always-on serve sidecar's
+DefaultServePort 8090. Commit C added serve to validatePrimaryWorkloadPorts (gated
+on serveEnabled), so this CR is now rejected as a port conflict → it never reaches
+Ready → the chainsaw e2e (root:test-e2e) FAILS. The subagents could not catch this
+(they can't run chainsaw; envtest uses its own fixtures). chainsaw-test.yaml ALSO
+asserts the faucet endpoint on port 8090 (status.endpoints.faucet), so the fix
+touches BOTH files.
+FIX (cleanest, least churn — do when channel is clean): move the smoke faucet to
+its default 8080 (manifest faucet.port 8090→8080) AND update chainsaw-test.yaml's
+faucet port/url assertions 8090→8080. serve stays 8090 (baked into B/C code+tests;
+moving serve instead is far more churn). 8080 is the faucet default; node 3001 /
+ogmios 1337 / kupo 1442 / serve 8090 leave 8080 free.
+STATUS: channel too corrupted right now to safely read/edit chainsaw-test.yaml.
+Deferring that fixture fix until reads are clean. Running the in-cluster serve
+smoke with a faucet-free local CR (doesn't depend on the fixture) to validate the
+real create-env→stage→serve→/manifest.json dataflow.
