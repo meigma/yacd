@@ -597,3 +597,62 @@ preview{magic=2,RequiresMagic}, preprod{magic=1,RequiresMagic},
 mainnet{magic=764824073,RequiresNoMagic}; profile file digests in
 /tmp/profile_hashes.txt (recompute via shasum if gone). Manager cardano-tools
 digest pin (slice 6): sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e.
+
+## 2026-05-31 (later) — Pausing autonomous impl at the coupled F0 core
+
+Clean reads obtained (plan_test.go, mithril init container). Conclusion: slice 2
+(drop embed) is NOT independently landable — curated BuildPlan loads embedded
+bytes that the controller copies into the ConfigMap and mounts at /profile, so
+removing the embed only works if slice 4 (fetch-init -> /state/profile + node
+mount repoint) + item 2 (manifest-only ConfigMap) + slice 5 (mode-aware
+contract) all land together. For curated public networks that's ONE coupled
+behavioral change (publicnet + cardanonetwork plan/artifacts/resources/
+containers/init_container + networkartifacts contract + a stored-identity
+fingerprint change + new fetch-init RBAC).
+
+STOPPING autonomous implementation here. Rationale: (1) needs in-cluster
+validation (Kind/Tilt preview-network live fetch), not unit tests alone; (2)
+large, hard-to-reverse controller rewrite better done with the user present;
+(3) recurring intermittent read corruption this session is unacceptable risk for
+a change that edits a stored-identity fingerprint + per-file digests. This is the
+loop's "don't invent/commit large irreversible work unsupervised" boundary.
+
+Banked (safe, golden-locked, behavior-preserving):
+- slice 1 publicpins 464a960
+- slice 3 fetch->publicpins adapter eb96db9
+Both on origin/feat/f0-public-profile-pvc, branch 0/0, clean, NO PR yet.
+Items 7/8/9/10 done+merged; cardano-tools published
+sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e.
+
+Design answers locked for resume:
+- fingerprint = sha256(json{schemaVersion,profile,networkMagic,
+  requiresNetworkMagic, files:[pinned digests: config,topology,mithril vkeys]}).
+  plan_test.go goldens WILL change (preview pinned fp currently
+  3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29 — recompute).
+- custom profiles unchanged (byte-based ConfigMap path; PVC-fetch curated-only).
+
+Resume checklist for the coupled rewrite (do interactively w/ dev stack up):
+1. Move per-profile static identity (networkMagic, requiresNetworkMagic) into
+   publicpins (preview 2/RequiresMagic, preprod 1/RequiresMagic, mainnet
+   764824073/RequiresNoMagic) — manager can't parse genesis bytes post-embed.
+2. Mithril vkeys: MithrilPlan.{Genesis,Ancillary}VerificationKey currently carry
+   vkey CONTENT (passed as env to mithril-client). Post-embed manager lacks bytes.
+   Lean: keep ONLY the two tiny .vkey files embedded (223B/221B) + narrow the
+   .dockerignore re-include to them; drop the large genesis/config/topology/
+   checkpoints embed. (Re-confirm vs init_container.go:202-207 env usage — done:
+   they ARE env values, so content is needed -> keep vkeys embedded.)
+3. publicnet BuildPlan curated path: list+manifest+fingerprint from publicpins
+   (no genesis bytes); custom path unchanged. Convert publicpins_crosscheck_test
+   to a frozen golden of the publicpins digests (loses embed ground truth).
+4. controller: publicPrimaryNetworkPlan -> ArtifactData = connection.json +
+   yacd-public-profile.json only; new publicProfileFetchInitContainer
+   (cardanoToolsImage, runs `fetch --profile <p> --output-dir /state/profile
+   --verify-manifest`, before mithril); node mount repoint /profile ->
+   /state/profile (drop publicProfileVolume ConfigMap mount for curated);
+   keep custom mounting its ConfigMap.
+5. networkartifacts dataContract mode-aware (public requires connection +
+   public-profile manifest only; local unchanged so report golden stays).
+6. fetch --verify-manifest flag; public report path; manager default digest pin;
+   builder_test + chainsaw preview-public smoke.
+
+Loop -> long heartbeat; remaining PR2 work is user-driven.
