@@ -451,3 +451,14 @@ loaded in kind). Results (two independent polls, both clean):
 This proves the full create-env→stage→/state/artifacts→serve→/manifest.json dataflow
 in a real cluster. Cleaned up the serve-smoke namespace. PR-A (7 commits) is ready
 to open; merge held for user review. NEXT: open PR-A; do NOT merge until approved.
+
+## 2026-05-31 17:10 — PR-A opened as #74 (merge HELD for review)
+Opened https://github.com/meigma/yacd/pull/74 "feat(cardanonetwork): serve network
+artifacts over HTTP (F0 redesign, PR-A)" — base master, head feat/f0-public-profile-pvc
+@ 105e8dc (7 commits). State OPEN, not draft, mergeStateStatus BLOCKED (awaiting CI +
+review; NOT auto-merging — per the user's "pause before merging" instruction). CI
+(incl. chainsaw e2e, the final cross-check that the serve container doesn't break the
+smoke) is queued. Body written from /tmp/pra-body.md (full scope + in-cluster smoke
+evidence). Dev stack left UP (warm for the session). NEXT after #74 merges: PR-C
+(db-sync over HTTP) → PR-B (node-from-PVC + ConfigMap deletion = mainnet F0 unblock)
+→ PR-D (cleanup + digest pin). Do NOT merge #74 until the user approves.
