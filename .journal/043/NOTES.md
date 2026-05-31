@@ -64,3 +64,34 @@ opening a duplicate 044. Refreshing the stale world snapshot above:
   implementation worktree is selected/created.
 
 Still awaiting the user's actual goal.
+
+## 2026-05-30 17:10 — Session-041 code review (workflow)
+Ran a multi-agent review workflow over the session-041 CLI code (host-access
+verbs + the YACD_* contract, PRs #59-63, #66, #67; base c7825f8..head e45ad76,
+path-scoped to exclude the interleaved PR #64 cardano-tools work). Script saved
+at `.journal/043/session-041-review.workflow.js` (resumable). 9 dimension
+finders → 30 raw findings → 3 adversarial verifiers each → **26 confirmed
+(0 critical, 0 high, 5 medium, 12 low, 9 nit), 1 uncertain, 3 refuted**. 101
+agents, ~20 min.
+
+Verdict: solid, shippable work; no critical/high defects. Token-handling
+discipline and the hexagonal boundary held well. The weak spots are the newest
+resilience/long-wait features:
+- MEDIUM `tests-1`: the `connect` reconnect/backoff supervision loop (PR #63's
+  headline feature) is entirely untested (`runConnect` ~47-53% cov).
+- MEDIUM `correctness-kube-1`: `Forward` doesn't promptly honor ctx cancellation
+  during the SPDY dial (no Dial/Timeout on the port-forward rest.Config) —
+  `access.go:153-168`. No unit or e2e coverage.
+- MEDIUM `ux-1`: interactive `exec` requests a remote TTY but never enters raw
+  mode / sends a window size (`exec.go:91-101,128-137`).
+- Plus low/nit: `topup --await` polls silently & swallows the submitted TxID on
+  the failure path; Ctrl-C misreported as timeout; stale token-free
+  `endpoints.json` after `connect` exit; `cli/doc.go` omits the new
+  `UTxOConfirmer` export; `host-access.md:17` `$SHELL` wording inverted.
+
+Top recommended fixes (in priority order): test the connect reconnect loop;
+bound Forward's cancellation; fix exec TTY raw-mode (or document non-interactive);
+pin the await-at-requested-address security invariant in a test; make
+`topup --await` observable/parseable; tidy connect's stale endpoints.json;
+batch the doc/contract drift fixes. Full report delivered in-session; not yet
+acted on — awaiting user direction on which (if any) to implement.
