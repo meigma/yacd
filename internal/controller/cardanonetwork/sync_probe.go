@@ -20,13 +20,26 @@ import (
 )
 
 const (
-	nodeSyncSourceOgmios                         = "ogmios"
-	nodeSyncProbeTimeout                         = 3 * time.Second
-	nodeSyncLagThreshold                         = 10 * time.Minute
-	nodeSyncStalledAfter                         = 10 * time.Minute
-	nodeSyncProbeRequeueAfter                    = time.Minute
+	// nodeSyncSourceOgmios is the wire value published in Status.Sync.Source
+	// when the payload was derived from Ogmios health.
+	nodeSyncSourceOgmios = "ogmios"
+	// nodeSyncProbeTimeout bounds a single Ogmios health request.
+	nodeSyncProbeTimeout = 3 * time.Second
+	// nodeSyncLagThreshold is the maximum inferred tip lag that still reports
+	// NodeSynchronized=True.
+	nodeSyncLagThreshold = 10 * time.Minute
+	// nodeSyncStalledAfter is the maximum age of the last tip update before a
+	// lagging node is reported stalled.
+	nodeSyncStalledAfter = 10 * time.Minute
+	// nodeSyncProbeRequeueAfter keeps sync visibility fresh while Ogmios is
+	// enabled.
+	nodeSyncProbeRequeueAfter = time.Minute
+	// nodeSyncNetworkSynchronizationReadyThreshold is the Ogmios synchronization
+	// estimate that is close enough to tip to report synchronized.
 	nodeSyncNetworkSynchronizationReadyThreshold = 0.99999
-	ogmiosConnectionStatusConnected              = "connected"
+	// ogmiosConnectionStatusConnected is the Ogmios health connectionStatus
+	// value for a connected node.
+	ogmiosConnectionStatusConnected = "connected"
 )
 
 // cardanoNetworkSyncProber is the narrow port used by CardanoNetwork to read
@@ -36,8 +49,11 @@ type cardanoNetworkSyncProber interface {
 	Probe(context.Context, string) (cardanoNetworkOgmiosHealth, error)
 }
 
+// cardanoNetworkSyncProberFunc adapts a function to [cardanoNetworkSyncProber]
+// for tests.
 type cardanoNetworkSyncProberFunc func(context.Context, string) (cardanoNetworkOgmiosHealth, error)
 
+// Probe implements [cardanoNetworkSyncProber].
 func (f cardanoNetworkSyncProberFunc) Probe(ctx context.Context, ogmiosURL string) (cardanoNetworkOgmiosHealth, error) {
 	return f(ctx, ogmiosURL)
 }
@@ -46,28 +62,47 @@ func (f cardanoNetworkSyncProberFunc) Probe(ctx context.Context, ogmiosURL strin
 // intentionally test-only: it lets unit tests exercise condition projection
 // without standing up an HTTP server for every case.
 type defaultCardanoNetworkSyncProber struct {
-	httpClient  *http.Client
+	// httpClient is used for Ogmios requests. http.DefaultClient is used when
+	// this field is nil.
+	httpClient *http.Client
+	// queryOgmios, when non-nil, replaces the live Ogmios HTTP request.
 	queryOgmios func(context.Context, string) (cardanoNetworkOgmiosHealth, error)
 }
 
+// cardanoNetworkOgmiosHealth is the subset of Ogmios health used to publish
+// CardanoNetwork node sync status.
 type cardanoNetworkOgmiosHealth struct {
-	ConnectionStatus       string
-	Tip                    cardanoNetworkOgmiosTip
-	LastTipUpdate          time.Time
+	// ConnectionStatus is the Ogmios health connectionStatus value.
+	ConnectionStatus string
+	// Tip is the last known tip reported by Ogmios health.
+	Tip cardanoNetworkOgmiosTip
+	// LastTipUpdate is the last known tip update timestamp.
+	LastTipUpdate time.Time
+	// NetworkSynchronization is Ogmios' optional 0..1 synchronization estimate.
 	NetworkSynchronization *float64
 }
 
+// cardanoNetworkOgmiosTip is the last known tip fragment of an Ogmios health
+// response.
 type cardanoNetworkOgmiosTip struct {
-	Slot        int64
+	// Slot is the last known tip slot.
+	Slot int64
+	// BlockHeight is the optional tip block height.
 	BlockHeight *int64
-	Hash        string
+	// Hash is the optional tip hash.
+	Hash string
 }
 
+// cardanoNetworkTiming is the Shelley genesis timing needed to infer wall-clock
+// network slots.
 type cardanoNetworkTiming struct {
-	SystemStart       time.Time
+	// SystemStart is the network start time.
+	SystemStart time.Time
+	// SlotLengthSeconds is the slot duration in seconds.
 	SlotLengthSeconds float64
 }
 
+// cardanoNetworkSyncProber returns the configured sync prober.
 func (r *CardanoNetworkReconciler) cardanoNetworkSyncProber() cardanoNetworkSyncProber {
 	if r.syncProberOverride != nil {
 		return r.syncProberOverride
@@ -76,6 +111,8 @@ func (r *CardanoNetworkReconciler) cardanoNetworkSyncProber() cardanoNetworkSync
 	return defaultCardanoNetworkSyncProber{httpClient: http.DefaultClient}
 }
 
+// primaryNodeSyncStatusConditions derives Status.Sync plus node sync conditions
+// from the live Ogmios Service and verified artifact ConfigMap.
 func (r *CardanoNetworkReconciler) primaryNodeSyncStatusConditions(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -124,12 +161,16 @@ func (r *CardanoNetworkReconciler) primaryNodeSyncStatusConditions(
 	return syncStatus, nodeSynchronized, nodeProgressing
 }
 
+// nodeSyncUnavailableConditions returns failure conditions and no sync payload
+// for probe prerequisites or probe failures.
 func nodeSyncUnavailableConditions(reason conditionReason, message string) (*yacdv1alpha1.CardanoNetworkSyncStatus, metav1.Condition, metav1.Condition) {
 	return nil,
 		nodeSynchronizedCondition(metav1.ConditionFalse, reason, message),
 		nodeProgressingCondition(metav1.ConditionFalse, reason, message)
 }
 
+// cardanoNetworkSyncConditions projects an Ogmios health sample and computed
+// lag into NodeSynchronized and NodeProgressing conditions.
 func cardanoNetworkSyncConditions(
 	syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus,
 	health cardanoNetworkOgmiosHealth,
@@ -163,6 +204,8 @@ func cardanoNetworkSyncConditions(
 		nodeProgressingCondition(metav1.ConditionTrue, conditionReasonNodeCatchingUp, conditionMessageNodeProgressing)
 }
 
+// cardanoNetworkSyncStatusFromHealth converts Ogmios health and network timing
+// into the CardanoNetwork Status.Sync payload.
 func cardanoNetworkSyncStatusFromHealth(
 	health cardanoNetworkOgmiosHealth,
 	timing cardanoNetworkTiming,
@@ -197,6 +240,8 @@ func cardanoNetworkSyncStatusFromHealth(
 	return status
 }
 
+// inferredTipSlot returns the slot implied by the elapsed wall-clock time since
+// system start.
 func (t cardanoNetworkTiming) inferredTipSlot(observedAt time.Time) int64 {
 	elapsed := observedAt.Sub(t.SystemStart).Seconds()
 	if elapsed <= 0 {
@@ -206,6 +251,8 @@ func (t cardanoNetworkTiming) inferredTipSlot(observedAt time.Time) int64 {
 	return int64(math.Floor(elapsed / t.SlotLengthSeconds))
 }
 
+// cardanoNetworkTimingFromArtifacts parses Shelley genesis timing from a
+// verified network artifact ConfigMap.
 func cardanoNetworkTimingFromArtifacts(configMap *corev1.ConfigMap) (cardanoNetworkTiming, error) {
 	if configMap == nil {
 		return cardanoNetworkTiming{}, errors.New("artifact ConfigMap is missing")
@@ -218,6 +265,8 @@ func cardanoNetworkTimingFromArtifacts(configMap *corev1.ConfigMap) (cardanoNetw
 	return parseShelleyGenesisTiming([]byte(raw))
 }
 
+// parseShelleyGenesisTiming extracts systemStart and slotLength from
+// shelley-genesis.json data.
 func parseShelleyGenesisTiming(data []byte) (cardanoNetworkTiming, error) {
 	var raw map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -257,6 +306,8 @@ func parseShelleyGenesisTiming(data []byte) (cardanoNetworkTiming, error) {
 	}, nil
 }
 
+// cardanoNetworkOgmiosEndpointURL renders the in-cluster Ogmios Service URL
+// used by the sync prober.
 func cardanoNetworkOgmiosEndpointURL(network *yacdv1alpha1.CardanoNetwork, service *corev1.Service) (string, error) {
 	if network == nil {
 		return "", errors.New("cardano network is missing")
@@ -271,6 +322,7 @@ func cardanoNetworkOgmiosEndpointURL(network *yacdv1alpha1.CardanoNetwork, servi
 	return fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", ogmiosServiceURLType, service.Name, service.Namespace, service.Spec.Ports[0].Port), nil
 }
 
+// Probe fetches and parses Ogmios /health for a published Ogmios endpoint.
 func (p defaultCardanoNetworkSyncProber) Probe(ctx context.Context, ogmiosURL string) (cardanoNetworkOgmiosHealth, error) {
 	if p.queryOgmios != nil {
 		return p.queryOgmios(ctx, ogmiosURL)
@@ -318,6 +370,8 @@ func (p defaultCardanoNetworkSyncProber) Probe(ctx context.Context, ogmiosURL st
 	return parseOgmiosHealth(health)
 }
 
+// ogmiosHTTPURL converts an Ogmios websocket URL into the matching HTTP URL
+// accepted by the /health endpoint.
 func ogmiosHTTPURL(rawURL string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
@@ -339,6 +393,8 @@ func ogmiosHTTPURL(rawURL string) (string, error) {
 	return parsed.String(), nil
 }
 
+// ogmiosHealthURL appends /health to an Ogmios HTTP URL and strips query and
+// fragment components.
 func ogmiosHealthURL(httpURL string) (string, error) {
 	parsed, err := url.Parse(httpURL)
 	if err != nil {
@@ -351,6 +407,8 @@ func ogmiosHealthURL(httpURL string) (string, error) {
 	return parsed.String(), nil
 }
 
+// parseOgmiosHealth parses the health fields the controller needs while
+// accepting minor Ogmios field-name variants.
 func parseOgmiosHealth(data json.RawMessage) (cardanoNetworkOgmiosHealth, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
@@ -418,6 +476,7 @@ func parseOgmiosHealth(data json.RawMessage) (cardanoNetworkOgmiosHealth, error)
 	}, nil
 }
 
+// firstJSONInt64 returns the first named int64 field found in values.
 func firstJSONInt64(values map[string]any, keys ...string) (int64, bool) {
 	for _, key := range keys {
 		if value, ok := jsonInt64(values[key]); ok {
@@ -428,6 +487,7 @@ func firstJSONInt64(values map[string]any, keys ...string) (int64, bool) {
 	return 0, false
 }
 
+// firstJSONString returns the first named string field found in values.
 func firstJSONString(values map[string]any, keys ...string) (string, bool) {
 	for _, key := range keys {
 		if value, ok := jsonString(values[key]); ok {
@@ -438,6 +498,7 @@ func firstJSONString(values map[string]any, keys ...string) (string, bool) {
 	return "", false
 }
 
+// jsonString converts a decoded JSON value to a string.
 func jsonString(value any) (string, bool) {
 	switch typed := value.(type) {
 	case string:
@@ -447,6 +508,8 @@ func jsonString(value any) (string, bool) {
 	}
 }
 
+// jsonInt64 converts a decoded JSON value to an int64 without accepting
+// fractional numbers.
 func jsonInt64(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case json.Number:
@@ -460,6 +523,7 @@ func jsonInt64(value any) (int64, bool) {
 	}
 }
 
+// jsonFloat64 converts a decoded JSON value to a float64.
 func jsonFloat64(value any) (float64, bool) {
 	switch typed := value.(type) {
 	case json.Number:
@@ -475,11 +539,13 @@ func jsonFloat64(value any) (float64, bool) {
 	}
 }
 
+// roundFloat rounds value to the requested decimal places.
 func roundFloat(value float64, places int) float64 {
 	scale := math.Pow10(places)
 	return math.Round(value*scale) / scale
 }
 
+// metav1TimePtr converts a Go time into a Kubernetes timestamp pointer.
 func metav1TimePtr(value time.Time) *metav1.Time {
 	result := metav1.NewTime(value.UTC())
 	return &result
