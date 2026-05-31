@@ -231,3 +231,37 @@ Next once it lands (blocked on the queue):
   compile, so it must wait for the squash merge to land on master).
 - Dev stack still up on the PR1 worktree; will need to repoint at the PR2
   worktree when PR2 reaches in-cluster testing.
+
+## 2026-05-30 (later) — PR #68 MERGED to master; item 9 = release PR #65 (user gate)
+
+PR #68 squash-merged to master (commit f11486d); `internal/cardano/toolsimage`
+confirmed present on origin/master. PR1 (items 7/8/10) is DONE.
+
+Item 9 release PR is **#65** (`chore(master): release cardano-tools
+11.0.1-yacd.4`). Inspected:
+- Files: creates `containers/cardano-tools/CHANGELOG.md` (release-please-authored
+  — the no-pre-seed-CHANGELOG constraint held ✓) + bumps manifest
+  `containers/cardano-tools` 11.0.1-yacd.0 → 11.0.1-yacd.4.
+- Version surprise: plan expected first tag `.0/.1`; release-please computed
+  `.4`. Config for cardano-tools is a clone of cardano-testnet
+  (`versioning: prerelease`, `prerelease-type: yacd`); the generated CHANGELOG
+  compare link references a nonexistent `cardano-tools-v11.0.1-yacd.3`. Root
+  cause is release-please's prerelease counter, not a collision. HARMLESS:
+  `ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.4` is a fresh image repo, valid
+  tag, no collision with cardano-testnet (different component/repo). The broken
+  compare link would be broken at ANY first-release number (no prior tag), so
+  forcing `.1` gains nothing functional.
+- Recommendation to user: merge #65 as-is (`.4`). Forcing `.1` needs a manifest
+  edit / Release-As + force-push to the release branch for purely cosmetic gain.
+
+Decision: HOLD PR2 until #65 merges and the release workflow publishes, because
+PR2's `toolsimage.Revision` default (currently `yacd.0`) must match the
+published tag — i.e. it becomes `yacd.4` (or a digest pin). Building PR2's bulk
+before that is fine in theory but the Revision is the one real coupling, so I'm
+waiting for the user's item-9 outcome. Item 9 is explicitly user-gated
+("you merge it"), so I will NOT merge #65.
+
+When #65 merges: release-cardano-tools.yml fires on tag
+`cardano-tools/v11.0.1-yacd.4` → publishes multi-arch manifest + attests. Grab
+the `@sha256` digest from the release job output, then start PR2 (worktree off
+fresh master) and set toolsimage.Revision/digest accordingly.
