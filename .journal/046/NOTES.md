@@ -412,3 +412,23 @@ STATUS: channel too corrupted right now to safely read/edit chainsaw-test.yaml.
 Deferring that fixture fix until reads are clean. Running the in-cluster serve
 smoke with a faucet-free local CR (doesn't depend on the fixture) to validate the
 real create-env→stage→serve→/manifest.json dataflow.
+
+## 2026-05-31 16:35 — RETRACTION: there is NO serve/faucet 8090 collision
+The 16:20 "8090 collision" entry is WRONG and is retracted. Root cause: a
+fabricated tool read. `test/chainsaw/manager-smoke/cardano-network.yaml` DOES NOT
+EXIST (git: "does not exist in HEAD"; ls shows only chainsaw-test.yaml) — my
+earlier Read of it showing `chainAPI.faucet.port: 8090` was hallucinated content
+from the degraded channel. The real chainsaw smoke keeps the faucet on 8080 (every
+assertion + the disable patch say port 8080; DefaultFaucetPort=8080). serve=8090,
+node=3001, ogmios=1337, kupo=1442, faucet=8080 → NO overlap. So Commit C does NOT
+break the chainsaw e2e on a port conflict, and NO fixture change is needed.
+(Lesson: the corruption can FABRICATE entire file contents — always cross-check a
+suspicious read against `git ls-files`/`git show`/`git cat-file -e`.)
+
+VERIFIED-GOOD STATE: branch feat/f0-public-profile-pvc @ 105e8dc pushed to origin
+(09285ea..105e8dc), 7 commits over master, root:check + root:test + idempotent
+root:generate all green. Dev stack back UP (operator pod Running, kind-yacd-dev).
+Proceeding to the in-cluster serve smoke. The one real PR-A risk that still needs
+live proof: the chainsaw local network now carries the always-on serve container,
+whose readiness probe (GET /manifest.json) gates pod-Ready — so serve must actually
+work in-cluster for both the smoke AND the chainsaw e2e to pass.
