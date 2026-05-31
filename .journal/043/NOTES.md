@@ -435,3 +435,51 @@ refactor of existing fetch behavior). Resume at slice 2:
   4. controller manifest-only ConfigMap + /state/profile fetch init + node mount.
   5. mode-aware dataContract.
   6. public report + manager digest pin (sha256:9ca9e033...) + tests + chainsaw.
+
+## 2026-05-31 (later) — User LGTM to continue; slice 3 deferred (degraded delivery)
+
+User: "LGTM. Please continue." Genesis-pinning fork resolved (trust remote);
+slice 1 (publicpins, commit 464a960) is clean on origin/feat/f0-public-profile-pvc.
+
+Read the slice-2/3 source cleanly this tick (captured below), but tool-result
+DELIVERY degraded mid-tick (corrupted grep echo + a "<system_warning> delivery
+degraded" banner). Did NOT author slice 3 — the pins.go adapter + fetch_test.go
+rewrite encode exact digests/URLs and a corrupted read could land a wrong pin.
+Worktree verified clean (0 dirty, HEAD 464a960). Nothing partially written.
+
+Decision: chose slice 3 (cardano-tools fetch -> publicpins adapter) as the next
+slice rather than slice 2 (drop embed), because slice 2 has an unresolved design
+question I should NOT decide solo: with the embed gone, the manager has no genesis
+bytes, so (a) the public fingerprint can no longer be contentHash(genesis bytes)
+— must switch to fingerprinting over the publicpins pinned digests + networkMagic
++ requiresNetworkMagic; and (b) CUSTOM profiles (user-supplied bytes via
+ConfigMap/Secret, no fetch) still need their own artifact+fingerprint path. Slice
+3 is pure behavior-preserving refactor (golden-locked), so it's the safe next
+autonomous step; slice 2's fingerprint/custom design may warrant a quick user
+check.
+
+FACTS captured for slice 3 (verified from clean reads this tick):
+- fetch.go depends on pins.go: `pinsFor(profile) ([]pinnedFile, bool)`,
+  `knownProfiles []string`, and pinnedFile fields {dest, url, expectedSHA256,
+  optional}. writeDryRun prints "<dest>\t<url>\t(sha256:<hex>|unpinned)".
+- fetch_test.go refs package idents: bookBase, previewConfigSHA256,
+  previewTopologySHA256 (helpers previewBodies/pinnedPreviewConfig/
+  embeddedProfileFile). It keys fake-doer bodies by `bookBase+"preview/<src>"`
+  and asserts pin==digest(embedded). Rewrite to source URL+digest from
+  publicpins (publicpins.Lookup("preview"); File.URL(profile); File.SHA256),
+  add helper bookSourceURL(t,profile,sourceName)->File.URL.
+- golden testdata/fetch-dry-run.txtar must stay byte-identical: preview prints
+  configuration.yaml + primary-topology.json as sha256:<64hex>, byron-genesis as
+  unpinned; mainnet prints mithril-genesis.vkey/ancillary.vkey pinned; unknown
+  profile errors "unknown profile". (publicpins already reproduces all these.)
+- profile data extracted from embedded files BEFORE any deletion:
+  preview networkMagic=2 RequiresMagic; preprod=1 RequiresMagic;
+  mainnet=764824073 RequiresNoMagic.
+
+Slice 3 adapter shape (pins.go): keep pinnedFile struct + pinsFor + knownProfiles
+but derive from publicpins.Lookup/Known; pinned files copy SHA256 only when
+File.Pinned. Drop the per-profile SHA consts + bookBase/bookFile/chainArtifacts
+(now in publicpins). Then update fetch_test.go. Validate: go test ./...fetch/...
++ the txtar golden + golangci-lint, commit, push (no PR yet).
+
+Resume: re-read pins.go + fetch_test.go cleanly, then write slice 3.
