@@ -23,6 +23,8 @@ const (
 	conditionTypeReady                 conditionType = "Ready"
 	conditionTypeDBSyncAttachmentReady conditionType = "DBSyncAttachmentReady"
 	conditionTypeNodeReady             conditionType = "NodeReady"
+	conditionTypeNodeSynchronized      conditionType = "NodeSynchronized"
+	conditionTypeNodeProgressing       conditionType = "NodeProgressing"
 	conditionTypeOgmiosReady           conditionType = "OgmiosReady"
 	conditionTypeKupoReady             conditionType = "KupoReady"
 	conditionTypeFaucetReady           conditionType = "FaucetReady"
@@ -48,6 +50,9 @@ const (
 	conditionReasonPrimaryWorkloadMissing       conditionReason = "PrimaryWorkloadMissing"
 	conditionReasonDBSyncAttachmentNotRequested conditionReason = "DBSyncAttachmentNotRequested"
 	conditionReasonDBSyncAttachmentPending      conditionReason = "DBSyncAttachmentPending"
+	conditionReasonOgmiosHealthUnavailable      conditionReason = "OgmiosHealthUnavailable"
+	conditionReasonOgmiosDisconnected           conditionReason = "OgmiosDisconnected"
+	conditionReasonNetworkTimingUnavailable     conditionReason = "NetworkTimingUnavailable"
 )
 
 // Per-component condition reasons. The Ready / Disabled pair appears for
@@ -55,6 +60,9 @@ const (
 // but the API admits explicit opt-out).
 const (
 	conditionReasonNodeReady             conditionReason = "NodeReady"
+	conditionReasonNodeSynchronized      conditionReason = "NodeSynchronized"
+	conditionReasonNodeCatchingUp        conditionReason = "NodeCatchingUp"
+	conditionReasonNodeSyncStalled       conditionReason = "NodeSyncStalled"
 	conditionReasonOgmiosReady           conditionReason = "OgmiosReady"
 	conditionReasonOgmiosDisabled        conditionReason = "OgmiosDisabled"
 	conditionReasonKupoReady             conditionReason = "KupoReady"
@@ -77,6 +85,8 @@ const (
 	conditionMessageDBSyncAttachmentNotRequested = "No primary-sidecar db-sync attachment is requested"
 	conditionMessageDBSyncAttachmentPending      = "Primary-sidecar db-sync attachment is requested but material is not attachable"
 	conditionMessagePrimaryNodeReady             = "Primary node container is ready"
+	conditionMessageNodeSynchronized             = "Primary node is synchronized with its inferred network tip"
+	conditionMessageNodeProgressing              = "Primary node tip is advancing or already synchronized"
 	conditionMessageOgmiosReady                  = "Ogmios sidecar is connected and available through its Service"
 	conditionMessageOgmiosDisabled               = "Ogmios chain API is disabled"
 	conditionMessageKupoReady                    = "Kupo sidecar is available through its Service"
@@ -127,6 +137,16 @@ func degradedCondition(status metav1.ConditionStatus, reason conditionReason, me
 // nodeReadyCondition constructs a NodeReady condition.
 func nodeReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
 	return ctrlstatus.Condition(string(conditionTypeNodeReady), status, string(reason), message)
+}
+
+// nodeSynchronizedCondition constructs a NodeSynchronized condition.
+func nodeSynchronizedCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeNodeSynchronized), status, string(reason), message)
+}
+
+// nodeProgressingCondition constructs a NodeProgressing condition.
+func nodeProgressingCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
+	return ctrlstatus.Condition(string(conditionTypeNodeProgressing), status, string(reason), message)
 }
 
 // ogmiosReadyCondition constructs an OgmiosReady condition.

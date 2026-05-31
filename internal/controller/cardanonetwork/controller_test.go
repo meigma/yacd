@@ -492,7 +492,7 @@ func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentReadyWhenSideca
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: nodeSyncProbeRequeueAfter}, result)
 	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionTrue, conditionReasonDBSyncAttachmentReady)
 	assertCondition(t, ctx, reconciler, network, conditionTypeReady, metav1.ConditionTrue, conditionReasonReady)
 }
@@ -918,7 +918,7 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, result)
+	assert.Equal(t, ctrl.Result{RequeueAfter: nodeSyncProbeRequeueAfter}, result)
 
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	assertCondition(t, ctx, reconciler, network, conditionTypeProgressing, metav1.ConditionFalse, conditionReasonReady)
@@ -2870,9 +2870,10 @@ func newTestReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, obj
 	fakeClient := builder.Build()
 
 	return &CardanoNetworkReconciler{
-		Client: fakeClient,
-		Reader: fakeClient,
-		Scheme: scheme,
+		Client:             fakeClient,
+		Reader:             fakeClient,
+		Scheme:             scheme,
+		syncProberOverride: syncedNodeSyncProber(),
 	}
 }
 
@@ -3188,7 +3189,7 @@ func testNetworkArtifactsData() map[string]string {
 	return map[string]string{
 		networkartifacts.ConfigurationKey:   "test configuration.yaml",
 		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
-		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
+		networkartifacts.ShelleyGenesisKey:  `{"systemStart":"2026-05-31T00:00:00Z","slotLength":1}`,
 		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
 		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
 		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",

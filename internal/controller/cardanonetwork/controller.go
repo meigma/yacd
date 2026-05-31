@@ -68,6 +68,9 @@ type CardanoNetworkReconciler struct {
 	// Now returns the current time. Tests override this to exercise
 	// time-bounded recovery behavior deterministically.
 	Now func() time.Time
+
+	// syncProberOverride replaces the Ogmios health prober in tests.
+	syncProberOverride cardanoNetworkSyncProber
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
@@ -148,6 +151,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, string(conditionReasonUnsupportedSpec), conditionMessagePrimaryWorkloadUnsupported),
 			dbSyncAttachmentCondition,
 			nodeReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			nodeSynchronizedCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			nodeProgressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			faucetReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
@@ -235,7 +240,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"networkFingerprint", resources.NetworkPlan.Fingerprint)
 
-	if result, requeue := primaryWorkloadRequeueResult(ready, applyResults, resources.FaucetAuthSecret != nil); requeue {
+	if result, requeue := primaryWorkloadRequeueResult(ready, applyResults, resources.FaucetAuthSecret != nil, resources.OgmiosService != nil); requeue {
 		return result, nil
 	}
 
@@ -267,6 +272,7 @@ func primaryWorkloadRequeueResult(
 	ready metav1.Condition,
 	applyResults primaryWorkloadApplyResults,
 	hasFaucetAuthSecret bool,
+	ogmiosEnabled bool,
 ) (ctrl.Result, bool) {
 	if ready.Status != metav1.ConditionTrue && applyResults.NetworkArtifactsRecoveryRequeueAfter > 0 {
 		return ctrl.Result{RequeueAfter: applyResults.NetworkArtifactsRecoveryRequeueAfter}, true
@@ -275,6 +281,9 @@ func primaryWorkloadRequeueResult(
 		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
 			ready.Reason == string(conditionReasonDBSyncAttachmentPending)) {
 		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, true
+	}
+	if ogmiosEnabled {
+		return ctrl.Result{RequeueAfter: nodeSyncProbeRequeueAfter}, true
 	}
 	if hasFaucetAuthSecret {
 		return ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, true
@@ -483,6 +492,8 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		ctrlstatus.Condition(string(conditionTypeReady), metav1.ConditionFalse, conditionErr.Reason, conditionErr.Message),
 		dbSyncAttachment,
 		nodeReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		nodeSynchronizedCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		nodeProgressingCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		ogmiosReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		kupoReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		faucetReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),

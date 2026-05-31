@@ -452,6 +452,11 @@ type CardanoNetworkStatus struct {
 	// +optional
 	Artifacts *CardanoNetworkArtifactsStatus `json:"artifacts,omitempty"`
 
+	// sync reports the primary node's chain synchronization status as inferred
+	// from in-cluster sources.
+	// +optional
+	Sync *CardanoNetworkSyncStatus `json:"sync,omitempty"`
+
 	// conditions represent the current state of the CardanoNetwork resource.
 	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
 	//
@@ -459,6 +464,8 @@ type CardanoNetworkStatus struct {
 	// - "Ready": the network is usable through its published endpoints
 	// - "DBSyncAttachmentReady": the primary-sidecar db-sync attachment is not blocking the primary Pod
 	// - "NodeReady": the primary node container is running
+	// - "NodeSynchronized": the primary node is caught up to its inferred network tip
+	// - "NodeProgressing": the primary node tip is advancing or already synchronized
 	// - "ArtifactsReady": the non-secret network artifact bundle is published
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
@@ -520,6 +527,73 @@ type CardanoNetworkArtifactsStatus struct {
 	// dataHash is the publisher-computed hash over ConfigMap data.
 	// +optional
 	DataHash string `json:"dataHash,omitempty"`
+}
+
+// CardanoNetworkSyncStatus reports the primary node's observed synchronization
+// state using only in-cluster sources.
+type CardanoNetworkSyncStatus struct {
+	// source identifies the probe source that produced this sync status.
+	// +kubebuilder:validation:Enum=ogmios
+	// +optional
+	Source string `json:"source,omitempty"`
+
+	// connectionStatus is the Ogmios health connection status.
+	// +optional
+	ConnectionStatus string `json:"connectionStatus,omitempty"`
+
+	// tip is the last known chain tip reported by Ogmios.
+	// +optional
+	Tip *CardanoNetworkTipStatus `json:"tip,omitempty"`
+
+	// lastTipUpdate is the timestamp Ogmios reported for the last known tip
+	// update.
+	// +optional
+	LastTipUpdate *metav1.Time `json:"lastTipUpdate,omitempty"`
+
+	// observedAt is the controller time when this sync status was probed.
+	// +optional
+	ObservedAt *metav1.Time `json:"observedAt,omitempty"`
+
+	// networkSynchronization is Ogmios' 0..1 synchronization estimate, rounded
+	// to five decimals when reported.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
+	// +optional
+	NetworkSynchronization *float64 `json:"networkSynchronization,omitempty"`
+
+	// inferredTipSlot is the wall-clock network slot inferred from the
+	// published Shelley genesis timing.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	InferredTipSlot *int64 `json:"inferredTipSlot,omitempty"`
+
+	// lagSlots is max(inferredTipSlot - tip.slot, 0).
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	LagSlots *int64 `json:"lagSlots,omitempty"`
+
+	// lagSeconds is lagSlots converted through slotLength and rounded up to a
+	// whole number of seconds.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	LagSeconds *int64 `json:"lagSeconds,omitempty"`
+}
+
+// CardanoNetworkTipStatus reports the primary node's last known chain tip.
+type CardanoNetworkTipStatus struct {
+	// slot is the tip slot reported by Ogmios.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	Slot *int64 `json:"slot,omitempty"`
+
+	// blockHeight is the tip block height reported by Ogmios.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	BlockHeight *int64 `json:"blockHeight,omitempty"`
+
+	// hash is the tip hash reported by Ogmios.
+	// +optional
+	Hash string `json:"hash,omitempty"`
 }
 
 // CardanoNetworkEndpointsStatus reports discovered Service endpoints.
