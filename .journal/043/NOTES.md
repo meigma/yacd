@@ -750,3 +750,53 @@ Resume 2b checklist (fresh context):
    apply a preview public CardanoNetwork on Kind, confirm fetch-init stages
    /state/profile, node boots, Ready, ConfigMap < 1MiB; mainnet render assertion
    for the >1MiB unblock. Open PR after green.
+
+## 2026-05-31 (later) — Wrap-up; slice 2b NOT started (genuine read corruption)
+
+Verified channel health on resources.go (Read matched git: 427 lines, on-disk==HEAD)
+and was about to implement slice 2b, but the very next Read (containers.go) came
+back GENUINELY corrupted: Cyrillic substitutions (cardanoNodeConfigДир),
+duplicated/!monotonic line numbers (33/34 after 48/49), mangled indentation. The
+on-disk file is fine (compiles in CI); corruption is in Read delivery. Did NOT
+edit — a delicate 6-file controller change must not be authored from corrupted
+reads. Asked to wrap up at the same moment, so stopping cleanly.
+
+STATE (all pushed, branch feat/f0-public-profile-pvc clean at fe2bb6c, 0/0, NO PR):
+- Items 7/8/9/10 DONE + merged (PR #68; cardano-tools 11.0.1-yacd.4 published
+  sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e).
+- PR2 foundation landed + green: 464a960 (publicpins), eb96db9 (fetch->publicpins
+  adapter), fe2bb6c (publicpins static identity, cross-checked vs embedded).
+
+RE-SCOPE confirmed (lower risk): F0 fix is CONTROLLER-ONLY; keep the manager
+//go:embed (manager image isn't size-constrained; only the ConfigMap is). So
+publicnet.BuildPlan stays unchanged (byte-based fingerprint preserved). Embed
+removal + fingerprint switch deferred to a clean follow-up (task #9).
+
+NEXT = slice 2b (task #6), controller-only, atomic (coupled, can't split further):
+  - plan.go: curated public ProfileDir -> /state/profile; curated ArtifactData =
+    {connection.json, yacd-public-profile.json} only (custom keeps full bytes).
+  - init_container.go: new publicProfileFetchInitContainer (b.cardanoToolsImage,
+    `fetch --profile <p> --output-dir /state/profile`, before mithril; mirror
+    cardanoTestnetInitContainer security ctx).
+  - resources.go deployment(): curated public -> add fetch init, DROP
+    publicProfileVolume ConfigMap volume; custom -> keep it. (resources.go read
+    CLEAN this session: publicProfileVolume@45, deployment@62, public volume
+    append@160-162, plan.isPublic gate.)
+  - containers.go cardanoNodeContainer: curated reads config/topology from
+    /state/profile (RE-READ FRESH — this file's read was corrupted; do not trust
+    the partial I saw: it had cardanoNodeContainer mounts ~34-49 and a
+    plan.isPublic() public-profile mount block).
+  - artifacts.go: ConfigMap data flows from plan.ArtifactData (artifacts.go:74-78)
+    so it shrinks automatically once plan curated ArtifactData shrinks.
+  - 2d: networkartifacts dataContract mode-aware (curated-public requires only
+    connection + public-profile manifest; local+custom keep full required set).
+  - Validate: root:generate/check/test (envtest) THEN in-cluster preview-public
+    smoke on Kind (dev stack); mainnet render assertion for >1MiB unblock. Open PR.
+
+PROCESS NOTE: read corruption is intermittent + real this session (Cyrillic/
+line-number scramble). Before editing any code file next session, cross-check the
+Read against `git show HEAD:<file> | sed -n` or `git hash-object` and re-read on
+any anomaly. resources.go is trustworthy as captured; containers.go is NOT.
+
+Dev stack still up on the PR1 worktree (feat-cardano-tools-image-foundation);
+will need repoint to the PR2 worktree for the 2b in-cluster smoke.
