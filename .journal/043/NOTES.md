@@ -288,3 +288,28 @@ genesis/checkpoints to pinned digests in publicpins (complete manifest
 integrity) vs rely on cardano-node config.json hash verification. Will pick the
 pinned-digest route for a complete integrity contract unless it proves
 impractical.
+
+## 2026-05-31 (later) — Item 9 DONE: cardano-tools published; PR2 slicing
+
+cardano-tools release workflow (run 26702435140) SUCCESS. Published:
+- tag `11.0.1-yacd.4`
+- manifest digest `sha256:9ca9e03348c3f9d22408be36f1525c3ef518ab6e0b0053b0a05f2b8401a6039e`
+  (multi-arch amd64+arm64, attested).
+PR2 will pin the manager default to this digest (toolsimage: Revision yacd.4 +
+optional @sha256 digest pin).
+
+Decision RESOLVED (was flagged open): publicpins will pin genesis/checkpoints
+per-file digests too (complete manifest integrity), since all digests are now
+computed. Captured profile file sha256s in /tmp/profile_hashes.txt; config/
+topology/mithril match existing pins.go constants (cross-check passed). NOTE:
+peer-snapshot stays UNPINNED/optional (advances with chain) — manifest marks it
+digest-exempt; fetch verify must not fail on it. SOURCE.md is not an artifact
+(skip).
+
+PR2 build order (committed slices on feat/f0-public-profile-pvc):
+  1. internal/cardano/publicpins (shared pins+metadata+digests+contentHash) [foundation]
+  2. publicnet BuildPlan: drop //go:embed, source from publicpins; manifest gains per-file sha256
+  3. cardano-tools fetch: pins.go -> thin adapter over publicpins; add --verify-manifest
+  4. controller: manifest-only public ConfigMap + /state/profile fetch init + node mount repoint
+  5. mode-aware dataContract (public requires connection.json+yacd-public-profile.json)
+  6. public report path + goldens; toolsimage digest pin; tests + chainsaw preview
