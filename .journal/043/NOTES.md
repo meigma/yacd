@@ -845,3 +845,71 @@ ConfigMap < 1MiB; mainnet render assertion for the >1MiB unblock. Then open PR.
 
 State unchanged: branch feat/f0-public-profile-pvc clean at fe2bb6c (0/0); slices
 1/2a/3 landed; items 7/8/9/10 merged; no PR yet.
+
+## 2026-05-31 (later) — Slice 2b production code WIP-committed; STOPPED on real channel corruption
+
+Implemented slice 2b production code via indentation-preserving Python regex
+edits (sidesteps the tab-render issue; each edit asserted exactly-once). All 6
+controller files compile (go build ./internal/controller/cardanonetwork = exit 0,
+gofmt -w applied). Preserved as LOCAL-ONLY commit 4d9f2a1 on
+feat/f0-public-profile-pvc — NOT pushed (origin safe at fe2bb6c; 1 commit ahead).
+Subject: "wip(cardanonetwork): F0 curated public PVC-fetch production code
+(2d contract + tests pending; do not push)".
+
+What 4d9f2a1 contains (production only, NO tests, NOT functional yet — see 2d):
+- builder.go: +defaultCardanoToolsImage builder field; publicNetworkSpec uses
+  publicProfileDir(public.Profile) for ProfileDir.
+- controller.go: threads defaultCardanoToolsImage: r.DefaultCardanoToolsImage.
+- plan.go: +curatedPublicProfileDir const (= localnetStateDir+"/profile" =
+  /state/profile); +isCuratedPublic()/isCustomPublic(); +publicProfileDir() helper;
+  publicPrimaryNetworkPlan reshaped — curated ArtifactData = {public-profile
+  manifest, connection.json} only; custom = full bytes (unchanged).
+- init_container.go: +toolsimage import; +cardanoToolsImage() method;
+  +publicProfileFetchInitContainer (runs `fetch --profile <p> --output-dir
+  /state/profile`, mounts localnet-state PVC at /state, restricted SC).
+- resources.go: curated public adds the fetch init BEFORE mithril; publicProfile
+  ConfigMap volume now custom-public-only.
+- containers.go: node+ogmios public-profile ConfigMap mount now custom-public-only
+  (curated reads config/topology from /state/profile under the existing /state mount).
+
+STOP REASON (genuine, matches user's "stop on surprises"): intermittent
+tool-result corruption hit for real. Read of
+internal/controller/networkartifacts/artifacts.go returned FABRICATED content
+(a literal "<<TRUNCATED BY RENDERER>>" marker + invented commentary lines that
+aren't valid Go), and a follow-up Bash returned inconsistent output (203 vs 207
+lines, empty grep, an injected line). I will NOT author 2d — a load-bearing
+ArtifactsReady-gating validation file — against untrustworthy reads. (Note: the
+WIP commit + markers came back clean; corruption is intermittent, not total.)
+
+REMAINING to finish slice 2b (resume when reads are trustworthy; verify each via
+`git show HEAD:<f> | sed -n` cross-check before editing):
+  2d (REQUIRED — without it curated public ArtifactsReady never flips because the
+     shrunk ConfigMap lacks the genesis keys the contract requires):
+     internal/controller/networkartifacts/artifacts.go — make dataContract
+     mode-aware. Curated-public contract requires only {connection.json,
+     yacd-public-profile.json} (genesis/config/topology/checkpoints optional);
+     local + custom keep the current full RequiredKeys() set (so the localnet
+     report-dry-run golden sha256:f1cd9ad8 is unaffected). Thread the
+     mode/contract through ProducerConfigMap + ConsumerConfigMap and their
+     callers (status.go producer call; cardanodbsync consumer call). Verify the
+     real file first: it is 203 lines, has dataContract() returning
+     ctrlartifacts.Contract{RequiredKeys: cardanonetworkartifacts.RequiredKeys(),
+     OptionalKeys: ...OptionalKeys()}; ProducerConfigMap/ProducerConfigMapNeedsRecovery/
+     ConsumerStatus/ConsumerConfigMap; validateArtifactData calls
+     ValidateConfigMapData(cm, dataContract(), hash).
+  Tests: builder_test.go (public deployment now has fetch init + no public-profile
+     volume for curated; ConfigMap data = manifest+connection only; custom
+     unchanged); controller envtest (curated public ArtifactsReady flips with
+     shrunk ConfigMap; mainnet render assertion ConfigMap < 1MiB); networkartifacts
+     contract tests.
+  Then: root:generate/check/test green -> push -> dev-up on PR2 worktree ->
+     in-cluster preview-public smoke (fetch-init stages /state/profile, node
+     Ready) -> open PR.
+  Deferred (task #9): drop //go:embed, publicnet fingerprint switch, fetch
+     --verify-manifest + idempotent skip, public report path, manager digest pin
+     sha256:9ca9e033..., chainsaw preview-public.
+
+NOTE on fetch-on-restart: current publicProfileFetchInitContainer re-downloads
+every pod start (no idempotent skip yet) — bounded (preview ~70KB, mainnet
+~1.5MB) but a brief book outage blocks RESTART (steady state unaffected; node DB
+persists on PVC). Idempotent skip + --verify-manifest is the task #9 follow-up.
