@@ -1,124 +1,47 @@
 package fetch
 
-import "github.com/meigma/yacd/internal/cardano/networkartifacts"
+import "github.com/meigma/yacd/internal/cardano/publicpins"
 
-// Trusted source bases. config.json and the chain artifacts come from the
-// Cardano operations book; the Mithril verification keys come from the Mithril
-// release-mainnet configuration. These mirror the provenance recorded in
-// internal/cardano/publicnet/profiles/*/SOURCE.md.
-const (
-	bookBase    = "https://book.play.dev.cardano.org/environments/"
-	mithrilBase = "https://raw.githubusercontent.com/input-output-hk/mithril/main/mithril-infra/configuration/release-mainnet/"
-)
-
-// Pinned config.json digests, one per profile. config.json is the single trust
-// anchor: it carries the Byron/Shelley/Alonzo/Conway and checkpoints file
-// hashes inline, which cardano-node verifies at startup, so pinning config.json
-// transitively covers every genesis file and the checkpoints file. These
-// digests are reviewed against the embedded profile copies (and SOURCE.md) and
-// must be re-reviewed against the live source whenever upstream rotates a
-// network configuration.
-const (
-	previewConfigSHA256 = "bdfe303362cb443ba15754747be07893bfebee367d09fad41af5a626503df6d6"
-	preprodConfigSHA256 = "6b2da527ab5ce7cfc6c02cf74a04f512fa845b870f9fdda25d26edcd5814e2c8"
-	mainnetConfigSHA256 = "e3db8de7ec244b5fddc114e7249df9f4bda11e2193c367c2135a3a8612de2da7"
-)
-
-// Pinned topology.json digests. topology is not referenced by config.json, so
-// it carries its own pin: it selects bootstrap/relay peers, and pinning it
-// turns a silent upstream change (which would alter peer selection) into a
-// loud, reviewable fetch failure. peer-snapshot.json is deliberately NOT pinned
-// — it advances continuously with the chain, so any pin would be stale
-// immediately; it is optional, best-effort, and affects only peer hints, not
-// chain validity (the node verifies blocks against the pinned genesis).
-const (
-	previewTopologySHA256 = "77db913f4b605cd874c1cf3cea160f9b4227b15fc07e4cce72d622bdda946de6"
-	preprodTopologySHA256 = "bd18a5adaeaa926c0eeb5ae5cbc8f70c6f18e702b6cb079cfdee58d1206fc25c"
-	mainnetTopologySHA256 = "628fbf74cfe4e513c092d00b2937cdaf26c619ac2f7bf27aa6469505ad5f43c7"
-)
-
-// Pinned Mithril verification key digests. These keys are not referenced from
-// config.json, so they carry their own pins; they anchor Mithril snapshot
-// verification and must never be fetched unverified.
-const (
-	mainnetMithrilGenesisSHA256   = "1dca8b11b21f72aedea1d102abbb2f783b64d61b6ba059cba0d2602bd5153e51"
-	mainnetMithrilAncillarySHA256 = "187c8a48e59bca37216d18e3a3a45195116cf64244faa98ea51f77681f7786b4"
-)
-
-// pinnedFile describes one artifact to download for a profile.
+// pinnedFile is the fetch-local view of a curated profile file: the destination
+// artifact key (the filename written into the output directory), the resolved
+// download URL, the pinned sha256 digest (empty when the file is not pinned),
+// and whether a missing download is tolerated.
 type pinnedFile struct {
-	// dest is the filename written into the output directory. It is the YACD
-	// artifact key (from networkartifacts), which can differ from the source
-	// filename: the book's config.json is written as configuration.yaml and
-	// topology.json as primary-topology.json so the result matches the
-	// artifact/runtime contract cardano-node and the controllers expect.
-	dest string
-	// url is the exact download URL (using the upstream source filename).
-	url string
-	// expectedSHA256 is the hex digest the downloaded bytes must match. Empty
-	// means the file is not pinned here: genesis and checkpoints files are
-	// verified downstream by cardano-node against the hashes inside the pinned
-	// config.json, and topology/peer-snapshot are operational files.
+	dest           string
+	url            string
 	expectedSHA256 string
-	// optional reports whether a download failure for this file is tolerated
-	// (the file may legitimately not exist for a profile).
-	optional bool
-}
-
-// bookFile builds a pinnedFile downloaded from the operations book, mapping the
-// upstream sourceName to the YACD dest artifact key.
-func bookFile(profile, sourceName, dest, sha256 string, optional bool) pinnedFile {
-	return pinnedFile{dest: dest, url: bookBase + profile + "/" + sourceName, expectedSHA256: sha256, optional: optional}
-}
-
-// chainArtifacts returns the files common to every public profile: the pinned
-// config.json (written as configuration.yaml), the genesis files verified
-// downstream by config.json's hashes, and the pinned topology.json (written as
-// primary-topology.json).
-func chainArtifacts(profile, configSHA256, topologySHA256 string) []pinnedFile {
-	return []pinnedFile{
-		bookFile(profile, "config.json", networkartifacts.ConfigurationKey, configSHA256, false),
-		bookFile(profile, "byron-genesis.json", networkartifacts.ByronGenesisKey, "", false),
-		bookFile(profile, "shelley-genesis.json", networkartifacts.ShelleyGenesisKey, "", false),
-		bookFile(profile, "alonzo-genesis.json", networkartifacts.AlonzoGenesisKey, "", false),
-		bookFile(profile, "conway-genesis.json", networkartifacts.ConwayGenesisKey, "", false),
-		bookFile(profile, "topology.json", networkartifacts.PrimaryTopologyKey, topologySHA256, false),
-	}
+	optional       bool
 }
 
 // pinsFor returns the download manifest for a public profile and whether the
-// profile is known.
+// profile is known. The profile definitions, source URLs, and pinned digests
+// are owned by internal/cardano/publicpins so the operator's published artifact
+// manifest and this fetch path share exactly one source of truth. config.json
+// and topology.json (and the mainnet Mithril keys) are pinned; the genesis and
+// checkpoints files are downloaded unpinned and verified downstream by
+// cardano-node against config.json's inline hashes.
 func pinsFor(profile string) ([]pinnedFile, bool) {
-	switch profile {
-	case "preview":
-		// preview config.json references CheckpointsFile + CheckpointsFileHash,
-		// so checkpoints.json is required (unpinned here — cardano-node verifies
-		// it against the hash inside the pinned config.json). peer-snapshot is a
-		// best-effort bootstrap aid and stays optional.
-		return append(chainArtifacts("preview", previewConfigSHA256, previewTopologySHA256),
-			bookFile("preview", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
-			bookFile("preview", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
-		), true
-	case "preprod":
-		// preprod config.json does not reference a checkpoints file.
-		return append(chainArtifacts("preprod", preprodConfigSHA256, preprodTopologySHA256),
-			bookFile("preprod", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
-		), true
-	case "mainnet":
-		// mainnet config.json references CheckpointsFile + CheckpointsFileHash,
-		// so checkpoints.json is required (verified downstream by that hash).
-		return append(chainArtifacts("mainnet", mainnetConfigSHA256, mainnetTopologySHA256),
-			bookFile("mainnet", "checkpoints.json", networkartifacts.CheckpointsKey, "", false),
-			bookFile("mainnet", "peer-snapshot.json", networkartifacts.PeerSnapshotKey, "", true),
-			pinnedFile{dest: networkartifacts.MithrilGenesisKey, url: mithrilBase + "genesis.vkey", expectedSHA256: mainnetMithrilGenesisSHA256},
-			pinnedFile{dest: networkartifacts.MithrilAncillaryKey, url: mithrilBase + "ancillary.vkey", expectedSHA256: mainnetMithrilAncillarySHA256},
-		), true
-	default:
+	p, ok := publicpins.Lookup(profile)
+	if !ok {
 		return nil, false
 	}
+	files := make([]pinnedFile, 0, len(p.Files))
+	for _, file := range p.Files {
+		pin := ""
+		if file.Pinned {
+			pin = file.SHA256
+		}
+		files = append(files, pinnedFile{
+			dest:           file.ArtifactKey,
+			url:            file.URL(profile),
+			expectedSHA256: pin,
+			optional:       file.Optional,
+		})
+	}
+	return files, true
 }
 
 // knownProfiles lists the profiles fetch supports, for error messages.
 //
-//nolint:gochecknoglobals // immutable display list.
-var knownProfiles = []string{"preview", "preprod", "mainnet"}
+//nolint:gochecknoglobals // immutable display list sourced from publicpins.
+var knownProfiles = publicpins.Known()
