@@ -44,3 +44,14 @@ Next: If we add this to `CardanoNetwork`, name it carefully as node/network sync
 - Committed follow-up as `c5da81d docs(cardanonetwork): document sync probe
   helpers`.
 - Revalidated with `moon run root:check` and `git diff --check`.
+
+## 2026-05-31 13:12 - Ogmios disconnected review fix
+
+- Addressed review findings for Ogmios `/health`: HTTP 500 health bodies are
+  now parsed so disconnected Ogmios publishes `connectionStatus=disconnected`,
+  and nullable `lastKnownTip`, `lastTipUpdate`, and `networkSynchronization`
+  fields are treated as reachable unknown-state health data.
+- Committed fix as `4f6892c fix(cardanonetwork): handle disconnected ogmios
+  health`.
+- Validation passed: `moon run root:test`, `moon run root:check`, and
+  `git diff --check`.
