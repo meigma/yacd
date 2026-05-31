@@ -229,3 +229,44 @@ every file via a clean Read AND `git show HEAD:<f> | sha256sum` (small output)
 before editing; prefer asserted exact-match edits; re-run root:test after each.
 Branch feat/f0-public-profile-pvc @ 09285ea, clean, 0/0, rebased on master
 2f28360, dev stack UP on this worktree (kind-yacd-dev, controller Running).
+
+## 2026-05-31 14:05 — Producer design confirmed; implementation BLOCKED by repo-wide read corruption
+Channel briefly recovered enough to confirm the Commit-A producer design against
+HEAD, then degraded again:
+- Shared package is `internal/cardano/networkartifacts` (ROOT module, importable
+  by cardano-tools). It already has: `connection.go` (typed `Connection`:
+  SchemaVersion, NetworkMagic uint32, SocketPath, NodeConfigFile, NodeTopologyFile,
+  Files map[string]string; `ConnectionSchemaVersion=1`), `contract.go`
+  (RequiredKeys/OptionalKeys), `manifest.go` (BuildManifest/Manifest.JSON/Verify/
+  FileDigest/ManifestKey), `keys.go`. The Explore agent's `internal/cardano/
+  artifactset` package is a HALLUCINATION — it does not exist.
+- `serve` serves `manifest.json` FROM A FILE (does not compute) — so the producer
+  MUST write manifest.json into the served dir.
+- Commit-A producer design (locked): (1) extend cardano-tools `fetch` to also
+  write connection.json (networkartifacts.Connection; magic from publicpins
+  static identity; NodeConfigFile=configuration.yaml, NodeTopologyFile=
+  primary-topology.json; SocketPath empty for public) + manifest.json
+  (BuildManifest over written files, last); (2) add a `stage` subcommand that
+  reuses `report`'s localnet flatten+connection assembly to turn a create-env
+  state dir into a flat served dir + connection.json + manifest.json, WITHOUT
+  changing report or its golden (sha f1cd9ad8). Both produce a flat dir keyed by
+  contract filenames that `serve` can expose.
+
+IMPLEMENTATION BLOCKED: delegated Commit A to a general-purpose subagent (clean
+context, robust go-test validation, NO commit). The subagent hit the SAME
+tool-result corruption — Read AND `cat`/`head` returned empty/garbled file
+contents repo-wide — and correctly refused to author code blind. It made ZERO
+changes; working tree is CLEAN (verified). So the corruption is harness/session-
+wide right now, not just the main channel.
+
+DECISION: stop code authoring this session. The blocker is purely environmental;
+nothing is half-written. Resume Commit A (then Commit B controller serve, Commit
+C A3 service/status) per the 13:40 ready-to-execute spec in a FRESH session/
+context where file reads are trustworthy (cross-check each file via clean Read +
+`git show HEAD:<f>` before editing; asserted exact-match edits; `moon run
+root:test` after each). State at pause: branch feat/f0-public-profile-pvc @
+09285ea (rebased on master 2f28360, root:test+root:check green), clean, 0/0, NO
+PR; dev stack UP on this worktree (kind-yacd-dev, controller Running); design
+fork resolved = Option A (build+load cardano-tools in e2e). Items 7/8/9/10 done+
+merged; cardano-tools yacd.4 published (pre-A1). Session 045 sync-status stream
+untouched.
