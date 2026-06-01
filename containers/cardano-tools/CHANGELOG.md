@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.1.0-yacd.4](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.4...cardano-tools/v11.1.0-yacd.4) (2026-06-01)
+
+
+### Features
+
+* **cardanonetwork:** serve network artifacts over HTTP (F0 redesign, PR-A) ([#75](https://github.com/meigma/yacd/issues/75)) ([c61e0a6](https://github.com/meigma/yacd/commit/c61e0a62a9f7cfb88e18b40a64ac919e60fe2fc8))
+
 ## [11.0.1-yacd.4](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.0...cardano-tools/v11.0.1-yacd.4) (2026-05-31)
 
 
