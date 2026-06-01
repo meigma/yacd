@@ -290,9 +290,14 @@
   + the Dockerfile publisher stage + the init-wrapper `publish_artifacts`) and bumped the
   manager default cardano-testnet revision yacd.4→yacd.5; a follow-up (PR #80, `7c13d14`)
   pinned the next release to `11.0.1-yacd.5` (see the cardano-testnet versioning bullet).
-  **REMAINING — PR-D** = remove the cardano-tools `report` verb + pin the manager
-  cardano-tools image to a published digest (release-please PR #76) + DESIGN.md rewrite +
-  drop the e2e build+load hack.
+  **PR-D (session 050, PRs #81 + #76 + #82) is DONE+merged — the F0 series is COMPLETE.**
+  #81 removed the dead cardano-tools `report` verb (+ its `internal/kube`/config loader/golden);
+  #76 released `cardano-tools 11.0.1-yacd.5` (publisher-/report-free, with stage/serve/sync);
+  #82 pinned the manager's `toolsimage` default to that published digest
+  (`@sha256:d3283ca5fc925f6ec01f61a54371e5ad1934088614b7cde1e1e1915424662fc4`) and dropped the
+  cardano-tools e2e build+load (Kind now pulls both tools images). DESIGN.md needed no rewrite
+  (no stale ConfigMap prose). Remaining/optional: digest-pin the cardano-testnet image for parity;
+  the root operator release PR #7 (`yacd 1.0.0`) is open awaiting a deliberate release decision.
 - Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
   slice. The default Mithril client image is
   `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot

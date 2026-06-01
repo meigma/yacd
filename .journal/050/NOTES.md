@@ -210,3 +210,22 @@ Carried/untouched: root #7 (operator 1.0.0, awaiting a deliberate release
 decision); deterministic primary-sidecar manager-envtest refactor; TEST_REPORT
 F2/F4; test-harness Phases 3–5; cardano-testnet digest-pin parity (optional
 follow-up). Session 049 (CLI/k3d) remains separately in-progress.
+
+## 2026-06-01 15:55 — Close
+
+PR-D complete; **F0 redesign series closed.** Merged this session:
+- **#81** `2b9bf84` — remove the dead cardano-tools `report` verb (+ orphaned
+  `internal/kube`, config loader, golden; cardano-tools README; cardano-testnet
+  e2e build+load dropped).
+- **#76** — release-please `cardano-tools 11.0.1-yacd.5` (publisher-/report-free,
+  with stage/serve/sync); tag `cardano-tools/v11.0.1-yacd.5`, image published.
+- **#82** `bd8e0bf` — digest-pin the manager's `toolsimage` default to
+  `@sha256:d3283ca5…`, drop the cardano-tools e2e build+load, and repin the root
+  release to `1.0.0` via scoped `Release-As: yacd@1.0.0` (leak fix).
+
+Handoff state: `master` @ `bd8e0bf`, local default fast-forwarded. All PR-D
+worktrees/branches removed. Dev stack (`kind-yacd-dev`) stopped via
+`root:dev-down`. Root release PR **#7 (`yacd 1.0.0`) left OPEN** for a deliberate
+operator-release decision; release-please correctly recomputed it to `1.0.0`.
+SUMMARY.md written; INDEX.md row → complete; TECH_NOTES F0 status updated +
+Release-As-scoping/cardano-tools-versioning notes added. Session 049 untouched.
