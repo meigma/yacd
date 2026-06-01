@@ -49,8 +49,17 @@ type PrimarySidecarAttachment struct {
 // CardanoNetwork uses to render a db-sync sidecar.
 type PrimarySidecarAttachmentResources struct {
 	// NetworkArtifactsConfigMapName is the CardanoNetwork-owned artifacts
-	// ConfigMap mounted by db-sync.
+	// ConfigMap mounted by db-sync on the legacy (custom-public) path. It is
+	// mutually exclusive with ArtifactsStateVolumeName.
 	NetworkArtifactsConfigMapName string
+	// ArtifactsStateVolumeName and ArtifactsSubPath select the serve path: the
+	// CardanoNetwork primary node stages the artifacts onto its node-state PVC,
+	// so the sidecar mounts that already-present volume at the artifacts
+	// subdirectory instead of a ConfigMap. Init-before-regular Pod ordering
+	// guarantees the directory is populated before the sidecar starts. They are
+	// mutually exclusive with NetworkArtifactsConfigMapName.
+	ArtifactsStateVolumeName string
+	ArtifactsSubPath         string
 	// ConfigMapName is the CardanoDBSync-owned db-sync config ConfigMap.
 	ConfigMapName string
 	// PGPassSecretName is the CardanoDBSync-owned pgpass Secret.
@@ -150,13 +159,19 @@ func BuildPrimarySidecarAttachment(
 	if resources.Revision == "" {
 		return nil, fmt.Errorf("db-sync sidecar revision is required")
 	}
-	if resources.NetworkArtifactsConfigMapName == "" {
-		return nil, fmt.Errorf("network artifacts ConfigMap name is required")
+	if resources.NetworkArtifactsConfigMapName == "" && resources.ArtifactsStateVolumeName == "" {
+		return nil, fmt.Errorf("network artifacts source (ConfigMap name or served-artifacts volume) is required")
 	}
 
 	// The reused container helpers are pure and do not depend on scheme or the
-	// follower-node image override.
-	builder := dbSyncWorkloadBuilder{}
+	// follower-node image override. On the serve path the sidecar reads the
+	// artifacts from the primary node-state PVC the CardanoNetwork already
+	// mounts, so the db-sync container's artifacts mount is redirected to that
+	// shared volume at the staged subdirectory.
+	builder := dbSyncWorkloadBuilder{
+		artifactsVolumeOverride: resources.ArtifactsStateVolumeName,
+		artifactsSubPath:        resources.ArtifactsSubPath,
+	}
 	spec, err := builder.dbSyncPlanSpec(dbSync, network, database)
 	if err != nil {
 		return nil, err
@@ -239,16 +254,25 @@ func primarySidecarMetricsSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync, net
 
 // primarySidecarVolumes renders the volumes CardanoNetwork appends to the
 // primary Pod when attaching db-sync.
+//
+// On the serve path the sidecar reads artifacts from the primary node-state
+// PVC the CardanoNetwork primary Pod already defines, so no network-artifacts
+// volume is appended (the db-sync container's mount targets that shared volume
+// by name with a subPath). Only the legacy ConfigMap path appends a
+// network-artifacts ConfigMap volume.
 func primarySidecarVolumes(resources PrimarySidecarAttachmentResources) []corev1.Volume {
-	return []corev1.Volume{
-		{
+	volumes := []corev1.Volume{}
+	if resources.NetworkArtifactsConfigMapName != "" {
+		volumes = append(volumes, corev1.Volume{
 			Name: networkArtifactsVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{Name: resources.NetworkArtifactsConfigMapName},
 				},
 			},
-		},
+		})
+	}
+	return append(volumes, []corev1.Volume{
 		{
 			Name: dbSyncConfigMapVolumeName,
 			VolumeSource: corev1.VolumeSource{
@@ -286,7 +310,7 @@ func primarySidecarVolumes(resources PrimarySidecarAttachmentResources) []corev1
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-	}
+	}...)
 }
 
 // primaryNetworkDeploymentName returns the referenced CardanoNetwork primary

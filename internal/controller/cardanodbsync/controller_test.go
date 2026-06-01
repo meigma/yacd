@@ -975,6 +975,37 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExternalDatabaseWorkloads(t *tes
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncMetricsServiceName(dbSync)}, &corev1.Service{}))
 }
 
+// TestCardanoDBSyncReconcilerReconcileServePathDecouplesFromConfigMap proves the
+// serve path is decoupled from the network-artifacts ConfigMap: with the serve
+// endpoint published but NO ConfigMap present in the cluster, the
+// dedicated-follower workload still applies, sourcing artifacts through a sync
+// init container that fetches them over HTTP.
+func TestCardanoDBSyncReconcilerReconcileServePathDecouplesFromConfigMap(t *testing.T) {
+	ctx := context.Background()
+	dbSync := localCardanoDBSync("dbsync", "ready-network")
+	network := withServedArtifacts(readyCardanoNetwork("ready-network"))
+	// Deliberately omit artifactConfigMapFor(network): the serve path must not
+	// read the ConfigMap.
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
+	reconciler.DefaultCardanoToolsImage = "ghcr.io/meigma/yacd/cardano-tools:tilt"
+
+	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
+
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{RequeueAfter: dbSyncRuntimeProbeRequeueAfter}, result)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
+	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonDeploymentProgressing)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncWorkloadName(dbSync)}, deployment))
+	syncInit := requireInitContainer(t, deployment, dbSyncArtifactsSyncInitName)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:tilt", syncInit.Image)
+	assert.Contains(t, syncInit.Args, network.Status.Endpoints.Artifacts.URL)
+	artifactsVolume := requireVolume(t, deployment, networkArtifactsVolumeName)
+	require.NotNil(t, artifactsVolume.EmptyDir, "serve path mounts an emptyDir the sync init fills")
+	assert.Nil(t, artifactsVolume.ConfigMap)
+}
+
 func TestCardanoDBSyncReconcilerReconcileAppliesExplicitDedicatedFollowerWorkloads(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")

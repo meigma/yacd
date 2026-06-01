@@ -49,6 +49,16 @@ const (
 	followerTopologyFileName = "follower-topology.json"
 	dbSyncPGPassFileName     = "pgpass"
 	dbSyncPGPassInitName     = "dbsync-pgpass-setup"
+
+	// dbSyncArtifactsSyncInitName is the init container that mirrors the
+	// referenced CardanoNetwork's served artifacts into the network-artifacts
+	// emptyDir over HTTP (dedicated-follower serve path).
+	dbSyncArtifactsSyncInitName = "network-artifacts-sync"
+	// cardanoToolsBinaryPath is the in-image path of the yacd-cardano-tools
+	// binary, matching the path the cardano-tools image installs. It is
+	// duplicated here rather than imported from the CardanoNetwork controller
+	// to keep the controllers free of cross-package vocabulary coupling.
+	cardanoToolsBinaryPath = "/opt/yacd/bin/yacd-cardano-tools"
 )
 
 // dbSyncWorkloadResources is the desired-state bundle the builder produces
@@ -115,10 +125,54 @@ type dbSyncWorkloadBuilder struct {
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
 
+	// defaultCardanoToolsImage is the Reconciler-injected override for the
+	// cardano-tools image used by the network-artifacts sync init container.
+	// It follows the same dev-stack override contract as
+	// defaultCardanoTestnetImage; empty leaves the built-in versioned
+	// reference owned by the shared toolsimage package.
+	defaultCardanoToolsImage string
+
+	// servedArtifactsURL is the referenced CardanoNetwork's serve endpoint
+	// (status.endpoints.artifacts.url). When non-empty the dedicated-follower
+	// Deployment sources network artifacts over HTTP through a sync init
+	// container writing an emptyDir, instead of mounting the network-artifacts
+	// ConfigMap. Empty selects the legacy ConfigMap path (custom-public).
+	servedArtifactsURL string
+
+	// artifactsVolumeOverride and artifactsSubPath redirect where the db-sync
+	// and follower-node containers mount the network artifacts. They are set
+	// only for a primary-sidecar attachment on the serve path, where the
+	// artifacts already live on the CardanoNetwork primary node-state PVC: the
+	// sidecar mounts that shared volume at the artifacts subdirectory rather
+	// than a ConfigMap. Empty selects the default network-artifacts volume with
+	// no subPath.
+	artifactsVolumeOverride string
+	artifactsSubPath        string
+
 	// networkConnection is the parsed connection.json identity from the
-	// referenced CardanoNetwork artifact bundle. Nil preserves the legacy local
-	// identity path for primary-sidecar attachment rendering.
+	// referenced CardanoNetwork artifact bundle. Nil selects the status-derived
+	// identity path used by primary-sidecar attachment rendering and by the
+	// serve path, where the controller no longer reads connection.json.
 	networkConnection *ctrlnetworkartifacts.Connection
+}
+
+// artifactsMount returns the VolumeMount the db-sync and follower-node
+// containers use for the flat network-artifact directory. By default it mounts
+// the network-artifacts volume (a ConfigMap or, on the dedicated-follower serve
+// path, an emptyDir the sync init populates). A primary-sidecar attachment on
+// the serve path overrides the volume and subPath to mount the shared primary
+// node-state PVC at its staged artifacts subdirectory.
+func (b dbSyncWorkloadBuilder) artifactsMount() corev1.VolumeMount {
+	name := networkArtifactsVolumeName
+	if strings.TrimSpace(b.artifactsVolumeOverride) != "" {
+		name = b.artifactsVolumeOverride
+	}
+	return corev1.VolumeMount{
+		Name:      name,
+		MountPath: networkArtifactsMountDir,
+		SubPath:   b.artifactsSubPath,
+		ReadOnly:  true,
+	}
 }
 
 // Build renders the dbsync workload resources for the external-database
@@ -169,7 +223,10 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
-	if networkArtifacts == nil {
+	// On the serve path the artifacts are fetched over HTTP by the sync init
+	// container, so no ConfigMap is mounted; the ConfigMap is required only for
+	// the legacy custom-public path.
+	if networkArtifacts == nil && strings.TrimSpace(b.servedArtifactsURL) == "" {
 		return nil, fmt.Errorf("network artifacts ConfigMap is required")
 	}
 	if databaseSecret == nil {
@@ -249,7 +306,12 @@ func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
-	if networkArtifacts == nil {
+	// The primary-sidecar artifacts mount is composed by CardanoNetwork (it
+	// owns the primary Pod), so this builder consumes the ConfigMap only as a
+	// presence guard for the legacy custom-public path. On the serve path the
+	// sidecar mounts the staged PVC subdirectory instead, so no ConfigMap is
+	// required.
+	if networkArtifacts == nil && strings.TrimSpace(b.servedArtifactsURL) == "" {
 		return nil, fmt.Errorf("network artifacts ConfigMap is required")
 	}
 	if databaseSecret == nil {

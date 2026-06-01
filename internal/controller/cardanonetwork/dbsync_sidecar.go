@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
@@ -100,7 +101,27 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 			),
 		}, nil
 	}
-	if network.Status.Artifacts == nil || network.Status.Artifacts.NetworkConfigMapName == "" {
+	resources := ctrldbsync.PrimarySidecarAttachmentResources{
+		ConfigMapName:    sidecarStatus.Resources.ConfigMapName,
+		PGPassSecretName: sidecarStatus.Resources.PGPassSecretName,
+		StatePVCName:     sidecarStatus.Resources.StatePVCName,
+		Revision:         sidecarStatus.Revision,
+	}
+	switch {
+	case network.Status.Endpoints != nil && network.Status.Endpoints.Artifacts != nil:
+		// Serve path (local + curated-public): the served-artifacts init
+		// container already staged the bundle into servedArtifactsDir on the
+		// primary node-state PVC, which the primary Pod mounts. The sidecar
+		// mounts that shared volume at the artifacts subdirectory rather than a
+		// ConfigMap; init-before-regular ordering guarantees it is populated
+		// before the sidecar container starts.
+		resources.ArtifactsStateVolumeName = localnetStateVolumeName
+		resources.ArtifactsSubPath = strings.TrimPrefix(servedArtifactsDir, localnetStateDir+"/")
+	case network.Status.Artifacts != nil && network.Status.Artifacts.NetworkConfigMapName != "":
+		// Legacy custom-public path: no serve endpoint, so mount the published
+		// network-artifacts ConfigMap.
+		resources.NetworkArtifactsConfigMapName = network.Status.Artifacts.NetworkConfigMapName
+	default:
 		return primaryDBSyncAttachmentResult{
 			Condition: dbSyncAttachmentReadyCondition(
 				metav1.ConditionFalse,
@@ -108,13 +129,6 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 				conditionMessageDBSyncAttachmentPending,
 			),
 		}, nil
-	}
-	resources := ctrldbsync.PrimarySidecarAttachmentResources{
-		NetworkArtifactsConfigMapName: network.Status.Artifacts.NetworkConfigMapName,
-		ConfigMapName:                 sidecarStatus.Resources.ConfigMapName,
-		PGPassSecretName:              sidecarStatus.Resources.PGPassSecretName,
-		StatePVCName:                  sidecarStatus.Resources.StatePVCName,
-		Revision:                      sidecarStatus.Revision,
 	}
 
 	attachment, err := ctrldbsync.BuildPrimarySidecarAttachment(&claim, network, database, resources)

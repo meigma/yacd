@@ -7,6 +7,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
+	"github.com/meigma/yacd/internal/cardano/toolsimage"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -34,7 +35,7 @@ func (b dbSyncWorkloadBuilder) dbSyncContainer(dbSync *yacdv1alpha1.CardanoDBSyn
 			Protocol:      corev1.ProtocolTCP,
 		}},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: networkArtifactsVolumeName, MountPath: networkArtifactsMountDir, ReadOnly: true},
+			b.artifactsMount(),
 			{Name: dbSyncConfigMapVolumeName, MountPath: dbSyncConfigMountDir, ReadOnly: true},
 			{Name: dbSyncStateVolumeName, MountPath: dbSyncStateMountDir},
 			{Name: nodeIPCVolumeName, MountPath: dbSyncNodeSocketDir},
@@ -79,7 +80,7 @@ func (b dbSyncWorkloadBuilder) followerNodeContainer(dbSync *yacdv1alpha1.Cardan
 			Protocol:      corev1.ProtocolTCP,
 		}},
 		VolumeMounts: []corev1.VolumeMount{
-			{Name: networkArtifactsVolumeName, MountPath: networkArtifactsMountDir, ReadOnly: true},
+			b.artifactsMount(),
 			{Name: dbSyncConfigMapVolumeName, MountPath: dbSyncConfigMountDir, ReadOnly: true},
 			{Name: followerNodeStateVolumeName, MountPath: dbSyncNodeDatabaseDir},
 			{Name: nodeIPCVolumeName, MountPath: dbSyncNodeSocketDir},
@@ -93,6 +94,39 @@ func (b dbSyncWorkloadBuilder) followerNodeContainer(dbSync *yacdv1alpha1.Cardan
 	}
 
 	return container
+}
+
+// syncInitContainer builds the init container that mirrors the referenced
+// CardanoNetwork's served artifact bundle into the network-artifacts emptyDir
+// over HTTP, verifying every file against the served manifest. It runs only on
+// the dedicated-follower serve path: a dedicated follower runs in its own Pod
+// and so cannot mount the primary node-state PVC (ReadWriteOnce, bound to the
+// primary's node), which is why it fetches over HTTP rather than sharing the
+// staged directory as a primary sidecar does.
+//
+// It mounts the network-artifacts emptyDir read-write at the same path the
+// db-sync and follower-node containers read, and runs before the pgpass init
+// container so the artifacts are present before any workload container starts.
+// The image follows the same dev-stack override contract as the follower-node
+// image; the tool version tracks the network's cardano-node version.
+func (b dbSyncWorkloadBuilder) syncInitContainer(network *yacdv1alpha1.CardanoNetwork) corev1.Container {
+	return corev1.Container{
+		Name:            dbSyncArtifactsSyncInitName,
+		Image:           toolsimage.Reference(b.defaultCardanoToolsImage, strings.TrimSpace(network.Spec.Node.Version)),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{cardanoToolsBinaryPath},
+		Args: []string{
+			"sync",
+			"--serve-url", b.servedArtifactsURL,
+			"--output-dir", networkArtifactsMountDir,
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: networkArtifactsVolumeName, MountPath: networkArtifactsMountDir},
+		},
+		SecurityContext:          restrictedSecurityContext(true),
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}
 }
 
 // pgPassInitContainer copies the rendered pgpass file from the
