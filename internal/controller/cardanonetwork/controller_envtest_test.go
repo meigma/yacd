@@ -635,9 +635,23 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
 	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, currentFirst.Status.Placement.PrimarySidecar.Revision)
 
-	currentFirst.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-	require.NoError(t, apiClient.Status().Update(ctx, currentFirst))
-	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+	// The manager reconciles this CardanoDBSync's status concurrently, so a
+	// fetch-then-status-update can race a controller write and conflict. Retry
+	// the revision bump against the latest object until it lands (mirrors how
+	// markAvailable handles the same optimistic-concurrency window).
+	const bumpedRevision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	require.Eventually(t, func() bool {
+		latest := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(first), latest); err != nil {
+			return false
+		}
+		if latest.Status.Placement == nil || latest.Status.Placement.PrimarySidecar == nil {
+			return false
+		}
+		latest.Status.Placement.PrimarySidecar.Revision = bumpedRevision
+		return apiClient.Status().Update(ctx, latest) == nil
+	}, time.Minute, 100*time.Millisecond)
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, bumpedRevision)
 
 	require.Eventually(t, func() bool {
 		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
@@ -650,7 +664,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Create(ctx, second))
 
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
-	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, bumpedRevision)
 
 	require.NoError(t, apiClient.Delete(ctx, currentFirst))
 	require.Eventually(t, func() bool {
