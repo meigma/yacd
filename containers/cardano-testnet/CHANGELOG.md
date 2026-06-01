@@ -1,5 +1,22 @@
 # Changelog
 
+## [11.0.1-yacd.5](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.4...cardano-testnet/v11.0.1-yacd.5) (2026-06-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cardano-testnet:** the cardano-testnet image no longer contains the yacd-cardano-testnet-publisher binary.
+
+### Features
+
+* **cardanodbsync:** probe dbsync progress ([#31](https://github.com/meigma/yacd/issues/31)) ([de42f99](https://github.com/meigma/yacd/commit/de42f995ccc0226578ba7e2a158beedaf5302e24))
+
+
+### Build
+
+* **cardano-testnet:** pin the next release to 11.0.1-yacd.5 and document versioning ([#80](https://github.com/meigma/yacd/issues/80)) ([7c13d14](https://github.com/meigma/yacd/commit/7c13d14caa6d432b60c4254a06c553c9557c7988))
+* **cardano-testnet:** remove the dead artifact publisher from the tools image (F0 PR-B2) ([#79](https://github.com/meigma/yacd/issues/79)) ([22a5e8f](https://github.com/meigma/yacd/commit/22a5e8fec1920c12bf4173cf27e3e197b3299012))
+
 ## [11.0.1-yacd.4](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.3...cardano-testnet/v11.0.1-yacd.4) (2026-05-25)
 
 
