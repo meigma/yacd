@@ -47,3 +47,4 @@
 | 044 | 2026-05-31 | CLI review fixes | complete | Reviewed `cli/`, fixed the accepted devconfig/topup/connect issues in PR #73, and cleaned up the dev stack/worktree. |
 | 045 | 2026-05-31 | CardanoNetwork node sync status | complete | Added non-external `CardanoNetwork.status.sync` and node sync/progress conditions from verified artifacts plus Ogmios health, merged as PR #74. |
 | 046 | 2026-05-31 | F0 redesign — PR-A (serve artifacts over HTTP) | complete | Merged PR-A of the F0 redesign (PR #75): cardano-tools serve sidecar + flat PVC-staged artifact dir + served manifest.json + owned artifacts Service/status, additive; PR-C/B/D remain. |
+| 047 | 2026-05-31 | F0 redesign — PR-C (db-sync consumes configs over HTTP) | in-progress | Continuing the F0 series: rewire CardanoDBSync to fetch+verify network artifacts over HTTP from the serve endpoint instead of mounting the ConfigMap, which must land before PR-B deletes that ConfigMap. |
