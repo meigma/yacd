@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
@@ -15,14 +14,12 @@ const (
 	previewProfileName = "preview"
 	preprodProfileName = "preprod"
 	mainnetProfileName = "mainnet"
-	customProfileName  = "custom"
 
 	defaultProfileDir = "/profile"
 
 	manifestSchemaVersion = "yacd.meigma.io/public-network-profile/v1alpha1"
 
 	operationsBookNodeRelease = "11.0.1"
-	customProfileSource       = "custom"
 
 	defaultMithrilClientImage       = "ghcr.io/input-output-hk/mithril-client:main-2478748"
 	defaultMithrilSnapshot          = "latest"
@@ -124,35 +121,16 @@ func BuildPlan(spec Spec) (Plan, error) {
 		return Plan{}, err
 	}
 
-	var artifacts map[string]string
-	var files []profileFile
-	var definition profileDefinition
-	source := customProfileSource
-	compatibleNodeRelease := ""
-	if profile == customProfileName {
-		if spec.Custom == nil {
-			return Plan{}, fmt.Errorf("public custom profile requires configSource files")
-		}
-		artifacts, files, err = customArtifacts(*spec.Custom)
-		if err != nil {
-			return Plan{}, err
-		}
-	} else {
-		if spec.Custom != nil {
-			return Plan{}, fmt.Errorf("public configSource is supported only for custom profiles")
-		}
-		var ok bool
-		definition, ok = curatedProfiles[profile]
-		if !ok {
-			return Plan{}, fmt.Errorf("public profile %q is not supported", profile)
-		}
-		artifacts, files, err = loadCuratedArtifacts(definition)
-		if err != nil {
-			return Plan{}, err
-		}
-		source = definition.source
-		compatibleNodeRelease = definition.compatibleNodeRelease
+	definition, ok := curatedProfiles[profile]
+	if !ok {
+		return Plan{}, fmt.Errorf("public profile %q is not supported", profile)
 	}
+	artifacts, files, err := loadCuratedArtifacts(definition)
+	if err != nil {
+		return Plan{}, err
+	}
+	source := definition.source
+	compatibleNodeRelease := definition.compatibleNodeRelease
 
 	mithril, err := buildMithrilPlan(profile, spec.Bootstrap, definition, artifacts)
 	if err != nil {
@@ -219,19 +197,6 @@ func BuildPlan(spec Spec) (Plan, error) {
 	}, nil
 }
 
-// SupportedCustomProfileKeys returns the source keys accepted from a custom
-// ConfigMap or Secret profile bundle.
-func SupportedCustomProfileKeys() []string {
-	keys := make([]string, 0, len(requiredProfileFiles)+len(optionalProfileFiles))
-	for _, file := range requiredProfileFiles {
-		keys = append(keys, file.assetPath)
-	}
-	for _, file := range optionalProfileFiles {
-		keys = append(keys, file.assetPath)
-	}
-	return keys
-}
-
 func normalizeProfileDir(profileDir string) (string, error) {
 	if strings.TrimSpace(profileDir) == "" {
 		profileDir = defaultProfileDir
@@ -250,7 +215,7 @@ func validateBootstrapProfile(profile string, bootstrap *BootstrapSpec) error {
 		if !hasMithril {
 			return fmt.Errorf("public mainnet profile requires mithril bootstrap")
 		}
-	case previewProfileName, preprodProfileName, customProfileName:
+	case previewProfileName, preprodProfileName:
 		if bootstrap != nil {
 			return fmt.Errorf("public bootstrap is supported only for mainnet")
 		}
@@ -306,67 +271,6 @@ func loadCuratedArtifacts(definition profileDefinition) (map[string]string, []pr
 		artifacts[file.artifactKey] = string(raw)
 	}
 	return artifacts, files, nil
-}
-
-func customArtifacts(bundle CustomBundle) (map[string]string, []profileFile, error) {
-	if len(bundle.Files) == 0 {
-		return nil, nil, fmt.Errorf("public custom profile bundle is empty")
-	}
-
-	supported := supportedProfileFilesBySourceKey()
-	for key := range bundle.Files {
-		if _, ok := supported[key]; !ok {
-			return nil, nil, fmt.Errorf("public custom profile file %q is not supported", key)
-		}
-	}
-
-	files := make([]profileFile, 0, len(requiredProfileFiles)+len(optionalProfileFiles))
-	artifacts := make(map[string]string, len(requiredProfileFiles)+len(optionalProfileFiles))
-	for _, file := range requiredProfileFiles {
-		content, ok := bundle.Files[file.assetPath]
-		if !ok {
-			return nil, nil, fmt.Errorf("public custom profile file %q is required", file.assetPath)
-		}
-		if err := validateCustomFile(file.assetPath, content); err != nil {
-			return nil, nil, err
-		}
-		files = append(files, file)
-		artifacts[file.artifactKey] = content
-	}
-	for _, file := range optionalProfileFiles {
-		content, ok := bundle.Files[file.assetPath]
-		if !ok {
-			continue
-		}
-		if err := validateCustomFile(file.assetPath, content); err != nil {
-			return nil, nil, err
-		}
-		files = append(files, file)
-		artifacts[file.artifactKey] = content
-	}
-
-	return artifacts, files, nil
-}
-
-func validateCustomFile(key string, content string) error {
-	if strings.TrimSpace(content) == "" {
-		return fmt.Errorf("public custom profile file %q must not be empty", key)
-	}
-	if !utf8.ValidString(content) {
-		return fmt.Errorf("public custom profile file %q must be UTF-8 text", key)
-	}
-	return nil
-}
-
-func supportedProfileFilesBySourceKey() map[string]profileFile {
-	files := make(map[string]profileFile, len(requiredProfileFiles)+len(optionalProfileFiles))
-	for _, file := range requiredProfileFiles {
-		files[file.assetPath] = file
-	}
-	for _, file := range optionalProfileFiles {
-		files[file.assetPath] = file
-	}
-	return files
 }
 
 func profileFiles(optional []profileFile) []profileFile {

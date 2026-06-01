@@ -11,8 +11,7 @@ import (
 )
 
 // faucetAuthSecretEventPredicate keeps the owned Secret watch scoped to
-// CardanoNetwork faucet auth Secrets. Custom public profile Secret events use
-// their own field-indexed handler in public_profile_source.go.
+// CardanoNetwork faucet auth Secrets.
 func faucetAuthSecretEventPredicate() predicate.Predicate {
 	return predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {

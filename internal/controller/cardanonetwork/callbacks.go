@@ -10,7 +10,6 @@ import (
 	ctrlstorage "github.com/meigma/yacd/internal/ctrlkit/storage"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -76,7 +75,6 @@ func validatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deplo
 // desired while delegating ObjectMeta merging and the cardanonetwork-owned
 // annotation overlay to the shared helper.
 func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deployment) error {
-	recoveryRolloutAt := current.Annotations[networkArtifactsRecoveryRolloutAtAnno]
 	ctrlresources.MutateDeployment(current, desired, mergeOwnedAnnotations, func(current *corev1.PodSpec, desired *corev1.PodSpec) {
 		current.ServiceAccountName = desired.ServiceAccountName
 		current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
@@ -85,62 +83,12 @@ func mutatePrimaryDeployment(current *appsv1.Deployment, desired *appsv1.Deploym
 		current.Containers = desired.Containers
 		current.Volumes = desired.Volumes
 	})
-	if _, ok := desired.Annotations[networkArtifactsRecoveryRolloutAtAnno]; !ok && recoveryRolloutAt != "" {
-		if current.Annotations == nil {
-			current.Annotations = map[string]string{}
-		}
-		current.Annotations[networkArtifactsRecoveryRolloutAtAnno] = recoveryRolloutAt
-	}
 	if _, desiredDBSyncLabel := desired.Spec.Template.Labels[labelDBSync]; !desiredDBSyncLabel && current.Spec.Template.Labels != nil {
 		delete(current.Spec.Template.Labels, labelDBSync)
 		if len(current.Spec.Template.Labels) == 0 {
 			current.Spec.Template.Labels = nil
 		}
 	}
-
-	return nil
-}
-
-// mutateArtifactPublisherServiceAccount is the Mutate callback for the
-// artifact publisher ServiceAccount. AutomountServiceAccountToken is
-// explicitly false because the init container takes its token through a
-// projected volume instead.
-func mutateArtifactPublisherServiceAccount(current *corev1.ServiceAccount, desired *corev1.ServiceAccount) error {
-	ctrlresources.MutateObjectMetadata(current, desired, nil)
-	current.AutomountServiceAccountToken = desired.AutomountServiceAccountToken
-
-	return nil
-}
-
-// mutateArtifactPublisherRole is the Mutate callback for the artifact
-// publisher Role. The Rules slice carries the resourceNames-scoped
-// configmaps grant.
-func mutateArtifactPublisherRole(current *rbacv1.Role, desired *rbacv1.Role) error {
-	ctrlresources.MutateObjectMetadata(current, desired, nil)
-	current.Rules = desired.Rules
-
-	return nil
-}
-
-// validateArtifactPublisherRoleBinding is the Validate callback for the
-// artifact publisher RoleBinding. RoleRef is immutable on a RoleBinding, so
-// we reject drift before attempting the patch.
-func validateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *rbacv1.RoleBinding) error {
-	if !equality.Semantic.DeepEqual(current.RoleRef, desired.RoleRef) {
-		return unsupportedWorkloadChange(
-			"RoleBinding %s roleRef drifted from desired value",
-			ctrlmetadata.ObjectKey(desired),
-		)
-	}
-
-	return nil
-}
-
-// mutateArtifactPublisherRoleBinding is the Mutate callback for the artifact
-// publisher RoleBinding.
-func mutateArtifactPublisherRoleBinding(current *rbacv1.RoleBinding, desired *rbacv1.RoleBinding) error {
-	ctrlresources.MutateObjectMetadata(current, desired, nil)
-	current.Subjects = desired.Subjects
 
 	return nil
 }

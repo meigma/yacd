@@ -33,7 +33,7 @@ func (b dbSyncWorkloadBuilder) configMap(dbSync *yacdv1alpha1.CardanoDBSync, net
 				dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 				dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 				dbSyncPlacementModeAnno:    string(effectivePlacementMode(dbSync)),
-				dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
+				dbSyncArtifactDataHashAnno: networkIdentityFingerprint(network),
 			},
 		},
 		Data: map[string]string{
@@ -233,7 +233,6 @@ func escapePGPassField(value string) string {
 func (b dbSyncWorkloadBuilder) deployment(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	networkArtifacts *corev1.ConfigMap,
 	databaseSecret *corev1.Secret,
 	plan dbsync.Plan,
 ) (*appsv1.Deployment, error) {
@@ -244,23 +243,16 @@ func (b dbSyncWorkloadBuilder) deployment(
 		return nil, err
 	}
 
-	// On the serve path the network-artifacts volume is an emptyDir the sync
-	// init container fills over HTTP (verifying the served manifest); otherwise
-	// it is the CardanoNetwork-owned ConfigMap mounted directly. Either way the
-	// volume name and mount path are unchanged, so the workload containers are
-	// identical across both transports.
-	serve := strings.TrimSpace(b.servedArtifactsURL) != ""
-	artifactsVolume := corev1.Volume{Name: networkArtifactsVolumeName}
-	initContainers := []corev1.Container{b.pgPassInitContainer(dbSync)}
-	if serve {
-		artifactsVolume.VolumeSource = corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
-		initContainers = append([]corev1.Container{b.syncInitContainer(network)}, initContainers...)
-	} else {
-		artifactsVolume.VolumeSource = corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: networkArtifacts.Name},
-			},
-		}
+	// The network-artifacts volume is an emptyDir the sync init container fills
+	// over HTTP from the referenced network's serve endpoint (verifying the
+	// served manifest before the workload containers start).
+	artifactsVolume := corev1.Volume{
+		Name:         networkArtifactsVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	}
+	initContainers := []corev1.Container{
+		b.syncInitContainer(network),
+		b.pgPassInitContainer(dbSync),
 	}
 
 	deployment := &appsv1.Deployment{
@@ -282,7 +274,7 @@ func (b dbSyncWorkloadBuilder) deployment(
 						dbSyncPlanFingerprintAnno:  plan.Fingerprint.Value,
 						dbSyncDatabaseIdentityAnno: plan.DatabaseIdentityFingerprint.Value,
 						dbSyncPlacementModeAnno:    string(effectivePlacementMode(dbSync)),
-						dbSyncArtifactDataHashAnno: network.Status.Artifacts.DataHash,
+						dbSyncArtifactDataHashAnno: networkIdentityFingerprint(network),
 						dbSyncSecretVersionAnno:    pgPassMaterialFingerprint(pgPass),
 					},
 				},

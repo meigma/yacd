@@ -77,21 +77,12 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(network *yacdv1alpha
 			{Name: localnetConfigFileEnvName, Value: plan.Layout.ConfigFile},
 			{Name: localnetManifestFileEnvName, Value: plan.Layout.ManifestFile},
 			{Name: localnetManifestEnvName, Value: string(manifest)},
-			{Name: artifactConfigMapNameEnv, Value: networkArtifactsConfigMapName(network)},
-			{Name: artifactNetworkNameEnv, Value: network.Name},
-			{Name: artifactNetworkNamespaceEnv, Value: network.Namespace},
-			{Name: artifactNetworkModeEnv, Value: string(network.Spec.Mode)},
-			{Name: artifactNetworkEraEnv, Value: string(network.Spec.Local.Era)},
-			{Name: artifactNodeToNodeHostEnv, Value: nodeToNodeHost(network)},
-			{Name: artifactNodeToNodePortEnv, Value: strconv.Itoa(int(network.Spec.Node.Port))},
-			{Name: artifactNodeToNodeURLEnv, Value: nodeToNodeURL(network)},
 		},
 		VolumeMounts: []corev1.VolumeMount{
 			{
 				Name:      localnetStateVolumeName,
 				MountPath: plan.Layout.StateDir,
 			},
-			artifactPublisherVolumeMount(),
 		},
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: new(false),
@@ -243,11 +234,9 @@ rm -rf "${staging_root}"
 // For LOCAL networks it runs cardano-tools "stage", flattening the
 // cardano-testnet create-env directory (localnetEnvDir) into the served
 // directory; it therefore must be ordered after the create-env init container.
-// For CURATED PUBLIC networks (public profile other than "custom") it runs
-// cardano-tools "fetch", downloading the profile's pinned artifacts into the
-// served directory; it must be ordered before any Mithril bootstrap init
-// container. Custom-public networks are out of scope for this additive PR and
-// must not reach this builder.
+// For CURATED PUBLIC networks it runs cardano-tools "fetch", downloading the
+// profile's pinned artifacts into the served directory; it must be ordered
+// before any Mithril bootstrap init container.
 //
 // The container reuses the hardened uid/gid 10001 security context shared by
 // the other tools init containers and mounts the node-state PVC read-write at
@@ -315,7 +304,7 @@ func (b primaryWorkloadBuilder) servedArtifactsInitArgs(network *yacdv1alpha1.Ca
 			"--cardano-node-to-node-port", strconv.Itoa(int(network.Spec.Node.Port)),
 		}
 		return args, strings.TrimSpace(plan.Localnet.Spec.Tool.Version), nil
-	case plan.isPublic() && isCuratedPublicProfile(plan):
+	case isCuratedPublicProfile(plan):
 		args := []string{
 			"fetch",
 			"--profile", string(*plan.Profile),
@@ -328,14 +317,10 @@ func (b primaryWorkloadBuilder) servedArtifactsInitArgs(network *yacdv1alpha1.Ca
 }
 
 // isCuratedPublicProfile reports whether the plan targets a curated public
-// profile (preview, preprod, mainnet) rather than the custom profile. Curated
-// profiles have pinned, fetchable artifacts; the custom profile is supplied by
-// the user and is intentionally out of scope for served-artifact staging in
-// this additive PR.
+// profile (preview, preprod, mainnet) with a resolved profile name. Every
+// supported public profile is curated and has pinned, fetchable artifacts.
 func isCuratedPublicProfile(plan primaryNetworkPlan) bool {
-	return plan.isPublic() &&
-		plan.Profile != nil &&
-		*plan.Profile != yacdv1alpha1.PublicNetworkProfileCustom
+	return plan.isPublic() && plan.Profile != nil
 }
 
 // cardanoTestnetImage returns the cardano-testnet container image reference

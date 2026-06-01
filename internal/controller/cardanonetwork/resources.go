@@ -32,31 +32,15 @@ const (
 	// faucet's auth token into its container.
 	faucetAuthVolumeName = "faucet-auth"
 
-	// publicProfileVolumeName is the ConfigMap-backed volume carrying checked-in
-	// public profile files for passive public-network nodes.
-	publicProfileVolumeName = "public-profile"
-
 	// faucetAuthTokenKey is the data key inside the faucet auth Secret that
 	// carries the token. The Secret data map is shaped {faucetAuthTokenKey:
 	// []byte(token)}.
 	faucetAuthTokenKey = "token"
 )
 
-func publicProfileVolume(network *yacdv1alpha1.CardanoNetwork) corev1.Volume {
-	return corev1.Volume{
-		Name: publicProfileVolumeName,
-		VolumeSource: corev1.VolumeSource{
-			ConfigMap: &corev1.ConfigMapVolumeSource{
-				LocalObjectReference: corev1.LocalObjectReference{Name: networkArtifactsConfigMapName(network)},
-			},
-		},
-	}
-}
-
 // deployment builds the primary workload Deployment. It composes the
 // cardano-node container with the enabled optional sidecars (ogmios, kupo,
-// faucet), wires the init container that prepares the localnet environment,
-// and adds the artifact publisher's projected ServiceAccount token volume.
+// faucet) and wires the init container that prepares the localnet environment.
 // The RecreateDeploymentStrategyType prevents two cardano-node instances
 // from running at once (they cannot share the underlying state PVC).
 func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) (*appsv1.Deployment, error) {
@@ -174,9 +158,6 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			},
 		})
 	}
-	if plan.isPublic() {
-		volumes = append(volumes, publicProfileVolume(network))
-	}
 	templateLabels := primaryWorkloadSelectorLabels(network)
 	templateAnnotations := map[string]string{
 		networkFingerprintAnno: plan.Fingerprint,
@@ -209,9 +190,8 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 					Annotations: templateAnnotations,
 				},
 				Spec: corev1.PodSpec{
-					// Pod-level token automount is off; only the artifact
-					// publisher's init container projects a scoped
-					// ServiceAccount token via its own volume.
+					// The primary Pod needs no ServiceAccount token; disabling
+					// automount keeps the API-access footprint minimal.
 					AutomountServiceAccountToken: new(false),
 					SecurityContext: &corev1.PodSecurityContext{
 						FSGroup:      new(localnetToolsRunAsID),
@@ -229,11 +209,6 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 			},
 		},
 	}
-	if plan.isLocal() {
-		deployment.Spec.Template.Spec.ServiceAccountName = artifactPublisherServiceAccountName(network)
-		deployment.Spec.Template.Spec.Volumes = append(deployment.Spec.Template.Spec.Volumes, artifactPublisherProjectedVolume())
-	}
-
 	if err := controllerutil.SetControllerReference(network, deployment, b.scheme); err != nil {
 		return nil, fmt.Errorf("set primary Deployment owner reference: %w", err)
 	}

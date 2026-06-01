@@ -48,16 +48,11 @@ type PrimarySidecarAttachment struct {
 // PrimarySidecarAttachmentResources are the status-published resource names
 // CardanoNetwork uses to render a db-sync sidecar.
 type PrimarySidecarAttachmentResources struct {
-	// NetworkArtifactsConfigMapName is the CardanoNetwork-owned artifacts
-	// ConfigMap mounted by db-sync on the legacy (custom-public) path. It is
-	// mutually exclusive with ArtifactsStateVolumeName.
-	NetworkArtifactsConfigMapName string
 	// ArtifactsStateVolumeName and ArtifactsSubPath select the serve path: the
 	// CardanoNetwork primary node stages the artifacts onto its node-state PVC,
 	// so the sidecar mounts that already-present volume at the artifacts
-	// subdirectory instead of a ConfigMap. Init-before-regular Pod ordering
-	// guarantees the directory is populated before the sidecar starts. They are
-	// mutually exclusive with NetworkArtifactsConfigMapName.
+	// subdirectory. Init-before-regular Pod ordering guarantees the directory is
+	// populated before the sidecar starts.
 	ArtifactsStateVolumeName string
 	ArtifactsSubPath         string
 	// ConfigMapName is the CardanoDBSync-owned db-sync config ConfigMap.
@@ -159,8 +154,8 @@ func BuildPrimarySidecarAttachment(
 	if resources.Revision == "" {
 		return nil, fmt.Errorf("db-sync sidecar revision is required")
 	}
-	if resources.NetworkArtifactsConfigMapName == "" && resources.ArtifactsStateVolumeName == "" {
-		return nil, fmt.Errorf("network artifacts source (ConfigMap name or served-artifacts volume) is required")
+	if resources.ArtifactsStateVolumeName == "" {
+		return nil, fmt.Errorf("served-artifacts state volume is required")
 	}
 
 	// The reused container helpers are pure and do not depend on scheme or the
@@ -210,7 +205,7 @@ func ValidatePrimarySidecarNetwork(dbSync *yacdv1alpha1.CardanoDBSync, network *
 			return unsupportedSpec(publicMainnetDBSyncUnsupportedMessage)
 		}
 		switch network.Spec.Public.Profile {
-		case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileCustom:
+		case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod:
 		default:
 			return unsupportedSpec("primarySidecar placement is not supported for public profile %q", network.Spec.Public.Profile)
 		}
@@ -255,24 +250,11 @@ func primarySidecarMetricsSelectorLabels(dbSync *yacdv1alpha1.CardanoDBSync, net
 // primarySidecarVolumes renders the volumes CardanoNetwork appends to the
 // primary Pod when attaching db-sync.
 //
-// On the serve path the sidecar reads artifacts from the primary node-state
-// PVC the CardanoNetwork primary Pod already defines, so no network-artifacts
-// volume is appended (the db-sync container's mount targets that shared volume
-// by name with a subPath). Only the legacy ConfigMap path appends a
-// network-artifacts ConfigMap volume.
+// The sidecar reads artifacts from the primary node-state PVC the CardanoNetwork
+// primary Pod already defines, so no network-artifacts volume is appended (the
+// db-sync container's mount targets that shared volume by name with a subPath).
 func primarySidecarVolumes(resources PrimarySidecarAttachmentResources) []corev1.Volume {
-	volumes := []corev1.Volume{}
-	if resources.NetworkArtifactsConfigMapName != "" {
-		volumes = append(volumes, corev1.Volume{
-			Name: networkArtifactsVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{Name: resources.NetworkArtifactsConfigMapName},
-				},
-			},
-		})
-	}
-	return append(volumes, []corev1.Volume{
+	return []corev1.Volume{
 		{
 			Name: dbSyncConfigMapVolumeName,
 			VolumeSource: corev1.VolumeSource{
@@ -310,7 +292,7 @@ func primarySidecarVolumes(resources PrimarySidecarAttachmentResources) []corev1
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-	}...)
+	}
 }
 
 // primaryNetworkDeploymentName returns the referenced CardanoNetwork primary

@@ -5,23 +5,11 @@ type Spec struct {
 	// Profile is the public network profile name.
 	Profile string
 
-	// Custom carries the profile files supplied by the controller when Profile
-	// is "custom". Curated profiles must leave it nil.
-	Custom *CustomBundle
-
 	// Bootstrap carries explicit public-network bootstrap settings.
 	Bootstrap *BootstrapSpec
 
 	// Paths identifies the container filesystem locations used by the plan.
 	Paths Paths
-}
-
-// CustomBundle carries caller-supplied public profile files. Files use the
-// source bundle keys documented on the CardanoNetwork API, not the published
-// network-artifact ConfigMap keys.
-type CustomBundle struct {
-	// Files maps custom profile source keys to UTF-8 file content.
-	Files map[string]string
 }
 
 // BootstrapSpec describes enabled public-network bootstrap mechanisms.

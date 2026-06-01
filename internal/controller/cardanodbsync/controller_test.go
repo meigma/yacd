@@ -2,18 +2,13 @@ package cardanodbsync
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	"github.com/meigma/yacd/internal/cardano/primarypod"
-	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,10 +29,9 @@ import (
 )
 
 const (
-	testNetworkArtifactSchemaVersion = networkartifacts.SchemaVersion
-	driftedDBSyncConfig              = "drifted"
-	forgedDBSyncDatabaseIdentity     = "deadbeef-forged-db-identity"
-	changedDBSyncImage               = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
+	driftedDBSyncConfig          = "drifted"
+	forgedDBSyncDatabaseIdentity = "deadbeef-forged-db-identity"
+	changedDBSyncImage           = "ghcr.io/intersectmbo/cardano-db-sync:13.8.0.0"
 )
 
 func TestCardanoDBSyncReconcilerReconcileHandlesMissingObject(t *testing.T) {
@@ -70,7 +64,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesManagedPostgresAndGatesDBSyncWor
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -147,7 +141,7 @@ func TestCardanoDBSyncReconcilerReconcileUsesProvidedManagedPostgresAuthSecret(t
 	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
 	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, authSecret, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -171,7 +165,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsProvidedManagedPostgresAuthSecre
 	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
 	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, authSecret, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -203,7 +197,7 @@ func TestCardanoDBSyncReconcilerReconcileAllowsProvidedManagedPostgresAuthSecret
 	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
 	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, authSecret, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -235,7 +229,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsProvidedManagedPostgresPasswordM
 	dbSync.Spec.Database.Managed.AuthSecretRef = &yacdv1alpha1.CardanoDBSyncSecretReference{Name: "provided-postgres-auth"}
 	authSecret := providedManagedPostgresAuthSecretFor(dbSync)
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, authSecret, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, authSecret, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -284,7 +278,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsUnsupportedOnlyUTxOPresetWithLSM
 		Preset: yacdv1alpha1.CardanoDBSyncInsertPresetOnlyUTxO,
 	}
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -298,7 +292,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesPrimarySidecarResources(t *testi
 	ctx := context.Background()
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -353,7 +347,6 @@ func TestCardanoDBSyncReconcilerReconcilePrimarySidecarWaitsForDedicatedPodsToTe
 		dbSync,
 		externalDatabaseSecretFor(dbSync),
 		network,
-		artifactConfigMapFor(network),
 		ownedDedicatedDBSyncDeployment(dbSync, 1),
 		runningDedicatedDBSyncPod(dbSync),
 	)
@@ -379,7 +372,6 @@ func TestCardanoDBSyncReconcilerReconcileDedicatedFollowerWaitsForPrimarySidecar
 		dbSync,
 		externalDatabaseSecretFor(dbSync),
 		network,
-		artifactConfigMapFor(network),
 		primaryNetworkDeploymentWithDBSyncSidecar(network),
 		runningPrimaryNetworkPodWithDBSyncSidecar(network),
 	)
@@ -400,7 +392,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarToDedicatedAfterAc
 	ctx := context.Background()
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -434,7 +426,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsDedicatedToPrimarySidecarAfterAc
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	dbSync.UID = types.UID("dbsync-uid")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -467,7 +459,7 @@ func TestCardanoDBSyncReconcilerReconcileBackfillsLegacyAcceptedPlacementMode(t 
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	dbSync.UID = types.UID("dbsync-uid")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -496,7 +488,7 @@ func TestCardanoDBSyncReconcilerReconcileRepairsForgedDatabaseIdentityStatus(t *
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -523,7 +515,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsDatabaseIdentityMutationAfterFor
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -563,7 +555,7 @@ func TestCardanoDBSyncReconcilerReconcileIgnoresForgedDatabaseIdentityStatusBefo
 		AcceptedIdentityFingerprint: forgedDBSyncDatabaseIdentity,
 	}
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -680,7 +672,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarPortConflict(t *te
 			Port:    8080,
 		},
 	}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -824,7 +816,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsDeletingNetwork(t *testing.T) {
 	now := metav1.Now()
 	network.DeletionTimestamp = &now
 	network.Finalizers = []string{"test.yacd.meigma.io/finalizer"}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -840,7 +832,7 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForFreshNetworkStatus(t *testing.T
 	network.Generation = 2
 	network.Status.ObservedGeneration = 1
 	network.Status.Conditions[0].ObservedGeneration = 1
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -868,11 +860,11 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForNetworkArtifactsReady(t *testin
 	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNetworkArtifactsPending)
 }
 
-func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactStatusFields(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactsServeEndpoint(t *testing.T) {
 	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "missing-artifact-status")
-	network := readyCardanoNetwork("missing-artifact-status")
-	network.Status.Artifacts = nil
+	dbSync := localCardanoDBSync("dbsync", "missing-serve-endpoint")
+	network := readyCardanoNetwork("missing-serve-endpoint")
+	network.Status.Endpoints.Artifacts = nil
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -881,55 +873,26 @@ func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactStatusFields(t *testing
 	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNetworkArtifactsPending)
 }
 
-func TestCardanoDBSyncReconcilerReconcileWaitsForArtifactConfigMap(t *testing.T) {
+func TestCardanoDBSyncReconcilerReconcileWaitsForNetworkIdentityFingerprint(t *testing.T) {
 	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "missing-configmap")
-	network := readyCardanoNetwork("missing-configmap")
+	dbSync := localCardanoDBSync("dbsync", "missing-identity")
+	network := readyCardanoNetwork("missing-identity")
+	network.Status.Network.LocalnetFingerprint = ""
+	network.Status.Network.NetworkFingerprint = ""
 	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
 	require.NoError(t, err)
 	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNetworkArtifactsPending)
-}
-
-func TestCardanoDBSyncReconcilerReconcileWaitsForMatchingArtifactConfigMapMetadata(t *testing.T) {
-	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "mismatched-configmap")
-	network := readyCardanoNetwork("mismatched-configmap")
-	configMap := artifactConfigMapFor(network)
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
-
-	require.NoError(t, err)
-	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNetworkArtifactsMismatch)
-}
-
-func TestCardanoDBSyncReconcilerReconcileWaitsForValidArtifactConfigMapData(t *testing.T) {
-	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "invalid-configmap-data")
-	network := readyCardanoNetwork("invalid-configmap-data")
-	configMap := artifactConfigMapFor(network)
-	delete(configMap.Data, networkartifacts.ConfigurationKey)
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	network.Status.Artifacts.DataHash = configMap.Annotations[ctrlannotations.ArtifactDataHash]
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
-
-	require.NoError(t, err)
-	assertDependencyWaiting(t, ctx, reconciler, dbSync, conditionReasonNetworkArtifactsMismatch)
 }
 
 func TestCardanoDBSyncReconcilerReconcileWaitsForNodeToNodeEndpoint(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "missing-node-endpoint")
 	network := readyCardanoNetwork("missing-node-endpoint")
-	configMap := artifactConfigMapFor(network)
-	network.Status.Endpoints = nil
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
+	network.Status.Endpoints.NodeToNode = nil
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -941,7 +904,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExternalDatabaseWorkloads(t *tes
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1013,7 +976,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesExplicitDedicatedFollowerWorkloa
 		Mode: yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower,
 	}
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1033,7 +996,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesPublicDedicatedFollowerWorkloads
 	dbSync.Spec.Placement = &yacdv1alpha1.CardanoDBSyncPlacementSpec{
 		Mode: yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower,
 	}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1053,7 +1016,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnet(t *testing.T) {
 	ctx := context.Background()
 	network := readyPublicCardanoNetwork("mainnet-network", yacdv1alpha1.PublicNetworkProfileMainnet)
 	dbSync := localCardanoDBSync("dbsync", network.Name)
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1070,7 +1033,7 @@ func TestCardanoDBSyncReconcilerReconcileAppliesPublicPrimarySidecarResources(t 
 	ctx := context.Background()
 	network := readyPublicCardanoNetwork("preview-network", yacdv1alpha1.PublicNetworkProfilePreview)
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", network.Name))
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1106,7 +1069,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsRuntimeReadyContainers(t *testin
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1140,7 +1103,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableProbe(t *test
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{result: dbSyncRuntimeProbeResult{
 		Sync:          nil,
 		PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress query failed: dial refused"),
@@ -1174,7 +1137,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsPostgresUnavailableBeforeDBSyncR
 		PostgresReady: postgresReadyCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress query failed: password authentication failed"),
 		Synced:        syncedCondition(metav1.ConditionFalse, conditionReasonPostgresUnavailable, "Postgres progress is unavailable"),
 	}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{postgresResult: &postgresResult}
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
@@ -1203,7 +1166,7 @@ func TestCardanoDBSyncReconcilerReconcilePreservesDBProgressWhenOgmiosUnavailabl
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 	reconciler.runtimeProberOverride = &fakeCardanoDBSyncRuntimeProber{result: dbSyncRuntimeProbeResult{
 		Sync: &yacdv1alpha1.CardanoDBSyncProgressStatus{
 			DBBlockHeight: ptr.To[int64](41),
@@ -1238,7 +1201,7 @@ func TestCardanoDBSyncReconcilerReconcileLeavesStatusUnchangedForSameProbe(t *te
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1262,7 +1225,7 @@ func TestCardanoDBSyncReconcilerReconcileKeepsFollowerAndDBSyncReadinessSeparate
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1284,7 +1247,7 @@ func TestCardanoDBSyncReconcilerReconcileRepairsOwnedConfigMapDrift(t *testing.T
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1307,7 +1270,7 @@ func TestCardanoDBSyncReconcilerReconcileRepairsManagedPostgresChildDrift(t *tes
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1347,7 +1310,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresPVCDrift(t *testi
 		StorageClassName: &storageClass,
 	}
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1401,7 +1364,7 @@ func TestCardanoDBSyncReconcilerReconcileSurfacesManagedPostgresStorageExpansion
 
 			return c.Update(ctx, obj, opts...)
 		},
-	}, dbSync, network, artifactConfigMapFor(network))
+	}, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1434,7 +1397,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsManagedPostgresIdentityMutationB
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1463,7 +1426,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsGeneratedManagedPostgresPassword
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1502,7 +1465,7 @@ func TestCardanoDBSyncReconcilerReconcileDoesNotRegenerateGeneratedManagedPostgr
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1528,7 +1491,7 @@ func TestCardanoDBSyncReconcilerReconcileAdoptsRestoredGeneratedManagedPostgresA
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1558,7 +1521,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsRestoredGeneratedManagedPostgres
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1583,7 +1546,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsForeignOwnedGeneratedManagedPost
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1617,7 +1580,7 @@ func TestCardanoDBSyncReconcilerReconcilePreservesRuntimeStatusWhenManagedPostgr
 	ctx := context.Background()
 	dbSync := managedCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1657,7 +1620,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsDatabaseIdentityMutation(t *test
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1693,7 +1656,7 @@ func TestCardanoDBSyncReconcilerReconcileRejectsImageMutation(t *testing.T) {
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1728,7 +1691,7 @@ func TestCardanoDBSyncReconcilerReconcileAllowsRuntimeOnlyMutation(t *testing.T)
 	ctx := context.Background()
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1769,7 +1732,7 @@ func TestCardanoDBSyncReconcilerReconcileReportsResourceConflict(t *testing.T) {
 			Namespace: dbSync.Namespace,
 		},
 	}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, artifactConfigMapFor(network), conflictingConfigMap)
+	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, conflictingConfigMap)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 
@@ -1784,7 +1747,7 @@ func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenSecretBecomesInvali
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
 	secret := externalDatabaseSecretFor(dbSync)
-	reconciler := newTestReconciler(t, dbSync, secret, network, artifactConfigMapFor(network))
+	reconciler := newTestReconciler(t, dbSync, secret, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
 	require.NoError(t, err)
@@ -1797,27 +1760,6 @@ func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenSecretBecomesInvali
 
 	require.NoError(t, err)
 	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonExternalDatabaseSecretInvalid)
-	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
-}
-
-func TestCardanoDBSyncReconcilerReconcileSuspendsWorkloadWhenArtifactsMismatch(t *testing.T) {
-	ctx := context.Background()
-	dbSync := localCardanoDBSync("dbsync", "ready-network")
-	network := readyCardanoNetwork("ready-network")
-	configMap := artifactConfigMapFor(network)
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network, configMap)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
-	require.NoError(t, err)
-	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 1)
-
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = "sha256:" + strings.Repeat("b", 64)
-	require.NoError(t, reconciler.Update(ctx, configMap))
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
-
-	require.NoError(t, err)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeProgressing, metav1.ConditionTrue, conditionReasonNetworkArtifactsMismatch)
 	assertDeploymentReplicas(t, ctx, reconciler, dbSync, 0)
 }
 
@@ -2413,10 +2355,6 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 				NetworkMagic:        &networkMagic,
 				Era:                 &era,
 			},
-			Artifacts: &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-				NetworkConfigMapName: name + "-network-artifacts",
-				SchemaVersion:        testNetworkArtifactSchemaVersion,
-			},
 			Endpoints: &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 				NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
 					ServiceName: name + "-node",
@@ -2427,6 +2365,11 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 					ServiceName: name + "-ogmios",
 					Port:        1337,
 					URL:         "ws://" + name + "-ogmios.default.svc.cluster.local:1337",
+				},
+				Artifacts: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-artifacts",
+					Port:        8090,
+					URL:         "http://" + name + "-artifacts.default.svc.cluster.local:8090",
 				},
 			},
 			Conditions: []metav1.Condition{{
@@ -2439,7 +2382,6 @@ func readyCardanoNetwork(name string) *yacdv1alpha1.CardanoNetwork {
 			}},
 		},
 	}
-	network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
 	return network
 }
 
@@ -2450,8 +2392,6 @@ func readyPublicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkPr
 		networkMagic = 1
 	case yacdv1alpha1.PublicNetworkProfileMainnet:
 		networkMagic = 764824073
-	case yacdv1alpha1.PublicNetworkProfileCustom:
-		networkMagic = 42
 	}
 	era := yacdv1alpha1.CardanoEraConway
 	network := &yacdv1alpha1.CardanoNetwork{
@@ -2477,10 +2417,6 @@ func readyPublicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkPr
 				Profile:            &profile,
 				Era:                &era,
 			},
-			Artifacts: &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-				NetworkConfigMapName: name + "-network-artifacts",
-				SchemaVersion:        testNetworkArtifactSchemaVersion,
-			},
 			Endpoints: &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 				NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
 					ServiceName: name + "-node",
@@ -2491,6 +2427,11 @@ func readyPublicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkPr
 					ServiceName: name + "-ogmios",
 					Port:        1337,
 					URL:         "ws://" + name + "-ogmios.default.svc.cluster.local:1337",
+				},
+				Artifacts: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: name + "-artifacts",
+					Port:        8090,
+					URL:         "http://" + name + "-artifacts.default.svc.cluster.local:8090",
 				},
 			},
 			Conditions: []metav1.Condition{{
@@ -2503,7 +2444,6 @@ func readyPublicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkPr
 			}},
 		},
 	}
-	network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
 	return network
 }
 
@@ -2518,101 +2458,7 @@ func moveReadyNetworkToNamespace(network *yacdv1alpha1.CardanoNetwork, namespace
 	if network.Status.Endpoints.Ogmios != nil {
 		network.Status.Endpoints.Ogmios.URL = "ws://" + network.Status.Endpoints.Ogmios.ServiceName + "." + namespace + ".svc.cluster.local:" + "1337"
 	}
-	if network.Status.Artifacts != nil {
-		network.Status.Artifacts.DataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsDataFor(network))
+	if network.Status.Endpoints.Artifacts != nil {
+		network.Status.Endpoints.Artifacts.URL = "http://" + network.Status.Endpoints.Artifacts.ServiceName + "." + namespace + ".svc.cluster.local:8090"
 	}
-}
-
-func artifactConfigMapFor(network *yacdv1alpha1.CardanoNetwork) *corev1.ConfigMap {
-	data := testNetworkArtifactsDataFor(network)
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      network.Status.Artifacts.NetworkConfigMapName,
-			Namespace: network.Namespace,
-			Annotations: map[string]string{
-				ctrlannotations.ArtifactSchemaVersion: network.Status.Artifacts.SchemaVersion,
-				ctrlannotations.ArtifactDataHash:      ctrlartifacts.ComputeDataHash(data),
-				ctrlannotations.NetworkFingerprint:    network.Status.Network.NetworkFingerprint,
-				ctrlannotations.LocalnetFingerprint:   network.Status.Network.LocalnetFingerprint,
-			},
-		},
-		Data: data,
-	}
-}
-
-func parsedConnectionForNetwork(t testing.TB, network *yacdv1alpha1.CardanoNetwork) ctrlnetworkartifacts.Connection {
-	t.Helper()
-	result := ctrlnetworkartifacts.ConsumerConnection(artifactConfigMapFor(network), network)
-	require.True(t, result.Ready, result.Message)
-	return result.Connection
-}
-
-func testNetworkArtifactsDataFor(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	data := map[string]string{
-		networkartifacts.ConfigurationKey:   "test configuration.yaml",
-		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
-		networkartifacts.ShelleyGenesisKey:  "test shelley-genesis.json",
-		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
-		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
-		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
-		networkartifacts.ConnectionKey:      testConnectionJSONForNetwork(network),
-	}
-	if network.Status.Network.Mode == yacdv1alpha1.CardanoNetworkModePublic {
-		data[networkartifacts.PublicProfileManifestKey] = "test yacd-public-profile.json"
-	} else {
-		data[networkartifacts.PlanManifestKey] = "test yacd-localnet-plan.json"
-	}
-	return data
-}
-
-func testConnectionJSONForNetwork(network *yacdv1alpha1.CardanoNetwork) string {
-	networkFields := map[string]any{
-		"name":         network.Name,
-		"namespace":    network.Namespace,
-		"mode":         string(network.Status.Network.Mode),
-		"networkMagic": *network.Status.Network.NetworkMagic,
-		"era":          string(*network.Status.Network.Era),
-	}
-	files := map[string]string{
-		"configuration":   networkartifacts.ConfigurationKey,
-		"byronGenesis":    networkartifacts.ByronGenesisKey,
-		"shelleyGenesis":  networkartifacts.ShelleyGenesisKey,
-		"alonzoGenesis":   networkartifacts.AlonzoGenesisKey,
-		"conwayGenesis":   networkartifacts.ConwayGenesisKey,
-		"primaryTopology": networkartifacts.PrimaryTopologyKey,
-		"connection":      networkartifacts.ConnectionKey,
-	}
-	if network.Status.Network.Mode == yacdv1alpha1.CardanoNetworkModePublic {
-		requiresMagic := true
-		if network.Status.Network.Profile != nil && *network.Status.Network.Profile == yacdv1alpha1.PublicNetworkProfileMainnet {
-			requiresMagic = false
-		}
-		networkFields["profile"] = string(*network.Status.Network.Profile)
-		networkFields["requiresNetworkMagic"] = requiresMagic
-		networkFields["networkFingerprint"] = network.Status.Network.NetworkFingerprint
-		files["publicProfile"] = networkartifacts.PublicProfileManifestKey
-	} else {
-		networkFields["localnetFingerprint"] = network.Status.Network.LocalnetFingerprint
-		files["localnetPlan"] = networkartifacts.PlanManifestKey
-	}
-	doc := struct {
-		SchemaVersion     string            `json:"schemaVersion"`
-		Network           map[string]any    `json:"network"`
-		PrimaryNodeToNode map[string]any    `json:"primaryNodeToNode"`
-		Files             map[string]string `json:"files"`
-	}{
-		SchemaVersion: networkartifacts.SchemaVersion,
-		Network:       networkFields,
-		PrimaryNodeToNode: map[string]any{
-			"host": network.Status.Endpoints.NodeToNode.ServiceName + "." + network.Namespace + ".svc.cluster.local",
-			"port": network.Status.Endpoints.NodeToNode.Port,
-			"url":  network.Status.Endpoints.NodeToNode.URL,
-		},
-		Files: files,
-	}
-	raw, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		panic(err)
-	}
-	return string(raw) + "\n"
 }

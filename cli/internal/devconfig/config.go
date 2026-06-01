@@ -130,30 +130,12 @@ func (e Environment) Validate() error {
 			if public.Bootstrap != nil {
 				return fmt.Errorf("spec.network.public.bootstrap is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
 			}
-			if public.ConfigSource != nil {
-				return fmt.Errorf("spec.network.public.configSource is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
-			}
 		case yacdv1alpha1.PublicNetworkProfileMainnet:
-			if public.ConfigSource != nil {
-				return fmt.Errorf("spec.network.public.configSource is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
-			}
 			if public.Bootstrap == nil || public.Bootstrap.Mithril == nil {
 				return fmt.Errorf("spec.network.public.bootstrap.mithril is required when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
 			}
-		case yacdv1alpha1.PublicNetworkProfileCustom:
-			if public.Bootstrap != nil {
-				return fmt.Errorf("spec.network.public.bootstrap is supported only when profile is %q", yacdv1alpha1.PublicNetworkProfileMainnet)
-			}
-			if public.ConfigSource == nil {
-				return fmt.Errorf("spec.network.public.configSource is required when profile is %q", yacdv1alpha1.PublicNetworkProfileCustom)
-			}
-			hasConfigMap := public.ConfigSource.ConfigMapRef != nil && strings.TrimSpace(public.ConfigSource.ConfigMapRef.Name) != ""
-			hasSecret := public.ConfigSource.SecretRef != nil && strings.TrimSpace(public.ConfigSource.SecretRef.Name) != ""
-			if hasConfigMap == hasSecret {
-				return fmt.Errorf("spec.network.public.configSource must set exactly one of configMapRef.name or secretRef.name")
-			}
 		default:
-			return fmt.Errorf("spec.network.public.profile must be one of %q, %q, %q, or %q", yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileMainnet, yacdv1alpha1.PublicNetworkProfileCustom)
+			return fmt.Errorf("spec.network.public.profile must be one of %q, %q, or %q", yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod, yacdv1alpha1.PublicNetworkProfileMainnet)
 		}
 	default:
 		return fmt.Errorf("spec.network.mode must be %q or %q", yacdv1alpha1.CardanoNetworkModeLocal, yacdv1alpha1.CardanoNetworkModePublic)
@@ -197,16 +179,6 @@ func validateExplicitFields(data []byte, environment Environment) error {
 		requiredPaths = append(requiredPaths,
 			[]string{"spec", "network", "public", "profile"},
 		)
-		if environment.Spec.Network.Public != nil &&
-			environment.Spec.Network.Public.Profile == yacdv1alpha1.PublicNetworkProfileCustom &&
-			environment.Spec.Network.Public.ConfigSource != nil {
-			switch {
-			case environment.Spec.Network.Public.ConfigSource.ConfigMapRef != nil:
-				requiredPaths = append(requiredPaths, []string{"spec", "network", "public", "configSource", "configMapRef", "name"})
-			case environment.Spec.Network.Public.ConfigSource.SecretRef != nil:
-				requiredPaths = append(requiredPaths, []string{"spec", "network", "public", "configSource", "secretRef", "name"})
-			}
-		}
 	}
 	if environment.Spec.Network.Node.Storage != nil {
 		requiredPaths = append(requiredPaths, []string{"spec", "network", "node", "storage", "size"})

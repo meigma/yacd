@@ -2,22 +2,16 @@ package cardanonetwork
 
 import (
 	"context"
-	"encoding/json"
-	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,11 +53,12 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.NoError(t, err)
 	envtestNow := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		Now:                func() time.Time { return envtestNow },
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		Now:                  func() time.Time { return envtestNow },
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -132,39 +127,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 			validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey]))
 	}, 10*time.Second, 100*time.Millisecond)
 
-	artifactsConfigMapKey := client.ObjectKey{Namespace: network.Namespace, Name: networkArtifactsConfigMapName(network)}
-	require.Eventually(t, func() bool {
-		configMap := &corev1.ConfigMap{}
-		return apiClient.Get(ctx, artifactsConfigMapKey, configMap) == nil &&
-			configMap.Annotations[localnetFingerprintAnno] != ""
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherServiceAccountKey := client.ObjectKey{Namespace: network.Namespace, Name: artifactPublisherServiceAccountName(network)}
-	require.Eventually(t, func() bool {
-		serviceAccount := &corev1.ServiceAccount{}
-		return apiClient.Get(ctx, artifactPublisherServiceAccountKey, serviceAccount) == nil &&
-			serviceAccount.AutomountServiceAccountToken != nil &&
-			!*serviceAccount.AutomountServiceAccountToken
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherRoleKey := client.ObjectKey{Namespace: network.Namespace, Name: artifactPublisherRoleName(network)}
-	require.Eventually(t, func() bool {
-		role := &rbacv1.Role{}
-		return apiClient.Get(ctx, artifactPublisherRoleKey, role) == nil &&
-			len(role.Rules) == 1 &&
-			len(role.Rules[0].ResourceNames) == 1 &&
-			role.Rules[0].ResourceNames[0] == artifactsConfigMapKey.Name
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherRoleBindingKey := client.ObjectKey{Namespace: network.Namespace, Name: artifactPublisherRoleBindingName(network)}
-	require.Eventually(t, func() bool {
-		roleBinding := &rbacv1.RoleBinding{}
-		return apiClient.Get(ctx, artifactPublisherRoleBindingKey, roleBinding) == nil &&
-			len(roleBinding.Subjects) == 1 &&
-			roleBinding.Subjects[0].Kind == rbacv1.ServiceAccountKind &&
-			roleBinding.Subjects[0].Name == artifactPublisherServiceAccountKey.Name
-	}, 10*time.Second, 100*time.Millisecond)
-
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -231,50 +193,9 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		return err == nil && got.UID != originalArtifactsServiceUID
 	}, 10*time.Second, 100*time.Millisecond)
 
-	artifactsConfigMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, artifactsConfigMap))
-	originalArtifactsConfigMapUID := artifactsConfigMap.UID
-	require.NoError(t, apiClient.Delete(ctx, artifactsConfigMap))
-	require.Eventually(t, func() bool {
-		got := &corev1.ConfigMap{}
-		err := apiClient.Get(ctx, artifactsConfigMapKey, got)
-		return err == nil && got.UID != originalArtifactsConfigMapUID
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherServiceAccount := &corev1.ServiceAccount{}
-	require.NoError(t, apiClient.Get(ctx, artifactPublisherServiceAccountKey, artifactPublisherServiceAccount))
-	originalArtifactPublisherServiceAccountUID := artifactPublisherServiceAccount.UID
-	require.NoError(t, apiClient.Delete(ctx, artifactPublisherServiceAccount))
-	require.Eventually(t, func() bool {
-		got := &corev1.ServiceAccount{}
-		err := apiClient.Get(ctx, artifactPublisherServiceAccountKey, got)
-		return err == nil && got.UID != originalArtifactPublisherServiceAccountUID
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherRole := &rbacv1.Role{}
-	require.NoError(t, apiClient.Get(ctx, artifactPublisherRoleKey, artifactPublisherRole))
-	originalArtifactPublisherRoleUID := artifactPublisherRole.UID
-	require.NoError(t, apiClient.Delete(ctx, artifactPublisherRole))
-	require.Eventually(t, func() bool {
-		got := &rbacv1.Role{}
-		err := apiClient.Get(ctx, artifactPublisherRoleKey, got)
-		return err == nil && got.UID != originalArtifactPublisherRoleUID
-	}, 10*time.Second, 100*time.Millisecond)
-
-	artifactPublisherRoleBinding := &rbacv1.RoleBinding{}
-	require.NoError(t, apiClient.Get(ctx, artifactPublisherRoleBindingKey, artifactPublisherRoleBinding))
-	originalArtifactPublisherRoleBindingUID := artifactPublisherRoleBinding.UID
-	require.NoError(t, apiClient.Delete(ctx, artifactPublisherRoleBinding))
-	require.Eventually(t, func() bool {
-		got := &rbacv1.RoleBinding{}
-		err := apiClient.Get(ctx, artifactPublisherRoleBindingKey, got)
-		return err == nil && got.UID != originalArtifactPublisherRoleBindingUID
-	}, 10*time.Second, 100*time.Millisecond)
-
 	require.Eventually(t, func() bool {
 		return statusHasProgressingEndpoints(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
-	publishNetworkArtifactsWithClient(t, ctx, apiClient, network)
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -288,6 +209,7 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 				{Name: ogmiosContainerName, Image: "example.com/ogmios:test"},
 				{Name: kupoContainerName, Image: "example.com/kupo:test"},
 				{Name: faucetContainerName, Image: "example.com/faucet:test"},
+				{Name: serveContainerName, Image: "example.com/serve:test"},
 			},
 		},
 	}
@@ -323,6 +245,15 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		},
 		{
 			Name:  faucetContainerName,
+			Ready: true,
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{
+					StartedAt: metav1.Now(),
+				},
+			},
+		},
+		{
+			Name:  serveContainerName,
 			Ready: true,
 			State: corev1.ContainerState{
 				Running: &corev1.ContainerStateRunning{
@@ -379,20 +310,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 			conditionHas(repaired, conditionTypeDegraded, metav1.ConditionFalse, conditionReasonReconcileSucceeded)
 	}, 10*time.Second, 100*time.Millisecond)
 
-	recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey)
-	publishNetworkArtifactsWithClient(t, ctx, apiClient, network)
-
-	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
-	deployment.Status.ObservedGeneration = deployment.Generation
-	deployment.Status.Replicas = 1
-	deployment.Status.UpdatedReplicas = 1
-	deployment.Status.ReadyReplicas = 1
-	deployment.Status.AvailableReplicas = 1
-	require.NoError(t, apiClient.Status().Update(ctx, deployment))
-	require.Eventually(t, func() bool {
-		return statusHasReadyConditions(ctx, apiClient, network)
-	}, 10*time.Second, 100*time.Millisecond)
-
 	current := &yacdv1alpha1.CardanoNetwork{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), current))
 	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -434,24 +351,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.Eventually(t, func() bool {
 		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
 	}, 10*time.Second, 100*time.Millisecond)
-
-	recoverCorruptedNetworkArtifactsConfigMap(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey, envtestNow)
-	publishNetworkArtifactsWithClient(t, ctx, apiClient, network)
-
-	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
-	deployment.Status.ObservedGeneration = deployment.Generation
-	deployment.Status.Replicas = 1
-	deployment.Status.UpdatedReplicas = 1
-	deployment.Status.ReadyReplicas = 1
-	deployment.Status.AvailableReplicas = 1
-	require.NoError(t, apiClient.Status().Update(ctx, deployment))
-
-	require.Eventually(t, func() bool {
-		return statusHasDisabledFaucetReadyConditions(ctx, apiClient, network)
-	}, 10*time.Second, 100*time.Millisecond)
-
-	envtestNow = envtestNow.Add(30 * time.Second)
-	suppressCorruptedNetworkArtifactsConfigMapDuringCooldown(t, ctx, apiClient, network, artifactsConfigMapKey, deploymentKey)
 }
 
 func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.T) {
@@ -480,10 +379,11 @@ func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.
 	})
 	require.NoError(t, err)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -574,97 +474,6 @@ func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.
 	require.True(t, apierrors.IsNotFound(err), "expected primary state PVC to remain absent, got %v", err)
 }
 
-func TestCardanoNetworkControllerManagerHandlesCustomProfileSources(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	testEnv := &envtest.Environment{
-		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
-	}
-	cfg, err := testEnv.Start()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.Eventually(t, func() bool {
-			return testEnv.Stop() == nil
-		}, time.Minute, time.Second)
-	})
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, clientgoscheme.AddToScheme(scheme))
-	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
-
-	skipNameValidation := true
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
-		Scheme:                 scheme,
-		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
-		Metrics:                metricsserver.Options{BindAddress: "0"},
-		HealthProbeBindAddress: "0",
-	})
-	require.NoError(t, err)
-	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		syncProberOverride: syncedNodeSyncProber(),
-	}).SetupWithManager(mgr))
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- mgr.Start(ctx)
-	}()
-	t.Cleanup(func() {
-		cancel()
-		require.NoError(t, <-errCh)
-	})
-	require.Eventually(t, func() bool {
-		return mgr.GetCache().WaitForCacheSync(ctx)
-	}, 10*time.Second, 100*time.Millisecond)
-
-	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
-	require.NoError(t, err)
-
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "cardanonetwork-custom-envtest"}}
-	require.NoError(t, apiClient.Create(ctx, namespace))
-
-	configMapNetwork := publicCardanoNetwork("custom-configmap", yacdv1alpha1.PublicNetworkProfileCustom)
-	configMapNetwork.Namespace = namespace.Name
-	configMapNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-	}
-	configMapSource := customProfileConfigMap(namespace.Name, "custom-profile", customPublicProfileBundle(t))
-	require.NoError(t, apiClient.Create(ctx, configMapSource))
-	require.NoError(t, apiClient.Create(ctx, configMapNetwork))
-
-	secretNetwork := publicCardanoNetwork("custom-secret", yacdv1alpha1.PublicNetworkProfileCustom)
-	secretNetwork.Namespace = namespace.Name
-	secretNetwork.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		SecretRef: &corev1.LocalObjectReference{Name: "custom-profile-secret"},
-	}
-	secretSource := customProfileSecret(namespace.Name, "custom-profile-secret", customPublicProfileBundle(t))
-	require.NoError(t, apiClient.Create(ctx, secretSource))
-	require.NoError(t, apiClient.Create(ctx, secretNetwork))
-
-	require.Eventually(t, func() bool {
-		return statusHasCustomPublicArtifacts(ctx, apiClient, configMapNetwork)
-	}, 10*time.Second, 100*time.Millisecond)
-	require.Eventually(t, func() bool {
-		return statusHasCustomPublicArtifacts(ctx, apiClient, secretNetwork)
-	}, 10*time.Second, 100*time.Millisecond)
-
-	currentSource := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(configMapSource), currentSource))
-	currentSource.Data["topology.json"] = "{\"Producers\":[]}\n"
-	require.NoError(t, apiClient.Update(ctx, currentSource))
-
-	require.Eventually(t, func() bool {
-		current := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(configMapNetwork), current); err != nil {
-			return false
-		}
-		return conditionHas(current, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedNetworkChange)
-	}, 10*time.Second, 100*time.Millisecond)
-}
-
 func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -693,10 +502,11 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	})
 	require.NoError(t, err)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 	require.NoError(t, (&ctrldbsync.CardanoDBSyncReconciler{
 		Client: mgr.GetClient(),
@@ -731,82 +541,78 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 		return apiClient.Get(ctx, deploymentKey, &appsv1.Deployment{}) == nil
 	}, time.Minute, 100*time.Millisecond)
 
-	artifactKey := client.ObjectKey{Namespace: network.Namespace, Name: networkArtifactsConfigMapName(network)}
-	require.Eventually(t, func() bool {
-		configMap := &corev1.ConfigMap{}
-		return apiClient.Get(ctx, artifactKey, configMap) == nil
-	}, time.Minute, 100*time.Millisecond)
-	artifactConfigMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, artifactKey, artifactConfigMap))
-
-	currentNetwork := &yacdv1alpha1.CardanoNetwork{}
-	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork))
-	networkFingerprint := ""
-	localnetFingerprint := ""
-	if currentNetwork.Status.Network != nil {
-		networkFingerprint = currentNetwork.Status.Network.NetworkFingerprint
-		localnetFingerprint = currentNetwork.Status.Network.LocalnetFingerprint
-	}
-	if networkFingerprint == "" || localnetFingerprint == "" {
-		currentDeployment := &appsv1.Deployment{}
-		require.NoError(t, apiClient.Get(ctx, deploymentKey, currentDeployment))
-		if networkFingerprint == "" {
-			networkFingerprint = currentDeployment.Spec.Template.Annotations[networkFingerprintAnno]
-		}
-		if localnetFingerprint == "" {
-			localnetFingerprint = currentDeployment.Spec.Template.Annotations[localnetFingerprintAnno]
-		}
-	}
-	require.NotEmpty(t, networkFingerprint)
-	require.NotEmpty(t, localnetFingerprint)
-	networkMagic := currentNetwork.Spec.Local.NetworkMagic
-	era := currentNetwork.Spec.Local.Era
-	currentNetwork.Status.Network = &yacdv1alpha1.CardanoNetworkIdentityStatus{
-		Mode:                yacdv1alpha1.CardanoNetworkModeLocal,
-		LocalnetFingerprint: localnetFingerprint,
-		NetworkFingerprint:  networkFingerprint,
-		NetworkMagic:        &networkMagic,
-		Era:                 &era,
-	}
-	currentNetwork.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
-		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
-			ServiceName: primaryWorkloadName(network),
-			Port:        network.Spec.Node.Port,
-			URL:         "tcp://sidecar-network-node.cardanonetwork-dbsync-envtest.svc.cluster.local:3001",
+	// The cardanonetwork controller publishes the network identity, the serve
+	// endpoint, and ArtifactsReady from the live primary workload, so mark the
+	// primary Deployment available with a ready serve sidecar Pod. The db-sync
+	// sidecar then sources artifacts over HTTP from the published serve endpoint
+	// rather than a network-artifacts ConfigMap.
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryWorkloadName(network) + "-pod",
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadSelectorLabels(network),
 		},
-		Ogmios: &yacdv1alpha1.ServiceEndpointStatus{
-			ServiceName: primaryOgmiosServiceName(network),
-			Port:        defaultOgmiosPort,
-			URL:         "ws://sidecar-network-ogmios.cardanonetwork-dbsync-envtest.svc.cluster.local:1337",
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: cardanoNodeContainerName, Image: "example.com/cardano-node:test"},
+				{Name: ogmiosContainerName, Image: "example.com/ogmios:test"},
+				{Name: kupoContainerName, Image: "example.com/kupo:test"},
+				{Name: serveContainerName, Image: "example.com/serve:test"},
+			},
 		},
 	}
-	artifactData := dbSyncEnvtestNetworkArtifactsData(currentNetwork)
-	artifactDataHash := ctrlartifacts.ComputeDataHash(artifactData)
-	if artifactConfigMap.Annotations == nil {
-		artifactConfigMap.Annotations = map[string]string{}
+	require.NoError(t, apiClient.Create(ctx, pod))
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{Name: cardanoNodeContainerName, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.Now()}}},
+		{Name: ogmiosContainerName, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.Now()}}},
+		{Name: kupoContainerName, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.Now()}}},
+		{Name: serveContainerName, Ready: true, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.Now()}}},
 	}
-	artifactConfigMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
-	artifactConfigMap.Annotations[ctrlannotations.ArtifactDataHash] = artifactDataHash
-	artifactConfigMap.Annotations[ctrlannotations.NetworkFingerprint] = currentNetwork.Status.Network.NetworkFingerprint
-	artifactConfigMap.Annotations[ctrlannotations.LocalnetFingerprint] = currentNetwork.Status.Network.LocalnetFingerprint
-	artifactConfigMap.Data = artifactData
-	require.NoError(t, apiClient.Update(ctx, artifactConfigMap))
+	require.NoError(t, apiClient.Status().Update(ctx, pod))
 
-	currentNetwork.Status.ObservedGeneration = currentNetwork.Generation
-	currentNetwork.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: artifactConfigMap.Name,
-		SchemaVersion:        networkartifacts.SchemaVersion,
-		DataHash:             artifactDataHash,
+	// The primary Deployment's generation bumps each time the db-sync sidecar
+	// attaches, which would flip the serve sidecar's readiness (and ArtifactsReady)
+	// to progressing. markAvailable re-stamps the Deployment status observed and
+	// available so ArtifactsReady self-heals; call it whenever the network must
+	// observe a fresh ArtifactsReady=True.
+	markAvailable := func() {
+		require.Eventually(t, func() bool {
+			current := &appsv1.Deployment{}
+			if err := apiClient.Get(ctx, deploymentKey, current); err != nil {
+				return false
+			}
+			current.Status.ObservedGeneration = current.Generation
+			current.Status.Replicas = 1
+			current.Status.UpdatedReplicas = 1
+			current.Status.ReadyReplicas = 1
+			current.Status.AvailableReplicas = 1
+			current.Status.Conditions = []appsv1.DeploymentCondition{{
+				Type:               appsv1.DeploymentAvailable,
+				Status:             corev1.ConditionTrue,
+				Reason:             "MinimumReplicasAvailable",
+				Message:            "Deployment has minimum availability.",
+				LastUpdateTime:     metav1.Now(),
+				LastTransitionTime: metav1.Now(),
+			}}
+			return apiClient.Status().Update(ctx, current) == nil
+		}, 10*time.Second, 100*time.Millisecond)
 	}
-	currentNetwork.Status.Conditions = []metav1.Condition{{
-		Type:               string(conditionTypeArtifactsReady),
-		Status:             metav1.ConditionTrue,
-		Reason:             string(conditionReasonArtifactsReady),
-		Message:            "artifacts are ready",
-		ObservedGeneration: currentNetwork.Generation,
-		LastTransitionTime: metav1.Now(),
-	}}
-	require.NoError(t, apiClient.Status().Update(ctx, currentNetwork))
+
+	awaitArtifactsReady := func() {
+		require.Eventually(t, func() bool {
+			markAvailable()
+			current := &yacdv1alpha1.CardanoNetwork{}
+			if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
+				return false
+			}
+			return current.Status.Endpoints != nil &&
+				current.Status.Endpoints.Artifacts != nil &&
+				conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
+		}, time.Minute, 200*time.Millisecond)
+	}
+
+	awaitArtifactsReady()
 
 	first := readyPrimarySidecarDBSync("first", network)
 	first.Namespace = namespace.Name
@@ -814,6 +620,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Create(ctx, first))
 
 	require.Eventually(t, func() bool {
+		markAvailable()
 		current := &yacdv1alpha1.CardanoDBSync{}
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(first), current); err != nil {
 			return false
@@ -824,16 +631,41 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 			current.Status.Placement.PrimarySidecar != nil &&
 			sidecarMaterialReady != nil &&
 			sidecarMaterialReady.Status == metav1.ConditionTrue
-	}, time.Minute, 100*time.Millisecond)
+	}, time.Minute, 200*time.Millisecond)
 
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
 	currentFirst := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
 	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, currentFirst.Status.Placement.PrimarySidecar.Revision)
 
-	currentFirst.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-	require.NoError(t, apiClient.Status().Update(ctx, currentFirst))
-	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+	// Bump the attached db-sync's published sidecar revision and assert the
+	// primary Deployment re-stamps it. Re-publish the bump on every iteration
+	// (not once) so the cardanonetwork watch keeps re-enqueuing and reconciling
+	// against the latest db-sync status until the Deployment reflects it; under
+	// heavy CI load a single bump-triggered reconcile can read a stale cache and
+	// nothing else would re-trigger it. The db-sync controller ignores this
+	// status-only update (its predicate reacts only to generation or
+	// accepted-identity changes), so the value sticks and there is no writer to
+	// conflict with.
+	const bumpedRevision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	require.Eventually(t, func() bool {
+		latest := &yacdv1alpha1.CardanoDBSync{}
+		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(first), latest); err != nil {
+			return false
+		}
+		if latest.Status.Placement == nil || latest.Status.Placement.PrimarySidecar == nil {
+			return false
+		}
+		latest.Status.Placement.PrimarySidecar.Revision = bumpedRevision
+		if err := apiClient.Status().Update(ctx, latest); err != nil {
+			return false
+		}
+		deployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, deployment); err != nil {
+			return false
+		}
+		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == bumpedRevision
+	}, 2*time.Minute, 200*time.Millisecond)
 
 	require.Eventually(t, func() bool {
 		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
@@ -846,10 +678,11 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Create(ctx, second))
 
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
-	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, "sha256:2222222222222222222222222222222222222222222222222222222222222222")
+	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, bumpedRevision)
 
 	require.NoError(t, apiClient.Delete(ctx, currentFirst))
 	require.Eventually(t, func() bool {
+		markAvailable()
 		current := &yacdv1alpha1.CardanoDBSync{}
 		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(second), current); err != nil {
 			return false
@@ -919,7 +752,7 @@ func requireDeploymentDBSyncSidecarRevisionEventually(
 		}
 
 		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == value
-	}, time.Minute, 100*time.Millisecond)
+	}, 2*time.Minute, 100*time.Millisecond)
 }
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, ct conditionType) *metav1.Condition {
@@ -943,8 +776,7 @@ func statusHasProgressingEndpoints(
 		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeKupoReady, metav1.ConditionFalse, "") &&
 		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionFalse, "") &&
-		conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
-		current.Status.Artifacts == nil &&
+		conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionFalse, "") &&
 		nodeToNodeEndpointMatches(current, network) &&
 		ogmiosEndpointMatches(current, network) &&
 		kupoEndpointMatches(current, network) &&
@@ -969,8 +801,7 @@ func statusHasReadyConditions(
 		conditionHas(current, conditionTypeOgmiosReady, metav1.ConditionTrue, conditionReasonOgmiosReady) &&
 		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady) &&
 		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionTrue, conditionReasonFaucetReady) &&
-		conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady) &&
-		networkArtifactsStatusMatches(current, network)
+		conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
 }
 
 func statusHasDisabledFaucetReadyConditions(
@@ -990,33 +821,9 @@ func statusHasDisabledFaucetReadyConditions(
 		conditionHas(current, conditionTypeKupoReady, metav1.ConditionTrue, conditionReasonKupoReady) &&
 		conditionHas(current, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonFaucetDisabled) &&
 		conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady) &&
-		networkArtifactsStatusMatches(current, network) &&
 		current.Status.Endpoints != nil &&
 		current.Status.Endpoints.Faucet == nil &&
 		current.Status.Faucet == nil
-}
-
-func statusHasCustomPublicArtifacts(
-	ctx context.Context,
-	apiClient client.Client,
-	network *yacdv1alpha1.CardanoNetwork,
-) bool {
-	current := &yacdv1alpha1.CardanoNetwork{}
-	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), current); err != nil {
-		return false
-	}
-	if current.Status.Network == nil ||
-		current.Status.Network.NetworkFingerprint == "" ||
-		current.Status.Network.Profile == nil ||
-		*current.Status.Network.Profile != yacdv1alpha1.PublicNetworkProfileCustom ||
-		current.Status.Artifacts == nil {
-		return false
-	}
-
-	return conditionHas(current, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady) &&
-		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
-		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
-		current.Status.Artifacts.DataHash != ""
 }
 
 func conditionHas(
@@ -1132,219 +939,4 @@ func recoverDeletedFaucetAuthSecret(
 			conditionHas(currentNetwork, conditionTypeReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing) &&
 			conditionHas(currentNetwork, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func recoverCorruptedNetworkArtifactsConfigMapWithFinalizer(
-	t *testing.T,
-	ctx context.Context,
-	apiClient client.Client,
-	network *yacdv1alpha1.CardanoNetwork,
-	artifactsConfigMapKey client.ObjectKey,
-	deploymentKey client.ObjectKey,
-) {
-	t.Helper()
-
-	configMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
-	verifiedArtifactsConfigMapUID := configMap.UID
-	configMap.Finalizers = append(configMap.Finalizers, "yacd.meigma.io/test-artifacts-finalizer")
-	delete(configMap.Data, networkartifacts.ConfigurationKey)
-	require.NoError(t, apiClient.Update(ctx, configMap))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.ConfigMap{}
-		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
-			return false
-		}
-		gotDeployment := &appsv1.Deployment{}
-		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
-			return false
-		}
-		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
-			return false
-		}
-		return got.UID == verifiedArtifactsConfigMapUID &&
-			!got.DeletionTimestamp.IsZero() &&
-			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(verifiedArtifactsConfigMapUID) &&
-			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
-			currentNetwork.Status.Artifacts == nil
-	}, 10*time.Second, 100*time.Millisecond)
-
-	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
-	configMap.Finalizers = nil
-	require.NoError(t, apiClient.Update(ctx, configMap))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.ConfigMap{}
-		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
-			return false
-		}
-		gotDeployment := &appsv1.Deployment{}
-		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
-			return false
-		}
-		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
-			return false
-		}
-		return got.UID != verifiedArtifactsConfigMapUID &&
-			len(got.Data) == 0 &&
-			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(got.UID) &&
-			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
-			currentNetwork.Status.Artifacts == nil
-	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func recoverCorruptedNetworkArtifactsConfigMap(
-	t *testing.T,
-	ctx context.Context,
-	apiClient client.Client,
-	network *yacdv1alpha1.CardanoNetwork,
-	artifactsConfigMapKey client.ObjectKey,
-	deploymentKey client.ObjectKey,
-	rolloutAt time.Time,
-) {
-	t.Helper()
-
-	configMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
-	verifiedArtifactsConfigMapUID := configMap.UID
-	configMap.Data[networkartifacts.PrimaryTopologyKey] = "corrupted-before-cooldown"
-	require.NoError(t, apiClient.Update(ctx, configMap))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.ConfigMap{}
-		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
-			return false
-		}
-		gotDeployment := &appsv1.Deployment{}
-		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
-			return false
-		}
-		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
-			return false
-		}
-		return got.UID != verifiedArtifactsConfigMapUID &&
-			len(got.Data) == 0 &&
-			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(got.UID) &&
-			gotDeployment.Annotations[networkArtifactsRecoveryRolloutAtAnno] == rolloutAt.UTC().Format(time.RFC3339) &&
-			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
-			currentNetwork.Status.Artifacts == nil
-	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func suppressCorruptedNetworkArtifactsConfigMapDuringCooldown(
-	t *testing.T,
-	ctx context.Context,
-	apiClient client.Client,
-	network *yacdv1alpha1.CardanoNetwork,
-	artifactsConfigMapKey client.ObjectKey,
-	deploymentKey client.ObjectKey,
-) {
-	t.Helper()
-
-	configMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, artifactsConfigMapKey, configMap))
-	cooldownConfigMapUID := configMap.UID
-	configMap.Data[networkartifacts.PrimaryTopologyKey] = "corrupted-during-cooldown"
-	require.NoError(t, apiClient.Update(ctx, configMap))
-
-	require.Eventually(t, func() bool {
-		got := &corev1.ConfigMap{}
-		if err := apiClient.Get(ctx, artifactsConfigMapKey, got); err != nil {
-			return false
-		}
-		gotDeployment := &appsv1.Deployment{}
-		if err := apiClient.Get(ctx, deploymentKey, gotDeployment); err != nil {
-			return false
-		}
-		currentNetwork := &yacdv1alpha1.CardanoNetwork{}
-		if err := apiClient.Get(ctx, client.ObjectKeyFromObject(network), currentNetwork); err != nil {
-			return false
-		}
-		return got.UID == cooldownConfigMapUID &&
-			got.Data[networkartifacts.PrimaryTopologyKey] == "corrupted-during-cooldown" &&
-			gotDeployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno] == string(cooldownConfigMapUID) &&
-			conditionHas(currentNetwork, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending) &&
-			currentNetwork.Status.Artifacts == nil
-	}, 10*time.Second, 100*time.Millisecond)
-}
-
-func publishNetworkArtifactsWithClient(
-	t *testing.T,
-	ctx context.Context,
-	apiClient client.Client,
-	network *yacdv1alpha1.CardanoNetwork,
-) {
-	t.Helper()
-
-	configMap := &corev1.ConfigMap{}
-	require.NoError(t, apiClient.Get(ctx, client.ObjectKey{
-		Namespace: network.Namespace,
-		Name:      networkArtifactsConfigMapName(network),
-	}, configMap))
-	if configMap.Annotations == nil {
-		configMap.Annotations = map[string]string{}
-	}
-	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
-	if configMap.Data == nil {
-		configMap.Data = map[string]string{}
-	}
-	maps.Copy(configMap.Data, testNetworkArtifactsData())
-	require.NoError(t, apiClient.Update(ctx, configMap))
-}
-
-func networkArtifactsStatusMatches(current *yacdv1alpha1.CardanoNetwork, network *yacdv1alpha1.CardanoNetwork) bool {
-	return current.Status.Artifacts != nil &&
-		current.Status.Artifacts.NetworkConfigMapName == networkArtifactsConfigMapName(network) &&
-		current.Status.Artifacts.SchemaVersion == networkartifacts.SchemaVersion &&
-		current.Status.Artifacts.DataHash == testNetworkArtifactsDataHash
-}
-
-func dbSyncEnvtestNetworkArtifactsData(network *yacdv1alpha1.CardanoNetwork) map[string]string {
-	data := testNetworkArtifactsData()
-	data[networkartifacts.ConnectionKey] = dbSyncEnvtestConnectionJSON(network)
-	return data
-}
-
-func dbSyncEnvtestConnectionJSON(network *yacdv1alpha1.CardanoNetwork) string {
-	doc := struct {
-		SchemaVersion     string            `json:"schemaVersion"`
-		Network           map[string]any    `json:"network"`
-		PrimaryNodeToNode map[string]any    `json:"primaryNodeToNode"`
-		Files             map[string]string `json:"files"`
-	}{
-		SchemaVersion: networkartifacts.SchemaVersion,
-		Network: map[string]any{
-			"name":                network.Name,
-			"namespace":           network.Namespace,
-			"mode":                string(network.Status.Network.Mode),
-			"networkMagic":        *network.Status.Network.NetworkMagic,
-			"era":                 string(*network.Status.Network.Era),
-			"localnetFingerprint": network.Status.Network.LocalnetFingerprint,
-		},
-		PrimaryNodeToNode: map[string]any{
-			"host": network.Status.Endpoints.NodeToNode.ServiceName + "." + network.Namespace + ".svc.cluster.local",
-			"port": network.Status.Endpoints.NodeToNode.Port,
-			"url":  network.Status.Endpoints.NodeToNode.URL,
-		},
-		Files: map[string]string{
-			"configuration":   networkartifacts.ConfigurationKey,
-			"byronGenesis":    networkartifacts.ByronGenesisKey,
-			"shelleyGenesis":  networkartifacts.ShelleyGenesisKey,
-			"alonzoGenesis":   networkartifacts.AlonzoGenesisKey,
-			"conwayGenesis":   networkartifacts.ConwayGenesisKey,
-			"primaryTopology": networkartifacts.PrimaryTopologyKey,
-			"connection":      networkartifacts.ConnectionKey,
-			"localnetPlan":    networkartifacts.PlanManifestKey,
-		},
-	}
-	raw, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		panic(err)
-	}
-	return string(raw) + "\n"
 }

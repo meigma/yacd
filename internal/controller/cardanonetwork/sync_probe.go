@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -58,6 +59,23 @@ func (f cardanoNetworkSyncProberFunc) Probe(ctx context.Context, ogmiosURL strin
 	return f(ctx, ogmiosURL)
 }
 
+// cardanoNetworkTimingProber is the narrow port used by CardanoNetwork to read
+// Shelley genesis timing from the served artifacts. Tests replace it so
+// controller behavior can be exercised without depending on real cluster DNS or
+// a running serve sidecar.
+type cardanoNetworkTimingProber interface {
+	Timing(context.Context, string) (cardanoNetworkTiming, error)
+}
+
+// cardanoNetworkTimingProberFunc adapts a function to
+// [cardanoNetworkTimingProber] for tests.
+type cardanoNetworkTimingProberFunc func(context.Context, string) (cardanoNetworkTiming, error)
+
+// Timing implements [cardanoNetworkTimingProber].
+func (f cardanoNetworkTimingProberFunc) Timing(ctx context.Context, artifactsURL string) (cardanoNetworkTiming, error) {
+	return f(ctx, artifactsURL)
+}
+
 // defaultCardanoNetworkSyncProber calls Ogmios /health over HTTP. queryOgmios is
 // intentionally test-only: it lets unit tests exercise condition projection
 // without standing up an HTTP server for every case.
@@ -67,6 +85,18 @@ type defaultCardanoNetworkSyncProber struct {
 	httpClient *http.Client
 	// queryOgmios, when non-nil, replaces the live Ogmios HTTP request.
 	queryOgmios func(context.Context, string) (cardanoNetworkOgmiosHealth, error)
+}
+
+// defaultCardanoNetworkTimingProber fetches shelley-genesis.json over HTTP from
+// the network's served artifacts and parses its timing. fetchTiming is
+// intentionally test-only: it lets unit tests exercise condition projection
+// without standing up an HTTP server for every case.
+type defaultCardanoNetworkTimingProber struct {
+	// httpClient is used for served-artifact requests. http.DefaultClient is
+	// used when this field is nil.
+	httpClient *http.Client
+	// fetchTiming, when non-nil, replaces the live served-artifact HTTP request.
+	fetchTiming func(context.Context, string) (cardanoNetworkTiming, error)
 }
 
 // cardanoNetworkOgmiosHealth is the subset of Ogmios health used to publish
@@ -111,13 +141,25 @@ func (r *CardanoNetworkReconciler) cardanoNetworkSyncProber() cardanoNetworkSync
 	return defaultCardanoNetworkSyncProber{httpClient: http.DefaultClient}
 }
 
+// cardanoNetworkTimingProber returns the configured served-artifact timing
+// prober.
+func (r *CardanoNetworkReconciler) cardanoNetworkTimingProber() cardanoNetworkTimingProber {
+	if r.timingProberOverride != nil {
+		return r.timingProberOverride
+	}
+
+	return defaultCardanoNetworkTimingProber{httpClient: http.DefaultClient}
+}
+
 // primaryNodeSyncStatusConditions derives Status.Sync plus node sync conditions
-// from the live Ogmios Service and verified artifact ConfigMap.
+// from the live Ogmios Service and the network timing fetched from the served
+// artifacts. The Shelley genesis timing is fetched over HTTP from the network's
+// published artifacts endpoint rather than read from a ConfigMap, so the
+// controller never copies genesis content into a Kubernetes object.
 func (r *CardanoNetworkReconciler) primaryNodeSyncStatusConditions(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
 	ogmiosService *corev1.Service,
-	networkArtifactsConfigMap *corev1.ConfigMap,
 	artifactsReady bool,
 	artifactsMessage string,
 ) (*yacdv1alpha1.CardanoNetworkSyncStatus, metav1.Condition, metav1.Condition) {
@@ -126,12 +168,24 @@ func (r *CardanoNetworkReconciler) primaryNodeSyncStatusConditions(
 	}
 	if !artifactsReady {
 		if strings.TrimSpace(artifactsMessage) == "" {
-			artifactsMessage = "Network artifact timing is unavailable until artifacts are verified"
+			artifactsMessage = "Network artifact timing is unavailable until artifacts are served"
 		}
 		return nodeSyncUnavailableConditions(conditionReasonNetworkTimingUnavailable, artifactsMessage)
 	}
 
-	timing, err := cardanoNetworkTimingFromArtifacts(networkArtifactsConfigMap)
+	// The artifacts endpoint is published later in the same reconcile that first
+	// renders the serve sidecar, so an empty URL here is expected and self-heals
+	// on the next reconcile: treat it as unavailable rather than failing.
+	if network.Status.Endpoints == nil ||
+		network.Status.Endpoints.Artifacts == nil ||
+		strings.TrimSpace(network.Status.Endpoints.Artifacts.URL) == "" {
+		return nodeSyncUnavailableConditions(conditionReasonNetworkTimingUnavailable, "Network timing is unavailable: artifacts endpoint not published")
+	}
+	artifactsURL := strings.TrimSpace(network.Status.Endpoints.Artifacts.URL)
+
+	timingCtx, cancelTiming := context.WithTimeout(ctx, nodeSyncProbeTimeout)
+	timing, err := r.cardanoNetworkTimingProber().Timing(timingCtx, artifactsURL)
+	cancelTiming()
 	if err != nil {
 		return nodeSyncUnavailableConditions(conditionReasonNetworkTimingUnavailable, fmt.Sprintf("Network timing is unavailable: %v", err))
 	}
@@ -259,20 +313,6 @@ func (t cardanoNetworkTiming) inferredTipSlot(observedAt time.Time) int64 {
 	return int64(math.Floor(elapsed / t.SlotLengthSeconds))
 }
 
-// cardanoNetworkTimingFromArtifacts parses Shelley genesis timing from a
-// verified network artifact ConfigMap.
-func cardanoNetworkTimingFromArtifacts(configMap *corev1.ConfigMap) (cardanoNetworkTiming, error) {
-	if configMap == nil {
-		return cardanoNetworkTiming{}, errors.New("artifact ConfigMap is missing")
-	}
-	raw := strings.TrimSpace(configMap.Data[cardanonetworkartifacts.ShelleyGenesisKey])
-	if raw == "" {
-		return cardanoNetworkTiming{}, fmt.Errorf("%s is missing", cardanonetworkartifacts.ShelleyGenesisKey)
-	}
-
-	return parseShelleyGenesisTiming([]byte(raw))
-}
-
 // parseShelleyGenesisTiming extracts systemStart and slotLength from
 // shelley-genesis.json data.
 func parseShelleyGenesisTiming(data []byte) (cardanoNetworkTiming, error) {
@@ -376,6 +416,49 @@ func (p defaultCardanoNetworkSyncProber) Probe(ctx context.Context, ogmiosURL st
 	}
 
 	return parseOgmiosHealth(health)
+}
+
+// Timing fetches shelley-genesis.json from a network's served-artifact endpoint
+// and parses its Shelley genesis timing. The served filename equals
+// [cardanonetworkartifacts.ShelleyGenesisKey].
+func (p defaultCardanoNetworkTimingProber) Timing(ctx context.Context, artifactsURL string) (cardanoNetworkTiming, error) {
+	if p.fetchTiming != nil {
+		return p.fetchTiming(ctx, artifactsURL)
+	}
+	if strings.TrimSpace(artifactsURL) == "" {
+		return cardanoNetworkTiming{}, errors.New("artifacts endpoint is not published")
+	}
+
+	genesisURL, err := url.JoinPath(artifactsURL, cardanonetworkartifacts.ShelleyGenesisKey)
+	if err != nil {
+		return cardanoNetworkTiming{}, err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, genesisURL, nil)
+	if err != nil {
+		return cardanoNetworkTiming{}, err
+	}
+	client := p.httpClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return cardanoNetworkTiming{}, err
+	}
+	defer func() {
+		_ = response.Body.Close()
+	}()
+	if response.StatusCode != http.StatusOK {
+		return cardanoNetworkTiming{}, fmt.Errorf("artifacts serve returned HTTP %d for %s", response.StatusCode, cardanonetworkartifacts.ShelleyGenesisKey)
+	}
+
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		return cardanoNetworkTiming{}, err
+	}
+
+	return parseShelleyGenesisTiming(body)
 }
 
 // ogmiosHealthStatusUsable reports whether an HTTP status can carry a useful

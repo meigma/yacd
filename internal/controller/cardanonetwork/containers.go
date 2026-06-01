@@ -106,13 +106,6 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 			MountPath: cardanoNodeSocketDir,
 		},
 	}
-	if plan.isPublic() {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      publicProfileVolumeName,
-			MountPath: plan.ProfileDir,
-			ReadOnly:  true,
-		})
-	}
 
 	container := corev1.Container{
 		Name:            cardanoNodeContainerName,
@@ -159,27 +152,21 @@ func (b primaryWorkloadBuilder) cardanoNodeContainer(network *yacdv1alpha1.Carda
 
 // ogmiosContainer builds the optional ogmios sidecar. It speaks to
 // cardano-node through the shared IPC socket and reads node config through
-// the shared state mount (read-only).
+// the shared state mount (read-only). Both LOCAL and CURATED PUBLIC networks
+// read their config from the node-state PVC: local from the generated
+// environment and public from the fetched served-artifact directory under
+// plan.StateDir.
 func (b primaryWorkloadBuilder) ogmiosContainer(settings ogmiosSettings, plan primaryNetworkPlan) corev1.Container {
-	volumeMounts := make([]corev1.VolumeMount, 0, 3)
-	if plan.isLocal() {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      localnetStateVolumeName,
-			MountPath: plan.StateDir,
-			ReadOnly:  true,
-		})
-	}
+	volumeMounts := make([]corev1.VolumeMount, 0, 2)
+	volumeMounts = append(volumeMounts, corev1.VolumeMount{
+		Name:      localnetStateVolumeName,
+		MountPath: plan.StateDir,
+		ReadOnly:  true,
+	})
 	volumeMounts = append(volumeMounts, corev1.VolumeMount{
 		Name:      nodeIPCVolumeName,
 		MountPath: cardanoNodeSocketDir,
 	})
-	if plan.isPublic() {
-		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      publicProfileVolumeName,
-			MountPath: plan.ProfileDir,
-			ReadOnly:  true,
-		})
-	}
 
 	container := corev1.Container{
 		Name:            ogmiosContainerName,

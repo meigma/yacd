@@ -5,17 +5,15 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // patchStatusConditionsClearingFaucet writes a status patch that clears the
-// faucet endpoints and artifact status while applying the caller-supplied
-// conditions. Used on the Degraded paths (unsupported spec, apply error)
-// where the faucet must be torn down and the conditions must reflect the
-// failure reason.
+// faucet endpoints while applying the caller-supplied conditions. Used on the
+// Degraded paths (unsupported spec, apply error) where the faucet must be torn
+// down and the conditions must reflect the failure reason.
 func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -23,7 +21,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	acceptedIdentity acceptedNetworkIdentity,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -41,7 +39,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	faucetService *corev1.Service,
 	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
-	networkArtifactsConfigMap *corev1.ConfigMap,
 	dbSyncAttached bool,
 	dbSyncAttachmentCondition metav1.Condition,
 ) (metav1.Condition, error) {
@@ -66,27 +63,18 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 		return metav1.Condition{}, err
 	}
 
-	// Project the artifact ConfigMap verification result into both a status
-	// payload (Status.Artifacts) and a ready/pending condition.
-	artifactResult := ctrlnetworkartifacts.ProducerConfigMap(networkArtifactsConfigMap, networkPlan.Fingerprint)
-	var artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus
-	artifactsReady := artifactsReadyCondition(
-		metav1.ConditionFalse,
-		conditionReasonArtifactsPending,
-		artifactResult.Message,
-	)
-	if artifactResult.Ready {
-		artifactsStatus = &artifactResult.Status
-		artifactsReady = artifactsReadyCondition(
-			metav1.ConditionTrue,
-			conditionReasonArtifactsReady,
-			conditionMessageArtifactsReady,
-		)
+	// Derive ArtifactsReady from served-artifacts availability (the artifacts
+	// Service and the always-on serve sidecar container's readiness) rather than
+	// from a ConfigMap. Every supported network serves artifacts, so the
+	// disabled branch is effectively unreachable.
+	artifactsReady, err := r.primaryArtifactsReadyCondition(ctx, network, stagesServedArtifacts(network))
+	if err != nil {
+		return metav1.Condition{}, err
 	}
-	syncStatus, nodeSynchronized, nodeProgressing := r.primaryNodeSyncStatusConditions(ctx, network, ogmiosService, networkArtifactsConfigMap, artifactResult.Ready, artifactResult.Message)
+	syncStatus, nodeSynchronized, nodeProgressing := r.primaryNodeSyncStatusConditions(ctx, network, ogmiosService, artifactsReady.Status == metav1.ConditionTrue, artifactsReady.Message)
 	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, artifactsService, faucetAuthSecret, artifactsStatus, syncStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, artifactsService, faucetAuthSecret, syncStatus, false,
 		degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied),
 		progressingForReadyCondition(ready),
 		ready,
@@ -119,7 +107,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	faucetService *corev1.Service,
 	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
-	artifactsStatus *yacdv1alpha1.CardanoNetworkArtifactsStatus,
 	syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus,
 	clearFaucet bool,
 	conditions ...metav1.Condition,
@@ -132,29 +119,14 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService, artifactsService)
 		setFaucetStatus(network, faucetAuthSecret)
-		setArtifactsStatus(network, artifactsStatus)
 		setSyncStatus(network, syncStatus)
 	} else if clearFaucet {
 		clearFaucetStatus(network)
-		clearArtifactsStatus(network)
 		clearSyncStatus(network)
 	}
 	ctrlstatus.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
 
 	return ctrlstatus.PatchIfChanged(ctx, r.Status(), network, original)
-}
-
-// setArtifactsStatus copies the verified artifact status payload onto the
-// CardanoNetwork or clears it when nil. The payload is deep-copied so the
-// caller can mutate the source freely.
-func setArtifactsStatus(network *yacdv1alpha1.CardanoNetwork, artifacts *yacdv1alpha1.CardanoNetworkArtifactsStatus) {
-	if artifacts == nil {
-		network.Status.Artifacts = nil
-		return
-	}
-
-	copied := *artifacts
-	network.Status.Artifacts = &copied
 }
 
 // setSyncStatus copies the node sync payload onto the CardanoNetwork or clears
@@ -177,12 +149,6 @@ func clearFaucetStatus(network *yacdv1alpha1.CardanoNetwork) {
 		network.Status.Endpoints.Faucet = nil
 	}
 	network.Status.Faucet = nil
-}
-
-// clearArtifactsStatus removes the artifact verification payload from
-// CardanoNetwork status. Used on the Degraded path.
-func clearArtifactsStatus(network *yacdv1alpha1.CardanoNetwork) {
-	network.Status.Artifacts = nil
 }
 
 // clearSyncStatus removes the sync payload from CardanoNetwork status. Used on

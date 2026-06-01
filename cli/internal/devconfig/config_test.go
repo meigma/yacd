@@ -45,24 +45,6 @@ spec:
       profile: preview
 `
 
-const validPublicCustomConfig = `
-apiVersion: yacd.meigma.io/devconfig/v1alpha1
-kind: Environment
-spec:
-  network:
-    mode: public
-    node:
-      version: "11.0.1"
-      port: 3001
-      storage:
-        size: 20Gi
-    public:
-      profile: custom
-      configSource:
-        configMapRef:
-          name: custom-profile
-`
-
 const validPublicMainnetConfig = `
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
 kind: Environment
@@ -107,7 +89,6 @@ func TestLoadReadsPublicEnvironmentConfig(t *testing.T) {
 			config:      validPublicMainnetConfig,
 			wantProfile: "mainnet",
 		},
-		{name: "custom", config: validPublicCustomConfig, wantProfile: "custom"},
 	}
 
 	for _, tc := range tests {
@@ -196,11 +177,6 @@ func TestLoadRejectsUnsupportedPublicConfigs(t *testing.T) {
 			wantErr: "spec.network.public",
 		},
 		{
-			name:    "custom without config source",
-			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: custom", 1),
-			wantErr: "spec.network.public.configSource",
-		},
-		{
 			name:    "mainnet without bootstrap",
 			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: mainnet", 1),
 			wantErr: "spec.network.public.bootstrap.mithril",
@@ -214,28 +190,15 @@ func TestLoadRejectsUnsupportedPublicConfigs(t *testing.T) {
 			wantErr: "spec.network.public.bootstrap",
 		},
 		{
-			name: "curated config source",
-			config: strings.Replace(validPublicPreviewConfig, "      profile: preview\n", `      profile: preview
-      configSource:
-        configMapRef:
-          name: custom-profile
-`, 1),
-			wantErr: "spec.network.public.configSource",
-		},
-		{
-			name: "custom with both sources",
-			config: strings.Replace(validPublicCustomConfig, `        configMapRef:
-          name: custom-profile
-`, `        configMapRef:
-          name: custom-profile
-        secretRef:
-          name: custom-profile
-`, 1),
-			wantErr: "spec.network.public.configSource",
-		},
-		{
 			name:    "unknown profile",
 			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: unknown", 1),
+			wantErr: "spec.network.public.profile",
+		},
+		{
+			// F0 PR-B1 removed the custom public profile; it is no longer a
+			// supported value (also rejected by the CRD profile enum).
+			name:    "custom profile is no longer supported",
+			config:  strings.Replace(validPublicPreviewConfig, "profile: preview", "profile: custom", 1),
 			wantErr: "spec.network.public.profile",
 		},
 	}

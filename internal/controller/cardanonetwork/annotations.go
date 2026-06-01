@@ -7,26 +7,14 @@ import (
 
 const (
 	// localnetFingerprintAnno is the annotation key carrying the accepted
-	// localnet plan fingerprint on the primary PVC, Deployment pod template,
-	// and artifact ConfigMap. Drift between current and desired triggers a
-	// hard error (PVC) or a Pod template hash roll (Deployment).
+	// localnet plan fingerprint on the primary PVC and Deployment pod
+	// template. Drift between current and desired triggers a hard error
+	// (PVC) or a Pod template hash roll (Deployment).
 	localnetFingerprintAnno = ctrlannotations.LocalnetFingerprint
 
 	// networkFingerprintAnno is the mode-neutral annotation key carrying the
-	// accepted network fingerprint on owned resources and artifact ConfigMaps.
+	// accepted network fingerprint on owned resources.
 	networkFingerprintAnno = ctrlannotations.NetworkFingerprint
-
-	// networkArtifactsConfigMapUIDAnno is the annotation key carrying the
-	// artifact ConfigMap UID on the Deployment pod template. The reconciler
-	// stamps this so a recovered (delete-then-create) ConfigMap can roll the
-	// primary Pod through the standard Deployment hash-change path when
-	// recovery rollout cooldown allows it.
-	networkArtifactsConfigMapUIDAnno = "yacd.meigma.io/network-artifacts-configmap-uid"
-
-	// networkArtifactsRecoveryRolloutAtAnno records the last artifact recovery
-	// timestamp on Deployment metadata. It is intentionally not a pod-template
-	// annotation so updating the cooldown state does not itself roll the Pod.
-	networkArtifactsRecoveryRolloutAtAnno = "yacd.meigma.io/network-artifacts-recovery-rollout-at"
 
 	// faucetAuthTokenHashAnno carries the hash of the live faucet auth token
 	// on the Deployment pod template. Token creation or rotation must roll the
@@ -47,8 +35,6 @@ var cardanoNetworkOwnedAnnotations = []string{
 	localnetFingerprintAnno,
 	networkFingerprintAnno,
 	ctrlannotations.RequestedStorageClass,
-	networkArtifactsConfigMapUIDAnno,
-	networkArtifactsRecoveryRolloutAtAnno,
 	faucetAuthTokenHashAnno,
 	dbSyncSidecarRevisionAnno,
 }

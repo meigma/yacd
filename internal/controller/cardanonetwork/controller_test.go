@@ -4,17 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"testing"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	"github.com/meigma/yacd/internal/cardano/publicnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
-	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -39,8 +34,6 @@ const (
 	forgedLocalnetFingerprint = "cafebabe-forged-localnet"
 	testDBSyncSidecarRevision = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 )
-
-var testNetworkArtifactsDataHash = ctrlartifacts.ComputeDataHash(testNetworkArtifactsData())
 
 // TestCardanoNetworkReconcilerReconcileHandlesMissingObject verifies deleted
 // resources are ignored without requeueing.
@@ -89,36 +82,16 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
 	requirePrimaryPVC(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	networkArtifactsConfigMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	artifactPublisherServiceAccount := requireArtifactPublisherServiceAccount(t, ctx, reconciler, network)
-	artifactPublisherRole := requireArtifactPublisherRole(t, ctx, reconciler, network)
-	artifactPublisherRoleBinding := requireArtifactPublisherRoleBinding(t, ctx, reconciler, network)
 	service := requirePrimaryService(t, ctx, reconciler, network)
 	ogmiosService := requirePrimaryOgmiosService(t, ctx, reconciler, network)
 	kupoService := requirePrimaryKupoService(t, ctx, reconciler, network)
 	faucetService := requirePrimaryFaucetService(t, ctx, reconciler, network)
 	artifactsService := requirePrimaryArtifactsService(t, ctx, reconciler, network)
 	faucetAuthSecret := requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
-	assert.Equal(t, "creates-workload-network-artifacts", networkArtifactsConfigMap.Name)
-	assert.Equal(t, deployment.Spec.Template.Annotations[localnetFingerprintAnno], networkArtifactsConfigMap.Annotations[localnetFingerprintAnno])
 	assertDeploymentFaucetAuthTokenHash(t, deployment, faucetAuthSecret)
-	assert.Equal(t, "creates-workload-artifact-publisher", artifactPublisherServiceAccount.Name)
-	require.NotNil(t, artifactPublisherServiceAccount.AutomountServiceAccountToken)
-	assert.False(t, *artifactPublisherServiceAccount.AutomountServiceAccountToken)
-	require.Len(t, artifactPublisherRole.Rules, 1)
-	assert.Equal(t, []string{networkArtifactsConfigMap.Name}, artifactPublisherRole.Rules[0].ResourceNames)
-	assert.Equal(t, []string{"get", "patch"}, artifactPublisherRole.Rules[0].Verbs)
-	require.Len(t, artifactPublisherRoleBinding.Subjects, 1)
-	assert.Equal(t, artifactPublisherServiceAccount.Name, artifactPublisherRoleBinding.Subjects[0].Name)
-	assert.Equal(t, artifactPublisherServiceAccount.Name, deployment.Spec.Template.Spec.ServiceAccountName)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 3)
-	assert.Contains(t, deployment.Spec.Template.Spec.InitContainers[0].VolumeMounts, artifactPublisherVolumeMount())
-	for _, container := range deployment.Spec.Template.Spec.Containers {
-		assert.NotContains(t, container.VolumeMounts, artifactPublisherVolumeMount())
-	}
-	assert.Contains(t, deployment.Spec.Template.Spec.Volumes, artifactPublisherProjectedVolume())
+	assert.Empty(t, deployment.Spec.Template.Spec.ServiceAccountName)
 	assert.Equal(t, []corev1.ServicePort{
 		{
 			Name:       cardanoNodePortName,
@@ -168,15 +141,13 @@ func TestCardanoNetworkReconcilerReconcileCreatesPrimaryWorkload(t *testing.T) {
 	assertCondition(t, ctx, reconciler, network, conditionTypeOgmiosReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeKupoReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertCondition(t, ctx, reconciler, network, conditionTypeFaucetReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, service.Name, network.Spec.Node.Port)
 	assertOgmiosEndpoint(t, ctx, reconciler, network, ogmiosService.Name, defaultOgmiosPort)
 	assertKupoEndpoint(t, ctx, reconciler, network, kupoService.Name, defaultKupoPort)
 	assertFaucetEndpoint(t, ctx, reconciler, network, faucetService.Name, defaultFaucetPort)
 	assertArtifactsEndpoint(t, ctx, reconciler, network, artifactsService.Name, defaultServePort)
 	assertFaucetStatus(t, ctx, reconciler, network, faucetAuthSecret.Name)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Artifacts)
 }
 
 func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testing.T) {
@@ -206,19 +177,9 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
 	assert.Equal(t, "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29", deployment.Spec.Template.Annotations[networkFingerprintAnno])
 	assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
-	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
-	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, artifactPublisherTokenVolumeName)
-
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Equal(t, deployment.Spec.Template.Annotations[networkFingerprintAnno], configMap.Annotations[networkFingerprintAnno])
-	assert.NotContains(t, configMap.Annotations, localnetFingerprintAnno)
-	assert.Equal(t, networkartifacts.SchemaVersion, configMap.Annotations[ctrlannotations.ArtifactSchemaVersion])
-	assert.Equal(t, ctrlartifacts.ComputeDataHash(configMap.Data), configMap.Annotations[ctrlannotations.ArtifactDataHash])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.PublicProfileManifestKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.ConnectionKey])
-	assertNoArtifactPublisherResources(t, ctx, reconciler, network)
+	// The public node and ogmios read their config from the fetched
+	// served-artifact directory on the node-state PVC, not a /profile ConfigMap.
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "network-artifacts")
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
@@ -233,7 +194,8 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 		},
 	}, artifactsService.Spec.Ports)
 
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
+	// The serve sidecar has no ready Pod yet, so ArtifactsReady is progressing.
+	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonDeploymentProgressing)
 	assertNodeToNodeEndpoint(t, ctx, reconciler, network, primaryWorkloadName(network), network.Spec.Node.Port)
 	assertOgmiosEndpoint(t, ctx, reconciler, network, primaryOgmiosServiceName(network), defaultOgmiosPort)
 	assertArtifactsEndpoint(t, ctx, reconciler, network, primaryArtifactsServiceName(network), defaultServePort)
@@ -246,10 +208,6 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicPreviewWorkload(t *testin
 	assert.Equal(t, yacdv1alpha1.PublicNetworkProfilePreview, *current.Status.Network.Profile)
 	require.NotNil(t, current.Status.Network.NetworkMagic)
 	assert.Equal(t, int64(2), *current.Status.Network.NetworkMagic)
-	require.NotNil(t, current.Status.Artifacts)
-	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
-	assert.Equal(t, networkartifacts.SchemaVersion, current.Status.Artifacts.SchemaVersion)
-	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], current.Status.Artifacts.DataHash)
 	require.NotNil(t, current.Status.Endpoints)
 	assert.Nil(t, current.Status.Endpoints.Kupo)
 	assert.Nil(t, current.Status.Endpoints.Faucet)
@@ -310,133 +268,10 @@ func TestCardanoNetworkReconcilerReconcileCreatesPublicMainnetWorkload(t *testin
 	storage := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	assert.Zero(t, storage.Cmp(resource.MustParse(defaultMainnetNodeStorageSize)))
 
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilGenesisKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilAncillaryKey])
 	current := requireNetwork(t, ctx, reconciler, network)
 	require.NotNil(t, current.Status.Network)
 	require.NotNil(t, current.Status.Network.Profile)
 	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileMainnet, *current.Status.Network.Profile)
-}
-
-func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkload(t *testing.T) {
-	ctx := context.Background()
-	network := publicCardanoNetwork("custom-workload", yacdv1alpha1.PublicNetworkProfileCustom)
-	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-	}
-	source := customProfileConfigMap(network.Namespace, "custom-profile", customPublicProfileBundle(t))
-	// Pre-seed an owned artifacts Service from a prior (serve-enabled) state so
-	// the reconcile must delete it now that custom-public has no serve sidecar.
-	staleArtifactsService, err := newTestPrimaryWorkloadBuilder(t).artifactsService(network)
-	require.NoError(t, err)
-	reconciler := newTestReconciler(t, source, network, staleArtifactsService)
-
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
-	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	// Custom public is scoped out of the served-artifact PR-A: no fetch init
-	// container and no serve sidecar.
-	assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
-	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
-	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, kupoContainerName)
-	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, faucetContainerName)
-	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, serveContainerName)
-	// Custom public has no serve sidecar, so it gets neither an artifacts
-	// Service nor an artifacts endpoint.
-	assertNoPrimaryArtifactsService(t, ctx, reconciler, network)
-
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
-	assert.NotContains(t, configMap.Data, "unsupported.json")
-	current := requireNetwork(t, ctx, reconciler, network)
-	require.NotNil(t, current.Status.Network)
-	require.NotNil(t, current.Status.Network.Profile)
-	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileCustom, *current.Status.Network.Profile)
-	require.NotNil(t, current.Status.Network.NetworkMagic)
-	assert.Equal(t, int64(2), *current.Status.Network.NetworkMagic)
-	if current.Status.Endpoints != nil {
-		assert.Nil(t, current.Status.Endpoints.Artifacts)
-	}
-}
-
-func TestCardanoNetworkReconcilerReconcileCreatesCustomPublicWorkloadFromSecret(t *testing.T) {
-	ctx := context.Background()
-	network := publicCardanoNetwork("secret-custom", yacdv1alpha1.PublicNetworkProfileCustom)
-	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		SecretRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-	}
-	source := customProfileSecret(network.Namespace, "custom-profile", customPublicProfileBundle(t))
-	reconciler := newTestReconciler(t, source, network)
-
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.NotEmpty(t, configMap.Data[networkartifacts.ConfigurationKey])
-	assert.NotEmpty(t, configMap.Data[networkartifacts.PrimaryTopologyKey])
-	current := requireNetwork(t, ctx, reconciler, network)
-	require.NotNil(t, current.Status.Network)
-	require.NotNil(t, current.Status.Network.Profile)
-	assert.Equal(t, yacdv1alpha1.PublicNetworkProfileCustom, *current.Status.Network.Profile)
-}
-
-func TestCardanoNetworkReconcilerReconcileDegradesMissingCustomPublicSource(t *testing.T) {
-	ctx := context.Background()
-	network := publicCardanoNetwork("missing-custom-source", yacdv1alpha1.PublicNetworkProfileCustom)
-	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-	}
-	reconciler := newTestReconciler(t, network)
-
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-	assertNoPrimaryChildren(t, ctx, reconciler, network)
-	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-}
-
-func TestCardanoNetworkReconcilerReconcileRejectsCustomProfileDriftBeforeArtifactMutation(t *testing.T) {
-	ctx := context.Background()
-	network := publicCardanoNetwork("custom-drift", yacdv1alpha1.PublicNetworkProfileCustom)
-	network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-		ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-	}
-	source := customProfileConfigMap(network.Namespace, "custom-profile", customPublicProfileBundle(t))
-	reconciler := newTestReconciler(t, source, network)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	originalDataHash := configMap.Annotations[ctrlannotations.ArtifactDataHash]
-	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	originalDeploymentFingerprint := deployment.Spec.Template.Annotations[networkFingerprintAnno]
-
-	current := requireNetwork(t, ctx, reconciler, network)
-	current.Status.Network = nil
-	current.Status.Artifacts = nil
-	storeNetworkStatus(t, ctx, reconciler, current)
-
-	source = &corev1.ConfigMap{}
-	require.NoError(t, reconciler.Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: "custom-profile"}, source))
-	source.Data["topology.json"] = "{\"Producers\":[]}\n"
-	require.NoError(t, reconciler.Update(ctx, source))
-
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{}, result)
-	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedNetworkChange)
-	configMap = requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Equal(t, originalDataHash, configMap.Annotations[ctrlannotations.ArtifactDataHash])
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, originalDeploymentFingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
 }
 
 func TestCardanoNetworkReconcilerReconcileLeavesFaucetDisabledByDefault(t *testing.T) {
@@ -464,7 +299,7 @@ func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSync(t *testin
 	dbSync := readyPrimarySidecarDBSync("dbsync", network)
 	reconciler := newTestReconciler(t, network, dbSync)
 	storeNetworkStatus(t, ctx, reconciler, network)
-	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Artifacts)
+	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Endpoints.Artifacts)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
@@ -506,7 +341,7 @@ func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSync(t *testin
 	assert.Equal(t, "artifacts", artifactsMount.SubPath)
 	assert.True(t, artifactsMount.ReadOnly)
 
-	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	attachDBSyncSidecar(t, ctx, reconciler, network)
 	currentDBSync := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(dbSync), currentDBSync))
 	currentDBSync.Status.Placement.PrimarySidecar.Revision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
@@ -525,7 +360,7 @@ func TestCardanoNetworkReconcilerReconcileAttachesPublicPrimarySidecarDBSync(t *
 	dbSync := readyPrimarySidecarDBSync("dbsync", network)
 	reconciler := newTestReconciler(t, network, dbSync)
 	storeNetworkStatus(t, ctx, reconciler, network)
-	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Artifacts)
+	require.NotNil(t, requireNetwork(t, ctx, reconciler, network).Status.Endpoints.Artifacts)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
@@ -534,7 +369,7 @@ func TestCardanoNetworkReconcilerReconcileAttachesPublicPrimarySidecarDBSync(t *
 	assert.Equal(t, "dbsync", deployment.Spec.Template.Labels[labelDBSync])
 	assert.Equal(t, testDBSyncSidecarRevision, deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno])
 	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
-	requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "network-artifacts")
 	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "follower-state")
 }
 
@@ -543,14 +378,18 @@ func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentReadyWhenSideca
 	network := readyLocalCardanoNetwork()
 	dbSync := readyPrimarySidecarDBSync("dbsync", network)
 	reconciler := newTestReconciler(t, network, dbSync)
+	reconciler.timingProberOverride = cardanoNetworkTimingProberFunc(func(context.Context, string) (cardanoNetworkTiming, error) {
+		return cardanoNetworkTiming{SystemStart: time.Now().Add(-time.Hour), SlotLengthSeconds: 1}, nil
+	})
+	reconciler.syncProberOverride = syncedNodeSyncProber()
 	storeNetworkStatus(t, ctx, reconciler, network)
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	attachDBSyncSidecar(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, ctrldbsync.PrimarySidecarContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, serveContainerName, ctrldbsync.PrimarySidecarContainerName)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 
@@ -569,7 +408,7 @@ func TestCardanoNetworkReconcilerReconcileReportsDBSyncAttachmentBlockerBeforeNo
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	attachDBSyncSidecar(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentObserved(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName)
@@ -592,7 +431,7 @@ func TestCardanoNetworkReconcilerReconcileKeepsDBSyncAttachmentReadySeparateFrom
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
+	attachDBSyncSidecar(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentObserved(t, ctx, reconciler, deployment)
 	markPrimaryPodContainersReady(t, ctx, reconciler, network, ctrldbsync.PrimarySidecarContainerName)
@@ -730,7 +569,6 @@ func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenStatusCon
 func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSyncWithoutConfigMap(t *testing.T) {
 	ctx := context.Background()
 	network := readyLocalCardanoNetwork()
-	network.Status.Artifacts.NetworkConfigMapName = ""
 	dbSync := readyPrimarySidecarDBSync("dbsync", network)
 	reconciler := newTestReconciler(t, network, dbSync)
 	storeNetworkStatus(t, ctx, reconciler, network)
@@ -761,217 +599,6 @@ func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncOnPortConflic
 	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
 }
 
-func TestCardanoNetworkReconcilerReconcilePublishesVerifiedNetworkArtifacts(t *testing.T) {
-	ctx := context.Background()
-	network := localCardanoNetwork("artifact-status")
-	reconciler := newTestReconciler(t, network)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	configMap := publishNetworkArtifacts(t, ctx, reconciler, network)
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
-	current := requireNetwork(t, ctx, reconciler, network)
-	require.NotNil(t, current.Status.Artifacts)
-	assert.Equal(t, configMap.Name, current.Status.Artifacts.NetworkConfigMapName)
-	assert.Equal(t, networkartifacts.SchemaVersion, current.Status.Artifacts.SchemaVersion)
-	assert.Equal(t, testNetworkArtifactsDataHash, current.Status.Artifacts.DataHash)
-}
-
-func TestCardanoNetworkReconcilerReconcileRecoversDeletedNetworkArtifactsConfigMapWithRollout(t *testing.T) {
-	ctx := context.Background()
-	network := localCardanoNetwork("artifact-recreate")
-	reconciler := newTestReconciler(t, network)
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	configMap.UID = types.UID("old-artifact-configmap")
-	require.NoError(t, reconciler.Update(ctx, configMap))
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "old-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-
-	require.NoError(t, reconciler.Delete(ctx, configMap))
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-
-	recreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Equal(t, networkArtifactsConfigMapName(network), recreated.Name)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.NotEqual(t, "old-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Artifacts)
-}
-
-func TestCardanoNetworkReconcilerReconcileRecoversCorruptedNetworkArtifactsConfigMapWithRollout(t *testing.T) {
-	ctx := context.Background()
-	network := localCardanoNetwork("artifact-corrupt")
-	recoveryTime := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
-	reconciler := newTestReconciler(t, network)
-	reconciler.Now = func() time.Time { return recoveryTime }
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	configMap := publishNetworkArtifacts(t, ctx, reconciler, network)
-	configMap.UID = types.UID("published-artifact-configmap")
-	require.NoError(t, reconciler.Update(ctx, configMap))
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
-
-	corrupted := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	delete(corrupted.Data, networkartifacts.ConfigurationKey)
-	require.NoError(t, reconciler.Update(ctx, corrupted))
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-
-	recreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Empty(t, recreated.Data)
-	assert.NotEqual(t, "published-artifact-configmap", string(recreated.UID))
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.NotEqual(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Artifacts)
-}
-
-func TestCardanoNetworkReconcilerReconcileThrottlesRepeatedNetworkArtifactRecovery(t *testing.T) {
-	ctx := context.Background()
-	network := localCardanoNetwork("artifact-throttle")
-	recoveryTime := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
-	reconciler := newTestReconciler(t, network)
-	reconciler.Now = func() time.Time { return recoveryTime }
-
-	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	published := publishNetworkArtifacts(t, ctx, reconciler, network)
-	published.UID = types.UID("published-artifact-configmap")
-	require.NoError(t, reconciler.Update(ctx, published))
-
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Empty(t, deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
-
-	corruptNetworkArtifacts(t, ctx, reconciler, network, "first-corruption")
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	recreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Empty(t, recreated.Data)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.NotEqual(t, "published-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-
-	recreated.UID = types.UID("recreated-artifact-configmap")
-	require.NoError(t, reconciler.Update(ctx, recreated))
-	published = publishNetworkArtifacts(t, ctx, reconciler, network)
-	require.Equal(t, types.UID("recreated-artifact-configmap"), published.UID)
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionTrue, conditionReasonArtifactsReady)
-
-	recoveryTime = recoveryTime.Add(30 * time.Second)
-	corruptNetworkArtifacts(t, ctx, reconciler, network, "second-corruption")
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: 30 * time.Second}, result)
-	stillCorrupted := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Equal(t, types.UID("recreated-artifact-configmap"), stillCorrupted.UID)
-	assert.Equal(t, "second-corruption", stillCorrupted.Data[networkartifacts.PrimaryTopologyKey])
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Add(-30*time.Second).Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-	assertCondition(t, ctx, reconciler, network, conditionTypeArtifactsReady, metav1.ConditionFalse, conditionReasonArtifactsPending)
-	current := requireNetwork(t, ctx, reconciler, network)
-	assert.Nil(t, current.Status.Artifacts)
-
-	recoveryTime = recoveryTime.Add(31 * time.Second)
-	result, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	assert.Equal(t, ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, result)
-	secondRecreated := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	assert.Empty(t, secondRecreated.Data)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.NotEqual(t, "recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-
-	secondRecreated.UID = types.UID("second-recreated-artifact-configmap")
-	require.NoError(t, reconciler.Update(ctx, secondRecreated))
-	published = publishNetworkArtifacts(t, ctx, reconciler, network)
-	require.Equal(t, types.UID("second-recreated-artifact-configmap"), published.UID)
-	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
-	require.NoError(t, err)
-	deployment = requirePrimaryDeployment(t, ctx, reconciler, network)
-	assert.Equal(t, "second-recreated-artifact-configmap", deployment.Spec.Template.Annotations[networkArtifactsConfigMapUIDAnno])
-	assert.Equal(t, recoveryTime.Format(time.RFC3339), deployment.Annotations[networkArtifactsRecoveryRolloutAtAnno])
-}
-
-func TestArtifactConfigMapStatusVerifiesNetworkArtifactsDataHash(t *testing.T) {
-	configMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "devnet-network-artifacts",
-			Annotations: map[string]string{
-				ctrlannotations.ArtifactSchemaVersion: networkartifacts.SchemaVersion,
-				localnetFingerprintAnno:               "fingerprint",
-				ctrlannotations.ArtifactDataHash:      "sha256:test",
-			},
-		},
-		Data: testNetworkArtifactsData(),
-	}
-
-	result := ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.False(t, result.Ready)
-	assert.Equal(t, "artifact ConfigMap data hash is not published", result.Message)
-
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
-	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.True(t, result.Ready)
-	assert.Equal(t, testNetworkArtifactsDataHash, result.Status.DataHash)
-
-	configMap.Data[networkartifacts.ConfigurationKey] = "corrupted"
-	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.False(t, result.Ready)
-	assert.Equal(t, "artifact ConfigMap data hash does not match data", result.Message)
-
-	configMap.Data = testNetworkArtifactsData()
-	configMap.Data[networkartifacts.DijkstraGenesisKey] = "test dijkstra-genesis.json"
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.True(t, result.Ready)
-	assert.Equal(t, configMap.Annotations[ctrlannotations.ArtifactDataHash], result.Status.DataHash)
-
-	configMap.Data = testNetworkArtifactsData()
-	configMap.Data["pool-keys/secret.skey"] = "do not publish"
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = ctrlartifacts.ComputeDataHash(configMap.Data)
-	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.False(t, result.Ready)
-	assert.Equal(t, "artifact ConfigMap contains unsupported key pool-keys/secret.skey", result.Message)
-
-	configMap.Data = testNetworkArtifactsData()
-	configMap.BinaryData = map[string][]byte{"secret": []byte("do not publish")}
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
-	result = ctrlnetworkartifacts.ProducerConfigMap(configMap, "fingerprint")
-	assert.False(t, result.Ready)
-	assert.Equal(t, "artifact ConfigMap contains binary data", result.Message)
-}
-
 func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailable(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("node-ready")
@@ -980,10 +607,9 @@ func TestCardanoNetworkReconcilerReconcileReportsNodeReadyWhenDeploymentAvailabl
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	publishNetworkArtifacts(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, faucetContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, faucetContainerName, serveContainerName)
 
 	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
@@ -1161,8 +787,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesKupo(t *testing.T) {
 	assert.Nil(t, current.Status.Faucet)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName)
-	publishNetworkArtifacts(t, ctx, reconciler, network)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, serveContainerName)
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 
@@ -1264,8 +889,7 @@ func TestCardanoNetworkReconcilerReconcileDisablesFaucet(t *testing.T) {
 	assert.Nil(t, current.Status.Faucet)
 
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
-	publishNetworkArtifacts(t, ctx, reconciler, network)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, serveContainerName)
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 
@@ -2230,98 +1854,6 @@ func TestCardanoNetworkReconcilerReconcileRejectsChildResourceCollisions(t *test
 		child func(*yacdv1alpha1.CardanoNetwork) client.Object
 	}{
 		{
-			name: "foreign-owned-network-artifacts-configmap",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &corev1.ConfigMap{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:            networkArtifactsConfigMapName(network),
-						Namespace:       network.Namespace,
-						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
-					},
-				}
-			},
-		},
-		{
-			name: "unowned-network-artifacts-configmap",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &corev1.ConfigMap{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      networkArtifactsConfigMapName(network),
-						Namespace: network.Namespace,
-					},
-				}
-			},
-		},
-		{
-			name: "foreign-owned-artifact-publisher-serviceaccount",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:            artifactPublisherServiceAccountName(network),
-						Namespace:       network.Namespace,
-						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
-					},
-				}
-			},
-		},
-		{
-			name: "unowned-artifact-publisher-serviceaccount",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      artifactPublisherServiceAccountName(network),
-						Namespace: network.Namespace,
-					},
-				}
-			},
-		},
-		{
-			name: "foreign-owned-artifact-publisher-role",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &rbacv1.Role{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:            artifactPublisherRoleName(network),
-						Namespace:       network.Namespace,
-						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
-					},
-				}
-			},
-		},
-		{
-			name: "unowned-artifact-publisher-role",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &rbacv1.Role{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      artifactPublisherRoleName(network),
-						Namespace: network.Namespace,
-					},
-				}
-			},
-		},
-		{
-			name: "foreign-owned-artifact-publisher-rolebinding",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &rbacv1.RoleBinding{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:            artifactPublisherRoleBindingName(network),
-						Namespace:       network.Namespace,
-						OwnerReferences: []metav1.OwnerReference{foreignControllerOwnerReference()},
-					},
-				}
-			},
-		},
-		{
-			name: "unowned-artifact-publisher-rolebinding",
-			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
-				return &rbacv1.RoleBinding{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      artifactPublisherRoleBindingName(network),
-						Namespace: network.Namespace,
-					},
-				}
-			},
-		},
-		{
 			name: "foreign-owned-pvc",
 			child: func(network *yacdv1alpha1.CardanoNetwork) client.Object {
 				return &corev1.PersistentVolumeClaim{
@@ -2740,35 +2272,6 @@ func publicCardanoNetwork(name string, profile yacdv1alpha1.PublicNetworkProfile
 	}
 }
 
-func customProfileConfigMap(namespace string, name string, bundle *publicnet.CustomBundle) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Data: maps.Clone(bundle.Files),
-		BinaryData: map[string][]byte{
-			"unsupported.json": []byte("ignored"),
-		},
-	}
-}
-
-func customProfileSecret(namespace string, name string, bundle *publicnet.CustomBundle) *corev1.Secret {
-	data := make(map[string][]byte, len(bundle.Files)+1)
-	for key, value := range bundle.Files {
-		data[key] = []byte(value)
-	}
-	data["unsupported.json"] = []byte("ignored")
-	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: data,
-	}
-}
-
 func enableFaucet(network *yacdv1alpha1.CardanoNetwork) {
 	if network.Spec.ChainAPI == nil {
 		network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{}
@@ -2785,11 +2288,6 @@ func enableFaucet(network *yacdv1alpha1.CardanoNetwork) {
 func readyLocalCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
 	network := localCardanoNetwork("primary-dbsync")
 	network.Status.ObservedGeneration = network.Generation
-	network.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: networkArtifactsConfigMapName(network),
-		SchemaVersion:        networkartifacts.SchemaVersion,
-		DataHash:             testNetworkArtifactsDataHash,
-	}
 	network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
 			ServiceName: primaryWorkloadName(network),
@@ -2800,6 +2298,11 @@ func readyLocalCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
 			ServiceName: primaryOgmiosServiceName(network),
 			Port:        defaultOgmiosPort,
 			URL:         fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", primaryOgmiosServiceName(network), network.Namespace, defaultOgmiosPort),
+		},
+		Artifacts: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryArtifactsServiceName(network),
+			Port:        defaultServePort,
+			URL:         fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", primaryArtifactsServiceName(network), network.Namespace, defaultServePort),
 		},
 	}
 	network.Status.Conditions = []metav1.Condition{{
@@ -2828,11 +2331,6 @@ func readyPublicPreviewCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
 		NetworkFingerprint: "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29",
 		Era:                &era,
 	}
-	network.Status.Artifacts = &yacdv1alpha1.CardanoNetworkArtifactsStatus{
-		NetworkConfigMapName: networkArtifactsConfigMapName(network),
-		SchemaVersion:        networkartifacts.SchemaVersion,
-		DataHash:             testNetworkArtifactsDataHash,
-	}
 	network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
 		NodeToNode: &yacdv1alpha1.ServiceEndpointStatus{
 			ServiceName: primaryWorkloadName(network),
@@ -2843,6 +2341,11 @@ func readyPublicPreviewCardanoNetwork() *yacdv1alpha1.CardanoNetwork {
 			ServiceName: primaryOgmiosServiceName(network),
 			Port:        defaultOgmiosPort,
 			URL:         fmt.Sprintf("ws://%s.%s.svc.cluster.local:%d", primaryOgmiosServiceName(network), network.Namespace, defaultOgmiosPort),
+		},
+		Artifacts: &yacdv1alpha1.ServiceEndpointStatus{
+			ServiceName: primaryArtifactsServiceName(network),
+			Port:        defaultServePort,
+			URL:         fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", primaryArtifactsServiceName(network), network.Namespace, defaultServePort),
 		},
 	}
 	network.Status.Conditions = []metav1.Condition{{
@@ -3155,112 +2658,11 @@ func assertDeploymentFaucetAuthTokenHash(t *testing.T, deployment *appsv1.Deploy
 	assert.Equal(t, faucetAuthTokenHash(secret), deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno])
 }
 
-func requireNetworkArtifactsConfigMap(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) *corev1.ConfigMap {
-	t.Helper()
-
-	configMap := &corev1.ConfigMap{}
-	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      networkArtifactsConfigMapName(network),
-	}, configMap))
-
-	return configMap
-}
-
-func requireArtifactPublisherServiceAccount(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) *corev1.ServiceAccount {
-	t.Helper()
-
-	serviceAccount := &corev1.ServiceAccount{}
-	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherServiceAccountName(network),
-	}, serviceAccount))
-
-	return serviceAccount
-}
-
-func requireArtifactPublisherRole(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) *rbacv1.Role {
-	t.Helper()
-
-	role := &rbacv1.Role{}
-	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleName(network),
-	}, role))
-
-	return role
-}
-
-func requireArtifactPublisherRoleBinding(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) *rbacv1.RoleBinding {
-	t.Helper()
-
-	roleBinding := &rbacv1.RoleBinding{}
-	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleBindingName(network),
-	}, roleBinding))
-
-	return roleBinding
-}
-
-func publishNetworkArtifacts(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) *corev1.ConfigMap {
-	t.Helper()
-
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	if configMap.Annotations == nil {
-		configMap.Annotations = map[string]string{}
-	}
-	configMap.Annotations[ctrlannotations.ArtifactSchemaVersion] = networkartifacts.SchemaVersion
-	configMap.Annotations[ctrlannotations.ArtifactDataHash] = testNetworkArtifactsDataHash
-	if configMap.Data == nil {
-		configMap.Data = map[string]string{}
-	}
-	maps.Copy(configMap.Data, testNetworkArtifactsData())
-	require.NoError(t, reconciler.Update(ctx, configMap))
-
-	return configMap
-}
-
-func corruptNetworkArtifacts(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-	value string,
-) {
-	t.Helper()
-
-	configMap := requireNetworkArtifactsConfigMap(t, ctx, reconciler, network)
-	configMap.Data[networkartifacts.PrimaryTopologyKey] = value
-	require.NoError(t, reconciler.Update(ctx, configMap))
-}
-
-func publishArtifactsAndAttachDBSyncSidecar(
+// attachDBSyncSidecar reconciles the primary node twice so the db-sync primary
+// sidecar attachment settles. Since the network-artifacts ConfigMap removal (F0
+// PR-B1) there is no producer ConfigMap to publish; the referenced CardanoDBSync
+// claim alone drives attachment.
+func attachDBSyncSidecar(
 	t *testing.T,
 	ctx context.Context,
 	reconciler *CardanoNetworkReconciler,
@@ -3268,24 +2670,10 @@ func publishArtifactsAndAttachDBSyncSidecar(
 ) {
 	t.Helper()
 
-	publishNetworkArtifacts(t, ctx, reconciler, network)
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
 	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-}
-
-func testNetworkArtifactsData() map[string]string {
-	return map[string]string{
-		networkartifacts.ConfigurationKey:   "test configuration.yaml",
-		networkartifacts.ByronGenesisKey:    "test byron-genesis.json",
-		networkartifacts.ShelleyGenesisKey:  `{"systemStart":"2026-05-31T00:00:00Z","slotLength":1}`,
-		networkartifacts.AlonzoGenesisKey:   "test alonzo-genesis.json",
-		networkartifacts.ConwayGenesisKey:   "test conway-genesis.json",
-		networkartifacts.PrimaryTopologyKey: "test primary-topology.json",
-		networkartifacts.PlanManifestKey:    "test yacd-localnet-plan.json",
-		networkartifacts.ConnectionKey:      "test connection.json",
-	}
 }
 
 func foreignControllerOwnerReference() metav1.OwnerReference {
@@ -3430,67 +2818,7 @@ func assertNoPrimaryChildren(
 	assertNoPrimaryKupoService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
-	assertNoNetworkArtifactChildren(t, ctx, reconciler, network)
-}
-
-func assertNoNetworkArtifactChildren(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) {
-	t.Helper()
-
-	err := reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      networkArtifactsConfigMapName(network),
-	}, &corev1.ConfigMap{})
-	assert.True(t, apierrors.IsNotFound(err), "expected network artifacts ConfigMap to be absent, got %v", err)
-
-	err = reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherServiceAccountName(network),
-	}, &corev1.ServiceAccount{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher ServiceAccount to be absent, got %v", err)
-
-	err = reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleName(network),
-	}, &rbacv1.Role{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher Role to be absent, got %v", err)
-
-	err = reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleBindingName(network),
-	}, &rbacv1.RoleBinding{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher RoleBinding to be absent, got %v", err)
-}
-
-func assertNoArtifactPublisherResources(
-	t *testing.T,
-	ctx context.Context,
-	reconciler *CardanoNetworkReconciler,
-	network *yacdv1alpha1.CardanoNetwork,
-) {
-	t.Helper()
-
-	err := reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherServiceAccountName(network),
-	}, &corev1.ServiceAccount{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher ServiceAccount to be absent, got %v", err)
-
-	err = reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleName(network),
-	}, &rbacv1.Role{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher Role to be absent, got %v", err)
-
-	err = reconciler.Get(ctx, types.NamespacedName{
-		Namespace: network.Namespace,
-		Name:      artifactPublisherRoleBindingName(network),
-	}, &rbacv1.RoleBinding{})
-	assert.True(t, apierrors.IsNotFound(err), "expected artifact publisher RoleBinding to be absent, got %v", err)
+	assertNoPrimaryArtifactsService(t, ctx, reconciler, network)
 }
 
 func assertNoPrimaryOgmiosService(

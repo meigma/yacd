@@ -11,9 +11,8 @@
 //     create-once data (here: the random auth token) cannot flow through
 //     it without a second pass.
 //
-// The shape below mirrors the [applyNetworkArtifactsConfigMap] exception
-// in apply.go: a small dispatcher reads through liveReader, then routes to
-// a create-with-token path or a reconcile-existing path.
+// The shape below is a small dispatcher that reads through liveReader, then
+// routes to a create-with-token path or a reconcile-existing path.
 
 package cardanonetwork
 
@@ -28,6 +27,7 @@ import (
 
 	ctrlmetadata "github.com/meigma/yacd/internal/ctrlkit/metadata"
 	ctrlresources "github.com/meigma/yacd/internal/ctrlkit/resources"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -134,6 +134,16 @@ func generateFaucetAuthToken() (string, error) {
 	}
 
 	return base64.RawURLEncoding.EncodeToString(tokenBytes[:]), nil
+}
+
+// setDeploymentFaucetAuthTokenHash stamps the live faucet auth token hash
+// onto the Deployment pod template so token creation or rotation rolls the
+// primary Pod through Kubernetes' normal ReplicaSet machinery.
+func setDeploymentFaucetAuthTokenHash(deployment *appsv1.Deployment, secret *corev1.Secret) {
+	if deployment.Spec.Template.Annotations == nil {
+		deployment.Spec.Template.Annotations = map[string]string{}
+	}
+	deployment.Spec.Template.Annotations[faucetAuthTokenHashAnno] = faucetAuthTokenHash(secret)
 }
 
 // faucetAuthTokenHash returns the stable Deployment revision value for the
