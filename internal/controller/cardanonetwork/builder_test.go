@@ -7,6 +7,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	"github.com/meigma/yacd/internal/cardano/toolsimage"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	"github.com/stretchr/testify/assert"
@@ -602,7 +603,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	// the generated env dir onto the served-artifact PVC subdirectory.
 	stageInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
 	assert.Equal(t, servedArtifactsInitContainerName, stageInitContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", stageInitContainer.Image)
+	assert.Equal(t, toolsimage.Reference("", "11.0.1"), stageInitContainer.Image)
 	assert.Equal(t, []string{cardanoToolsCommand}, stageInitContainer.Command)
 	assert.Equal(t, []string{
 		"stage",
@@ -767,7 +768,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	// served-artifact directory read-only over HTTP on port 8090.
 	serveContainer := deployment.Spec.Template.Spec.Containers[4]
 	assert.Equal(t, serveContainerName, serveContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
+	assert.Equal(t, toolsimage.Reference("", "11.0.1"), serveContainer.Image)
 	assert.Equal(t, []string{cardanoToolsCommand}, serveContainer.Command)
 	assert.Equal(t, []string{
 		"serve",
@@ -992,7 +993,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 
 			fetchInit := deployment.Spec.Template.Spec.InitContainers[0]
 			assert.Equal(t, servedArtifactsInitContainerName, fetchInit.Name)
-			assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", fetchInit.Image)
+			assert.Equal(t, toolsimage.Reference("", "11.0.1"), fetchInit.Image)
 			assert.Equal(t, []string{cardanoToolsCommand}, fetchInit.Command)
 			assert.Equal(t, []string{
 				"fetch",
@@ -1028,7 +1029,7 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
 			serveContainer := deployment.Spec.Template.Spec.Containers[2]
 			assert.Equal(t, serveContainerName, serveContainer.Name)
-			assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
+			assert.Equal(t, toolsimage.Reference("", "11.0.1"), serveContainer.Image)
 			assert.Equal(t, []string{
 				"serve",
 				"--artifacts-dir", "/state/artifacts",

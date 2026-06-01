@@ -1,14 +1,18 @@
 package toolsimage_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/meigma/yacd/internal/cardano/toolsimage"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReference(t *testing.T) {
 	t.Parallel()
+
+	builtIn := "ghcr.io/meigma/yacd/cardano-tools:11.0.1-" + toolsimage.Revision + "@" + toolsimage.Digest
 
 	tests := []struct {
 		name        string
@@ -17,10 +21,10 @@ func TestReference(t *testing.T) {
 		want        string
 	}{
 		{
-			name:        "built-in reference when override empty",
+			name:        "built-in reference is digest-pinned when override empty",
 			override:    "",
 			toolVersion: "11.0.1",
-			want:        "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0",
+			want:        builtIn,
 		},
 		{
 			name:        "override wins",
@@ -32,7 +36,7 @@ func TestReference(t *testing.T) {
 			name:        "whitespace-only override is ignored",
 			override:    "   ",
 			toolVersion: "11.0.1",
-			want:        "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0",
+			want:        builtIn,
 		},
 		{
 			name:        "override is trimmed",
@@ -49,4 +53,16 @@ func TestReference(t *testing.T) {
 			assert.Equal(t, tt.want, toolsimage.Reference(tt.override, tt.toolVersion))
 		})
 	}
+}
+
+// TestDigestPin guards the production invariant that the no-override default is
+// pinned to a sha256 digest, so a stock install can never resolve a mutable tag.
+func TestDigestPin(t *testing.T) {
+	t.Parallel()
+
+	require.NotEmpty(t, toolsimage.Digest, "built-in reference must carry a published digest")
+	assert.True(t, strings.HasPrefix(toolsimage.Digest, "sha256:"), "Digest must be a sha256 reference")
+
+	ref := toolsimage.Reference("", "11.0.1")
+	assert.Contains(t, ref, "@"+toolsimage.Digest, "default reference must be digest-pinned")
 }

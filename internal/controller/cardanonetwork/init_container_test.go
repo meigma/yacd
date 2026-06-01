@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/meigma/yacd/internal/cardano/localnet"
+	"github.com/meigma/yacd/internal/cardano/toolsimage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -72,7 +73,7 @@ func TestCardanoTestnetImageHonorsInjectedOverride(t *testing.T) {
 // TestCardanoToolsImageHonorsInjectedOverride verifies the Reconciler-injected
 // defaultCardanoToolsImage replaces the built-in toolsimage reference on both
 // the served-artifact init container and the always-on serve sidecar, and that
-// the built-in formula resolves to "<repo>:<toolVersion>-<revision>" with no
+// the built-in reference (the digest-pinned toolsimage default) is used with no
 // override. This is the seam the local dev stack uses to substitute a freshly
 // built cardano-tools image.
 func TestCardanoToolsImageHonorsInjectedOverride(t *testing.T) {
@@ -85,8 +86,8 @@ func TestCardanoToolsImageHonorsInjectedOverride(t *testing.T) {
 	require.NoError(t, err)
 	defaultStage := requireContainerNamed(t, defaultResources.Deployment.Spec.Template.Spec.InitContainers, servedArtifactsInitContainerName)
 	defaultServe := requireContainerNamed(t, defaultResources.Deployment.Spec.Template.Spec.Containers, serveContainerName)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", defaultStage.Image)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", defaultServe.Image)
+	assert.Equal(t, toolsimage.Reference("", "11.0.1"), defaultStage.Image)
+	assert.Equal(t, toolsimage.Reference("", "11.0.1"), defaultServe.Image)
 
 	overrideBuilder := newTestPrimaryWorkloadBuilder(t)
 	overrideBuilder.defaultCardanoToolsImage = override
