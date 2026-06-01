@@ -49,40 +49,9 @@ func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {
 	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet-auth")
 }
 
-// networkArtifactsConfigMapName returns the DNS-label name of the ConfigMap
-// the init container publishes with the localnet environment artifacts
-// downstream controllers consume.
-func networkArtifactsConfigMapName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "network-artifacts")
-}
-
-// artifactPublisherServiceAccountName returns the DNS-label name of the
-// ServiceAccount the init container uses to publish the artifact ConfigMap.
-func artifactPublisherServiceAccountName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-// artifactPublisherRoleName returns the DNS-label name of the Role that
-// allows the artifact publisher to patch its ConfigMap and nothing else.
-func artifactPublisherRoleName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
-// artifactPublisherRoleBindingName returns the DNS-label name of the
-// RoleBinding that grants the artifact publisher ServiceAccount its Role.
-func artifactPublisherRoleBindingName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifact-publisher")
-}
-
 // nodeToNodeHost is the in-cluster DNS name of the primary node-to-node
 // Service. It depends on the namespace, so it is derived from the network
 // object rather than precomputed.
 func nodeToNodeHost(network *yacdv1alpha1.CardanoNetwork) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", primaryWorkloadName(network), network.Namespace)
-}
-
-// nodeToNodeURL is the in-cluster tcp:// URL the artifact ConfigMap publishes
-// for the primary node-to-node endpoint.
-func nodeToNodeURL(network *yacdv1alpha1.CardanoNetwork) string {
-	return fmt.Sprintf("tcp://%s:%d", nodeToNodeHost(network), network.Spec.Node.Port)
 }

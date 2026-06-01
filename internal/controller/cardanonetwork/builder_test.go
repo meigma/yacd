@@ -7,10 +7,7 @@ import (
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/localnet"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	"github.com/meigma/yacd/internal/cardano/publicnet"
 	ctrlannotations "github.com/meigma/yacd/internal/controller/annotations"
-	ctrlartifacts "github.com/meigma/yacd/internal/ctrlkit/artifacts"
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -374,34 +371,6 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "local spec is not supported with public mode",
 		},
 		{
-			name: "public custom config source without resolved bundle",
-			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
-				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
-				network.Spec.Local = nil
-				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
-					Profile: yacdv1alpha1.PublicNetworkProfileCustom,
-					ConfigSource: &yacdv1alpha1.NetworkConfigSource{
-						ConfigMapRef: &corev1.LocalObjectReference{Name: "custom"},
-					},
-				}
-			},
-			wantErr: "public custom profile source has not been resolved",
-		},
-		{
-			name: "public curated config source",
-			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
-				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
-				network.Spec.Local = nil
-				network.Spec.Public = &yacdv1alpha1.PublicNetworkSpec{
-					Profile: yacdv1alpha1.PublicNetworkProfilePreview,
-					ConfigSource: &yacdv1alpha1.NetworkConfigSource{
-						ConfigMapRef: &corev1.LocalObjectReference{Name: "custom"},
-					},
-				}
-			},
-			wantErr: "public configSource is supported only for custom profiles",
-		},
-		{
 			name: "public mainnet without mithril bootstrap",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.Mode = yacdv1alpha1.CardanoNetworkModePublic
@@ -544,10 +513,6 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	resources, err := newTestPrimaryWorkloadBuilder(t).Build(network)
 	require.NoError(t, err)
 	deployment := resources.Deployment
-	networkArtifactsConfigMap := resources.NetworkArtifactsConfigMap
-	artifactPublisherServiceAccount := resources.ArtifactPublisherServiceAccount
-	artifactPublisherRole := resources.ArtifactPublisherRole
-	artifactPublisherRoleBinding := resources.ArtifactPublisherRoleBinding
 	persistentVolumeClaim := resources.PersistentVolumeClaim
 	service := resources.Service
 	ogmiosService := resources.OgmiosService
@@ -560,10 +525,6 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, faucetService)
 	require.NotNil(t, artifactsService)
 	require.NotNil(t, faucetAuthSecret)
-	require.NotNil(t, networkArtifactsConfigMap)
-	require.NotNil(t, artifactPublisherServiceAccount)
-	require.NotNil(t, artifactPublisherRole)
-	require.NotNil(t, artifactPublisherRoleBinding)
 
 	assert.Equal(t, "devnet-node", deployment.Name)
 	assert.Equal(t, "default", deployment.Namespace)
@@ -575,23 +536,6 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, controller)
 	assert.Equal(t, "devnet", controller.Name)
 	assert.Equal(t, "CardanoNetwork", controller.Kind)
-
-	artifactsController := metav1.GetControllerOf(networkArtifactsConfigMap)
-	require.NotNil(t, artifactsController)
-	assert.Equal(t, "devnet", artifactsController.Name)
-	assert.Equal(t, "CardanoNetwork", artifactsController.Kind)
-	artifactServiceAccountController := metav1.GetControllerOf(artifactPublisherServiceAccount)
-	require.NotNil(t, artifactServiceAccountController)
-	assert.Equal(t, "devnet", artifactServiceAccountController.Name)
-	assert.Equal(t, "CardanoNetwork", artifactServiceAccountController.Kind)
-	artifactRoleController := metav1.GetControllerOf(artifactPublisherRole)
-	require.NotNil(t, artifactRoleController)
-	assert.Equal(t, "devnet", artifactRoleController.Name)
-	assert.Equal(t, "CardanoNetwork", artifactRoleController.Kind)
-	artifactRoleBindingController := metav1.GetControllerOf(artifactPublisherRoleBinding)
-	require.NotNil(t, artifactRoleBindingController)
-	assert.Equal(t, "devnet", artifactRoleBindingController.Name)
-	assert.Equal(t, "CardanoNetwork", artifactRoleBindingController.Kind)
 
 	pvcController := metav1.GetControllerOf(persistentVolumeClaim)
 	require.NotNil(t, pvcController)
@@ -642,7 +586,6 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.NotContains(t, persistentVolumeClaim.Annotations, ctrlannotations.RequestedStorageClass)
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
-	assert.Equal(t, "devnet-artifact-publisher", deployment.Spec.Template.Spec.ServiceAccountName)
 
 	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 3)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
@@ -650,17 +593,10 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: localnetStateVolumeName, MountPath: "/state"},
-		{Name: artifactPublisherTokenVolumeName, MountPath: artifactPublisherServiceAccountMountDir, ReadOnly: true},
 	}, initContainer.VolumeMounts)
 	initEnv := envMap(initContainer)
-	assert.Equal(t, "devnet-network-artifacts", initEnv[artifactConfigMapNameEnv])
-	assert.Equal(t, "devnet", initEnv[artifactNetworkNameEnv])
-	assert.Equal(t, "default", initEnv[artifactNetworkNamespaceEnv])
-	assert.Equal(t, "local", initEnv[artifactNetworkModeEnv])
-	assert.Equal(t, "conway", initEnv[artifactNetworkEraEnv])
-	assert.Equal(t, "devnet-node.default.svc.cluster.local", initEnv[artifactNodeToNodeHostEnv])
-	assert.Equal(t, "3001", initEnv[artifactNodeToNodePortEnv])
-	assert.Equal(t, "tcp://devnet-node.default.svc.cluster.local:3001", initEnv[artifactNodeToNodeURLEnv])
+	assert.Equal(t, "/state/env", initEnv[localnetEnvDirEnvName])
+	assert.Equal(t, "/state/env/configuration.yaml", initEnv[localnetConfigFileEnvName])
 
 	// The stage init container is ordered after create-env so it can flatten
 	// the generated env dir onto the served-artifact PVC subdirectory.
@@ -854,7 +790,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	}, serveContainer.VolumeMounts)
 	assertRestrictedContainerSecurityContext(t, serveContainer.SecurityContext)
 
-	require.Len(t, deployment.Spec.Template.Spec.Volumes, 6)
+	require.Len(t, deployment.Spec.Template.Spec.Volumes, 5)
 	stateVolume := deployment.Spec.Template.Spec.Volumes[0]
 	assert.Equal(t, localnetStateVolumeName, stateVolume.Name)
 	require.NotNil(t, stateVolume.PersistentVolumeClaim)
@@ -876,38 +812,6 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, faucetAuthVolumeName, faucetAuthVolume.Name)
 	require.NotNil(t, faucetAuthVolume.Secret)
 	assert.Equal(t, "devnet-faucet-auth", faucetAuthVolume.Secret.SecretName)
-	artifactPublisherTokenVolume := deployment.Spec.Template.Spec.Volumes[5]
-	assert.Equal(t, artifactPublisherTokenVolumeName, artifactPublisherTokenVolume.Name)
-	require.NotNil(t, artifactPublisherTokenVolume.Projected)
-	require.Len(t, artifactPublisherTokenVolume.Projected.Sources, 3)
-	require.NotNil(t, artifactPublisherTokenVolume.Projected.Sources[0].ServiceAccountToken)
-	assert.Empty(t, artifactPublisherTokenVolume.Projected.Sources[0].ServiceAccountToken.Audience)
-
-	assert.Equal(t, "devnet-network-artifacts", networkArtifactsConfigMap.Name)
-	assert.Equal(t, "default", networkArtifactsConfigMap.Namespace)
-	assert.Equal(t, "yacd", networkArtifactsConfigMap.Labels[labelAppManagedBy])
-	assert.Equal(t, persistentVolumeClaim.Annotations[localnetFingerprintAnno], networkArtifactsConfigMap.Annotations[localnetFingerprintAnno])
-
-	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherServiceAccount.Name)
-	assert.Equal(t, "default", artifactPublisherServiceAccount.Namespace)
-	assert.Equal(t, "yacd", artifactPublisherServiceAccount.Labels[labelAppManagedBy])
-	require.NotNil(t, artifactPublisherServiceAccount.AutomountServiceAccountToken)
-	assert.False(t, *artifactPublisherServiceAccount.AutomountServiceAccountToken)
-
-	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRole.Name)
-	require.Len(t, artifactPublisherRole.Rules, 1)
-	assert.Equal(t, []string{""}, artifactPublisherRole.Rules[0].APIGroups)
-	assert.Equal(t, []string{"configmaps"}, artifactPublisherRole.Rules[0].Resources)
-	assert.Equal(t, []string{"devnet-network-artifacts"}, artifactPublisherRole.Rules[0].ResourceNames)
-	assert.Equal(t, []string{"get", "patch"}, artifactPublisherRole.Rules[0].Verbs)
-
-	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.Name)
-	assert.Equal(t, "Role", artifactPublisherRoleBinding.RoleRef.Kind)
-	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.RoleRef.Name)
-	require.Len(t, artifactPublisherRoleBinding.Subjects, 1)
-	assert.Equal(t, rbacv1.ServiceAccountKind, artifactPublisherRoleBinding.Subjects[0].Kind)
-	assert.Equal(t, "devnet-artifact-publisher", artifactPublisherRoleBinding.Subjects[0].Name)
-	assert.Equal(t, "default", artifactPublisherRoleBinding.Subjects[0].Namespace)
 
 	assert.Equal(t, "devnet-node-state", persistentVolumeClaim.Name)
 	assert.Equal(t, "default", persistentVolumeClaim.Namespace)
@@ -1000,18 +904,12 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 
 func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 	tests := []struct {
-		name                 string
-		profile              yacdv1alpha1.PublicNetworkProfile
-		customBundle         *publicnet.CustomBundle
-		wantNetworkMagic     int64
-		wantRequiresMagic    bool
-		wantFingerprint      string
-		wantMissingArtifacts []string
-		mithrilBootstrap     bool
-		// curated is true for the curated public profiles (preview, preprod,
-		// mainnet) that get the fetch init container + serve sidecar, and
-		// false for the custom profile that gets neither in this additive PR.
-		curated bool
+		name              string
+		profile           yacdv1alpha1.PublicNetworkProfile
+		wantNetworkMagic  int64
+		wantRequiresMagic bool
+		wantFingerprint   string
+		mithrilBootstrap  bool
 	}{
 		{
 			name:              "preview",
@@ -1019,15 +917,12 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			wantNetworkMagic:  2,
 			wantRequiresMagic: true,
 			wantFingerprint:   "3eee469d6200db89fd64fbd032ccbb58a7ba557b920a07bc2f22523b6f009a29",
-			curated:           true,
 		},
 		{
-			name:                 "preprod",
-			profile:              yacdv1alpha1.PublicNetworkProfilePreprod,
-			wantNetworkMagic:     1,
-			wantRequiresMagic:    true,
-			wantMissingArtifacts: []string{networkartifacts.CheckpointsKey},
-			curated:              true,
+			name:              "preprod",
+			profile:           yacdv1alpha1.PublicNetworkProfilePreprod,
+			wantNetworkMagic:  1,
+			wantRequiresMagic: true,
 		},
 		{
 			name:              "mainnet",
@@ -1035,14 +930,6 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			wantNetworkMagic:  764824073,
 			wantRequiresMagic: false,
 			mithrilBootstrap:  true,
-			curated:           true,
-		},
-		{
-			name:              "custom",
-			profile:           yacdv1alpha1.PublicNetworkProfileCustom,
-			customBundle:      customPublicProfileBundle(t),
-			wantNetworkMagic:  2,
-			wantRequiresMagic: true,
 		},
 	}
 
@@ -1050,12 +937,6 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			network := publicCardanoNetwork(tc.name, tc.profile)
 			builder := newTestPrimaryWorkloadBuilder(t)
-			if tc.profile == yacdv1alpha1.PublicNetworkProfileCustom {
-				network.Spec.Public.ConfigSource = &yacdv1alpha1.NetworkConfigSource{
-					ConfigMapRef: &corev1.LocalObjectReference{Name: "custom-profile"},
-				}
-				builder.publicCustomBundle = tc.customBundle
-			}
 			if tc.mithrilBootstrap {
 				network.Spec.Public.Bootstrap = &yacdv1alpha1.PublicNetworkBootstrapSpec{
 					Mithril: &yacdv1alpha1.MithrilBootstrapSpec{},
@@ -1074,32 +955,24 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			if tc.wantFingerprint != "" {
 				assert.Equal(t, tc.wantFingerprint, resources.NetworkPlan.Fingerprint)
 			}
-			assert.Nil(t, resources.ArtifactPublisherServiceAccount)
-			assert.Nil(t, resources.ArtifactPublisherRole)
-			assert.Nil(t, resources.ArtifactPublisherRoleBinding)
 			assert.NotNil(t, resources.OgmiosService)
 			assert.Nil(t, resources.KupoService)
 			assert.Nil(t, resources.FaucetService)
 			assert.Nil(t, resources.FaucetAuthSecret)
-			// The artifacts Service fronts the serve sidecar: present for the
-			// curated public profiles, absent for custom-public.
-			if tc.curated {
-				require.NotNil(t, resources.ArtifactsService)
-				assert.Equal(t, tc.name+"-artifacts", resources.ArtifactsService.Name)
-				assert.Equal(t, "default", resources.ArtifactsService.Namespace)
-				assert.Equal(t, corev1.ServiceTypeClusterIP, resources.ArtifactsService.Spec.Type)
-				assert.Equal(t, primaryWorkloadSelectorLabels(network), resources.ArtifactsService.Spec.Selector)
-				assert.Equal(t, []corev1.ServicePort{
-					{
-						Name:       servePortName,
-						Protocol:   corev1.ProtocolTCP,
-						Port:       defaultServePort,
-						TargetPort: intstr.FromString(servePortName),
-					},
-				}, resources.ArtifactsService.Spec.Ports)
-			} else {
-				assert.Nil(t, resources.ArtifactsService)
-			}
+			// The artifacts Service fronts the always-on serve sidecar.
+			require.NotNil(t, resources.ArtifactsService)
+			assert.Equal(t, tc.name+"-artifacts", resources.ArtifactsService.Name)
+			assert.Equal(t, "default", resources.ArtifactsService.Namespace)
+			assert.Equal(t, corev1.ServiceTypeClusterIP, resources.ArtifactsService.Spec.Type)
+			assert.Equal(t, primaryWorkloadSelectorLabels(network), resources.ArtifactsService.Spec.Selector)
+			assert.Equal(t, []corev1.ServicePort{
+				{
+					Name:       servePortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       defaultServePort,
+					TargetPort: intstr.FromString(servePortName),
+				},
+			}, resources.ArtifactsService.Spec.Ports)
 
 			deployment := resources.Deployment
 			assert.Equal(t, tc.name+"-node", deployment.Name)
@@ -1108,30 +981,28 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 			assert.Equal(t, resources.NetworkPlan.Fingerprint, deployment.Spec.Template.Annotations[networkFingerprintAnno])
 			assert.NotContains(t, deployment.Spec.Template.Annotations, localnetFingerprintAnno)
-			if tc.curated {
-				// Curated public profiles get a fetch init container first;
-				// mainnet additionally gets the Mithril bootstrap ordered
-				// after fetch.
-				wantInitCount := 1
-				if tc.mithrilBootstrap {
-					wantInitCount = 2
-				}
-				require.Len(t, deployment.Spec.Template.Spec.InitContainers, wantInitCount)
 
-				fetchInit := deployment.Spec.Template.Spec.InitContainers[0]
-				assert.Equal(t, servedArtifactsInitContainerName, fetchInit.Name)
-				assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", fetchInit.Image)
-				assert.Equal(t, []string{cardanoToolsCommand}, fetchInit.Command)
-				assert.Equal(t, []string{
-					"fetch",
-					"--profile", string(tc.profile),
-					"--output-dir", "/state/artifacts",
-				}, fetchInit.Args)
-				assert.Equal(t, []corev1.VolumeMount{
-					{Name: localnetStateVolumeName, MountPath: "/state"},
-				}, fetchInit.VolumeMounts)
-				assertRestrictedContainerSecurityContext(t, fetchInit.SecurityContext)
+			// Every public profile gets a fetch init container first; mainnet
+			// additionally gets the Mithril bootstrap ordered after fetch.
+			wantInitCount := 1
+			if tc.mithrilBootstrap {
+				wantInitCount = 2
 			}
+			require.Len(t, deployment.Spec.Template.Spec.InitContainers, wantInitCount)
+
+			fetchInit := deployment.Spec.Template.Spec.InitContainers[0]
+			assert.Equal(t, servedArtifactsInitContainerName, fetchInit.Name)
+			assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", fetchInit.Image)
+			assert.Equal(t, []string{cardanoToolsCommand}, fetchInit.Command)
+			assert.Equal(t, []string{
+				"fetch",
+				"--profile", string(tc.profile),
+				"--output-dir", "/state/artifacts",
+			}, fetchInit.Args)
+			assert.Equal(t, []corev1.VolumeMount{
+				{Name: localnetStateVolumeName, MountPath: "/state"},
+			}, fetchInit.VolumeMounts)
+			assertRestrictedContainerSecurityContext(t, fetchInit.SecurityContext)
 			if tc.mithrilBootstrap {
 				mithril := deployment.Spec.Template.Spec.InitContainers[1]
 				assert.Equal(t, mithrilBootstrapInitContainerName, mithril.Name)
@@ -1151,44 +1022,39 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 				assert.NotEmpty(t, mithrilEnv[mithrilGenesisVerificationKeyEnvName])
 				assert.NotEmpty(t, mithrilEnv[mithrilAncillaryVerificationKeyEnvName])
 			}
-			if !tc.curated {
-				assert.Empty(t, deployment.Spec.Template.Spec.InitContainers)
-			}
 
-			// Curated public profiles add the always-on serve sidecar (node,
-			// ogmios, serve); custom adds neither (node, ogmios).
-			if tc.curated {
-				require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
-				serveContainer := deployment.Spec.Template.Spec.Containers[2]
-				assert.Equal(t, serveContainerName, serveContainer.Name)
-				assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
-				assert.Equal(t, []string{
-					"serve",
-					"--artifacts-dir", "/state/artifacts",
-					"--listen", ":8090",
-				}, serveContainer.Args)
-				require.Len(t, serveContainer.Ports, 1)
-				assert.Equal(t, int32(8090), serveContainer.Ports[0].ContainerPort)
-				assert.Equal(t, servePortName, serveContainer.Ports[0].Name)
-				require.NotNil(t, serveContainer.ReadinessProbe)
-				require.NotNil(t, serveContainer.ReadinessProbe.HTTPGet)
-				assert.Equal(t, "/manifest.json", serveContainer.ReadinessProbe.HTTPGet.Path)
-				assert.Equal(t, []corev1.VolumeMount{
-					{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
-				}, serveContainer.VolumeMounts)
-				assertRestrictedContainerSecurityContext(t, serveContainer.SecurityContext)
-			} else {
-				require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
-				assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, serveContainerName)
-			}
+			// Every public profile gets the always-on serve sidecar (node,
+			// ogmios, serve).
+			require.Len(t, deployment.Spec.Template.Spec.Containers, 3)
+			serveContainer := deployment.Spec.Template.Spec.Containers[2]
+			assert.Equal(t, serveContainerName, serveContainer.Name)
+			assert.Equal(t, "ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0", serveContainer.Image)
+			assert.Equal(t, []string{
+				"serve",
+				"--artifacts-dir", "/state/artifacts",
+				"--listen", ":8090",
+			}, serveContainer.Args)
+			require.Len(t, serveContainer.Ports, 1)
+			assert.Equal(t, int32(8090), serveContainer.Ports[0].ContainerPort)
+			assert.Equal(t, servePortName, serveContainer.Ports[0].Name)
+			require.NotNil(t, serveContainer.ReadinessProbe)
+			require.NotNil(t, serveContainer.ReadinessProbe.HTTPGet)
+			assert.Equal(t, "/manifest.json", serveContainer.ReadinessProbe.HTTPGet.Path)
+			assert.Equal(t, []corev1.VolumeMount{
+				{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
+			}, serveContainer.VolumeMounts)
+			assertRestrictedContainerSecurityContext(t, serveContainer.SecurityContext)
 
+			// The public node and ogmios read their config from the fetched
+			// served-artifact directory on the node-state PVC (mounted at
+			// /state) rather than a /profile ConfigMap.
 			nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 			assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
-			assert.Equal(t, "/profile", nodeContainer.WorkingDir)
+			assert.Equal(t, "/state/artifacts", nodeContainer.WorkingDir)
 			assert.Equal(t, []string{
 				"run",
-				"--config", "/profile/configuration.yaml",
-				"--topology", "/profile/primary-topology.json",
+				"--config", "/state/artifacts/configuration.yaml",
+				"--topology", "/state/artifacts/primary-topology.json",
 				"--database-path", "/state/db",
 				"--socket-path", "/ipc/node.socket",
 				"--host-addr", "0.0.0.0",
@@ -1198,7 +1064,6 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 			assert.Equal(t, []corev1.VolumeMount{
 				{Name: localnetStateVolumeName, MountPath: "/state"},
 				{Name: nodeIPCVolumeName, MountPath: "/ipc"},
-				{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
 			}, nodeContainer.VolumeMounts)
 			if tc.mithrilBootstrap {
 				assert.Equal(t, defaultMainnetNodeResources(), nodeContainer.Resources)
@@ -1208,57 +1073,24 @@ func TestPrimaryWorkloadBuilderBuildsPublicWorkload(t *testing.T) {
 
 			ogmiosContainer := deployment.Spec.Template.Spec.Containers[1]
 			assert.Equal(t, ogmiosContainerName, ogmiosContainer.Name)
-			assert.Equal(t, "/profile", ogmiosContainer.WorkingDir)
+			assert.Equal(t, "/state/artifacts", ogmiosContainer.WorkingDir)
 			assert.Equal(t, []string{
 				"--node-socket", "/ipc/node.socket",
-				"--node-config", "/profile/configuration.yaml",
+				"--node-config", "/state/artifacts/configuration.yaml",
 				"--host", "0.0.0.0",
 				"--port", "1337",
 			}, ogmiosContainer.Args)
 			assert.Equal(t, []corev1.VolumeMount{
+				{Name: localnetStateVolumeName, MountPath: "/state", ReadOnly: true},
 				{Name: nodeIPCVolumeName, MountPath: "/ipc"},
-				{Name: publicProfileVolumeName, MountPath: "/profile", ReadOnly: true},
 			}, ogmiosContainer.VolumeMounts)
 
 			if tc.mithrilBootstrap {
-				require.Len(t, deployment.Spec.Template.Spec.Volumes, 4)
+				require.Len(t, deployment.Spec.Template.Spec.Volumes, 3)
 				require.NotNil(t, requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName).EmptyDir)
 			} else {
-				require.Len(t, deployment.Spec.Template.Spec.Volumes, 3)
+				require.Len(t, deployment.Spec.Template.Spec.Volumes, 2)
 				assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, mithrilTmpVolumeName)
-			}
-			publicProfileVolume := requireVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, publicProfileVolumeName)
-			require.NotNil(t, publicProfileVolume.ConfigMap)
-			assert.Equal(t, tc.name+"-network-artifacts", publicProfileVolume.ConfigMap.Name)
-			assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, artifactPublisherTokenVolumeName)
-
-			configMap := resources.NetworkArtifactsConfigMap
-			assert.Equal(t, resources.NetworkPlan.Fingerprint, configMap.Annotations[networkFingerprintAnno])
-			assert.NotContains(t, configMap.Annotations, localnetFingerprintAnno)
-			assert.Equal(t, networkartifacts.SchemaVersion, configMap.Annotations[ctrlannotations.ArtifactSchemaVersion])
-			assert.Equal(t, ctrlartifacts.ComputeDataHash(configMap.Data), configMap.Annotations[ctrlannotations.ArtifactDataHash])
-			for _, key := range []string{
-				networkartifacts.ConfigurationKey,
-				networkartifacts.ByronGenesisKey,
-				networkartifacts.ShelleyGenesisKey,
-				networkartifacts.AlonzoGenesisKey,
-				networkartifacts.ConwayGenesisKey,
-				networkartifacts.PrimaryTopologyKey,
-				networkartifacts.PeerSnapshotKey,
-				networkartifacts.PublicProfileManifestKey,
-				networkartifacts.ConnectionKey,
-			} {
-				assert.NotEmpty(t, configMap.Data[key], "artifact %s", key)
-			}
-			if len(tc.wantMissingArtifacts) == 0 {
-				assert.NotEmpty(t, configMap.Data[networkartifacts.CheckpointsKey], "artifact %s", networkartifacts.CheckpointsKey)
-			}
-			for _, key := range tc.wantMissingArtifacts {
-				assert.Empty(t, configMap.Data[key], "artifact %s", key)
-			}
-			if tc.mithrilBootstrap {
-				assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilGenesisKey])
-				assert.NotEmpty(t, configMap.Data[networkartifacts.MithrilAncillaryKey])
 			}
 
 			assert.Equal(t, resources.NetworkPlan.Fingerprint, resources.PersistentVolumeClaim.Annotations[networkFingerprintAnno])
@@ -1287,11 +1119,7 @@ func TestPrimaryWorkloadBuilderLeavesFaucetDisabledByDefault(t *testing.T) {
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
 	assert.Equal(t, localnetCreateEnvInitContainerName, resources.Deployment.Spec.Template.Spec.InitContainers[0].Name)
 	assert.Equal(t, servedArtifactsInitContainerName, resources.Deployment.Spec.Template.Spec.InitContainers[1].Name)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
-	assert.NotNil(t, resources.NetworkArtifactsConfigMap)
-	assert.NotNil(t, resources.ArtifactPublisherServiceAccount)
-	assert.NotNil(t, resources.ArtifactPublisherRole)
-	assert.NotNil(t, resources.ArtifactPublisherRoleBinding)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
 	assert.NotNil(t, resources.OgmiosService)
 	assert.NotNil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
@@ -1500,7 +1328,7 @@ func TestPrimaryWorkloadBuilderDisablesOgmios(t *testing.T) {
 	assert.Nil(t, resources.KupoService)
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
 }
 
 func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
@@ -1523,7 +1351,7 @@ func TestPrimaryWorkloadBuilderDisablesKupo(t *testing.T) {
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 3)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 2)
 }
 
 func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
@@ -1547,7 +1375,7 @@ func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
 	assert.Nil(t, resources.FaucetService)
 	assert.Nil(t, resources.FaucetAuthSecret)
 	require.Len(t, resources.Deployment.Spec.Template.Spec.InitContainers, 2)
-	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 5)
+	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
 }
 
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {
@@ -1586,21 +1414,4 @@ func assertRestrictedContainerSecurityContext(t *testing.T, securityContext *cor
 	assert.Equal(t, int64(10001), *securityContext.RunAsGroup)
 	require.NotNil(t, securityContext.SeccompProfile)
 	assert.Equal(t, corev1.SeccompProfileTypeRuntimeDefault, securityContext.SeccompProfile.Type)
-}
-
-func customPublicProfileBundle(t testing.TB) *publicnet.CustomBundle {
-	t.Helper()
-
-	plan, err := publicnet.BuildPlan(publicnet.Spec{Profile: "preview"})
-	require.NoError(t, err)
-	return &publicnet.CustomBundle{Files: map[string]string{
-		"config.json":          plan.Artifacts[networkartifacts.ConfigurationKey],
-		"byron-genesis.json":   plan.Artifacts[networkartifacts.ByronGenesisKey],
-		"shelley-genesis.json": plan.Artifacts[networkartifacts.ShelleyGenesisKey],
-		"alonzo-genesis.json":  plan.Artifacts[networkartifacts.AlonzoGenesisKey],
-		"conway-genesis.json":  plan.Artifacts[networkartifacts.ConwayGenesisKey],
-		"topology.json":        plan.Artifacts[networkartifacts.PrimaryTopologyKey],
-		"checkpoints.json":     plan.Artifacts[networkartifacts.CheckpointsKey],
-		"peer-snapshot.json":   plan.Artifacts[networkartifacts.PeerSnapshotKey],
-	}}
 }

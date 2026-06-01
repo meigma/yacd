@@ -29,9 +29,8 @@ const (
 	CardanoEraConway CardanoEra = "conway"
 )
 
-// PublicNetworkProfile names a known public Cardano network profile or a
-// caller-supplied profile bundle.
-// +kubebuilder:validation:Enum=preprod;preview;mainnet;custom
+// PublicNetworkProfile names a known public Cardano network profile.
+// +kubebuilder:validation:Enum=preprod;preview;mainnet
 type PublicNetworkProfile string
 
 const (
@@ -41,8 +40,6 @@ const (
 	PublicNetworkProfilePreview PublicNetworkProfile = "preview"
 	// PublicNetworkProfileMainnet joins Cardano mainnet.
 	PublicNetworkProfileMainnet PublicNetworkProfile = "mainnet"
-	// PublicNetworkProfileCustom joins a supplied network profile bundle.
-	PublicNetworkProfileCustom PublicNetworkProfile = "custom"
 )
 
 // GenesisProfile chooses a curated local genesis preset. Custom genesis tuning
@@ -259,18 +256,12 @@ type ProtocolVersionSpec struct {
 	Minor int32 `json:"minor"`
 }
 
-// PublicNetworkSpec configures a node that joins a public or supplied network profile.
-// +kubebuilder:validation:XValidation:rule="self.profile == 'custom' ? has(self.configSource) : !has(self.configSource)",message="configSource is required only when public.profile is custom"
+// PublicNetworkSpec configures a node that joins a public network profile.
 // +kubebuilder:validation:XValidation:rule="self.profile == 'mainnet' ? has(self.bootstrap) && has(self.bootstrap.mithril) : !has(self.bootstrap)",message="bootstrap.mithril is required only when public.profile is mainnet"
 type PublicNetworkSpec struct {
 	// profile selects the public network profile.
 	// +required
 	Profile PublicNetworkProfile `json:"profile"`
-
-	// configSource supplies network config and genesis files for custom public
-	// profiles.
-	// +optional
-	ConfigSource *NetworkConfigSource `json:"configSource,omitempty"`
 
 	// bootstrap configures explicit public-network bootstrap behavior. This is
 	// currently required only for mainnet, where the node database is seeded
@@ -301,21 +292,6 @@ type MithrilBootstrapSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +optional
 	Snapshot string `json:"snapshot,omitempty"`
-}
-
-// NetworkConfigSource identifies the in-cluster object that supplies custom
-// profile files. The expected bundle keys are config.json, topology.json,
-// byron-genesis.json, shelley-genesis.json, alonzo-genesis.json, and
-// conway-genesis.json.
-// +kubebuilder:validation:XValidation:rule="(has(self.configMapRef) && !has(self.secretRef) && size(self.configMapRef.name) > 0) || (has(self.secretRef) && !has(self.configMapRef) && size(self.secretRef.name) > 0)",message="exactly one of configMapRef or secretRef must be set with a non-empty name"
-type NetworkConfigSource struct {
-	// configMapRef loads profile files from a ConfigMap in the same namespace.
-	// +optional
-	ConfigMapRef *corev1.LocalObjectReference `json:"configMapRef,omitempty"`
-
-	// secretRef loads profile files from a Secret in the same namespace.
-	// +optional
-	SecretRef *corev1.LocalObjectReference `json:"secretRef,omitempty"`
 }
 
 // ChainAPISpec configures APIs exposed for clients and supporting services.
@@ -446,12 +422,6 @@ type CardanoNetworkStatus struct {
 	// +optional
 	Faucet *FaucetStatus `json:"faucet,omitempty"`
 
-	// artifacts publishes references to generated non-secret network
-	// artifacts once the controller has verified that the artifact bundle
-	// matches the accepted localnet.
-	// +optional
-	Artifacts *CardanoNetworkArtifactsStatus `json:"artifacts,omitempty"`
-
 	// sync reports the primary node's chain synchronization status as inferred
 	// from in-cluster sources.
 	// +optional
@@ -466,7 +436,7 @@ type CardanoNetworkStatus struct {
 	// - "NodeReady": the primary node container is running
 	// - "NodeSynchronized": the primary node is caught up to its inferred network tip
 	// - "NodeProgressing": the primary node tip is advancing or already synchronized
-	// - "ArtifactsReady": the non-secret network artifact bundle is published
+	// - "ArtifactsReady": the network artifact bundle is staged and served over HTTP
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
 	// - "FaucetReady": the faucet is enabled and available through its Service
@@ -509,24 +479,6 @@ type CardanoNetworkIdentityStatus struct {
 	// era is the newest resolved ledger era known to the controller.
 	// +optional
 	Era *CardanoEra `json:"era,omitempty"`
-}
-
-// CardanoNetworkArtifactsStatus reports the verified network artifact bundle
-// that supporting controllers can consume.
-type CardanoNetworkArtifactsStatus struct {
-	// networkConfigMapName is the same-namespace ConfigMap containing
-	// non-secret generated network files and connection metadata.
-	// +optional
-	NetworkConfigMapName string `json:"networkConfigMapName,omitempty"`
-
-	// schemaVersion identifies the artifact bundle schema verified by the
-	// controller.
-	// +optional
-	SchemaVersion string `json:"schemaVersion,omitempty"`
-
-	// dataHash is the publisher-computed hash over ConfigMap data.
-	// +optional
-	DataHash string `json:"dataHash,omitempty"`
 }
 
 // CardanoNetworkSyncStatus reports the primary node's observed synchronization

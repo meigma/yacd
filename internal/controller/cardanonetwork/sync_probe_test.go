@@ -11,7 +11,6 @@ import (
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -211,7 +210,6 @@ func TestCardanoNetworkSyncStatusComputesInferredSlotAndLag(t *testing.T) {
 func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 	now := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
 	service := syncTestOgmiosService()
-	artifacts := syncTestArtifactsConfigMap()
 	caughtUpHealth := cardanoNetworkOgmiosHealth{
 		ConnectionStatus: ogmiosConnectionStatusConnected,
 		Tip: &cardanoNetworkOgmiosTip{
@@ -224,8 +222,8 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 	tests := []struct {
 		name                  string
 		service               *corev1.Service
-		artifacts             *corev1.ConfigMap
 		artifactsReady        bool
+		timingFails           bool
 		health                cardanoNetworkOgmiosHealth
 		probeErr              error
 		wantSync              bool
@@ -237,7 +235,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:                  "synchronized by lag",
 			service:               service,
-			artifacts:             artifacts,
 			artifactsReady:        true,
 			health:                caughtUpHealth,
 			wantSync:              true,
@@ -249,7 +246,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:           "synchronized by Ogmios synchronization estimate",
 			service:        service,
-			artifacts:      artifacts,
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus:       ogmiosConnectionStatusConnected,
@@ -266,7 +262,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:           "behind but advancing",
 			service:        service,
-			artifacts:      artifacts,
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
@@ -282,7 +277,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:           "connected without tip yet",
 			service:        service,
-			artifacts:      artifacts,
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
@@ -296,7 +290,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:           "behind and stalled",
 			service:        service,
-			artifacts:      artifacts,
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: ogmiosConnectionStatusConnected,
@@ -312,7 +305,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:           "disconnected",
 			service:        service,
-			artifacts:      artifacts,
 			artifactsReady: true,
 			health: cardanoNetworkOgmiosHealth{
 				ConnectionStatus: "disconnected",
@@ -328,7 +320,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:                  "missing Ogmios",
 			service:               nil,
-			artifacts:             artifacts,
 			artifactsReady:        true,
 			wantSynchronized:      conditionReasonOgmiosDisabled,
 			wantSynchronizedState: metav1.ConditionFalse,
@@ -338,8 +329,8 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:                  "missing timing",
 			service:               service,
-			artifacts:             syncTestArtifactsConfigMapWithShelley("not json"),
 			artifactsReady:        true,
+			timingFails:           true,
 			wantSynchronized:      conditionReasonNetworkTimingUnavailable,
 			wantSynchronizedState: metav1.ConditionFalse,
 			wantProgressing:       conditionReasonNetworkTimingUnavailable,
@@ -348,7 +339,6 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 		{
 			name:                  "malformed health",
 			service:               service,
-			artifacts:             artifacts,
 			artifactsReady:        true,
 			probeErr:              errors.New("bad health"),
 			wantSynchronized:      conditionReasonOgmiosHealthUnavailable,
@@ -361,22 +351,40 @@ func TestPrimaryNodeSyncStatusConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			network := localCardanoNetwork("sync-condition")
+			// The served-artifacts endpoint must be published for timing to be
+			// fetched over HTTP; the prober override stands in for the fetch.
+			network.Status.Endpoints = &yacdv1alpha1.CardanoNetworkEndpointsStatus{
+				Artifacts: &yacdv1alpha1.ServiceEndpointStatus{
+					ServiceName: primaryArtifactsServiceName(network),
+					Port:        defaultServePort,
+					URL:         "http://sync-condition-artifacts.default.svc.cluster.local:8090",
+				},
+			}
 			reconciler := newTestReconciler(t, network)
 			reconciler.Now = func() time.Time { return now }
+			reconciler.timingProberOverride = cardanoNetworkTimingProberFunc(func(context.Context, string) (cardanoNetworkTiming, error) {
+				if tt.timingFails {
+					return cardanoNetworkTiming{}, errors.New("timing unavailable")
+				}
+				return cardanoNetworkTiming{
+					SystemStart:       time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+					SlotLengthSeconds: 1,
+				}, nil
+			})
 			probeCalled := false
 			reconciler.syncProberOverride = cardanoNetworkSyncProberFunc(func(context.Context, string) (cardanoNetworkOgmiosHealth, error) {
 				probeCalled = true
 				return tt.health, tt.probeErr
 			})
 
-			syncStatus, synchronized, progressing := reconciler.primaryNodeSyncStatusConditions(context.Background(), network, tt.service, tt.artifacts, tt.artifactsReady, "artifacts pending")
+			syncStatus, synchronized, progressing := reconciler.primaryNodeSyncStatusConditions(context.Background(), network, tt.service, tt.artifactsReady, "artifacts pending")
 
 			if tt.wantSync {
 				require.NotNil(t, syncStatus)
 			} else {
 				assert.Nil(t, syncStatus)
 			}
-			if tt.service == nil || tt.artifacts == nil || tt.probeErr != nil || tt.artifacts.Data[networkartifacts.ShelleyGenesisKey] == "not json" {
+			if tt.service == nil || tt.timingFails || tt.probeErr != nil {
 				assert.Equal(t, tt.probeErr != nil, probeCalled)
 			}
 			assert.Equal(t, tt.wantSynchronizedState, synchronized.Status)
@@ -507,6 +515,9 @@ func TestCardanoNetworkReconcilerReconcileReportsMissingNetworkTiming(t *testing
 		Source: nodeSyncSourceOgmios,
 	}
 	reconciler := newTestReconciler(t, network)
+	reconciler.timingProberOverride = cardanoNetworkTimingProberFunc(func(context.Context, string) (cardanoNetworkTiming, error) {
+		return cardanoNetworkTiming{}, errors.New("timing unavailable")
+	})
 	reconciler.syncProberOverride = cardanoNetworkSyncProberFunc(func(context.Context, string) (cardanoNetworkOgmiosHealth, error) {
 		require.FailNow(t, "sync probe should not run without valid timing")
 		return cardanoNetworkOgmiosHealth{}, nil
@@ -514,12 +525,9 @@ func TestCardanoNetworkReconcilerReconcileReportsMissingNetworkTiming(t *testing
 
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	configMap := publishNetworkArtifacts(t, ctx, reconciler, network)
-	configMap.Data[networkartifacts.ShelleyGenesisKey] = "not json"
-	require.NoError(t, reconciler.Update(ctx, configMap))
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, serveContainerName)
 	current := requireNetwork(t, ctx, reconciler, network)
 	current.Status.Sync = &yacdv1alpha1.CardanoNetworkSyncStatus{Source: nodeSyncSourceOgmios}
 	storeNetworkStatus(t, ctx, reconciler, current)
@@ -541,12 +549,22 @@ func readyNetworkForSyncTest(
 ) {
 	t.Helper()
 
+	// Network timing is fetched over HTTP from the serve endpoint; the prober
+	// override stands in for that fetch unless the test set its own.
+	if reconciler.timingProberOverride == nil {
+		reconciler.timingProberOverride = cardanoNetworkTimingProberFunc(func(context.Context, string) (cardanoNetworkTiming, error) {
+			return cardanoNetworkTiming{
+				SystemStart:       time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC),
+				SlotLengthSeconds: 1,
+			}, nil
+		})
+	}
+
 	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
 	require.NoError(t, err)
-	publishNetworkArtifacts(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	markPrimaryDeploymentAvailable(t, ctx, reconciler, deployment)
-	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName)
+	markPrimaryPodContainersReady(t, ctx, reconciler, network, cardanoNodeContainerName, ogmiosContainerName, kupoContainerName, serveContainerName)
 }
 
 func syncTestOgmiosService() *corev1.Service {
@@ -559,25 +577,6 @@ func syncTestOgmiosService() *corev1.Service {
 			Ports: []corev1.ServicePort{{
 				Port: defaultOgmiosPort,
 			}},
-		},
-	}
-}
-
-func syncTestArtifactsConfigMap() *corev1.ConfigMap {
-	return syncTestArtifactsConfigMapWithShelley(`{
-		"systemStart": "2026-05-31T00:00:00Z",
-		"slotLength": 1
-	}`)
-}
-
-func syncTestArtifactsConfigMapWithShelley(shelleyGenesis string) *corev1.ConfigMap {
-	return &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sync-condition-network-artifacts",
-			Namespace: "default",
-		},
-		Data: map[string]string{
-			networkartifacts.ShelleyGenesisKey: shelleyGenesis,
 		},
 	}
 }

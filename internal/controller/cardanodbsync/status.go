@@ -24,6 +24,26 @@ func networkArtifactsReady(network *yacdv1alpha1.CardanoNetwork) bool {
 		condition.ObservedGeneration >= network.Generation
 }
 
+// networkIdentityFingerprint returns the accepted network identity fingerprint
+// the db-sync database identity binds to. Since the network-artifacts ConfigMap
+// removal (F0 PR-B1) it is sourced from the referenced CardanoNetwork's
+// published Status.Network fingerprint — LocalnetFingerprint for local networks,
+// NetworkFingerprint for public — rather than the deleted Status.Artifacts.DataHash.
+func networkIdentityFingerprint(network *yacdv1alpha1.CardanoNetwork) string {
+	identity := network.Status.Network
+	if identity == nil {
+		return ""
+	}
+	switch identity.Mode {
+	case yacdv1alpha1.CardanoNetworkModeLocal:
+		return identity.LocalnetFingerprint
+	case yacdv1alpha1.CardanoNetworkModePublic:
+		return identity.NetworkFingerprint
+	default:
+		return ""
+	}
+}
+
 // patchDependencyUnavailableStatus suspends the dbsync workload and writes a
 // Degraded status patch. Used when a hard dependency (database Secret,
 // referenced CardanoNetwork) is missing or invalid.

@@ -1,7 +1,6 @@
 package publicnet
 
 import (
-	"path"
 	"strings"
 	"testing"
 
@@ -145,29 +144,6 @@ func TestBuildPlanFingerprintIsStableAcrossMountDirs(t *testing.T) {
 	}
 }
 
-func TestBuildPlanCustomProfile(t *testing.T) {
-	t.Parallel()
-
-	plan, err := BuildPlan(Spec{
-		Profile: customProfileName,
-		Custom:  customPreviewBundle(t),
-		Paths:   Paths{ProfileDir: "/profile"},
-	})
-	require.NoError(t, err)
-
-	assert.Equal(t, customProfileName, plan.Profile)
-	assert.Equal(t, int64(2), plan.NetworkMagic)
-	assert.True(t, plan.RequiresNetworkMagic)
-	assert.Equal(t, customProfileSource, plan.Manifest.Source)
-	assert.Empty(t, plan.Manifest.CompatibleNodeRelease)
-	assert.Equal(t, "sha256", plan.Fingerprint.Algorithm)
-	assert.NotEmpty(t, plan.Fingerprint.Value)
-	assert.NotEmpty(t, plan.Artifacts[networkartifacts.ConfigurationKey])
-	assert.NotEmpty(t, plan.Artifacts[networkartifacts.PrimaryTopologyKey])
-	assert.NotEmpty(t, plan.Artifacts[networkartifacts.CheckpointsKey])
-	assert.NotEmpty(t, plan.Artifacts[networkartifacts.PeerSnapshotKey])
-}
-
 func TestBuildPlanNormalizesMainnetMithrilBootstrap(t *testing.T) {
 	t.Parallel()
 
@@ -206,19 +182,6 @@ func TestBuildPlanRejectsUnsupportedProfiles(t *testing.T) {
 			wantErr: `public profile "unknown" is not supported`,
 		},
 		{
-			name: "curated with custom bundle",
-			spec: Spec{
-				Profile: previewProfileName,
-				Custom:  customPreviewBundle(t),
-			},
-			wantErr: "public configSource is supported only for custom profiles",
-		},
-		{
-			name:    "custom without bundle",
-			spec:    Spec{Profile: customProfileName},
-			wantErr: "public custom profile requires configSource files",
-		},
-		{
 			name:    "mainnet without mithril bootstrap",
 			spec:    Spec{Profile: mainnetProfileName},
 			wantErr: "public mainnet profile requires mithril bootstrap",
@@ -239,43 +202,6 @@ func TestBuildPlanRejectsUnsupportedProfiles(t *testing.T) {
 			},
 			wantErr: "public bootstrap is supported only for mainnet",
 		},
-		{
-			name: "custom with mithril bootstrap",
-			spec: Spec{
-				Profile:   customProfileName,
-				Custom:    customPreviewBundle(t),
-				Bootstrap: &BootstrapSpec{Mithril: &MithrilBootstrapSpec{}},
-			},
-			wantErr: "public bootstrap is supported only for mainnet",
-		},
-		{
-			name: "custom missing required file",
-			spec: Spec{
-				Profile: customProfileName,
-				Custom:  &CustomBundle{Files: map[string]string{"config.json": "{}"}},
-			},
-			wantErr: `public custom profile file "byron-genesis.json" is required`,
-		},
-		{
-			name: "custom unsupported file",
-			spec: Spec{
-				Profile: customProfileName,
-				Custom:  &CustomBundle{Files: map[string]string{"unsupported.json": "{}"}},
-			},
-			wantErr: `public custom profile file "unsupported.json" is not supported`,
-		},
-		{
-			name: "custom invalid config",
-			spec: Spec{
-				Profile: customProfileName,
-				Custom: func() *CustomBundle {
-					bundle := customPreviewBundle(t)
-					bundle.Files["config.json"] = "{}"
-					return bundle
-				}(),
-			},
-			wantErr: `custom RequiresNetworkMagic value "" is not supported`,
-		},
 	}
 
 	for _, tc := range tests {
@@ -285,31 +211,4 @@ func TestBuildPlanRejectsUnsupportedProfiles(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
-}
-
-func TestSupportedCustomProfileKeys(t *testing.T) {
-	t.Parallel()
-
-	assert.Equal(t, []string{
-		"config.json",
-		"byron-genesis.json",
-		"shelley-genesis.json",
-		"alonzo-genesis.json",
-		"conway-genesis.json",
-		"topology.json",
-		"checkpoints.json",
-		"peer-snapshot.json",
-	}, SupportedCustomProfileKeys())
-}
-
-func customPreviewBundle(t *testing.T) *CustomBundle {
-	t.Helper()
-
-	files := make(map[string]string, len(requiredProfileFiles)+len(optionalProfileFiles))
-	for _, file := range profileFiles(optionalProfileFiles) {
-		raw, err := profileAssets.ReadFile(path.Join("profiles", previewProfileName, file.assetPath))
-		require.NoError(t, err)
-		files[file.assetPath] = string(raw)
-	}
-	return &CustomBundle{Files: files}
 }

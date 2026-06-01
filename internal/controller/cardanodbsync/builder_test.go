@@ -21,13 +21,11 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	dbSync.UID = types.UID("dbsync-uid")
 	network := readyCardanoNetwork("ready-network")
-	artifactConfigMap := artifactConfigMapFor(network)
-	artifactConfigMap.UID = types.UID("artifact-uid")
 	secret := externalDatabaseSecretFor(dbSync)
 	secret.ResourceVersion = "7"
 	expectedPGPass := "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n"
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	resources, err := builder.Build(dbSync, network, secret)
 
 	require.NoError(t, err)
 	require.NotNil(t, resources.Plan)
@@ -40,7 +38,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, networkIdentityFingerprint(network), resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: ready-network")
 	assert.Contains(t, resources.ConfigMap.Data[followerTopologyFileName], `"address": "ready-network-node.default.svc.cluster.local"`)
 
@@ -62,7 +60,10 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.True(t, *deployment.Spec.Template.Spec.SecurityContext.RunAsNonRoot)
 	assert.Equal(t, dbSyncRunAsID, *deployment.Spec.Template.Spec.SecurityContext.RunAsUser)
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 2)
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
+	// The serve path renders two init containers: the artifacts sync init runs
+	// first and fetches the bundle over HTTP, then the pgpass init prepares the
+	// libpq pgpass file.
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 2)
 	pgPassInit := requireInitContainer(t, deployment, dbSyncPGPassInitName)
 	follower := requireContainer(t, deployment, followerNodeContainerName)
 	dbSyncContainer := requireContainer(t, deployment, dbSyncContainerName)
@@ -90,7 +91,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, deployment.Spec.Template.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, deployment.Spec.Template.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), deployment.Spec.Template.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, network.Status.Artifacts.DataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, networkIdentityFingerprint(network), deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, pgPassMaterialFingerprint(expectedPGPass), resources.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModeDedicatedFollower), resources.PGPassSecret.Annotations[dbSyncPlacementModeAnno])
@@ -116,25 +117,16 @@ func TestDBSyncWorkloadBuilderBuildsPublicDedicatedFollowerIdentity(t *testing.T
 	testCases := []struct {
 		name              string
 		profile           yacdv1alpha1.PublicNetworkProfile
-		wantNetworkName   string
 		wantRequiresMagic string
 	}{
 		{
 			name:              "preview",
 			profile:           yacdv1alpha1.PublicNetworkProfilePreview,
-			wantNetworkName:   "preview",
 			wantRequiresMagic: "RequiresMagic",
 		},
 		{
 			name:              "preprod",
 			profile:           yacdv1alpha1.PublicNetworkProfilePreprod,
-			wantNetworkName:   "preprod",
-			wantRequiresMagic: "RequiresMagic",
-		},
-		{
-			name:              "custom",
-			profile:           yacdv1alpha1.PublicNetworkProfileCustom,
-			wantNetworkName:   "custom",
 			wantRequiresMagic: "RequiresMagic",
 		},
 	}
@@ -142,20 +134,18 @@ func TestDBSyncWorkloadBuilderBuildsPublicDedicatedFollowerIdentity(t *testing.T
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			network := readyPublicCardanoNetwork("public-"+testCase.name, testCase.profile)
-			connection := parsedConnectionForNetwork(t, network)
 			builder := newDBSyncWorkloadBuilder(t)
-			builder.networkConnection = &connection
 			dbSync := localCardanoDBSync("dbsync-"+testCase.name, network.Name)
 			secret := externalDatabaseSecretFor(dbSync)
 
-			resources, err := builder.BuildForDatabase(dbSync, network, artifactConfigMapFor(network), secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
+			resources, err := builder.BuildForDatabase(dbSync, network, secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
 
 			require.NoError(t, err)
-			assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: "+testCase.wantNetworkName)
+			assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "NetworkName: "+network.Name)
 			assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "RequiresNetworkMagic: "+testCase.wantRequiresMagic)
 			assert.Contains(t, resources.ConfigMap.Data[followerTopologyFileName], `"address": "`+network.Name+`-node.default.svc.cluster.local"`)
-			assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
-			assert.Equal(t, network.Status.Artifacts.DataHash, resources.Deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
+			assert.Equal(t, networkIdentityFingerprint(network), resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+			assert.Equal(t, networkIdentityFingerprint(network), resources.Deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 		})
 	}
 }
@@ -167,7 +157,7 @@ func TestDBSyncWorkloadBuilderBuildsPrimarySidecarMaterial(t *testing.T) {
 	secret := externalDatabaseSecretFor(dbSync)
 	expectedPGPass := "postgres.default.svc.cluster.local:5432:cexplorer:postgres:secret\n"
 
-	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, artifactConfigMapFor(network), secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
+	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
 
 	require.NoError(t, err)
 	require.NotNil(t, resources.Plan)
@@ -178,7 +168,7 @@ func TestDBSyncWorkloadBuilderBuildsPrimarySidecarMaterial(t *testing.T) {
 	assert.Equal(t, resources.Plan.Fingerprint.Value, resources.ConfigMap.Annotations[dbSyncPlanFingerprintAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.ConfigMap.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.ConfigMap.Annotations[dbSyncPlacementModeAnno])
-	assert.Equal(t, network.Status.Artifacts.DataHash, resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
+	assert.Equal(t, networkIdentityFingerprint(network), resources.ConfigMap.Annotations[dbSyncArtifactDataHashAnno])
 	assert.Equal(t, resources.Plan.DatabaseIdentityFingerprint.Value, resources.PersistentVolumeClaim.Annotations[dbSyncDatabaseIdentityAnno])
 	assert.Equal(t, string(yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar), resources.PersistentVolumeClaim.Annotations[dbSyncPlacementModeAnno])
 	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
@@ -254,7 +244,7 @@ func TestDBSyncWorkloadBuilderBuildsDBSyncWorkloadForManagedPostgres(t *testing.
 	}
 	expectedPGPass := "dbsync-postgres.default.svc.cluster.local:5432:cexplorer:postgres:managed-secret\n"
 
-	resources, err := builder.BuildForDatabase(dbSync, network, artifactConfigMapFor(network), authSecret, dbSyncDatabaseFromManaged(dbSync, authSecret.Name))
+	resources, err := builder.BuildForDatabase(dbSync, network, authSecret, dbSyncDatabaseFromManaged(dbSync, authSecret.Name))
 
 	require.NoError(t, err)
 	assert.Equal(t, expectedPGPass, string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
@@ -267,23 +257,22 @@ func TestDBSyncWorkloadBuilderCredentialFingerprintTracksPGPassMaterial(t *testi
 	builder := newDBSyncWorkloadBuilder(t)
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	artifactConfigMap := artifactConfigMapFor(network)
 	secret := externalDatabaseSecretFor(dbSync)
 	secret.ResourceVersion = "7"
 
-	base, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	base, err := builder.Build(dbSync, network, secret)
 	require.NoError(t, err)
 	baseFingerprint := base.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno]
 	require.NotEmpty(t, baseFingerprint)
 
 	secret.ResourceVersion = "8"
-	metadataOnly, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	metadataOnly, err := builder.Build(dbSync, network, secret)
 	require.NoError(t, err)
 	assert.Equal(t, baseFingerprint, metadataOnly.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, baseFingerprint, metadataOnly.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
 
 	secret.Data[externalDatabasePasswordKey(dbSync.Spec.Database.External)] = []byte("rotated-secret")
-	rotated, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	rotated, err := builder.Build(dbSync, network, secret)
 	require.NoError(t, err)
 	assert.NotEqual(t, baseFingerprint, rotated.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno])
 	assert.Equal(t, rotated.Deployment.Spec.Template.Annotations[dbSyncSecretVersionAnno], rotated.PGPassSecret.Annotations[dbSyncSecretVersionAnno])
@@ -293,10 +282,9 @@ func TestDBSyncWorkloadBuilderFingerprintChangesWithRuntimeConfig(t *testing.T) 
 	builder := newDBSyncWorkloadBuilder(t)
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	artifactConfigMap := artifactConfigMapFor(network)
 	secret := externalDatabaseSecretFor(dbSync)
 
-	base, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	base, err := builder.Build(dbSync, network, secret)
 	require.NoError(t, err)
 
 	dbSync.Spec.Config.Runtime = &yacdv1alpha1.CardanoDBSyncRuntimeSpec{
@@ -305,7 +293,7 @@ func TestDBSyncWorkloadBuilderFingerprintChangesWithRuntimeConfig(t *testing.T) 
 		ForceIndexes: true,
 		MetricsPort:  8080,
 	}
-	changed, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	changed, err := builder.Build(dbSync, network, secret)
 
 	require.NoError(t, err)
 	assert.NotEqual(t, base.Plan.Fingerprint, changed.Plan.Fingerprint)
@@ -320,14 +308,13 @@ func TestDBSyncWorkloadBuilderDatabaseIdentityIncludesDBSyncImage(t *testing.T) 
 	builder := newDBSyncWorkloadBuilder(t)
 	dbSync := localCardanoDBSync("dbsync", "ready-network")
 	network := readyCardanoNetwork("ready-network")
-	artifactConfigMap := artifactConfigMapFor(network)
 	secret := externalDatabaseSecretFor(dbSync)
 
-	base, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	base, err := builder.Build(dbSync, network, secret)
 	require.NoError(t, err)
 
 	dbSync.Spec.Image = changedDBSyncImage
-	changed, err := builder.Build(dbSync, network, artifactConfigMap, secret)
+	changed, err := builder.Build(dbSync, network, secret)
 
 	require.NoError(t, err)
 	assert.NotEqual(t, base.Plan.Fingerprint, changed.Plan.Fingerprint)
@@ -350,7 +337,7 @@ func TestDBSyncWorkloadBuilderUsesFollowerStorageAndIPFSGateways(t *testing.T) {
 	dbSync.Spec.Config.IPFSGateways = []string{"https://ipfs.example.test"}
 	network := readyCardanoNetwork("ready-network")
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	storage := resources.FollowerPersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -376,7 +363,7 @@ func TestDBSyncWorkloadBuilderDefaultsStorageSizeWithStorageClassOnly(t *testing
 	}
 	network := readyCardanoNetwork("ready-network")
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	stateStorage := resources.PersistentVolumeClaim.Spec.Resources.Requests[corev1.ResourceStorage]
@@ -397,7 +384,7 @@ func TestDBSyncWorkloadBuilderInsertPresetsDoNotUseDefaultedOverrides(t *testing
 	dbSync.Spec.Config.Insert = &yacdv1alpha1.CardanoDBSyncInsertSpec{
 		Preset: yacdv1alpha1.CardanoDBSyncInsertPresetDisableAll,
 	}
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	config := resources.ConfigMap.Data[dbSyncConfigFileName]
@@ -409,7 +396,7 @@ func TestDBSyncWorkloadBuilderInsertPresetsDoNotUseDefaultedOverrides(t *testing
 	dbSync.Spec.Config.Insert = &yacdv1alpha1.CardanoDBSyncInsertSpec{
 		Preset: yacdv1alpha1.CardanoDBSyncInsertPresetFull,
 	}
-	resources, err = builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err = builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	assert.Contains(t, resources.ConfigMap.Data[dbSyncConfigFileName], "pool_stat: enable")
@@ -428,7 +415,7 @@ func TestDBSyncWorkloadBuilderPreservesNestedPresetValuesUnlessOverridden(t *tes
 	}
 	network := readyCardanoNetwork("ready-network")
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	config := resources.ConfigMap.Data[dbSyncConfigFileName]
@@ -456,7 +443,7 @@ func TestDBSyncWorkloadBuilderAppliesExplicitInsertOverrides(t *testing.T) {
 	}
 	network := readyCardanoNetwork("ready-network")
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	config := resources.ConfigMap.Data[dbSyncConfigFileName]
@@ -477,7 +464,7 @@ func TestDBSyncWorkloadBuilderEscapesPGPassFields(t *testing.T) {
 	secret := externalDatabaseSecretFor(dbSync)
 	secret.Data["password"] = []byte(`sec:ret\value`)
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), secret)
+	resources, err := builder.Build(dbSync, network, secret)
 
 	require.NoError(t, err)
 	assert.Equal(t, `postgres\:rw.default.svc.cluster.local:5432:cexplorer:post\\gres:sec\:ret\\value`+"\n", string(resources.PGPassSecret.Data[dbSyncPGPassFileName]))
@@ -527,7 +514,7 @@ func TestDBSyncWorkloadBuilderRejectsNewlinePGPassFields(t *testing.T) {
 			secret := externalDatabaseSecretFor(dbSync)
 			testCase.mutate(dbSync, secret)
 
-			_, err := builder.Build(dbSync, network, artifactConfigMapFor(network), secret)
+			_, err := builder.Build(dbSync, network, secret)
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), testCase.wantErr)
@@ -540,7 +527,7 @@ func TestDBSyncWorkloadBuilderUsesSafeResourceAndLabelNames(t *testing.T) {
 	dbSync := localCardanoDBSync("db.sync."+strings.Repeat("x", 80), "ready-network")
 	network := readyCardanoNetwork("ready-network")
 
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), externalDatabaseSecretFor(dbSync))
+	resources, err := builder.Build(dbSync, network, externalDatabaseSecretFor(dbSync))
 
 	require.NoError(t, err)
 	authSecret := &corev1.Secret{
@@ -582,7 +569,13 @@ func newDBSyncWorkloadBuilder(t *testing.T) dbSyncWorkloadBuilder {
 	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, corev1.AddToScheme(scheme))
 
-	return dbSyncWorkloadBuilder{scheme: scheme}
+	// Artifacts are fetched over HTTP from the referenced network's serve
+	// endpoint; the builder requires a non-empty serve URL to render the
+	// dedicated-follower sync init container.
+	return dbSyncWorkloadBuilder{
+		scheme:             scheme,
+		servedArtifactsURL: "http://ready-network-artifacts.default.svc.cluster.local:8090",
+	}
 }
 
 // TestFollowerNodeImageHonorsInjectedOverride verifies the

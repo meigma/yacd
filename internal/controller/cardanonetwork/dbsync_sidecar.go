@@ -107,23 +107,7 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 		StatePVCName:     sidecarStatus.Resources.StatePVCName,
 		Revision:         sidecarStatus.Revision,
 	}
-	switch {
-	case stagesServedArtifacts(network):
-		// Serve path (local + curated-public): the served-artifacts init
-		// container stages the bundle into servedArtifactsDir on the primary
-		// node-state PVC, which the primary Pod mounts. The sidecar mounts that
-		// shared volume at the artifacts subdirectory rather than a ConfigMap;
-		// init-before-regular ordering guarantees it is populated before the
-		// sidecar container starts. This is keyed on the network spec rather
-		// than status.endpoints.artifacts because the artifacts endpoint is
-		// published later in the same reconcile that builds this attachment.
-		resources.ArtifactsStateVolumeName = localnetStateVolumeName
-		resources.ArtifactsSubPath = strings.TrimPrefix(servedArtifactsDir, localnetStateDir+"/")
-	case network.Status.Artifacts != nil && network.Status.Artifacts.NetworkConfigMapName != "":
-		// Legacy custom-public path: no served artifacts, so mount the
-		// published network-artifacts ConfigMap.
-		resources.NetworkArtifactsConfigMapName = network.Status.Artifacts.NetworkConfigMapName
-	default:
+	if !stagesServedArtifacts(network) {
 		return primaryDBSyncAttachmentResult{
 			Condition: dbSyncAttachmentReadyCondition(
 				metav1.ConditionFalse,
@@ -132,6 +116,16 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 			),
 		}, nil
 	}
+	// Serve path (local + curated-public): the served-artifacts init container
+	// stages the bundle into servedArtifactsDir on the primary node-state PVC,
+	// which the primary Pod mounts. The sidecar mounts that shared volume at the
+	// artifacts subdirectory; init-before-regular ordering guarantees it is
+	// populated before the sidecar container starts. This is keyed on the
+	// network spec rather than status.endpoints.artifacts because the artifacts
+	// endpoint is published later in the same reconcile that builds this
+	// attachment.
+	resources.ArtifactsStateVolumeName = localnetStateVolumeName
+	resources.ArtifactsSubPath = strings.TrimPrefix(servedArtifactsDir, localnetStateDir+"/")
 
 	attachment, err := ctrldbsync.BuildPrimarySidecarAttachment(&claim, network, database, resources)
 	if err != nil {
@@ -149,18 +143,16 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 }
 
 // stagesServedArtifacts reports whether the network's primary Pod stages a
-// flat served-artifact directory onto its node-state PVC (local + curated
-// public). It mirrors the producer predicate the primary builder uses
-// (plan.isLocal() || isCuratedPublicProfile(plan)) but reads the spec, so it
-// is decidable while the attachment is built — before status.endpoints.artifacts
-// is published in the same reconcile. Custom-public stages nothing and keeps
-// the byte-based ConfigMap.
+// flat served-artifact directory onto its node-state PVC. Every supported
+// network does: local generates the bundle and public fetches it. It reads the
+// spec, so it is decidable while the attachment is built — before
+// status.endpoints.artifacts is published in the same reconcile.
 func stagesServedArtifacts(network *yacdv1alpha1.CardanoNetwork) bool {
 	switch network.Spec.Mode {
 	case yacdv1alpha1.CardanoNetworkModeLocal:
 		return true
 	case yacdv1alpha1.CardanoNetworkModePublic:
-		return network.Spec.Public != nil && network.Spec.Public.Profile != yacdv1alpha1.PublicNetworkProfileCustom
+		return network.Spec.Public != nil
 	default:
 		return false
 	}

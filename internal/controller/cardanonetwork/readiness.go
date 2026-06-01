@@ -196,6 +196,31 @@ func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
 	})
 }
 
+// primaryArtifactsReadyCondition computes the ArtifactsReady condition. It
+// mirrors the optional sidecars: the artifacts Service must exist and the
+// always-on serve container must be ready in the primary Deployment. The
+// disabled branch is effectively unreachable because every supported network
+// serves artifacts (stagesServedArtifacts is true for local and public). See
+// primarySidecarReadyCondition for the shared shape.
+func (r *CardanoNetworkReconciler) primaryArtifactsReadyCondition(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+	enabled bool,
+) (metav1.Condition, error) {
+	return r.primarySidecarReadyCondition(ctx, network, enabled, sidecarReadinessConfig{
+		serviceName:              primaryArtifactsServiceName,
+		containerName:            serveContainerName,
+		condition:                artifactsReadyCondition,
+		disabledReason:           conditionReasonArtifactsPending,
+		disabledMessage:          "Network does not serve artifacts",
+		readyReason:              conditionReasonArtifactsReady,
+		readyMessage:             conditionMessageArtifactsReady,
+		missingServiceMessage:    "Artifacts Service is missing",
+		unavailableMessage:       "Artifacts serve sidecar is not available",
+		containerNotReadyMessage: "Artifacts serve sidecar is not ready",
+	})
+}
+
 // primaryDBSyncAttachmentReadyCondition computes only the primary Pod impact
 // of an attached db-sync sidecar. Detailed db-sync health remains on the
 // CardanoDBSync resource.

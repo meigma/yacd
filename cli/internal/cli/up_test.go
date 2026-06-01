@@ -100,7 +100,6 @@ func TestUpDryRunDoesNotWarnForNonMainnetPublicProfiles(t *testing.T) {
 			name:   "preprod",
 			config: strings.Replace(testPublicPreviewDevConfig, "profile: preview", "profile: preprod", 1),
 		},
-		{name: "custom", config: testPublicCustomDevConfig},
 	}
 
 	for _, tc := range tests {

@@ -93,7 +93,7 @@ const (
 	conditionMessageKupoDisabled                 = "Kupo chain index API is disabled"
 	conditionMessageFaucetReady                  = "Faucet sidecar is available through its Service"
 	conditionMessageFaucetDisabled               = "Faucet API is disabled"
-	conditionMessageArtifactsReady               = "Network artifact ConfigMap is published and verified"
+	conditionMessageArtifactsReady               = "Network artifacts are served and available through the artifacts Service"
 )
 
 // primaryDeploymentConditionFunc is the constructor signature shared by the

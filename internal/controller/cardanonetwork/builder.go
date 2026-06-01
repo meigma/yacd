@@ -10,36 +10,23 @@ import (
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // primaryWorkloadResources is the desired-state bundle the builder produces
-// for one CardanoNetwork. Every field is non-nil except localnet-only artifact
-// publisher RBAC and optional chain API resources, which are nil when disabled
-// or not applicable.
+// for one CardanoNetwork. Every field is non-nil except optional chain API
+// resources, which are nil when disabled or not applicable.
 type primaryWorkloadResources struct {
-	NetworkPlan                     primaryNetworkPlan
-	NetworkArtifactsConfigMap       *corev1.ConfigMap
-	ArtifactPublisherServiceAccount *corev1.ServiceAccount
-	ArtifactPublisherRole           *rbacv1.Role
-	ArtifactPublisherRoleBinding    *rbacv1.RoleBinding
-	PersistentVolumeClaim           *corev1.PersistentVolumeClaim
-	Deployment                      *appsv1.Deployment
-	Service                         *corev1.Service
-	OgmiosService                   *corev1.Service
-	KupoService                     *corev1.Service
-	FaucetService                   *corev1.Service
-	ArtifactsService                *corev1.Service
-	FaucetAuthSecret                *corev1.Secret
-	DBSyncAttached                  bool
-}
-
-type localArtifactPublisherResources struct {
-	ServiceAccount *corev1.ServiceAccount
-	Role           *rbacv1.Role
-	RoleBinding    *rbacv1.RoleBinding
-	InitContainer  *corev1.Container
+	NetworkPlan           primaryNetworkPlan
+	PersistentVolumeClaim *corev1.PersistentVolumeClaim
+	Deployment            *appsv1.Deployment
+	Service               *corev1.Service
+	OgmiosService         *corev1.Service
+	KupoService           *corev1.Service
+	FaucetService         *corev1.Service
+	ArtifactsService      *corev1.Service
+	FaucetAuthSecret      *corev1.Secret
+	DBSyncAttached        bool
 }
 
 type chainAPISettings struct {
@@ -90,8 +77,6 @@ type primaryWorkloadBuilder struct {
 	acceptedIdentity acceptedNetworkIdentity
 
 	dbSyncAttachment *ctrldbsync.PrimarySidecarAttachment
-
-	publicCustomBundle *publicnet.CustomBundle
 }
 
 // Build composes the desired primary workload resources for the given
@@ -100,11 +85,10 @@ type primaryWorkloadBuilder struct {
 // The order of operations is:
 //  1. validate the spec into a runtime plan the planner can accept
 //  2. compute the network plan (fingerprint, paths, invocation args)
-//  3. build the artifact bundle (ConfigMap, and localnet-only RBAC)
-//  4. build the localnet cardano-testnet init container fragment
-//  5. resolve effective sidecar settings (ogmios/kupo/faucet) and run the
+//  3. build the localnet cardano-testnet create-env init container fragment
+//  4. resolve effective sidecar settings (ogmios/kupo/faucet) and run the
 //     cross-component validations
-//  6. assemble the Deployment, PVC, and Services
+//  5. assemble the Deployment, PVC, and Services
 //
 // Build returns an unsupportedSpecError when the spec is not satisfiable;
 // the reconciler surfaces that as a Degraded condition rather than retrying.
@@ -121,11 +105,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, err
 	}
 
-	networkArtifactsConfigMap, err := b.networkArtifactsConfigMap(network, networkPlan)
-	if err != nil {
-		return nil, err
-	}
-	artifactPublisher, err := b.localArtifactPublisherResources(network, networkPlan)
+	createEnvInitContainer, err := b.localCreateEnvInitContainer(network, networkPlan)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +114,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, err
 	}
 
-	deployment, err := b.deployment(network, networkPlan, artifactPublisher.InitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.Faucet)
+	deployment, err := b.deployment(network, networkPlan, createEnvInitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.Faucet)
 	if err != nil {
 		return nil, err
 	}
@@ -184,52 +164,34 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	}
 
 	return &primaryWorkloadResources{
-		NetworkPlan:                     networkPlan,
-		NetworkArtifactsConfigMap:       networkArtifactsConfigMap,
-		ArtifactPublisherServiceAccount: artifactPublisher.ServiceAccount,
-		ArtifactPublisherRole:           artifactPublisher.Role,
-		ArtifactPublisherRoleBinding:    artifactPublisher.RoleBinding,
-		PersistentVolumeClaim:           persistentVolumeClaim,
-		Deployment:                      deployment,
-		Service:                         service,
-		OgmiosService:                   ogmiosService,
-		KupoService:                     kupoService,
-		FaucetService:                   faucetService,
-		ArtifactsService:                artifactsService,
-		FaucetAuthSecret:                faucetAuthSecret,
-		DBSyncAttached:                  b.dbSyncAttachment != nil,
+		NetworkPlan:           networkPlan,
+		PersistentVolumeClaim: persistentVolumeClaim,
+		Deployment:            deployment,
+		Service:               service,
+		OgmiosService:         ogmiosService,
+		KupoService:           kupoService,
+		FaucetService:         faucetService,
+		ArtifactsService:      artifactsService,
+		FaucetAuthSecret:      faucetAuthSecret,
+		DBSyncAttached:        b.dbSyncAttachment != nil,
 	}, nil
 }
 
-func (b primaryWorkloadBuilder) localArtifactPublisherResources(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (localArtifactPublisherResources, error) {
+// localCreateEnvInitContainer builds the localnet cardano-testnet create-env
+// init container that generates the network environment on the node-state PVC.
+// It returns nil for non-local networks, which have no create-env step.
+func (b primaryWorkloadBuilder) localCreateEnvInitContainer(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (*corev1.Container, error) {
 	if !plan.isLocal() {
-		return localArtifactPublisherResources{}, nil
+		return nil, nil
 	}
 
-	serviceAccount, err := b.artifactPublisherServiceAccount(network)
-	if err != nil {
-		return localArtifactPublisherResources{}, err
-	}
-	role, err := b.artifactPublisherRole(network)
-	if err != nil {
-		return localArtifactPublisherResources{}, err
-	}
-	roleBinding, err := b.artifactPublisherRoleBinding(network)
-	if err != nil {
-		return localArtifactPublisherResources{}, err
-	}
 	localnetPlan := *plan.Localnet
 	initContainer, err := b.cardanoTestnetInitContainer(network, localnetPlan)
 	if err != nil {
-		return localArtifactPublisherResources{}, err
+		return nil, err
 	}
 
-	return localArtifactPublisherResources{
-		ServiceAccount: serviceAccount,
-		Role:           role,
-		RoleBinding:    roleBinding,
-		InitContainer:  &initContainer,
-	}, nil
+	return &initContainer, nil
 }
 
 func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) (chainAPISettings, error) {
@@ -310,7 +272,7 @@ func (b primaryWorkloadBuilder) networkPlan(network *yacdv1alpha1.CardanoNetwork
 		if err != nil {
 			return primaryNetworkPlan{}, unsupportedSpec("%v", err)
 		}
-		return publicPrimaryNetworkPlan(network, plan)
+		return publicPrimaryNetworkPlan(plan), nil
 	default:
 		return primaryNetworkPlan{}, unsupportedSpec("mode %q is not supported", network.Spec.Mode)
 	}
@@ -392,27 +354,11 @@ func (b primaryWorkloadBuilder) publicNetworkSpec(network *yacdv1alpha1.CardanoN
 
 	public := network.Spec.Public
 	switch public.Profile {
-	case yacdv1alpha1.PublicNetworkProfileCustom:
-		if public.Bootstrap != nil {
-			return publicnet.Spec{}, unsupportedSpec("public bootstrap is supported only for mainnet")
-		}
-		if public.ConfigSource == nil {
-			return publicnet.Spec{}, unsupportedSpec("public custom profile configSource is required")
-		}
-		if b.publicCustomBundle == nil {
-			return publicnet.Spec{}, unsupportedSpec("public custom profile source has not been resolved")
-		}
 	case yacdv1alpha1.PublicNetworkProfilePreview, yacdv1alpha1.PublicNetworkProfilePreprod:
 		if public.Bootstrap != nil {
 			return publicnet.Spec{}, unsupportedSpec("public bootstrap is supported only for mainnet")
 		}
-		if public.ConfigSource != nil {
-			return publicnet.Spec{}, unsupportedSpec("public configSource is supported only for custom profiles")
-		}
 	case yacdv1alpha1.PublicNetworkProfileMainnet:
-		if public.ConfigSource != nil {
-			return publicnet.Spec{}, unsupportedSpec("public configSource is supported only for custom profiles")
-		}
 		if public.Bootstrap == nil || public.Bootstrap.Mithril == nil {
 			return publicnet.Spec{}, unsupportedSpec("public mainnet profile requires spec.public.bootstrap.mithril")
 		}
@@ -425,10 +371,9 @@ func (b primaryWorkloadBuilder) publicNetworkSpec(network *yacdv1alpha1.CardanoN
 	bootstrap := publicBootstrapSpec(public)
 	return publicnet.Spec{
 		Profile:   string(public.Profile),
-		Custom:    b.publicCustomBundle,
 		Bootstrap: bootstrap,
 		Paths: publicnet.Paths{
-			ProfileDir: publicProfileMountDir,
+			ProfileDir: servedArtifactsDir,
 		},
 	}, nil
 }

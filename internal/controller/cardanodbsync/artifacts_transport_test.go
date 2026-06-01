@@ -6,7 +6,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	corev1 "k8s.io/api/core/v1"
 )
 
 // withServedArtifacts publishes a serve endpoint on a ready network so the
@@ -33,8 +32,8 @@ func TestDedicatedFollowerServePathFetchesOverHTTP(t *testing.T) {
 	dbSync := localCardanoDBSync("dbsync", network.Name)
 	secret := externalDatabaseSecretFor(dbSync)
 
-	// The serve path passes a nil ConfigMap; the bundle is fetched in-pod.
-	resources, err := builder.BuildForDatabase(dbSync, network, nil, secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
+	// The serve path fetches the bundle in-pod via the sync init container.
+	resources, err := builder.BuildForDatabase(dbSync, network, secret, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External))
 	require.NoError(t, err)
 
 	deployment := resources.Deployment
@@ -70,30 +69,9 @@ func TestDedicatedFollowerServePathFetchesOverHTTP(t *testing.T) {
 		assert.True(t, mount.ReadOnly)
 	}
 
-	// Identity still comes from the published content hash, unchanged by the
-	// transport swap.
-	assert.Equal(t, network.Status.Artifacts.DataHash, deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
-}
-
-// TestDedicatedFollowerConfigMapPathHasNoSyncInit verifies the custom-public
-// (no serve endpoint) path keeps the ConfigMap projection and adds no sync init.
-func TestDedicatedFollowerConfigMapPathHasNoSyncInit(t *testing.T) {
-	builder := newDBSyncWorkloadBuilder(t)
-	network := readyCardanoNetwork("ready-network") // no Artifacts endpoint
-	dbSync := localCardanoDBSync("dbsync", network.Name)
-	secret := externalDatabaseSecretFor(dbSync)
-
-	resources, err := builder.Build(dbSync, network, artifactConfigMapFor(network), secret)
-	require.NoError(t, err)
-
-	deployment := resources.Deployment
-	artifactsVolume := requireVolume(t, deployment, networkArtifactsVolumeName)
-	require.NotNil(t, artifactsVolume.ConfigMap, "ConfigMap path projects the network-artifacts ConfigMap")
-	assert.Equal(t, network.Name+"-network-artifacts", artifactsVolume.ConfigMap.Name)
-	assert.Nil(t, artifactsVolume.EmptyDir)
-
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 1)
-	assert.Equal(t, dbSyncPGPassInitName, deployment.Spec.Template.Spec.InitContainers[0].Name, "no sync init on the ConfigMap path")
+	// Identity still comes from the published network fingerprint, unchanged by
+	// the transport swap.
+	assert.Equal(t, networkIdentityFingerprint(network), deployment.Spec.Template.Annotations[dbSyncArtifactDataHashAnno])
 }
 
 // TestPrimarySidecarServePathMountsStagedPVC verifies a serve-path attachment
@@ -122,35 +100,4 @@ func TestPrimarySidecarServePathMountsStagedPVC(t *testing.T) {
 	for _, volume := range attachment.Volumes {
 		assert.NotEqual(t, networkArtifactsVolumeName, volume.Name, "serve path appends no network-artifacts volume; it reuses the primary state volume")
 	}
-}
-
-// TestPrimarySidecarConfigMapPathMountsConfigMap verifies the custom-public
-// attachment keeps the ConfigMap volume and the default mount.
-func TestPrimarySidecarConfigMapPathMountsConfigMap(t *testing.T) {
-	network := readyCardanoNetwork("ready-network") // no Artifacts endpoint
-	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", network.Name))
-
-	resources := PrimarySidecarAttachmentResources{
-		NetworkArtifactsConfigMapName: network.Name + "-network-artifacts",
-		ConfigMapName:                 "dbsync-dbsync-config",
-		PGPassSecretName:              "dbsync-dbsync-pgpass",
-		StatePVCName:                  "dbsync-dbsync-state",
-		Revision:                      "rev-1",
-	}
-	attachment, err := BuildPrimarySidecarAttachment(dbSync, network, dbSyncDatabaseFromExternal(dbSync.Spec.Database.External), resources)
-	require.NoError(t, err)
-
-	var artifactsVolume *corev1.Volume
-	for i := range attachment.Volumes {
-		if attachment.Volumes[i].Name == networkArtifactsVolumeName {
-			artifactsVolume = &attachment.Volumes[i]
-		}
-	}
-	require.NotNil(t, artifactsVolume, "ConfigMap path appends a network-artifacts volume")
-	require.NotNil(t, artifactsVolume.ConfigMap)
-	assert.Equal(t, network.Name+"-network-artifacts", artifactsVolume.ConfigMap.Name)
-
-	mount := requireVolumeMount(t, attachment.Container, networkArtifactsVolumeName)
-	assert.Equal(t, networkArtifactsMountDir, mount.MountPath)
-	assert.Empty(t, mount.SubPath)
 }

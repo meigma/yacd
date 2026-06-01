@@ -33,11 +33,6 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 			Name:      "localnet-state",
 			MountPath: "/state",
 		},
-		{
-			Name:      artifactPublisherTokenVolumeName,
-			MountPath: artifactPublisherServiceAccountMountDir,
-			ReadOnly:  true,
-		},
 	}, container.VolumeMounts)
 
 	env := envMap(container)
@@ -45,14 +40,6 @@ func TestLocalnetCreateEnvInitContainerBuildsFragment(t *testing.T) {
 	assert.Equal(t, "/state/env/configuration.yaml", env["YACD_LOCALNET_CONFIG_FILE"])
 	assert.Equal(t, "/state/env/yacd-localnet-plan.json", env["YACD_LOCALNET_PLAN_MANIFEST_FILE"])
 	assert.NotEmpty(t, env["YACD_LOCALNET_PLAN_MANIFEST"])
-	assert.Equal(t, "devnet-network-artifacts", env["YACD_ARTIFACT_CONFIGMAP_NAME"])
-	assert.Equal(t, "devnet", env["YACD_CARDANO_NETWORK_NAME"])
-	assert.Equal(t, "default", env["YACD_CARDANO_NETWORK_NAMESPACE"])
-	assert.Equal(t, "local", env["YACD_CARDANO_NETWORK_MODE"])
-	assert.Equal(t, "conway", env["YACD_CARDANO_NETWORK_ERA"])
-	assert.Equal(t, "devnet-node.default.svc.cluster.local", env["YACD_CARDANO_NODE_TO_NODE_HOST"])
-	assert.Equal(t, "3001", env["YACD_CARDANO_NODE_TO_NODE_PORT"])
-	assert.Equal(t, "tcp://devnet-node.default.svc.cluster.local:3001", env["YACD_CARDANO_NODE_TO_NODE_URL"])
 
 	assertRestrictedContainerSecurityContext(t, container.SecurityContext)
 }

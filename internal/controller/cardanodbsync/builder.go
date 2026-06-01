@@ -7,7 +7,6 @@ import (
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/internal/cardano/dbsync"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
-	ctrlnetworkartifacts "github.com/meigma/yacd/internal/controller/networkartifacts"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -148,12 +147,6 @@ type dbSyncWorkloadBuilder struct {
 	// no subPath.
 	artifactsVolumeOverride string
 	artifactsSubPath        string
-
-	// networkConnection is the parsed connection.json identity from the
-	// referenced CardanoNetwork artifact bundle. Nil selects the status-derived
-	// identity path used by primary-sidecar attachment rendering and by the
-	// serve path, where the controller no longer reads connection.json.
-	networkConnection *ctrlnetworkartifacts.Connection
 }
 
 // artifactsMount returns the VolumeMount the db-sync and follower-node
@@ -182,7 +175,6 @@ func (b dbSyncWorkloadBuilder) artifactsMount() corev1.VolumeMount {
 func (b dbSyncWorkloadBuilder) Build(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	networkArtifacts *corev1.ConfigMap,
 	externalDatabaseSecret *corev1.Secret,
 ) (*dbSyncWorkloadResources, error) {
 	if dbSync == nil {
@@ -193,7 +185,7 @@ func (b dbSyncWorkloadBuilder) Build(
 		return nil, unsupportedSpec("external database spec is required")
 	}
 
-	return b.BuildForDatabase(dbSync, network, networkArtifacts, externalDatabaseSecret, dbSyncDatabaseFromExternal(external))
+	return b.BuildForDatabase(dbSync, network, externalDatabaseSecret, dbSyncDatabaseFromExternal(external))
 }
 
 // BuildForDatabase renders the dbsync workload resources for an arbitrary
@@ -213,7 +205,6 @@ func (b dbSyncWorkloadBuilder) Build(
 func (b dbSyncWorkloadBuilder) BuildForDatabase(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	networkArtifacts *corev1.ConfigMap,
 	databaseSecret *corev1.Secret,
 	database dbsync.Database,
 ) (*dbSyncWorkloadResources, error) {
@@ -223,11 +214,10 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 	if network == nil {
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
-	// On the serve path the artifacts are fetched over HTTP by the sync init
-	// container, so no ConfigMap is mounted; the ConfigMap is required only for
-	// the legacy custom-public path.
-	if networkArtifacts == nil && strings.TrimSpace(b.servedArtifactsURL) == "" {
-		return nil, fmt.Errorf("network artifacts ConfigMap is required")
+	// Artifacts are fetched over HTTP by the sync init container from the
+	// referenced network's serve endpoint, so the serve URL is required.
+	if strings.TrimSpace(b.servedArtifactsURL) == "" {
+		return nil, fmt.Errorf("network artifacts serve endpoint is required")
 	}
 	if databaseSecret == nil {
 		return nil, fmt.Errorf("database credential Secret is required")
@@ -261,7 +251,7 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 	if err != nil {
 		return nil, err
 	}
-	deployment, err := b.deployment(dbSync, network, networkArtifacts, databaseSecret, plan)
+	deployment, err := b.deployment(dbSync, network, databaseSecret, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +286,6 @@ func (b dbSyncWorkloadBuilder) BuildForDatabase(
 func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	networkArtifacts *corev1.ConfigMap,
 	databaseSecret *corev1.Secret,
 	database dbsync.Database,
 ) (*primarySidecarDBSyncResources, error) {
@@ -307,12 +296,11 @@ func (b dbSyncWorkloadBuilder) BuildPrimarySidecarForDatabase(
 		return nil, fmt.Errorf("cardanonetwork is required")
 	}
 	// The primary-sidecar artifacts mount is composed by CardanoNetwork (it
-	// owns the primary Pod), so this builder consumes the ConfigMap only as a
-	// presence guard for the legacy custom-public path. On the serve path the
-	// sidecar mounts the staged PVC subdirectory instead, so no ConfigMap is
-	// required.
-	if networkArtifacts == nil && strings.TrimSpace(b.servedArtifactsURL) == "" {
-		return nil, fmt.Errorf("network artifacts ConfigMap is required")
+	// owns the primary Pod); the sidecar mounts the staged PVC subdirectory.
+	// The serve endpoint URL is still required so the database identity and
+	// follower-node fetch are resolvable.
+	if strings.TrimSpace(b.servedArtifactsURL) == "" {
+		return nil, fmt.Errorf("network artifacts serve endpoint is required")
 	}
 	if databaseSecret == nil {
 		return nil, fmt.Errorf("database credential Secret is required")
@@ -377,20 +365,11 @@ func (b dbSyncWorkloadBuilder) dbSyncPlanSpec(dbSync *yacdv1alpha1.CardanoDBSync
 	if nodeVersion == "" && (dbSync.Spec.FollowerNode == nil || dbSync.Spec.FollowerNode.Image == nil) {
 		return dbsync.Spec{}, unsupportedSpec("network node version is required to derive follower node image")
 	}
-	networkArtifactHash := ""
-	if network.Status.Artifacts != nil {
-		networkArtifactHash = network.Status.Artifacts.DataHash
-	}
+	networkArtifactHash := networkIdentityFingerprint(network)
 	networkName := network.Name
 	requiresNetworkMagic := true
 	nodeToNodeHost := fmt.Sprintf("%s.%s.svc.cluster.local", network.Status.Endpoints.NodeToNode.ServiceName, network.Namespace)
 	nodeToNodePort := network.Status.Endpoints.NodeToNode.Port
-	if b.networkConnection != nil {
-		networkName = b.networkConnection.NetworkName
-		requiresNetworkMagic = b.networkConnection.RequiresNetworkMagic
-		nodeToNodeHost = b.networkConnection.NodeToNodeHost
-		nodeToNodePort = b.networkConnection.NodeToNodePort
-	}
 
 	return dbsync.Spec{
 		NetworkName:          networkName,
