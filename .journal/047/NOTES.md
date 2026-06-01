@@ -114,3 +114,29 @@ State: feat has 6 commits (sync cmd, controller rewire, sidecar-spec fix, lint,
 chainsaw assert, genesis enrich). Targeted suites all green (cardanodbsync,
 cardanonetwork, cardano-tools, stage). e2e #2 re-running in background from the
 feat worktree (rebuilds cardano-tools from source). After green: push + PR.
+
+## 2026-05-31 21:15 — PR-C green, ready for review
+e2e #2 PASSED (chainsaw manager-smoke green, 0 db-sync errors — the genesis
+enrichment fixed the ByronGenesisHash failure; my HTTP-transport assertion held).
+Pushed PR #77 (https://github.com/meigma/yacd/pull/77).
+
+CI: e2e + cardano-tools-image + Kusari green first try; the RBAC test PASSED in CI
+(confirming the local failure is purely the proto-shim artifact — do not chase it).
+Only red was the documented load-sensitive flake
+`TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync` — failed 3x in a
+row (each ~17-18s hitting tight 10s Eventually waits), exceeding the prior
+"2x-then-green" pattern. Verified NOT my bug: passed 5x locally in isolation + 2x
+in full suite; my change adds zero reconcile latency to that path. User chose
+(AskUserQuestion) to BUNDLE the de-flake into PR-C. Committed `ee06df5`: bumped the
+8 in-scope `10*time.Second` Eventually waits (the attachment test 668-868 + its two
+deployment-assertion helpers 882-923) to `time.Minute`; left the other 46 in sibling
+tests untouched. Fresh full CI after the push: **ALL GREEN** (ci 4m45s, e2e 8m17s,
+cardano-tools-image, Kusari).
+
+PR #77 = 7 commits, ready for review/merge. NOT merging (PR review is the
+integration path; user merges). REMAINING F0 after this: PR-B (node reads PVC +
+DELETE the ConfigMap = the mainnet unblock; also migrate db-sync identity off
+Status.Artifacts.DataHash), then PR-D (remove report verb, pin manager
+cardano-tools image to a published sync-capable digest, drop the e2e build+load
+hack, DESIGN.md + chainsaw ConfigMap-shape rewrite). The flake is now de-flaked in
+PR-C, so the TECH_NOTES KNOWN-FLAKE entry can be retired once #77 merges.
