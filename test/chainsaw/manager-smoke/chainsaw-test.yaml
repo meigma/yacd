@@ -522,6 +522,17 @@ spec:
                 kubectl get cardanodbsync -n yacd-smoke phase6-managed -o yaml || true
                 sleep 5
               done
+              # F0 PR-C: the dedicated follower fetches the network artifacts
+              # over HTTP through a sync init container into an emptyDir, rather
+              # than mounting the network-artifacts ConfigMap. Lock that so a
+              # regression back to the ConfigMap transport is caught here.
+              sync_init="$(kubectl get deployment -n yacd-smoke phase6-managed-dbsync -o jsonpath='{.spec.template.spec.initContainers[?(@.name=="network-artifacts-sync")].name}' 2>/dev/null || true)"
+              artifacts_cm="$(kubectl get deployment -n yacd-smoke phase6-managed-dbsync -o jsonpath='{.spec.template.spec.volumes[?(@.name=="network-artifacts")].configMap.name}' 2>/dev/null || true)"
+              if [ "${sync_init}" != "network-artifacts-sync" ] || [ -n "${artifacts_cm}" ]; then
+                echo "expected phase6-managed-dbsync to fetch artifacts over HTTP (sync init present, no ConfigMap volume)"
+                kubectl get deployment -n yacd-smoke phase6-managed-dbsync -o yaml || true
+                exit 1
+              fi
               db_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.dbBlockHeight}' 2>/dev/null || true)"
               node_block="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.nodeBlockHeight}' 2>/dev/null || true)"
               lag_blocks="$(kubectl get cardanodbsync -n yacd-smoke phase6-managed -o jsonpath='{.status.sync.lagBlocks}' 2>/dev/null || true)"
