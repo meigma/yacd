@@ -140,3 +140,49 @@ Status.Artifacts.DataHash), then PR-D (remove report verb, pin manager
 cardano-tools image to a published sync-capable digest, drop the e2e build+load
 hack, DESIGN.md + chainsaw ConfigMap-shape rewrite). The flake is now de-flaked in
 PR-C, so the TECH_NOTES KNOWN-FLAKE entry can be retired once #77 merges.
+
+## 2026-06-01 06:59 — PR-C MERGED; PR-B planned+approved; PR-B1 implementation started
+PR-C merged: PR #77 squash `231ccde` on master; PR-C worktree removed; master
+fast-forwarded. (CI: e2e+image+Kusari green; the known sidecar-attachment flake was
+de-flaked IN PR-C after failing 3x — see `ee06df5`.)
+
+PR-B planned + **approved** (plan file:
+/Users/josh/.claude/plans/please-propose-a-plan-quiet-sutton.md). Two decisions locked
+with the user:
+1. **Scope expanded: REMOVE custom-public entirely.** It's the ConfigMap's last
+   consumer once local+curated read from the PVC, so removing it deletes the ConfigMap
+   concept ENTIRELY (no mode-gating; mostly deletions; net less work). YACD then
+   supports only local + curated-public (preview/preprod/mainnet).
+2. **Split**: PR-B1 = operator logic + API (no image rebuild); PR-B2 = delete the
+   publisher binary/nested-module + Dockerfile stage + new cardano-testnet image.
+3. **db-sync identity churn accepted** (network fingerprint replaces the deleted
+   ConfigMap DataHash; one-time UnsupportedDatabaseIdentityChange, documented).
+
+ADVERSARIAL FINDINGS (must address in PR-B1): the ConfigMap is the controller's only
+window into artifact CONTENT for THREE signals that silently break when it's gone:
+(1) `ArtifactsReady` cond (db-sync gates on it; set only via ProducerConfigMap),
+(2) `Status.Sync` timing (sync_probe reads shelley-genesis from the ConfigMap),
+(3) `DataHash` (db-sync identity + pod-roll; PR-C nil-derefs Status.Artifacts on the
+serve path). RE-SOURCING (single-path, my refinement vs the plan's "add timing to
+Status.Network"): the **sync_probe should FETCH shelley-genesis.json from the serve
+endpoint** (`status.endpoints.artifacts.url`) — reuses `parseShelleyGenesisTiming`,
+needs NO new API field, and avoids the local-systemStart-unknown problem (create-env
+sets systemStart in-pod). ArtifactsReady → from served-artifacts/serve readiness.
+Identity → `Status.Network.NetworkFingerprint`/`LocalnetFingerprint`. Also: dropping
+RBAC markers REQUIRES dropping the `.Owns()` watches; curated-public ogmios needs a NEW
+`/state/artifacts` PVC mount; the Dockerfile publisher stage is PR-B2.
+
+STATE: branch `feat/f0-delete-network-configmap` (off master 231ccde), worktree
+`.wt/feat-f0-delete-network-configmap`. **Tree is NON-COMPILING (mid-implementation).**
+DONE: API removals in `api/v1alpha1/cardanonetwork_types.go` (PublicNetworkProfileCustom,
+NetworkConfigSource, PublicNetworkSpec.ConfigSource + its CEL, Status.Artifacts +
+CardanoNetworkArtifactsStatus struct — NO timing fields added, by design). STARTED:
+`internal/cardano/publicnet/plan.go` BuildPlan custom branch removed. REMAINING (per the
+approved plan, ~23-file cascade): finish publicnet (consts/case/SupportedCustomProfileKeys/
+customArtifacts/validateCustomFile + types.go Custom/CustomBundle); networkartifacts
+delete Producer*/Consumer* (keep Manifest); cardanonetwork delete ConfigMap+publisher+RBAC+
+.Owns, repoint curated-public node+ogmios to /state/artifacts, re-source ArtifactsReady +
+sync-probe serve-fetch; cardanodbsync single-path serve + fingerprint identity (delete the
+PR-C ConfigMap fallback); cli/devconfig drop custom validation; rbac chart mirror; chainsaw;
+delete custom tests + add no-ConfigMap envtest; root:generate; e2e. RESUME by executing the
+approved plan (consider `git restore` the 2 partial files for a clean single-pass start).
