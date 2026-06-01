@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.1.0-yacd.4](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.4...cardano-testnet/v11.1.0-yacd.4) (2026-06-01)
+
+
+### Features
+
+* **cardanodbsync:** probe dbsync progress ([#31](https://github.com/meigma/yacd/issues/31)) ([de42f99](https://github.com/meigma/yacd/commit/de42f995ccc0226578ba7e2a158beedaf5302e24))
+
 ## [11.0.1-yacd.4](https://github.com/meigma/yacd/compare/cardano-testnet/v11.0.1-yacd.3...cardano-testnet/v11.0.1-yacd.4) (2026-05-25)
 
 
