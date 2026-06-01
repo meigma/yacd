@@ -599,3 +599,14 @@ func syncedNodeSyncProber() cardanoNetworkSyncProber {
 		}, nil
 	})
 }
+
+// syncedNodeTimingProber returns deterministic Shelley genesis timing for the
+// manager-backed envtests. Without it the reconciler falls back to the default
+// timing prober, which HTTP-GETs shelley-genesis.json from the (non-existent in
+// envtest) serve endpoint on every applied-status reconcile and blocks until the
+// probe context times out, serializing and starving reconciles under load.
+func syncedNodeTimingProber() cardanoNetworkTimingProber {
+	return cardanoNetworkTimingProberFunc(func(context.Context, string) (cardanoNetworkTiming, error) {
+		return cardanoNetworkTiming{SystemStart: time.Now(), SlotLengthSeconds: 1}, nil
+	})
+}

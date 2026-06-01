@@ -53,11 +53,12 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	require.NoError(t, err)
 	envtestNow := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		Now:                func() time.Time { return envtestNow },
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		Now:                  func() time.Time { return envtestNow },
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -378,10 +379,11 @@ func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.
 	})
 	require.NoError(t, err)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -500,10 +502,11 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	})
 	require.NoError(t, err)
 	require.NoError(t, (&CardanoNetworkReconciler{
-		Client:             mgr.GetClient(),
-		Reader:             mgr.GetAPIReader(),
-		Scheme:             mgr.GetScheme(),
-		syncProberOverride: syncedNodeSyncProber(),
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
 	}).SetupWithManager(mgr))
 	require.NoError(t, (&ctrldbsync.CardanoDBSyncReconciler{
 		Client: mgr.GetClient(),
