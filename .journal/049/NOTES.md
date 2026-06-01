@@ -116,3 +116,22 @@ for the user (verb name; wallet sequencing; up targeting precedence; defer
 
 NEXT: paused for user review of the proposal. Open decisions in §13 await the
 user's calls before any implementation.
+
+## 2026-06-01 — Review round 1 (decisions)
+
+User reviewing the proposal incrementally:
+- DROPPED the proposed `yacd query tip` verb. Querying stays `yacd exec NAME --
+  cardano-cli …`; `devnet`/`up`/`info` print a copy-pasteable exec hint with the
+  network magic interpolated from published status (no hard-coded 42). `info`
+  remains the structured-status inspector. (Committed bd0ef55.)
+- DECIDED the all-in-one verb's network model: `yacd devnet` takes **NO name** —
+  zero-config, ensures the SINGLETON cluster (k3d-yacd) + operator + one default
+  network named "devnet". Additional networks via existing `yacd up NAME -f FILE`;
+  `yacd down NAME` removes one network; `yacd devnet down` tears down the whole
+  cluster. There is exactly ONE managed cluster; cluster-per-network is out of
+  scope (would need a future `--cluster` opt-in). `devnet` is flag-light/zero-
+  config; custom-spec networks use `up -f`. Doc §4/§5 updated.
+
+Still open (§13): verb name (devnet vs dev/quickstart/start); funded-wallet
+sequencing; up targeting precedence; defer `cluster` nouns (now effectively
+yes — folded into devnet/devnet down/status); ephemeral-by-default.

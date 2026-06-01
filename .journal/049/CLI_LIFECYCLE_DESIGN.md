@@ -90,8 +90,11 @@ Two layers, deliberately distinct:
   networks.** (Not cluster-per-network — that is wasteful and contradicts the
   operator's namespaced-CRD, shared-cluster design.)
 
-The all-in-one verb manages *both* layers in one shot. The existing primitives
-(`up`, `down`, `info`, …) manage *networks* within whatever cluster they target.
+`yacd devnet` brings up the cluster (if absent) plus a single default network in
+one shot — it does not name or multiply the cluster. The existing primitives
+(`up`, `down`, `info`, …) manage *networks* within whatever cluster they target,
+so adding a second/third network is `yacd up NAME -f FILE` against the same
+managed cluster.
 
 ## 5. Command surface (recommended)
 
@@ -104,9 +107,19 @@ behavior.
 
 | Command | Purpose |
 |---|---|
-| `yacd devnet [NAME] [-f FILE]` | The all-in-one. Idempotently: ensure cluster → ensure/upgrade operator → apply network (embedded **default local devnet** if no `-f`; `NAME` defaults to `devnet`) → wait Ready → print endpoints + funded wallet + next steps. The **only** verb that provisions a cluster. Always uses the managed kubeconfig. |
-| `yacd devnet down [NAME]` | Inverse: delete the k3d cluster (and its operator, networks, managed-kubeconfig context) in one shot. Warns that ephemeral chain data is discarded; `--keep-data` to preserve a bind-mounted host dir. |
-| `yacd devnet status [NAME]` | One view of the hidden layer: Docker reachable? k3d binary present + pinned version? cluster up? operator version + Ready? network endpoints? The single place a confused user (or support) sees what yacd put on the machine. |
+| `yacd devnet` | The all-in-one, zero-config. Takes **no** name. Idempotently: ensure the **singleton** cluster → ensure/upgrade operator → apply the embedded **default local devnet** network (named `devnet`) → wait Ready → print endpoints + funded wallet + next steps. The **only** verb that provisions a cluster. Always uses the managed kubeconfig. |
+| `yacd devnet down` | Inverse: delete the k3d cluster (and its operator, **all** networks, managed-kubeconfig context) in one shot. Warns that ephemeral chain data is discarded; `--keep-data` to preserve a bind-mounted host dir. |
+| `yacd devnet status` | One view of the hidden layer: Docker reachable? k3d binary present + pinned version? cluster up? operator version + Ready? networks + endpoints? The single place a confused user (or support) sees what yacd put on the machine. |
+
+**Exactly one managed cluster.** There is no per-name cluster — `devnet` neither
+takes nor implies a cluster name (the context is always `k3d-yacd`). The default
+network it creates is named `devnet`. **Additional networks** beyond the default
+go through the existing `yacd up NAME -f FILE` (which targets the managed cluster
+via the precedence in §7); `yacd down NAME` removes a single network and leaves
+the cluster. So `devnet` is the bootstrap/fast path; `up`/`down` are the
+incremental network primitives within the one cluster. (Custom-spec networks use
+`up -f`; `devnet` itself is intentionally flag-light and zero-config. Isolated
+clusters-per-network are explicitly out of scope — see §4.)
 
 **No new `query` verb.** Querying the chain is done with the existing `yacd exec
 NAME -- cardano-cli …`; yacd's job is to *surface the correct command* in
