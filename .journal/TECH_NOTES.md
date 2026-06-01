@@ -274,24 +274,25 @@
   `network-artifacts-sync` init (emptyDir) for dedicatedFollower, a staged-PVC subPath
   mount for primarySidecar; `cardano-tools stage` now enriches `configuration.yaml`
   genesis hashes (db-sync needs them); custom-public still used the ConfigMap.
-  **REMAINING — PR-B (next) scope CHANGED (session 047, user-approved; full plan banked
-  at `.journal/047/PR-B1-PLAN.md`): REMOVE custom-public ENTIRELY**, which deletes the
-  `<net>-network-artifacts` ConfigMap concept outright (custom-public is its last
-  consumer) instead of mode-gating it. **PR-B1** = operator logic + API: drop the API
-  `profile: custom` + `NetworkConfigSource` + `Status.Artifacts`; delete the ConfigMap
-  producer/publisher/artifact-publisher RBAC + the custom-source machinery
-  (`public_profile_source.go`, publicnet `CustomBundle`); repoint curated-public node
-  **and ogmios** to read `/state/artifacts`; **re-source the 3 ConfigMap-coupled signals**
-  — `ArtifactsReady` (from serve readiness), **sync-timing (the probe FETCHES
-  shelley-genesis.json from the serve endpoint** — no new API field; avoids the
-  local-systemStart-unknown problem), and db-sync identity (→ `Status.Network.NetworkFingerprint`,
-  a one-time accepted `UnsupportedDatabaseIdentityChange` churn); mirror the RBAC marker
-  drop in `charts/yacd/templates/rbac-manager.yaml`; db-sync becomes single-path serve
-  (delete the PR-C ConfigMap fallback). YACD then supports only local + curated-public.
-  **PR-B2** = delete the publisher binary/nested-module + Dockerfile stage + new
-  cardano-testnet image. **PR-D** = remove `report` verb + pin the manager cardano-tools
-  image to a published digest (PR-A opened release-please PR #76) + DESIGN.md + drop the
-  e2e build+load hack.
+  **PR-B1 (session 048, PR #78, `606d800`) + PR-B2 (session 048, PR #79, `22a5e8f`) are
+  DONE+merged.** PR-B1 removed the `<net>-network-artifacts` ConfigMap concept and
+  custom-public ENTIRELY: dropped API `profile: custom` + `NetworkConfigSource` +
+  `Status.Artifacts`; deleted the ConfigMap producer/publisher/artifact-publisher RBAC +
+  `public_profile_source.go` + publicnet `CustomBundle`; repointed curated-public node
+  **and ogmios** to read `/state/artifacts`; re-sourced `ArtifactsReady` (serve-container
+  readiness via `primaryArtifactsReadyCondition`), **sync-timing (the probe HTTP-fetches
+  shelley-genesis.json from `status.endpoints.artifacts.url`** via a `cardanoNetworkTimingProber`
+  seam — no new API field), and db-sync identity (→ `Status.Network` fingerprint selected
+  by Mode via `networkIdentityFingerprint`, a one-time accepted
+  `UnsupportedDatabaseIdentityChange`); db-sync is single-path serve. YACD now supports
+  only local + curated-public. PR-B2 deleted the dead `cardano-testnet` artifact publisher
+  (nested module + `yacd-cardano-testnet-publisher` wrapper cmd + `internal/artifactpublisher`
+  + the Dockerfile publisher stage + the init-wrapper `publish_artifacts`) and bumped the
+  manager default cardano-testnet revision yacd.4→yacd.5; a follow-up (PR #80, `7c13d14`)
+  pinned the next release to `11.0.1-yacd.5` (see the cardano-testnet versioning bullet).
+  **REMAINING — PR-D** = remove the cardano-tools `report` verb + pin the manager
+  cardano-tools image to a published digest (release-please PR #76) + DESIGN.md rewrite +
+  drop the e2e build+load hack.
 - Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
   slice. The default Mithril client image is
   `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot
@@ -308,10 +309,29 @@
   uses tags like `cardano-testnet/v11.0.1-yacd.1`; the OCI image tag is the
   full `11.0.1-yacd.1`, while the release workflow strips the `-yacd.N` suffix
   to download upstream Cardano artifacts.
-- The current published artifact-capable tools image is
-  `ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4`. Future packaging-only
-  fixes should bump `yacd.N`; future upstream Cardano bumps should move the
-  base version and reset the YACD packaging revision.
+- The cardano-testnet image's artifact PUBLISHER is GONE (session 048, PR-B2):
+  no more `publisher` nested module / `yacd-cardano-testnet-publisher` binary /
+  `internal/artifactpublisher` / Dockerfile publisher stage / init-wrapper
+  `publish_artifacts`. The image now ships only cardano-node/cli/testnet + the
+  `yacd-cardano-testnet-init` create-env wrapper. The last PUBLISHED tag is still
+  `11.0.1-yacd.4` (with the publisher); the manager default is now `yacd.5`
+  (publisher-free), and release-please PR #34 (`cardano-testnet 11.0.1-yacd.5`) is
+  the pending release that, when merged, cuts+publishes the slimmer image.
+- **cardano-testnet versioning convention** (documented in
+  `containers/cardano-testnet/README.md`, session 048): the image tag is
+  `<cardano-node-version>-yacd.<N>`. The base MUST equal the packaged cardano-node
+  version (the release workflow downloads cardano-node at the base; the manager
+  computes the image ref as `<node version>-yacd.N`). release-please derives the
+  next version from Conventional-Commit semver, which DRIFTS the base (a `feat`
+  made it 11.1.0, a breaking `!` made it 12.0.0). So each cardano-testnet release
+  MUST set its exact version with a `Release-As:` footer on the squash commit
+  (packaging-only → `<same node version>-yacd.<N+1>`; cardano-node bump →
+  `<new version>-yacd.0`); a footer on a commit touching only
+  `containers/cardano-testnet/` scopes to that component (verified: PR #80's
+  `Release-As: 11.0.1-yacd.5` fixed PR #34 without disturbing root #7 / cardano-tools
+  #76). When bumping `yacd.N`, also update `cardanoTestnetImageRevision`
+  (cardanonetwork/init_container.go), `defaultFollowerNodeImageRevision`
+  (cardanodbsync/defaults.go), and the kind-loaded tag in `.dev/scripts/test-e2e.sh`.
 - The IOG cardano-node 11.0.1 Linux release binaries are **fully static musl**
   builds (GHC 9.6.7): `ldd` says "not a dynamic executable", no `PT_INTERP`/
   `PT_DYNAMIC`/`GLIBC_` symbols, and the tarball has zero `.so` files. So any
