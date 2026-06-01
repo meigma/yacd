@@ -16,7 +16,7 @@ import (
 
 const (
 	cardanoTestnetImageRepository = "ghcr.io/meigma/yacd/cardano-testnet"
-	cardanoTestnetImageRevision   = "yacd.4"
+	cardanoTestnetImageRevision   = "yacd.5"
 
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	mithrilBootstrapInitContainerName    = "mithril-bootstrap"

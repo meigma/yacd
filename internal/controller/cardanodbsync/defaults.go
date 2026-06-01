@@ -14,7 +14,7 @@ const (
 	// defaultFollowerNodeImageRevision is the YACD packaging revision
 	// appended to the cardano-node version tag when the spec does not
 	// override the follower-node image.
-	defaultFollowerNodeImageRevision = "yacd.4"
+	defaultFollowerNodeImageRevision = "yacd.5"
 
 	// defaultFollowerNodeStorageSize is the requested PVC size for the
 	// follower node state volume when the CardanoDBSync spec does not

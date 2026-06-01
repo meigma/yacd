@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.19.0@sha256:b6afd42430b15f2d2a4c5a02b919e98a525b785b1aaff16747d2f623364e39b6
 
 ARG CARDANO_NODE_VERSION=11.0.1
-ARG YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.4
+ARG YACD_CARDANO_TESTNET_VERSION=11.0.1-yacd.5
 
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS fetch
 
@@ -33,28 +33,6 @@ RUN case "${TARGETARCH}" in \
     test -x /out/bin/cardano-cli; \
     test -x /out/bin/cardano-node
 
-FROM --platform=$BUILDPLATFORM golang:1.26.3-bookworm@sha256:386d475a660466863d9f8c766fec64d7fdad3edac2c6a05020c09534d71edb4b AS publisher
-
-ARG TARGETARCH
-ARG TARGETOS=linux
-ARG YACD_PUBLISHER_VERSION=dev
-ARG YACD_PUBLISHER_COMMIT=none
-ARG YACD_PUBLISHER_DATE=unknown
-
-WORKDIR /src
-
-COPY publisher/go.mod publisher/go.sum ./
-RUN go mod download
-
-COPY publisher/cmd ./cmd
-COPY publisher/internal ./internal
-
-RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
-    go build -trimpath \
-      -ldflags "-X main.version=${YACD_PUBLISHER_VERSION} -X main.commit=${YACD_PUBLISHER_COMMIT} -X main.date=${YACD_PUBLISHER_DATE}" \
-      -o /out/bin/yacd-cardano-testnet-publisher ./cmd; \
-    test -x /out/bin/yacd-cardano-testnet-publisher
-
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb
 
 ARG CARDANO_NODE_VERSION
@@ -74,7 +52,6 @@ RUN groupadd --gid 10001 cardano \
     && chown cardano:cardano /state
 
 COPY --from=fetch /out/bin /opt/cardano/bin
-COPY --from=publisher /out/bin/yacd-cardano-testnet-publisher /opt/yacd/bin/yacd-cardano-testnet-publisher
 COPY --chmod=0555 yacd-cardano-testnet-init /opt/yacd/bin/yacd-cardano-testnet-init
 
 ENV PATH="/opt/yacd/bin:/opt/cardano/bin:${PATH}" \

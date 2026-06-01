@@ -32,8 +32,6 @@ YACD is currently a development-environment operator. The Helm chart installs
 the manager with a cluster-scoped role so it can watch `CardanoNetwork`
 resources and owned runtime children across namespaces. Treat the manager
 ServiceAccount as trusted cluster automation for YACD-managed namespaces.
-Per-network artifact publisher ServiceAccounts are narrower: each publisher can
-only get and patch its own network artifact ConfigMap.
 
 Namespace-scoped manager mode is a future hardening path, not part of the first
 localnet/db-sync prototype.
