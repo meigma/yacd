@@ -2,6 +2,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrldbsync "github.com/meigma/yacd/internal/controller/cardanodbsync"
@@ -100,7 +101,29 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 			),
 		}, nil
 	}
-	if network.Status.Artifacts == nil || network.Status.Artifacts.NetworkConfigMapName == "" {
+	resources := ctrldbsync.PrimarySidecarAttachmentResources{
+		ConfigMapName:    sidecarStatus.Resources.ConfigMapName,
+		PGPassSecretName: sidecarStatus.Resources.PGPassSecretName,
+		StatePVCName:     sidecarStatus.Resources.StatePVCName,
+		Revision:         sidecarStatus.Revision,
+	}
+	switch {
+	case stagesServedArtifacts(network):
+		// Serve path (local + curated-public): the served-artifacts init
+		// container stages the bundle into servedArtifactsDir on the primary
+		// node-state PVC, which the primary Pod mounts. The sidecar mounts that
+		// shared volume at the artifacts subdirectory rather than a ConfigMap;
+		// init-before-regular ordering guarantees it is populated before the
+		// sidecar container starts. This is keyed on the network spec rather
+		// than status.endpoints.artifacts because the artifacts endpoint is
+		// published later in the same reconcile that builds this attachment.
+		resources.ArtifactsStateVolumeName = localnetStateVolumeName
+		resources.ArtifactsSubPath = strings.TrimPrefix(servedArtifactsDir, localnetStateDir+"/")
+	case network.Status.Artifacts != nil && network.Status.Artifacts.NetworkConfigMapName != "":
+		// Legacy custom-public path: no served artifacts, so mount the
+		// published network-artifacts ConfigMap.
+		resources.NetworkArtifactsConfigMapName = network.Status.Artifacts.NetworkConfigMapName
+	default:
 		return primaryDBSyncAttachmentResult{
 			Condition: dbSyncAttachmentReadyCondition(
 				metav1.ConditionFalse,
@@ -108,13 +131,6 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 				conditionMessageDBSyncAttachmentPending,
 			),
 		}, nil
-	}
-	resources := ctrldbsync.PrimarySidecarAttachmentResources{
-		NetworkArtifactsConfigMapName: network.Status.Artifacts.NetworkConfigMapName,
-		ConfigMapName:                 sidecarStatus.Resources.ConfigMapName,
-		PGPassSecretName:              sidecarStatus.Resources.PGPassSecretName,
-		StatePVCName:                  sidecarStatus.Resources.StatePVCName,
-		Revision:                      sidecarStatus.Revision,
 	}
 
 	attachment, err := ctrldbsync.BuildPrimarySidecarAttachment(&claim, network, database, resources)
@@ -130,6 +146,24 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachment(
 	}
 
 	return primaryDBSyncAttachmentResult{Attachment: attachment}, nil
+}
+
+// stagesServedArtifacts reports whether the network's primary Pod stages a
+// flat served-artifact directory onto its node-state PVC (local + curated
+// public). It mirrors the producer predicate the primary builder uses
+// (plan.isLocal() || isCuratedPublicProfile(plan)) but reads the spec, so it
+// is decidable while the attachment is built — before status.endpoints.artifacts
+// is published in the same reconcile. Custom-public stages nothing and keeps
+// the byte-based ConfigMap.
+func stagesServedArtifacts(network *yacdv1alpha1.CardanoNetwork) bool {
+	switch network.Spec.Mode {
+	case yacdv1alpha1.CardanoNetworkModeLocal:
+		return true
+	case yacdv1alpha1.CardanoNetworkModePublic:
+		return network.Spec.Public != nil && network.Spec.Public.Profile != yacdv1alpha1.PublicNetworkProfileCustom
+	default:
+		return false
+	}
 }
 
 // primarySidecarClaims lists non-deleting CardanoDBSync resources in the

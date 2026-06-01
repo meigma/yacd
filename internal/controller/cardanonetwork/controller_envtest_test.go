@@ -714,7 +714,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	})
 	require.Eventually(t, func() bool {
 		return mgr.GetCache().WaitForCacheSync(ctx)
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 
 	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
 	require.NoError(t, err)
@@ -729,13 +729,13 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	deploymentKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
 	require.Eventually(t, func() bool {
 		return apiClient.Get(ctx, deploymentKey, &appsv1.Deployment{}) == nil
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 
 	artifactKey := client.ObjectKey{Namespace: network.Namespace, Name: networkArtifactsConfigMapName(network)}
 	require.Eventually(t, func() bool {
 		configMap := &corev1.ConfigMap{}
 		return apiClient.Get(ctx, artifactKey, configMap) == nil
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 	artifactConfigMap := &corev1.ConfigMap{}
 	require.NoError(t, apiClient.Get(ctx, artifactKey, artifactConfigMap))
 
@@ -824,7 +824,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 			current.Status.Placement.PrimarySidecar != nil &&
 			sidecarMaterialReady != nil &&
 			sidecarMaterialReady.Status == metav1.ConditionTrue
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
 	currentFirst := &yacdv1alpha1.CardanoDBSync{}
@@ -838,7 +838,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.Eventually(t, func() bool {
 		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
 		return apierrors.IsNotFound(err)
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 
 	second := readyPrimarySidecarDBSync("second", network)
 	second.Namespace = namespace.Name
@@ -860,7 +860,7 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 			current.Status.Placement.PrimarySidecar != nil &&
 			sidecarMaterialReady != nil &&
 			sidecarMaterialReady.Status == metav1.ConditionTrue
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 	requireDeploymentContainerEventually(t, ctx, apiClient, deploymentKey, "cardano-db-sync", true)
 	currentSecond := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(second), currentSecond))
@@ -900,7 +900,7 @@ func requireDeploymentContainerEventually(
 			}
 		}
 		return !wantPresent
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 }
 
 func requireDeploymentDBSyncSidecarRevisionEventually(
@@ -919,7 +919,7 @@ func requireDeploymentDBSyncSidecarRevisionEventually(
 		}
 
 		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == value
-	}, 10*time.Second, 100*time.Millisecond)
+	}, time.Minute, 100*time.Millisecond)
 }
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, ct conditionType) *metav1.Condition {

@@ -146,6 +146,25 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			"Referenced CardanoNetwork has not published fresh verified artifacts",
 		)
 	}
+
+	// Transport discriminator: prefer the HTTP serve endpoint when the
+	// referenced network publishes one (local + curated-public). The follower
+	// Pod's sync init container fetches and verifies the served manifest, so the
+	// controller does not read the ConfigMap bytes. Custom-public networks
+	// publish no serve endpoint and stay on the ConfigMap path below.
+	if serveURL := servedArtifactsURL(network); serveURL != "" {
+		// The serve path still needs the published content hash for the
+		// database identity fingerprint, even though it no longer reads the
+		// ConfigMap.
+		if network.Status.Artifacts == nil || network.Status.Artifacts.DataHash == "" {
+			return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
+				conditionReasonNetworkArtifactsPending,
+				"Referenced CardanoNetwork has not published an artifact data hash",
+			)
+		}
+		return r.reconcileReadyDBSync(ctx, log, dbSync, network, artifactSource{serveURL: serveURL}, databaseRuntime)
+	}
+
 	artifactStatus := ctrlnetworkartifacts.ConsumerStatus(network.Status.Artifacts)
 	if !artifactStatus.Ready {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
@@ -169,7 +188,7 @@ func (r *CardanoDBSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	configMapResult := ctrlnetworkartifacts.ConsumerConfigMap(configMap, *network.Status.Artifacts)
 	if configMapResult.Ready {
-		return r.reconcileReadyDBSync(ctx, log, dbSync, network, configMap, databaseRuntime)
+		return r.reconcileReadyDBSync(ctx, log, dbSync, network, artifactSource{configMap: configMap}, databaseRuntime)
 	}
 	if configMapResult.Pending {
 		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
@@ -213,6 +232,25 @@ func (r *CardanoDBSyncReconciler) preflightPrimarySidecarNetwork(
 	return true, nil
 }
 
+// artifactSource carries how a reconcile sources the referenced network's
+// artifacts. Exactly one field is set: serveURL selects the HTTP serve path
+// (local + curated-public), where the follower Pod's sync init container
+// fetches and verifies the bundle; configMap selects the legacy ConfigMap path
+// (custom-public), where the controller validated the ConfigMap up front.
+type artifactSource struct {
+	serveURL  string
+	configMap *corev1.ConfigMap
+}
+
+// servedArtifactsURL returns the referenced network's serve endpoint URL, or
+// "" when the network publishes no artifacts serve endpoint (custom-public).
+func servedArtifactsURL(network *yacdv1alpha1.CardanoNetwork) string {
+	if network.Status.Endpoints == nil || network.Status.Endpoints.Artifacts == nil {
+		return ""
+	}
+	return network.Status.Endpoints.Artifacts.URL
+}
+
 // reconcileReadyDBSync is the workload-apply leg of Reconcile, entered
 // only after the referenced CardanoNetwork has published verified
 // artifacts. It rejects requests that lack a node-to-node endpoint
@@ -223,7 +261,7 @@ func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
 	log logr.Logger,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	configMap *corev1.ConfigMap,
+	src artifactSource,
 	databaseRuntime databaseRuntime,
 ) (ctrl.Result, error) {
 	if network.Status.Endpoints == nil ||
@@ -237,18 +275,27 @@ func (r *CardanoDBSyncReconciler) reconcileReadyDBSync(
 		)
 	}
 
-	connectionResult := ctrlnetworkartifacts.ConsumerConnection(configMap, network)
-	if !connectionResult.Ready {
-		return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
-			conditionReasonNetworkArtifactsMismatch,
-			connectionResult.Message,
-		)
-	}
-	if err := validatePublicDBSyncSupport(dbSync, connectionResult.Connection); err != nil {
+	if err := validatePublicDBSyncSupport(dbSync, network); err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
 
-	return r.reconcileWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime, connectionResult.Connection)
+	// On the serve path the controller derives the network identity from status
+	// (networkConnection stays nil; the builder's status fallback supplies the
+	// network name, node-to-node endpoint, and network-magic flag). Only the
+	// ConfigMap path parses and validates connection.json.
+	var networkConnection *ctrlnetworkartifacts.Connection
+	if src.serveURL == "" {
+		connectionResult := ctrlnetworkartifacts.ConsumerConnection(src.configMap, network)
+		if !connectionResult.Ready {
+			return ctrl.Result{}, r.patchDependencyWaitingStatus(ctx, dbSync,
+				conditionReasonNetworkArtifactsMismatch,
+				connectionResult.Message,
+			)
+		}
+		networkConnection = &connectionResult.Connection
+	}
+
+	return r.reconcileWorkloads(ctx, log, dbSync, network, src, databaseRuntime, networkConnection)
 }
 
 // reconcileWorkloads applies (in dependency order) the managed Postgres
@@ -261,14 +308,16 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	log logr.Logger,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	configMap *corev1.ConfigMap,
+	src artifactSource,
 	databaseRuntime databaseRuntime,
-	networkConnection ctrlnetworkartifacts.Connection,
+	networkConnection *ctrlnetworkartifacts.Connection,
 ) (ctrl.Result, error) {
 	builder := dbSyncWorkloadBuilder{
 		scheme:                     r.Scheme,
 		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
-		networkConnection:          &networkConnection,
+		defaultCardanoToolsImage:   r.DefaultCardanoToolsImage,
+		servedArtifactsURL:         src.serveURL,
+		networkConnection:          networkConnection,
 	}
 	var postgresResources *managedPostgresResources
 	if databaseRuntime.Mode == databaseModeManaged {
@@ -283,10 +332,10 @@ func (r *CardanoDBSyncReconciler) reconcileWorkloads(
 	}
 
 	if effectivePlacementMode(dbSync) == yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar {
-		return r.reconcilePrimarySidecarWorkloads(ctx, log, dbSync, network, configMap, databaseRuntime, builder, postgresResources)
+		return r.reconcilePrimarySidecarWorkloads(ctx, log, dbSync, network, src, databaseRuntime, builder, postgresResources)
 	}
 
-	resources, err := builder.BuildForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
+	resources, err := builder.BuildForDatabase(dbSync, network, src.configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}
@@ -370,12 +419,12 @@ func (r *CardanoDBSyncReconciler) reconcilePrimarySidecarWorkloads(
 	log logr.Logger,
 	dbSync *yacdv1alpha1.CardanoDBSync,
 	network *yacdv1alpha1.CardanoNetwork,
-	configMap *corev1.ConfigMap,
+	src artifactSource,
 	databaseRuntime databaseRuntime,
 	builder dbSyncWorkloadBuilder,
 	postgresResources *managedPostgresResources,
 ) (ctrl.Result, error) {
-	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
+	resources, err := builder.BuildPrimarySidecarForDatabase(dbSync, network, src.configMap, databaseRuntime.workloadPasswordSecret(), databaseRuntime.Database)
 	if err != nil {
 		return r.handleDBSyncWorkloadApplyError(ctx, dbSync, err)
 	}

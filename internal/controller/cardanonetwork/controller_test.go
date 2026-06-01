@@ -491,6 +491,21 @@ func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSync(t *testin
 	assert.Equal(t, "dbsync-pgpass", pgpassVolume.Secret.SecretName)
 	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "follower-state")
 
+	// On the serve path the sidecar reads artifacts from the primary
+	// node-state PVC at the staged subdirectory, so no network-artifacts
+	// ConfigMap volume is appended; the db-sync container mounts the shared
+	// localnet-state volume at the artifacts subdirectory read-only.
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "network-artifacts")
+	var artifactsMount corev1.VolumeMount
+	for _, mount := range container.VolumeMounts {
+		if mount.Name == localnetStateVolumeName {
+			artifactsMount = mount
+		}
+	}
+	assert.Equal(t, "/network-artifacts", artifactsMount.MountPath)
+	assert.Equal(t, "artifacts", artifactsMount.SubPath)
+	assert.True(t, artifactsMount.ReadOnly)
+
 	publishArtifactsAndAttachDBSyncSidecar(t, ctx, reconciler, network)
 	currentDBSync := &yacdv1alpha1.CardanoDBSync{}
 	require.NoError(t, reconciler.Get(ctx, client.ObjectKeyFromObject(dbSync), currentDBSync))
@@ -706,7 +721,13 @@ func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenStatusCon
 	}
 }
 
-func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenArtifactConfigMapNameMissing(t *testing.T) {
+// TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSyncWithoutConfigMap
+// proves the serve-path attachment does not depend on the network-artifacts
+// ConfigMap: a local network stages artifacts onto the node-state PVC, so the
+// sidecar attaches (reading the staged subdirectory) even when no artifact
+// ConfigMap name is published. This is what lets PR-B delete the ConfigMap
+// without wedging primary-sidecar db-sync.
+func TestCardanoNetworkReconcilerReconcileAttachesPrimarySidecarDBSyncWithoutConfigMap(t *testing.T) {
 	ctx := context.Background()
 	network := readyLocalCardanoNetwork()
 	network.Status.Artifacts.NetworkConfigMapName = ""
@@ -718,9 +739,9 @@ func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncWhenArtifactC
 
 	require.NoError(t, err)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
-	assertNoContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
-	assert.NotContains(t, deployment.Spec.Template.Labels, labelDBSync)
-	assertCondition(t, ctx, reconciler, network, conditionTypeDBSyncAttachmentReady, metav1.ConditionFalse, conditionReasonDBSyncAttachmentPending)
+	requireContainerNamed(t, deployment.Spec.Template.Spec.Containers, "cardano-db-sync")
+	assert.Equal(t, "dbsync", deployment.Spec.Template.Labels[labelDBSync])
+	assertNoVolumeNamed(t, deployment.Spec.Template.Spec.Volumes, "network-artifacts")
 }
 
 func TestCardanoNetworkReconcilerReconcileSkipsPrimarySidecarDBSyncOnPortConflict(t *testing.T) {

@@ -243,6 +243,26 @@ func (b dbSyncWorkloadBuilder) deployment(
 	if err != nil {
 		return nil, err
 	}
+
+	// On the serve path the network-artifacts volume is an emptyDir the sync
+	// init container fills over HTTP (verifying the served manifest); otherwise
+	// it is the CardanoNetwork-owned ConfigMap mounted directly. Either way the
+	// volume name and mount path are unchanged, so the workload containers are
+	// identical across both transports.
+	serve := strings.TrimSpace(b.servedArtifactsURL) != ""
+	artifactsVolume := corev1.Volume{Name: networkArtifactsVolumeName}
+	initContainers := []corev1.Container{b.pgPassInitContainer(dbSync)}
+	if serve {
+		artifactsVolume.VolumeSource = corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}
+		initContainers = append([]corev1.Container{b.syncInitContainer(network)}, initContainers...)
+	} else {
+		artifactsVolume.VolumeSource = corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: networkArtifacts.Name},
+			},
+		}
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      dbSyncWorkloadName(dbSync),
@@ -277,22 +297,13 @@ func (b dbSyncWorkloadBuilder) deployment(
 							Type: corev1.SeccompProfileTypeRuntimeDefault,
 						},
 					},
-					InitContainers: []corev1.Container{
-						b.pgPassInitContainer(dbSync),
-					},
+					InitContainers: initContainers,
 					Containers: []corev1.Container{
 						b.followerNodeContainer(dbSync, network, plan),
 						b.dbSyncContainer(dbSync, plan),
 					},
 					Volumes: []corev1.Volume{
-						{
-							Name: networkArtifactsVolumeName,
-							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{Name: networkArtifacts.Name},
-								},
-							},
-						},
+						artifactsVolume,
 						{
 							Name: dbSyncConfigMapVolumeName,
 							VolumeSource: corev1.VolumeSource{
