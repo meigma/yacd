@@ -46,4 +46,4 @@
 | 043 | 2026-05-30 | Review fixes + cardano-tools/F0 foundation | complete | Merged the session-041 review's five medium fixes (PRs #69–72) and the cardano-tools image foundation + first release (#68, #65); the F0 transport redesign (PR2) is banked unmerged on `feat/f0-public-profile-pvc`. |
 | 044 | 2026-05-31 | CLI review fixes | complete | Reviewed `cli/`, fixed the accepted devconfig/topup/connect issues in PR #73, and cleaned up the dev stack/worktree. |
 | 045 | 2026-05-31 | CardanoNetwork node sync status | complete | Added non-external `CardanoNetwork.status.sync` and node sync/progress conditions from verified artifacts plus Ogmios health, merged as PR #74. |
-| 046 | 2026-05-31 | F0 redesign — PR-A continuation | in-progress | Continuing session 043's F0 ConfigMap-removal redesign; next step is PR-A/A2 (cardano-tools serve sidecar + served manifest.json). |
+| 046 | 2026-05-31 | F0 redesign — PR-A (serve artifacts over HTTP) | complete | Merged PR-A of the F0 redesign (PR #75): cardano-tools serve sidecar + flat PVC-staged artifact dir + served manifest.json + owned artifacts Service/status, additive; PR-C/B/D remain. |

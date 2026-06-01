@@ -554,3 +554,30 @@ publisher = the mainnet F0 unblock), PR-D (remove cardano-tools `report` verb, p
 manager default cardano-tools image to a published digest, refresh DESIGN.md + chainsaw).
 Dev stack still UP on kind-yacd-dev (now orphaned — the F0 worktree that owned it was
 removed; tear down at session close via moon run root:dev-down, or it persists).
+
+## 2026-06-01 00:55 — Close
+Session 046 closed. PR-A of the F0 redesign is MERGED: PR #75 squash-merged to
+master as `c61e0a6` "feat(cardanonetwork): serve network artifacts over HTTP
+(F0 redesign, PR-A)". Local master fast-forwarded to c61e0a6; the merged remote
+branch `feat/f0-public-profile-pvc` deleted + pruned; the F0 and stale session-043
+PR1 worktrees removed (only `master` + `journal/jmgilman` worktrees remain).
+No journal contamination on master (`git ls-files .journal` empty).
+
+What shipped (7 commits): publicpins registry + fetch adapter (foundation), A1
+served-artifact manifest contract, cardano-tools `stage`/`fetch` producer (writes
+flat dir + connection.json + manifest.json), controller serve sidecar + stage/fetch
+init (local + curated-public), owned `<net>-artifacts` Service +
+`status.endpoints.artifacts`, e2e build+load of cardano-tools. Validated:
+root:check + root:test (envtest) + idempotent root:generate + live in-cluster smoke
+(GET /manifest.json → 200) + full CI green (ci/e2e/cardano-tools-image/Kusari).
+Mid-session rebase resolved a status.go conflict with PR #74 (session-045 node sync
+status) as a clean union of both features.
+
+SUMMARY.md written (incl. the full REMAINING F0 SERIES PR-C/PR-B/PR-D handoff per
+user request), INDEX row → complete, TECH_NOTES F0 bullet rewritten to the
+serve-over-HTTP architecture + remaining series. HANDOFF: resume at PR-C (db-sync
+over HTTP) off fresh master; full step list in `.journal/046/SUMMARY.md` Open Threads.
+Dev stack left UP on kind-yacd-dev but ORPHANED (owning worktree removed) —
+`moon run root:dev-down` from the main checkout to tear down. Release-please PR #76
+(`release cardano-tools 11.1.0-yacd.4`) was opened by this merge; relevant to PR-D's
+digest pin.

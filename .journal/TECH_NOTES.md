@@ -257,15 +257,28 @@
   faucet still rejected. Curated public profiles are embedded for preview,
   preprod, and mainnet; custom profiles come from same-namespace ConfigMap or
   Secret bundles.
-- TEST_REPORT F0 is still open: public mainnet cannot currently be created
-  because the public profile artifacts are copied into one raw
-  `<network>-network-artifacts` ConfigMap and mounted directly as `/profile`,
-  while the mainnet bundle exceeds Kubernetes' 1 MiB ConfigMap data cap. A
-  session-040 size check showed the checked-in mainnet profile files gzip below
-  the cap, but the preferred next direction is not a naive compressed ConfigMap:
-  make public networks materialize profile files in an init path closer to the
-  localnet artifact publisher, then publish only compact/non-secret artifact
-  metadata for consumers.
+- TEST_REPORT F0 (public mainnet cannot be created: the raw
+  `<network>-network-artifacts` ConfigMap exceeds Kubernetes' 1 MiB cap) is being
+  fixed by a redesign where the manager is NOT an authoritative config source: local
+  generates / public fetches configs onto the node PVC, `cardano-node` reads from the
+  PVC, and every OTHER consumer fetches over HTTP from an always-on cardano-tools
+  `serve` sidecar; integrity/discovery via a served `manifest.json`. Lands as
+  **PR-A → PR-C → PR-B → PR-D** (order matters — A→B→C→D bricks db-sync). PR-A is
+  **DONE+merged** (session 046, PR #75, `c61e0a6`, additive — ConfigMap kept):
+  cardano-tools `stage`/`fetch` produce a flat served dir (`/state/artifacts` on the
+  node PVC: contract-key files + `connection.json` + `manifest.json`), a
+  `servedArtifactsInitContainer` populates it (stage=local, fetch=curated-public), an
+  always-on `serveContainer` (:8090, `/manifest.json` readiness, RO `/state`) exposes
+  it, and an owned `<net>-artifacts` ClusterIP Service publishes
+  `status.endpoints.artifacts`. serve+stage are local + curated-public only
+  (`isPublic && profile != custom`); custom-public keeps its ConfigMap.
+  **REMAINING (see `.journal/046/SUMMARY.md` Open Threads for full detail):** PR-C
+  db-sync consumes over HTTP (must precede B); PR-B node-reads-from-PVC + DELETE the
+  ConfigMap/publisher/RBAC = the actual mainnet unblock (RBAC marker drop must mirror
+  `charts/yacd/templates/rbac-manager.yaml` in-PR; the `//go:embed` is NOT the
+  blocker — the ConfigMap volume mount is); PR-D remove `report` verb + pin the
+  manager cardano-tools image to a published-with-A1 digest (PR-A merge opened
+  release-please PR #76) + DESIGN.md + chainsaw rewrite + drop the e2e build+load hack.
 - Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
   slice. The default Mithril client image is
   `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot
