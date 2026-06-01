@@ -317,6 +317,27 @@
   `11.0.1-yacd.4` (with the publisher); the manager default is now `yacd.5`
   (publisher-free), and release-please PR #34 (`cardano-testnet 11.0.1-yacd.5`) is
   the pending release that, when merged, cuts+publishes the slimmer image.
+- **release-please `Release-As:` MUST be component-scoped when the commit spans
+  components** (session 050 mistake). The root `yacd` component
+  (`release-please-config.json`) includes everything EXCEPT
+  `containers/cardano-testnet` + `containers/cardano-tools` (its only
+  `exclude-paths`). So a commit that touches BOTH a container dir and any other
+  path (e.g. `.dev/scripts/test-e2e.sh`) counts toward the container component
+  AND root. An **unscoped** `Release-As: <ver>` footer then applies to EVERY
+  component the commit touches — in session 050 it leaked `11.0.1-yacd.5` into the
+  root release PR #7 (which was heading to `1.0.0`). #80 got away with unscoped
+  only because it touched cardano-testnet paths exclusively. **Fix/use the
+  component-scoped form `Release-As: <package-name>@<version>`** (proven in repo
+  history: `Release-As: cardano-testnet@11.0.1-yacd.4`). Package-names:
+  `yacd` (root), `cardano-testnet`, `cardano-tools`. The latest commit's
+  applicable Release-As wins for a component's pending window.
+- **cardano-tools versioning convention** (documented in
+  `containers/cardano-tools/README.md`, session 050; mirrors cardano-testnet):
+  same contract — tag `<cardano-node-version>-yacd.<N>`, base = packaged
+  cardano-node version, set each release via a `Release-As:` footer (scoped if
+  the commit also touches root paths). When bumping `yacd.N`, update
+  `Revision`/`Digest` in `internal/cardano/toolsimage/toolsimage.go` and the
+  kind-loaded tag in `.dev/scripts/test-e2e.sh`.
 - **cardano-testnet versioning convention** (documented in
   `containers/cardano-testnet/README.md`, session 048): the image tag is
   `<cardano-node-version>-yacd.<N>`. The base MUST equal the packaged cardano-node

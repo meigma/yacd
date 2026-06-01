@@ -51,3 +51,106 @@ fresh implementation worktree off master. Dev stack startup deferred until the
 implementation worktree is selected and the user gives the go-ahead.
 
 User asked me to review PR-D and report readiness before further instructions.
+
+## 2026-06-01 14:15 — PR-D review findings
+
+Reviewed all four items against master (`ca24030`). Two things diverge from the
+session-048 PR-D scope:
+
+1. **`report` verb removal — clean/ready.** Lives at
+   `containers/cardano-tools/internal/cli/report.go` (`newReportCommand`),
+   registered `internal/cli/root.go:106`, config in `internal/config/config.go`
+   (`ReportConfig` + tests), golden
+   `cmd/yacd-cardano-tools/testdata/report-dry-run.txtar`. NO remaining
+   invocations anywhere (operator, init wrappers, .dev scripts, chainsaw,
+   moon.yml). Its only purpose (publisher sha256 compat) is moot since the
+   publisher was deleted in PR-B2. Straight dead-code removal.
+
+2. **Digest pinning — the crux, with a latent bug + chicken-and-egg.**
+   - `internal/cardano/toolsimage/toolsimage.go:23` `Revision = "yacd.0"` →
+     manager defaults to `ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0`.
+   - **But the ONLY published cardano-tools tag is `v11.0.1-yacd.4`** (git tag
+     list). So the manager default points at an UNPUBLISHED tag — this is
+     exactly why the e2e build+load hack exists, and digest-pinning fixes it.
+   - Chicken-and-egg: removing `report` changes the image, so a NEW cardano-tools
+     release must be cut before there's a final digest to pin to.
+   - **Open release-please PR #76 proposes `11.1.0-yacd.4` — base DRIFTED**
+     (feat commits drove minor bump). Per the versioning contract base must equal
+     the cardano-node version `11.0.1`; needs a `Release-As:` fix like #80 did for
+     cardano-testnet.
+   - Helm value `cardanoTools.image.digest` already exists
+     (`charts/yacd/values.yaml`), and `--default-cardano-tools-image` is the
+     override flag — but the built-in `Reference()` is tag-only; pinning means
+     teaching it a digest constant.
+
+3. **e2e build+load hack — ready, partial.** `.dev/scripts/test-e2e.sh:36-45`
+   builds+kind-loads manager, faucet, cardano-testnet, cardano-tools. Only
+   cardano-testnet + cardano-tools can switch to pull-by-digest; manager + faucet
+   MUST stay built-and-loaded (they're the code under test, not published
+   per-commit).
+
+4. **DESIGN.md — NO stale ConfigMap prose.** Contrary to the 048 note, `DESIGN.md`
+   does NOT describe the old artifact-ConfigMap transport (only mention is a
+   generic K8s-resource-type list at line 49). So item 4 is either a no-op or
+   should be reframed as ADDING serve-over-HTTP/PVC transport prose. Flagged for
+   the user.
+
+Implied landing order: (a) remove report + drop e2e build/load for tools images
++ teach digest pinning mechanism in one code PR → (b) merge → release-please
+cardano-tools PR (fix base via Release-As) → (c) merge release → published digest
+→ (d) pin manager to that digest. Steps b–d span a release, so digest pinning
+tails the release. Awaiting user direction on sequencing + the DESIGN.md question.
+
+## 2026-06-01 14:35 — Plan approved; Stage 1 implemented
+
+User decisions: **skip item 4** (DESIGN.md already clean), **full chain with a
+pause before merging the release**, **Release-As: 11.0.1-yacd.5** + add a
+cardano-tools README. Plan saved; PR-D is a 3-stage chain (code PR → release →
+digest-pin PR).
+
+Worktree `f0-pr-d-report` off `origin/master`. `moon run root:dev-up` ran clean.
+
+**Stage 1 done + committed** (`95cf748`,
+`build(cardano-tools)!: remove the dead report verb (F0 PR-D)`):
+- Discovery refined the plan: `config.go` was ENTIRELY report-only — `LoadStage`
+  derives its own plan-manifest filename, so `planManifestFilename` was NOT
+  shared. Deleted the whole `config.go` (kept `config_stage.go`) and rewrote
+  `config/doc.go` to describe the stage loader.
+- Deleted: `cli/report.go`, the `report` registration in `root.go`, the orphaned
+  `internal/kube/` package (imported only by report), `config_test.go` (all
+  report-only), and the `report-dry-run.txtar` golden.
+- Refreshed stale "report verb" doc comments in `stage/{stage.go,doc.go}` and the
+  Dockerfile LABEL verb list (now generate/fetch/serve/stage/sync).
+- Added `containers/cardano-tools/README.md` (versioning contract; mirrors
+  cardano-testnet; points at `toolsimage.Revision`/`Digest`).
+- `.dev/scripts/test-e2e.sh`: dropped cardano-testnet build+load (published tag,
+  Kind pulls it); kept cardano-tools build+load until Stage 3.
+
+Verified: `go build ./...`, all cardano-tools tests, `--help` shows no `report`,
+`root:generate` no-op, `root:check` green (incl. test/chart RBAC, which passed
+locally this run), `root:test` green. `root:test-e2e` running in background to
+confirm the cardano-testnet pull works.
+
+## 2026-06-01 15:05 — Stage 1 merged; Stage 2 in flight; Release-As LEAK
+
+Stage 1: `root:test-e2e` green (`Passed tests 1`, 0 reconcile errors, fresh
+cluster created+deleted — proves the cardano-testnet PULL works). All CI on
+**PR #81** green (ci/e2e/cardano-tools-image/Kusari). Squash-merged → master
+`2b9bf84`. Worktree removed.
+
+**MISTAKE + fix (recorded in TECH_NOTES):** my Stage-1 squash commit carried an
+UNSCOPED `Release-As: 11.0.1-yacd.5`. The root `yacd` release-please component
+excludes only the two `containers/*` dirs, and the commit also touched
+`.dev/scripts/test-e2e.sh` (a root path) — so the footer LEAKED into root release
+PR **#7**, flipping it from `1.0.0` → `11.0.1-yacd.5`. cardano-tools #76 was
+correct (`11.0.1-yacd.5`). Root cause: unscoped footer on a multi-component
+commit. Fix (user-approved): root stays unmerged/latent; restore to `1.0.0` in
+Stage 3 via the proven component-scoped form `Release-As: yacd@1.0.0` (Stage 3
+legitimately touches root). Use scoped footers for any multi-component commit.
+
+Stage 2 (user OK'd the publish): squash-merged release-please **#76** → master
+`046f979` → release-please created tag `cardano-tools/v11.0.1-yacd.5` → "Release
+cardano-tools Image" workflow building+publishing (polling). NOTE: a master CI
+run flaked on `cardano-tools-image` "Booting builder" pulling
+`moby/buildkit:buildx-stable-1` (`context deadline exceeded` — Docker Hub
+jitter, env not code).
