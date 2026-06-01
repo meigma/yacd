@@ -255,3 +255,28 @@ Dockerfile stage + new cardano-testnet image) and **PR-D** (remove cardano-tools
 `report` verb; pin manager cardano-tools image to published digest — release-please
 PR #76 is open; drop e2e build+load hack; rewrite DESIGN.md ConfigMap prose).
 Carried: TEST_REPORT F2/F4; test-harness Phases 3-5.
+
+## 2026-06-01 14:01 PDT — Close
+
+Session 048 closed. Goal met in full: PR-B1 + PR-B2 landed and the slimmer,
+publisher-free `cardano-testnet 11.0.1-yacd.5` image is released and verified.
+
+Merged PRs (all squash, all on `master` @ `ca24030`):
+- **#78** `feat(cardanonetwork)!:` — PR-B1 (remove ConfigMap + custom-public).
+- **#79** `build(cardano-testnet)!:` — PR-B2 (delete the dead publisher).
+- **#80** `build(cardano-testnet):` — pin release to 11.0.1-yacd.5 + README.
+- **#34** `chore(master): release cardano-testnet 11.0.1-yacd.5` — release PR.
+
+Close-out actions: dev stack `kind-yacd-dev` torn down (`moon run root:dev-down`);
+`master` fast-forwarded to `ca24030`; all three session worktrees + branches
+(`feat/f0-delete-network-configmap`, `feat/f0-remove-publisher`,
+`fix/f0-cardano-testnet-versioning`) removed; SUMMARY.md written (with a dedicated
+PR-D hand-off section), INDEX row → complete, TECH_NOTES carries the F0 status +
+cardano-testnet versioning contract.
+
+Hand-off: **PR-D is the only remaining F0 slice** — remove the cardano-tools
+`report` verb, pin the manager cardano-tools image to a published digest
+(coordinate with open release-please PR #76), drop the e2e build+load hack, and
+rewrite the DESIGN.md ConfigMap prose. See SUMMARY.md "Next session — PR-D" for
+the actionable breakdown. Session 049 (CLI/k3d lifecycle design) remains a
+separate in-progress session, untouched here.
