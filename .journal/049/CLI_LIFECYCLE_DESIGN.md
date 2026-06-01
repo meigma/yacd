@@ -107,7 +107,7 @@ behavior.
 
 | Command | Purpose |
 |---|---|
-| `yacd devnet` | The all-in-one, zero-config. Takes **no** name. Idempotently: ensure the **singleton** cluster → ensure/upgrade operator → apply the embedded **default local devnet** network (named `devnet`) → wait Ready → print endpoints + funded wallet + next steps. The **only** verb that provisions a cluster. Always uses the managed kubeconfig. |
+| `yacd devnet [--bare]` | The all-in-one, zero-config. Takes **no** name. Idempotently: ensure the **singleton** cluster → ensure/upgrade operator → (unless `--bare`) apply the embedded **default local devnet** network (named `devnet`) → wait Ready → print endpoints + funded wallet + next steps. `--bare` stops after the operator (cluster + operator only, no network) for users who will add their own with `yacd up`. The **only** verb that provisions a cluster. Always operates on the managed cluster (context `k3d-yacd`). |
 | `yacd devnet down` | Inverse: delete the k3d cluster (and its operator, **all** networks, managed-kubeconfig context) in one shot. Warns that ephemeral chain data is discarded; `--keep-data` to preserve a bind-mounted host dir. |
 | `yacd devnet status` | One view of the hidden layer: Docker reachable? k3d binary present + pinned version? cluster up? operator version + Ready? networks + endpoints? The single place a confused user (or support) sees what yacd put on the machine. |
 
@@ -138,7 +138,7 @@ for a single managed cluster — fold lifecycle into `devnet`/`devnet down`/`sta
 |---|---|---|
 | **A. Overload `up` vs separate verb** | **Separate verb** (`devnet`). `up`/`down` untouched. | CI/Chainsaw select the cluster via *ambient* `KUBECONFIG` (no `--context` flag); the CLI can't distinguish ambient-env from default at the flag layer, so "provision unless explicit flag" breaks CI. Relaxing `up`'s `ExactArgs(1)` + required `-f` breaks pinned tests (`up_test.go`). A separate verb makes provisioning explicit at the verb boundary, not inferred from kubeconfig heuristics. |
 | **B. Helm SDK vs pre-render + SSA** | **Pre-render manifests at build time → embed → server-side apply** via the controller-runtime client the CLI already has. | The repo already vendors SSA and the CLI already does `ApplyCardanoNetwork` via SSA. Helm's `crds/` are **install-once** (never upgraded) — a trap for a long-lived cluster across CLI upgrades. SSA lets the CLI own CRD-first ordering, in-place CRD upgrades, and label-based prune, and avoids the ~15 MB Helm-SDK import. |
-| **C. Managed kubeconfig: isolated vs merge into `~/.kube/config`** | **Isolated.** yacd writes its own kubeconfig under an XDG path and **never** touches `~/.kube/config`. | k3d does *not* do this by default — `cluster create` clobbers `~/.kube/config` and switches its current-context. Mechanism: set `KUBECONFIG=<yacd-managed file>` in the **child k3d process env** before every shell-out (k3d then writes to that one file), keeping `--kubeconfig-switch-context` true *within that file*. Test invariant: `~/.kube/config` mtime unchanged after `yacd devnet`. |
+| **C. Kubeconfig / context: isolate vs switch** | **Switch the kubectl context (k3d's default) *and* have yacd track/pin its own managed context for its own verbs.** Don't isolate by default; offer `--isolate-kubeconfig` (+ config) for power users. | Ecosystem convention — minikube/kind/k3d all merge into `~/.kube/config` and switch current-context on create — so `kubectl`/`k9s`/tutorial commands "just work" right after `devnet`. **Switching alone is insufficient for yacd determinism** (a later `kubectl config use-context …` would misdirect yacd), so yacd *also* records that it owns context `k3d-yacd` and defaults all its verbs to it, overridable only by an explicit `--context`/`--kubeconfig` flag. This makes yacd robust against later context changes **and** ensures it can never accidentally target a *real* cluster. `devnet` prints the switch (`switched kubectl context to k3d-yacd (was: X)`); `devnet down` clears the tracked state and restores the prior current-context. (Earlier draft chose full isolation; revised to match convention + the "kubectl just works" goal. Isolation remains the opt-in for multi-cluster users.) |
 | **D. k3d shell-out vs Go-library import** | **Shell-out** to a pinned, checksum-verified k3d binary. | Importing `github.com/k3d-io/k3d/v5` pulls ~115 modules incl. the full Docker engine SDK + docker/cli + client-go v0.30.2 (skews against the operator's controller-runtime client-go), forces Go ≥1.24.4, and adds logrus. Shell-out keeps yacd's module tree clean; the cost (binary fetch + CLI output parsing) is contained behind a port (§8). |
 
 ## 7. The `up` contract (why it stays safe)
@@ -160,19 +160,25 @@ with zero test changes. `devnet` reuses the *same* apply+wait code internally
 **Targeting precedence** (resolved by one function; explicit always wins):
 
 ```
-explicit --kubeconfig / --context / YACD_KUBECONFIG / YACD_KUBE_CONTEXT / KUBECONFIG-env
-  >  the yacd-managed kubeconfig (if it exists)
-  >  ~/.kube/config current-context
+explicit --kubeconfig / --context (or YACD_KUBECONFIG / YACD_KUBE_CONTEXT)   [caller set it]
+  >  yacd's tracked managed context (k3d-yacd), when yacd's state records the cluster exists
+  >  ambient KUBECONFIG env / ~/.kube/config current-context             [today's behavior]
 ```
 
-- `devnet` **always** uses the managed kubeconfig (deterministic; can never
-  touch a real cluster).
-- `up`/`info`/`run`/… use the precedence above. CI/automation always set an
-  explicit target → unchanged. A dapp dev with a managed cluster present → all
-  verbs seamlessly target it. This is a **bounded, additive** change to
-  bare-`up` default targeting (it only differs from today when a managed cluster
-  exists *and* no explicit target is given — a branch that didn't exist before).
-  It is flagged as an open decision (§13).
+- `devnet` **always** operates on the managed cluster (it provisions it). It lets
+  k3d merge+switch the kubectl context (convention) so external tools follow, and
+  records `k3d-yacd` as yacd's owned context.
+- `up`/`down`/`info`/`run`/… use the precedence above. Because the managed-context
+  state **only exists after a user runs `devnet`**, CI/Chainsaw/the `yacd-env`
+  Action (which never run `devnet`) fall straight through to the ambient
+  `KUBECONFIG` they already set → **byte-for-byte unchanged, no test edits**. A
+  dapp dev who ran `devnet` gets every yacd verb pinned to the devnet even if they
+  later `kubectl config use-context …`, and yacd can never silently apply to a
+  real cluster.
+- Pinning to the *tracked* context (not bare current-context) is what makes this
+  safe: yacd does not blindly follow `~/.kube/config` current-context once it owns
+  a cluster — it follows *its own* recorded context, overridable by an explicit
+  flag.
 - Every mutating verb prints the resolved target (context + server) to stderr so
   neither persona is surprised about which cluster they hit.
 
@@ -339,8 +345,9 @@ exists. Decision needed on sequencing (§13).
 - **Slice 0 — provisioning core (no operator/network yet).** `BinaryResolver`
   (pinned fetch + embedded-checksum verify + XDG), `ClusterProvisioner` port +
   k3d adapter + `EnsureCluster` state machine, cluster lock, Docker/disk
-  preflight, isolated managed kubeconfig. Verb: `yacd devnet status` +
-  `devnet down`. Proves cluster up/down on the managed kubeconfig in isolation.
+  preflight, context switch + managed-context tracking/pinning (§6-C/§7), prior-
+  context restore on teardown. Verbs: `yacd devnet status` + `devnet down`.
+  Proves cluster up/down + deterministic yacd targeting of the managed context.
 - **Slice 1 — operator install (SSA).** CI render of the chart → `embed.FS`;
   CRD-first SSA + prune; version stamp + skew check.
 - **Slice 2 — the all-in-one.** `yacd devnet`: chain Slice 0 + 1 + the reused
@@ -361,11 +368,11 @@ exists. Decision needed on sequencing (§13).
 2. **Funded-wallet sequencing (§11).** Build the operator-side funded-wallet
    bootstrap *before* the all-in-one (so the story is fully met on day one), or
    ship the lifecycle first and add the wallet next?
-3. **Targeting precedence for bare `up` (§7).** Adopt "managed kubeconfig >
-   `~/.kube/config`" so all verbs seamlessly follow `devnet` (recommended;
-   CI/automation unaffected because they set explicit targets) — *or* the
-   conservative variant where only the `devnet` family uses the managed
-   kubeconfig and other verbs require `--context k3d-yacd`?
+3. **Kubeconfig / context default (§6-C, §7) — proposed resolved.** Switch the
+   kubectl context (k3d default, so `kubectl`/`k9s`/tutorials just work) **plus**
+   yacd tracks/pins its managed context for its own verbs (deterministic,
+   CI-safe); isolation is opt-in via `--isolate-kubeconfig`. Confirm this over an
+   isolate-by-default stance.
 4. **`cluster` nouns.** Confirm deferring an explicit `yacd cluster create|list`
    group (folding lifecycle into `devnet`/`devnet down`/`status`) for v1.
 5. **Chain-data persistence.** Confirm ephemeral-by-default for v1, with

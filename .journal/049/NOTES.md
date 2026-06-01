@@ -135,3 +135,22 @@ User reviewing the proposal incrementally:
 Still open (§13): verb name (devnet vs dev/quickstart/start); funded-wallet
 sequencing; up targeting precedence; defer `cluster` nouns (now effectively
 yes — folded into devnet/devnet down/status); ephemeral-by-default.
+
+## 2026-06-01 — Review round 2 (decisions)
+
+- ADDED `yacd devnet --bare`: provision cluster + operator only, skip the default
+  CardanoNetwork (for users who add their own via `yacd up`).
+- REVISED the kubeconfig/context default (Fork C), reversing the earlier
+  isolation default. New design: switch the kubectl context (k3d's default
+  merge+switch — matches minikube/kind/k3d convention so raw kubectl/k9s/tutorials
+  just work) PLUS yacd tracks/pins its own managed context (k3d-yacd) for all yacd
+  verbs, overridable only by an explicit --context/--kubeconfig flag. Rationale:
+  switching alone isn't enough for yacd determinism (a later `kubectl config
+  use-context` would misdirect yacd), and pinning to the TRACKED context (not bare
+  current-context) means yacd can never accidentally hit a real cluster. New
+  precedence: explicit flag/var > yacd tracked managed context (when cluster
+  exists) > ambient KUBECONFIG/current-context. CI-safe because the tracked state
+  only exists after a user runs `devnet` (CI never does) → existing `up` callers
+  fall through to ambient KUBECONFIG unchanged. `devnet` prints the switch + prior
+  context; `devnet down` clears state + restores prior context. Isolation is now
+  opt-in (`--isolate-kubeconfig`). Doc §5/§6-C/§7/§12/§13 updated.
