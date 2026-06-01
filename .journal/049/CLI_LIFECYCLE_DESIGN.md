@@ -62,12 +62,12 @@ $ yacd devnet
     Ogmios          ws://127.0.0.1:1337
     Kupo            http://127.0.0.1:1442
     Funded wallet   addr_test1qz…   (100,000 ADA)   ← see §11
-    Try:  yacd query tip devnet
+    Try:  yacd exec devnet -- cardano-cli query tip --testnet-magic 42   (query the chain)
           yacd topup devnet --address <addr> --lovelace 1000000000
           yacd run  devnet -- <your-app>      (env wired to the net)
           yacd devnet down                    (tear it all down)
 
-$ yacd query tip devnet
+$ yacd exec devnet -- cardano-cli query tip --testnet-magic 42
 { "epoch": 0, "block": 4, "slot": 312, "syncProgress": "100.00" }
 
 $ yacd run devnet -- my-dapp test
@@ -107,7 +107,13 @@ behavior.
 | `yacd devnet [NAME] [-f FILE]` | The all-in-one. Idempotently: ensure cluster → ensure/upgrade operator → apply network (embedded **default local devnet** if no `-f`; `NAME` defaults to `devnet`) → wait Ready → print endpoints + funded wallet + next steps. The **only** verb that provisions a cluster. Always uses the managed kubeconfig. |
 | `yacd devnet down [NAME]` | Inverse: delete the k3d cluster (and its operator, networks, managed-kubeconfig context) in one shot. Warns that ephemeral chain data is discarded; `--keep-data` to preserve a bind-mounted host dir. |
 | `yacd devnet status [NAME]` | One view of the hidden layer: Docker reachable? k3d binary present + pinned version? cluster up? operator version + Ready? network endpoints? The single place a confused user (or support) sees what yacd put on the machine. |
-| `yacd query tip NAME` | Convenience: print the chain tip with the **published** network magic (no hard-coded `--testnet-magic 42`). Closes a real gap (§9.3). |
+
+**No new `query` verb.** Querying the chain is done with the existing `yacd exec
+NAME -- cardano-cli …`; yacd's job is to *surface the correct command* in
+`devnet`/`up`/`info` output, with the network magic interpolated from the
+published status (§9.3), not to wrap cardano-cli in a `query` verb. `info` stays
+the structured-status inspector (endpoints, magic, conditions); `exec` is how you
+actually run cardano-cli against the in-pod node socket.
 
 Deferred (not v1): a full `yacd cluster create|list|...` noun group (gold-plating
 for a single managed cluster — fold lifecycle into `devnet`/`devnet down`/`status`);
@@ -224,8 +230,12 @@ sets"). See §11 — flagged as the top product dependency.
 
 **9.3 Tip-query hint must use the live published magic (MEDIUM).** Hard-coding
 `--testnet-magic 42` breaks if the default magic changes, and `exec` (no shell)
-can't expand `$YACD_NETWORK_MAGIC`. → Add `yacd query tip NAME` that reads the
-magic from the published status, and print magic-correct hints.
+can't expand `$YACD_NETWORK_MAGIC`. → **No new `query` verb** (keep the surface
+small; querying stays `yacd exec NAME -- cardano-cli …`). Instead, `devnet`/`up`/
+`info` print a copy-pasteable `yacd exec NAME -- cardano-cli query tip
+--testnet-magic <magic>` hint with `<magic>` interpolated from the published
+status (`info.go` already exposes `networkOutput.NetworkMagic`), so the suggested
+command is always correct for the actual network.
 
 **9.4 Version skew / upgrade contract is unspecified (HIGH, completeness).** A
 user who runs `devnet`, upgrades the CLI, and runs it again hits a long-lived
@@ -321,8 +331,8 @@ exists. Decision needed on sequencing (§13).
 - **Slice 1 — operator install (SSA).** CI render of the chart → `embed.FS`;
   CRD-first SSA + prune; version stamp + skew check.
 - **Slice 2 — the all-in-one.** `yacd devnet`: chain Slice 0 + 1 + the reused
-  `up` apply path + embedded default local Environment + result/hint output +
-  progress streaming. `yacd query tip`.
+  `up` apply path + embedded default local Environment + result output (incl. the
+  magic-interpolated `yacd exec … query tip` hint) + progress streaming.
 - **Slice 3 — usability hardening.** DiskPressure/Evicted mapper, uninstall
   `--purge` + binary GC, docs/quickstart + first-run banner, WSL2 validation,
   ARM multi-arch CI guard.
