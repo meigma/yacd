@@ -11,9 +11,8 @@
 //     create-once data (here: the random auth token) cannot flow through
 //     it without a second pass.
 //
-// The shape below mirrors the [applyNetworkArtifactsConfigMap] exception
-// in apply.go: a small dispatcher reads through liveReader, then routes to
-// a create-with-token path or a reconcile-existing path.
+// The shape below is a small dispatcher that reads through liveReader, then
+// routes to a create-with-token path or a reconcile-existing path.
 
 package cardanonetwork
 
