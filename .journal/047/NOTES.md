@@ -186,3 +186,15 @@ sync-probe serve-fetch; cardanodbsync single-path serve + fingerprint identity (
 PR-C ConfigMap fallback); cli/devconfig drop custom validation; rbac chart mirror; chainsaw;
 delete custom tests + add no-ConfigMap envtest; root:generate; e2e. RESUME by executing the
 approved plan (consider `git restore` the 2 partial files for a clean single-pass start).
+
+## 2026-06-01 07:10 — Close
+Session closed. PR-C MERGED (PR #77, squash `231ccde`); local master fast-forwarded;
+PR-C worktree removed. PR-B was planned + approved but deferred to a fresh session at
+the user's request — the non-compiling PR-B1 WIP (2 uncommitted files: API removals +
+publicnet) was discarded clean and its worktree `feat/f0-delete-network-configmap`
+removed (no commits). Resume PR-B1 from the approved plan banked at
+`.journal/047/PR-B1-PLAN.md` (also summarized in SUMMARY.md Open Threads): branch fresh
+off master `231ccde` and execute in one pass (large compile-coupled ~23-file change).
+SUMMARY.md + INDEX.md written; TECH_NOTES.md updated (F0 series state: PR-A+PR-C merged,
+PR-B scope = remove custom-public + ConfigMap concept; the de-flake retired the
+known-flake entry). Hand-off ready.

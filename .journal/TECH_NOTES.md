@@ -201,13 +201,14 @@
   `endpoints.json`. The host-access methods (`PrimaryPodName`/`Forward`/`Exec`)
   hang off the existing `kube.Client` port; `Forward`/`Exec` need a live kubelet
   so they are proven by manual/e2e, not envtest.
-- KNOWN FLAKE: `TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync`
-  (`internal/controller/cardanonetwork/controller_envtest_test.go`) is a
+- DE-FLAKED (session 047, PR #77): `TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync`
+  (`internal/controller/cardanonetwork/controller_envtest_test.go`) was a
   load-sensitive manager-backed envtest whose `Eventually` ("Condition never
-  satisfied") intermittently fails under CI load — it blocked merges on PR #61
-  (1×) and PR #67 (2× in a row, green on the 3rd). It is unrelated to the change
-  under test; rerun the `ci` job, and consider a de-flake (longer wait / sturdier
-  condition) as a standalone PR.
+  satisfied") failed under CI load (PR #61 1×, #67 2×, #77 3× in a row). Its tight
+  10s `Eventually` waits + its two deployment-assertion helpers were bumped to 1m
+  (matching the test's own teardown timeout); other tests' 10s waits were left
+  alone. If a sibling manager-backed envtest starts flaking the same way under CI
+  load, apply the same bump.
 - Test-harness Phase 0 is **done — GO** (session 036). A throwaway hosted-runner
   spike proved KinD + operator + a representative local `CardanoNetwork`
   (Ogmios+Kupo+faucet) cold-starts to `Ready` in ~27s (full pipeline ~112s) vs
@@ -263,22 +264,34 @@
   generates / public fetches configs onto the node PVC, `cardano-node` reads from the
   PVC, and every OTHER consumer fetches over HTTP from an always-on cardano-tools
   `serve` sidecar; integrity/discovery via a served `manifest.json`. Lands as
-  **PR-A → PR-C → PR-B → PR-D** (order matters — A→B→C→D bricks db-sync). PR-A is
-  **DONE+merged** (session 046, PR #75, `c61e0a6`, additive — ConfigMap kept):
-  cardano-tools `stage`/`fetch` produce a flat served dir (`/state/artifacts` on the
-  node PVC: contract-key files + `connection.json` + `manifest.json`), a
-  `servedArtifactsInitContainer` populates it (stage=local, fetch=curated-public), an
-  always-on `serveContainer` (:8090, `/manifest.json` readiness, RO `/state`) exposes
-  it, and an owned `<net>-artifacts` ClusterIP Service publishes
-  `status.endpoints.artifacts`. serve+stage are local + curated-public only
-  (`isPublic && profile != custom`); custom-public keeps its ConfigMap.
-  **REMAINING (see `.journal/046/SUMMARY.md` Open Threads for full detail):** PR-C
-  db-sync consumes over HTTP (must precede B); PR-B node-reads-from-PVC + DELETE the
-  ConfigMap/publisher/RBAC = the actual mainnet unblock (RBAC marker drop must mirror
-  `charts/yacd/templates/rbac-manager.yaml` in-PR; the `//go:embed` is NOT the
-  blocker — the ConfigMap volume mount is); PR-D remove `report` verb + pin the
-  manager cardano-tools image to a published-with-A1 digest (PR-A merge opened
-  release-please PR #76) + DESIGN.md + chainsaw rewrite + drop the e2e build+load hack.
+  **PR-A → PR-C → PR-B → PR-D** (order matters — A→B→C→D bricks db-sync). PR-A
+  (session 046, PR #75, `c61e0a6`) + **PR-C (session 047, PR #77, `231ccde`) are
+  DONE+merged.** PR-A: cardano-tools `stage`/`fetch` produce a flat served dir
+  (`/state/artifacts` on the node PVC), `servedArtifactsInitContainer` populates it,
+  an always-on `serveContainer` (:8090, `/manifest.json` readiness) exposes it, owned
+  `<net>-artifacts` Service publishes `status.endpoints.artifacts`. PR-C: CardanoDBSync
+  fetches over HTTP via a new `cardano-tools sync` verb (pkg `artifactsync`) — a
+  `network-artifacts-sync` init (emptyDir) for dedicatedFollower, a staged-PVC subPath
+  mount for primarySidecar; `cardano-tools stage` now enriches `configuration.yaml`
+  genesis hashes (db-sync needs them); custom-public still used the ConfigMap.
+  **REMAINING — PR-B (next) scope CHANGED (session 047, user-approved; full plan banked
+  at `.journal/047/PR-B1-PLAN.md`): REMOVE custom-public ENTIRELY**, which deletes the
+  `<net>-network-artifacts` ConfigMap concept outright (custom-public is its last
+  consumer) instead of mode-gating it. **PR-B1** = operator logic + API: drop the API
+  `profile: custom` + `NetworkConfigSource` + `Status.Artifacts`; delete the ConfigMap
+  producer/publisher/artifact-publisher RBAC + the custom-source machinery
+  (`public_profile_source.go`, publicnet `CustomBundle`); repoint curated-public node
+  **and ogmios** to read `/state/artifacts`; **re-source the 3 ConfigMap-coupled signals**
+  — `ArtifactsReady` (from serve readiness), **sync-timing (the probe FETCHES
+  shelley-genesis.json from the serve endpoint** — no new API field; avoids the
+  local-systemStart-unknown problem), and db-sync identity (→ `Status.Network.NetworkFingerprint`,
+  a one-time accepted `UnsupportedDatabaseIdentityChange` churn); mirror the RBAC marker
+  drop in `charts/yacd/templates/rbac-manager.yaml`; db-sync becomes single-path serve
+  (delete the PR-C ConfigMap fallback). YACD then supports only local + curated-public.
+  **PR-B2** = delete the publisher binary/nested-module + Dockerfile stage + new
+  cardano-testnet image. **PR-D** = remove `report` verb + pin the manager cardano-tools
+  image to a published digest (PR-A opened release-please PR #76) + DESIGN.md + drop the
+  e2e build+load hack.
 - Mainnet `CardanoNetwork` requires `spec.public.bootstrap.mithril` for this
   slice. The default Mithril client image is
   `ghcr.io/input-output-hk/mithril-client:main-2478748`, the default snapshot
