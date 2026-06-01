@@ -28,6 +28,7 @@ func TestKeys(t *testing.T) {
 		PeerSnapshotKey,
 		MithrilGenesisKey,
 		MithrilAncillaryKey,
+		ManifestKey,
 	}, OptionalKeys())
 }
 

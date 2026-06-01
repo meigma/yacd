@@ -37,6 +37,13 @@ const (
 	// effective working directory for the localnet chain bootstrap fragment.
 	localnetEnvDir = "/state/env"
 
+	// servedArtifactsDir is the flat served-artifact directory the
+	// stage/fetch init container populates on the node PVC and the always-on
+	// cardano-tools serve sidecar exposes over HTTP. It is a subdirectory of
+	// localnetStateDir ("/state"), so it rides the existing node-state PVC and
+	// needs no additional top-level volume.
+	servedArtifactsDir = "/state/artifacts"
+
 	// defaultOgmiosImage is the ogmios sidecar image used when the
 	// CardanoNetwork spec does not specify one.
 	defaultOgmiosImage = "cardanosolutions/ogmios:v6.14.0"
@@ -101,6 +108,14 @@ const (
 	// faucetServiceURLType is the scheme published on the faucet endpoint
 	// status.
 	faucetServiceURLType = "http"
+
+	// defaultServePort is the cardano-tools serve container port used for the
+	// artifacts Service.
+	defaultServePort = primarypod.DefaultServePort
+
+	// serveServiceURLType is the scheme published on the artifacts endpoint
+	// status. The cardano-tools serve sidecar speaks plain HTTP.
+	serveServiceURLType = "http"
 )
 
 // supportedOgmiosNodeVersions maps the recognized ogmios major.minor tag to

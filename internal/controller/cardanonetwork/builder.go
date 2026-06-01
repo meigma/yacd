@@ -30,6 +30,7 @@ type primaryWorkloadResources struct {
 	OgmiosService                   *corev1.Service
 	KupoService                     *corev1.Service
 	FaucetService                   *corev1.Service
+	ArtifactsService                *corev1.Service
 	FaucetAuthSecret                *corev1.Secret
 	DBSyncAttached                  bool
 }
@@ -71,6 +72,16 @@ type primaryWorkloadBuilder struct {
 	// picks up post-release publisher changes that the published
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
+
+	// defaultCardanoToolsImage is the Reconciler-injected override for the
+	// cardano-tools utility image. When non-empty it replaces the computed
+	// "<repo>:<toolVersion>-<revision>" reference (see
+	// internal/cardano/toolsimage) used by the served-artifact stage/fetch
+	// init container and the always-on serve sidecar. The local dev stack's
+	// docker-built image flows in through here so manual testing picks up
+	// post-release producer changes the published cardano-tools tag does not
+	// yet contain.
+	defaultCardanoToolsImage string
 
 	// acceptedIdentity is the already-accepted network identity read from
 	// owned runtime material. It is used only to preserve the primary
@@ -161,6 +172,16 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	// The artifacts Service fronts the always-on serve sidecar, which is wired
+	// for LOCAL and CURATED PUBLIC networks only (the same gate the Deployment
+	// uses to add the serve container); custom-public has neither.
+	var artifactsService *corev1.Service
+	if networkPlan.isLocal() || isCuratedPublicProfile(networkPlan) {
+		artifactsService, err = b.artifactsService(network)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	return &primaryWorkloadResources{
 		NetworkPlan:                     networkPlan,
@@ -174,6 +195,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		OgmiosService:                   ogmiosService,
 		KupoService:                     kupoService,
 		FaucetService:                   faucetService,
+		ArtifactsService:                artifactsService,
 		FaucetAuthSecret:                faucetAuthSecret,
 		DBSyncAttached:                  b.dbSyncAttachment != nil,
 	}, nil
@@ -253,7 +275,10 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	if err := validateKupoImage(kupo); err != nil {
 		return chainAPISettings{}, err
 	}
-	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet); err != nil {
+	// The serve sidecar runs (and owns its fixed port) only for LOCAL and
+	// CURATED PUBLIC networks; custom-public has no serve port to reserve.
+	serveEnabled := plan.isLocal() || isCuratedPublicProfile(plan)
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet, serveEnabled); err != nil {
 		return chainAPISettings{}, err
 	}
 

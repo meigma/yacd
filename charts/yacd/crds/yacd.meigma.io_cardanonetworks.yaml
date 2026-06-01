@@ -787,6 +787,23 @@ spec:
                   endpoints publishes cluster-local connection details for clients and
                   supporting controllers.
                 properties:
+                  artifacts:
+                    description: |-
+                      artifacts is the cardano-tools serve HTTP endpoint that exposes the
+                      staged network artifact files and manifest.json.
+                    properties:
+                      port:
+                        description: port is the Service port.
+                        format: int32
+                        type: integer
+                      serviceName:
+                        description: serviceName is the Kubernetes Service name.
+                        type: string
+                      url:
+                        description: url is a convenience URL for protocols with a
+                          stable URL shape.
+                        type: string
+                    type: object
                   faucet:
                     description: faucet is the local development faucet HTTP endpoint.
                     properties:

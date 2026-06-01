@@ -76,9 +76,26 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if b.dbSyncAttachment != nil {
 		containers = append(containers, b.dbSyncAttachment.Container)
 	}
-	initContainers := make([]corev1.Container, 0, 3)
+	// The served-artifact producer (stage/fetch init) and the always-on serve
+	// sidecar are wired for LOCAL and CURATED PUBLIC networks only;
+	// custom-public is deferred out of this additive PR.
+	serveArtifacts := plan.isLocal() || isCuratedPublicProfile(plan)
+	if serveArtifacts {
+		containers = append(containers, b.serveContainer(network, plan))
+	}
+	initContainers := make([]corev1.Container, 0, 4)
 	if initContainer != nil {
 		initContainers = append(initContainers, *initContainer)
+	}
+	// Order matters: the LOCAL stage init reads the create-env output appended
+	// above, and the CURATED PUBLIC fetch init must run before any Mithril
+	// bootstrap appended below.
+	if serveArtifacts {
+		servedArtifactsInit, err := b.servedArtifactsInitContainer(network, plan)
+		if err != nil {
+			return nil, err
+		}
+		initContainers = append(initContainers, servedArtifactsInit)
 	}
 	if mithril := plan.mithrilBootstrap(); mithril != nil {
 		initContainers = append(initContainers, b.mithrilBootstrapInitContainer(*mithril))
@@ -358,6 +375,38 @@ func (b primaryWorkloadBuilder) faucetService(network *yacdv1alpha1.CardanoNetwo
 
 	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
 		return nil, fmt.Errorf("set faucet Service owner reference: %w", err)
+	}
+
+	return service, nil
+}
+
+// artifactsService builds the artifacts ClusterIP Service that exposes the
+// always-on cardano-tools serve sidecar. It mirrors the chain API Services:
+// the selector targets the primary node Pod labels and the single port maps to
+// the serve container port.
+func (b primaryWorkloadBuilder) artifactsService(network *yacdv1alpha1.CardanoNetwork) (*corev1.Service, error) {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      primaryArtifactsServiceName(network),
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     corev1.ServiceTypeClusterIP,
+			Selector: primaryWorkloadSelectorLabels(network),
+			Ports: []corev1.ServicePort{
+				{
+					Name:       servePortName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       defaultServePort,
+					TargetPort: intstr.FromString(servePortName),
+				},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
+		return nil, fmt.Errorf("set artifacts Service owner reference: %w", err)
 	}
 
 	return service, nil

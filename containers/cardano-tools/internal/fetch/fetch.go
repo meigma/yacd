@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/meigma/yacd/containers/cardano-tools/internal/artifactset"
+	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
 
 // maxArtifactBytes bounds a single downloaded artifact. Public genesis is a few
@@ -39,22 +42,33 @@ type Options struct {
 
 // Run fetches the profile's artifacts through doer and writes them to
 // OutputDir, hard-failing on any pinned-digest mismatch. Optional files whose
-// download fails are reported and skipped.
+// download fails are reported and skipped. After the artifact files are
+// written, Run completes the flat served directory by adding connection.json (a
+// discovery document for HTTP consumers) and manifest.json (an integrity index
+// over every file in the directory). manifest.json is written last so it covers
+// connection.json.
 func Run(ctx context.Context, opts Options, doer httpDoer, out io.Writer) error {
-	files, ok := pinsFor(opts.Profile)
+	pins, ok := pinsFor(opts.Profile)
 	if !ok {
 		return fmt.Errorf("unknown profile %q (known: %s)", opts.Profile, strings.Join(knownProfiles, ", "))
 	}
 
 	if opts.DryRun {
-		return writeDryRun(out, opts.Profile, files)
+		return writeDryRun(out, opts.Profile, pins.files)
 	}
 
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
 	}
 
-	for _, file := range files {
+	// written accumulates the bytes of every file placed in OutputDir so the
+	// served manifest can be built without re-reading from disk. connectionKeys
+	// maps each present artifact's connection key to its served filename for
+	// connection.json's files map.
+	written := make(map[string][]byte, len(pins.files)+2)
+	connectionKeys := make(map[string]string, len(pins.files))
+
+	for _, file := range pins.files {
 		body, err := download(ctx, doer, file.url)
 		if err != nil {
 			if file.optional {
@@ -74,10 +88,44 @@ func Run(ctx context.Context, opts Options, doer httpDoer, out io.Writer) error 
 		if err := writeArtifact(opts.OutputDir, file.dest, body); err != nil {
 			return err
 		}
+		written[file.dest] = body
+		if file.connectionKey != "" {
+			connectionKeys[file.connectionKey] = file.dest
+		}
 	}
 
-	_, err := fmt.Fprintf(out, "fetched %s artifacts to %s\n", opts.Profile, opts.OutputDir)
+	connection, err := artifactset.RenderPublicConnection(artifactset.PublicConnection{
+		Profile:              opts.Profile,
+		NetworkMagic:         pins.networkMagic,
+		RequiresNetworkMagic: pins.requiresNetworkMagic,
+		Files:                connectionKeys,
+	})
+	if err != nil {
+		return fmt.Errorf("render connection.json: %w", err)
+	}
+	if err := writeArtifact(opts.OutputDir, networkartifacts.ConnectionKey, []byte(connection)); err != nil {
+		return err
+	}
+	written[networkartifacts.ConnectionKey] = []byte(connection)
+
+	if err := writeManifest(opts.OutputDir, written); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "fetched %s artifacts to %s\n", opts.Profile, opts.OutputDir)
 	return err
+}
+
+// writeManifest builds the integrity manifest over files and writes it to
+// OutputDir/manifest.json. [networkartifacts.BuildManifest] skips manifest.json
+// itself, so the caller must invoke this after every other file is written.
+func writeManifest(dir string, files map[string][]byte) error {
+	manifest := networkartifacts.BuildManifest(files)
+	raw, err := manifest.JSON()
+	if err != nil {
+		return fmt.Errorf("render manifest.json: %w", err)
+	}
+	return writeArtifact(dir, networkartifacts.ManifestKey, raw)
 }
 
 // download issues a GET for url through doer and returns the body, bounding the

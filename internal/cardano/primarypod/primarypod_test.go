@@ -33,6 +33,7 @@ func TestPortOwners(t *testing.T) {
 				DefaultNodePort:   PortNameNodeToNode,
 				DefaultOgmiosPort: PortNameOgmios,
 				DefaultKupoPort:   PortNameKupo,
+				DefaultServePort:  PortNameServe,
 			},
 		},
 		{
@@ -41,7 +42,8 @@ func TestPortOwners(t *testing.T) {
 				Ogmios: &yacdv1alpha1.OgmiosSpec{Enabled: false},
 			}),
 			want: map[int32]string{
-				DefaultNodePort: PortNameNodeToNode,
+				DefaultNodePort:  PortNameNodeToNode,
+				DefaultServePort: PortNameServe,
 			},
 		},
 		{
@@ -51,8 +53,9 @@ func TestPortOwners(t *testing.T) {
 				Kupo:   &yacdv1alpha1.KupoSpec{Enabled: true, Port: 1443},
 			}),
 			want: map[int32]string{
-				DefaultNodePort: PortNameNodeToNode,
-				1443:            PortNameKupo,
+				DefaultNodePort:  PortNameNodeToNode,
+				DefaultServePort: PortNameServe,
+				1443:             PortNameKupo,
 			},
 		},
 		{
@@ -63,10 +66,11 @@ func TestPortOwners(t *testing.T) {
 				Faucet: &yacdv1alpha1.FaucetSpec{Enabled: true, Port: 8081},
 			}),
 			want: map[int32]string{
-				DefaultNodePort: PortNameNodeToNode,
-				1338:            PortNameOgmios,
-				1443:            PortNameKupo,
-				8081:            PortNameFaucet,
+				DefaultNodePort:  PortNameNodeToNode,
+				DefaultServePort: PortNameServe,
+				1338:             PortNameOgmios,
+				1443:             PortNameKupo,
+				8081:             PortNameFaucet,
 			},
 		},
 	}
@@ -76,6 +80,19 @@ func TestPortOwners(t *testing.T) {
 			assert.Equal(t, tt.want, PortOwners(tt.network))
 		})
 	}
+}
+
+// TestServePortIsOwned documents that the cardano-tools serve port is
+// registered in PortOwners now that the serve sidecar is exposed on an owned
+// Service, so it participates in the CardanoDBSync placement collision check.
+func TestServePortIsOwned(t *testing.T) {
+	assert.Equal(t, int32(8090), DefaultServePort)
+	assert.Equal(t, "serve", PortNameServe)
+
+	owners := PortOwners(localNetwork("serveport"))
+	owner, ok := owners[DefaultServePort]
+	assert.True(t, ok, "serve port must be registered in PortOwners")
+	assert.Equal(t, PortNameServe, owner)
 }
 
 func localNetwork(name string) *yacdv1alpha1.CardanoNetwork {

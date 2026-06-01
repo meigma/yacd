@@ -120,6 +120,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			scheme:                     r.Scheme,
 			defaultFaucetImage:         r.DefaultFaucetImage,
 			defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
+			defaultCardanoToolsImage:   r.DefaultCardanoToolsImage,
 			acceptedIdentity:           acceptedIdentity,
 			dbSyncAttachment:           dbSyncAttachment.Attachment,
 			publicCustomBundle:         publicCustomBundle,
@@ -176,7 +177,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.ArtifactsService, resources.FaucetAuthSecret, applyResults.NetworkArtifactsConfigMapObject, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -211,6 +212,10 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if resources.FaucetService != nil {
 		faucetServiceKey = client.ObjectKeyFromObject(resources.FaucetService).String()
 	}
+	artifactsServiceKey := disabledChildResourceLogValue
+	if resources.ArtifactsService != nil {
+		artifactsServiceKey = client.ObjectKeyFromObject(resources.ArtifactsService).String()
+	}
 	faucetAuthSecretKey := disabledChildResourceLogValue
 	if resources.FaucetAuthSecret != nil {
 		faucetAuthSecretKey = client.ObjectKeyFromObject(resources.FaucetAuthSecret).String()
@@ -236,6 +241,8 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"kupoServiceOperation", applyResults.KupoService,
 		"faucetService", faucetServiceKey,
 		"faucetServiceOperation", applyResults.FaucetService,
+		"artifactsService", artifactsServiceKey,
+		"artifactsServiceOperation", applyResults.ArtifactsService,
 		"faucetAuthSecret", faucetAuthSecretKey,
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"networkFingerprint", resources.NetworkPlan.Fingerprint)
@@ -311,6 +318,7 @@ type primaryWorkloadApplyResults struct {
 	OgmiosService                        controllerutil.OperationResult
 	KupoService                          controllerutil.OperationResult
 	FaucetService                        controllerutil.OperationResult
+	ArtifactsService                     controllerutil.OperationResult
 	FaucetAuthSecret                     controllerutil.OperationResult
 	FaucetAuthSecretObject               *corev1.Secret
 }
@@ -329,6 +337,7 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 		r.OgmiosService == controllerutil.OperationResultNone &&
 		r.KupoService == controllerutil.OperationResultNone &&
 		r.FaucetService == controllerutil.OperationResultNone &&
+		r.ArtifactsService == controllerutil.OperationResultNone &&
 		r.FaucetAuthSecret == controllerutil.OperationResultNone
 }
 
@@ -421,6 +430,11 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	}
 
 	results.FaucetService, err = r.applyOrDeletePrimaryChainAPIService(ctx, network, resources.FaucetService, r.deletePrimaryFaucetService)
+	if err != nil {
+		return results, err
+	}
+
+	results.ArtifactsService, err = r.applyOrDeletePrimaryChainAPIService(ctx, network, resources.ArtifactsService, r.deletePrimaryArtifactsService)
 	if err != nil {
 		return results, err
 	}

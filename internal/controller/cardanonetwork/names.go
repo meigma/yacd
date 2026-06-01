@@ -37,6 +37,12 @@ func primaryFaucetServiceName(network *yacdv1alpha1.CardanoNetwork) string {
 	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet")
 }
 
+// primaryArtifactsServiceName returns the DNS-label name of the artifacts
+// Service that exposes the cardano-tools serve sidecar.
+func primaryArtifactsServiceName(network *yacdv1alpha1.CardanoNetwork) string {
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "artifacts")
+}
+
 // primaryFaucetAuthSecretName returns the DNS-label name of the faucet auth
 // Secret that carries the API token consumed by the faucet sidecar.
 func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {

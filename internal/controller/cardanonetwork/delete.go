@@ -48,6 +48,16 @@ func (r *CardanoNetworkReconciler) deletePrimaryFaucetService(
 	return r.deletePrimaryChainAPIService(ctx, network, primaryFaucetServiceName(network), "faucet")
 }
 
+// deletePrimaryArtifactsService deletes the optional artifacts Service when
+// the network no longer runs the serve sidecar (for example after a switch to
+// a custom public profile).
+func (r *CardanoNetworkReconciler) deletePrimaryArtifactsService(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (controllerutil.OperationResult, error) {
+	return r.deletePrimaryChainAPIService(ctx, network, primaryArtifactsServiceName(network), "artifacts")
+}
+
 // deletePrimaryFaucetAuthSecret deletes the faucet auth Secret when the
 // CardanoNetwork spec turns the faucet off after it had been enabled.
 func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecret(
