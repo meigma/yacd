@@ -37,3 +37,45 @@ Plan (rough):
 3. Start the dev stack (`moon run root:dev-up`) once after selecting the
    worktree — note the orphaned-stack cleanup may be needed first.
 4. Implement PR-C, keep `root:check`/`root:test`/chainsaw green, PR + squash.
+
+## 2026-05-31 19:57 — PR-C implemented; e2e in flight
+Plan approved (cardano-tools command named `sync`; one bundled PR-C). Work done
+on branch `feat/f0-dbsync-http` (off master `c61e0a6`), worktree
+`.wt/feat-f0-dbsync-http`. Commits so far:
+- `6052f4b` feat(cardano-tools): add `sync` command (package `artifactsync` to
+  avoid shadowing stdlib `sync`; CLI verb stays `sync`). GET manifest.json →
+  fetch+verify each listed file → write manifest verbatim. httptest tests.
+- `dbdcf3b` feat(cardanodbsync): consume artifacts over HTTP on the serve path.
+  Transport discriminator in `controller.go` (`servedArtifactsURL`); serve path
+  skips ConfigMap GET + ConsumerConnection, keeps `Status.Artifacts.DataHash`
+  for the identity fingerprint (zero churn), derives identity from status
+  (networkConnection nil). `public_network.go` reads mode/profile from spec.
+  dedicatedFollower: emptyDir + `network-artifacts-sync` init container
+  (`syncInitContainer`) before pgpass init. primarySidecar: `artifactsMount()`
+  override mounts the primary state PVC subPath `artifacts`. New builder fields:
+  defaultCardanoToolsImage, servedArtifactsURL, artifactsVolumeOverride,
+  artifactsSubPath. `artifactSource{serveURL, configMap}` threaded through
+  reconcileReadyDBSync/reconcileWorkloads/reconcilePrimarySidecarWorkloads.
+- `98d6534` fix(cardanonetwork): KEY DISCOVERY — the primary-sidecar attachment
+  is built in the SAME reconcile that later publishes
+  `status.endpoints.artifacts`, so that status field is nil at attachment-build
+  time. Discriminate on the SPEC (`stagesServedArtifacts` = isLocal ||
+  curated-public), not status, in `dbsync_sidecar.go`. (The db-sync controller
+  is fine reading the already-reconciled referenced network's status + needs the
+  URL anyway.) Caught by an attachment test I added.
+- `c284ce5` lint; `b34dea4` chainsaw assert (sync init present, no ConfigMap
+  volume on phase6-managed-dbsync).
+
+Tests added (all green): cardanodbsync `artifacts_transport_test.go` (4 builder
+cases: dedicatedFollower serve emptyDir+sync-init, dedicatedFollower configmap,
+primarySidecar serve PVC-subPath, primarySidecar configmap) + controller
+decoupling test (Artifacts endpoint set, ConfigMap absent → still reconciles);
+cardanonetwork attachment test now asserts the staged-PVC subPath mount, and the
+former "skip when ConfigMap missing" local-network test is flipped to assert
+serve-path attaches WITHOUT a ConfigMap (the PR-B enablement).
+
+Gates green: `root:generate` (idempotent, no API change), `root:check`,
+`root:test` (full suite, envtest incl. frozen fingerprint untouched).
+Custom-public KEEPS the ConfigMap path (no regression). NOW: `root:test-e2e`
+running in background (chainsaw on real Kind, builds cardano-tools from source
+so it carries `sync`). After green: PR, then journal close.
