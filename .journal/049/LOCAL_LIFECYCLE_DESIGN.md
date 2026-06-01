@@ -107,6 +107,19 @@ defaults all its own verbs to it — so yacd stays correct even if the user late
 changes their current-context, and never targets a foreign cluster. Teardown
 clears the record and restores the prior current-context.
 
+**State & source of truth.** The managed cluster has a fixed name (`k3d-yacd`),
+so its existence and health are always discoverable directly from the runtime
+(`cluster.Status` → `k3d cluster list` + an API probe); yacd never depends on
+local state to *find* its cluster. The `clusterstate` record under
+`$XDG_STATE_HOME/yacd/` (plus a `cluster.lock`) is supplementary bookkeeping the
+runtime can't hold — the owned context, the prior current-context to restore on
+teardown, and the pinned k3d version. The runtime is authoritative: `devnet` /
+`status` reconcile against it and re-derive the record, so a deleted record (with
+the cluster still up) is rebuilt, and a stale record (with the cluster gone) is
+corrected on the next `devnet`. Read verbs use the record's context cheaply for
+targeting; if the cluster is actually gone, the connection fails with a "run
+`yacd devnet`" hint.
+
 **Targeting precedence** (one resolver, used by every verb):
 
 ```
