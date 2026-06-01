@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/meigma/yacd/containers/cardano-tools/internal/artifactset"
+	"github.com/meigma/yacd/containers/cardano-tools/internal/generate"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
 
@@ -32,6 +33,10 @@ type Options struct {
 	OutputDir string
 	// Network is the connection identity recorded in connection.json.
 	Network artifactset.NetworkIdentity
+	// Hasher computes genesis hashes for configuration.yaml enrichment. Nil
+	// selects a cardano-cli hasher from CARDANO_CLI/"cardano-cli"; tests inject
+	// a fake to avoid shelling out.
+	Hasher generate.GenesisHasher
 	// DryRun reports whether Run should print the files it would write instead
 	// of writing them.
 	DryRun bool
@@ -49,7 +54,7 @@ type Options struct {
 //
 // ctx is accepted for symmetry with the other verbs; staging is local
 // filesystem work and does not block on it.
-func Run(_ context.Context, opts Options, out io.Writer) error {
+func Run(ctx context.Context, opts Options, out io.Writer) error {
 	data, err := assemble(opts)
 	if err != nil {
 		return err
@@ -57,6 +62,25 @@ func Run(_ context.Context, opts Options, out io.Writer) error {
 
 	if opts.DryRun {
 		return writeDryRun(out, opts.OutputDir, data)
+	}
+
+	// Enrich configuration.yaml with the referenced genesis hashes. The
+	// create-env config on disk omits them (cardano-node computes them at
+	// startup, but cardano-db-sync rejects a config missing ByronGenesisHash),
+	// and the legacy ConfigMap publisher enriched only in-memory, so the served
+	// bundle a follower consumes over HTTP must enrich here. Public profiles
+	// ship pre-enriched configs and never reach the stage verb.
+	stateDir, err := filepath.Abs(opts.StateDir)
+	if err != nil {
+		return fmt.Errorf("resolve state directory: %w", err)
+	}
+	hasher := opts.Hasher
+	if hasher == nil {
+		hasher = generate.CardanoCLIHasherFromEnv()
+	}
+	data, err = generate.EnrichGenesisHashes(ctx, stateDir, data, hasher)
+	if err != nil {
+		return fmt.Errorf("enrich configuration.yaml: %w", err)
 	}
 
 	if err := os.MkdirAll(opts.OutputDir, outputDirPerm); err != nil {

@@ -13,8 +13,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/meigma/yacd/containers/cardano-tools/internal/artifactset"
+	"github.com/meigma/yacd/containers/cardano-tools/internal/generate"
 	"github.com/meigma/yacd/internal/cardano/networkartifacts"
 )
+
+// fakeHasher returns a deterministic per-kind hash so stage tests exercise
+// genesis-hash enrichment without shelling out to cardano-cli.
+type fakeHasher struct{}
+
+func (fakeHasher) HashGenesis(_ context.Context, kind generate.GenesisKind, _ string) (string, error) {
+	return "hash-" + string(kind), nil
+}
 
 // writeCreateEnv lays out a representative cardano-testnet create-env state
 // directory: the flat genesis/config files at the root, the primary topology
@@ -25,7 +34,7 @@ func writeCreateEnv(t *testing.T) string {
 	stateDir := t.TempDir()
 
 	files := map[string]string{
-		"configuration.yaml":            "ConwayGenesisFile: conway-genesis.json\n",
+		"configuration.yaml":            "ByronGenesisFile: byron-genesis.json\nShelleyGenesisFile: shelley-genesis.json\nAlonzoGenesisFile: alonzo-genesis.json\nConwayGenesisFile: conway-genesis.json\n",
 		"byron-genesis.json":            `{"byron":true}` + "\n",
 		"shelley-genesis.json":          `{"shelley":true}` + "\n",
 		"alonzo-genesis.json":           `{"alonzo":true}` + "\n",
@@ -64,8 +73,17 @@ func TestRunStagesFlatServedDirectory(t *testing.T) {
 		StateDir:  stateDir,
 		OutputDir: outDir,
 		Network:   validNetwork(),
+		Hasher:    fakeHasher{},
 	}, io.Discard)
 	require.NoError(t, err)
+
+	// configuration.yaml is enriched with the referenced genesis hashes so a
+	// cardano-db-sync follower can consume the served bundle.
+	configRaw, err := os.ReadFile(filepath.Join(outDir, networkartifacts.ConfigurationKey))
+	require.NoError(t, err)
+	for _, want := range []string{"ByronGenesisHash", "ShelleyGenesisHash", "AlonzoGenesisHash", "ConwayGenesisHash", "hash-conway"} {
+		assert.Contains(t, string(configRaw), want, "served configuration.yaml must carry %s", want)
+	}
 
 	// The nested topology is flattened to its contract key at the served root.
 	assert.FileExists(t, filepath.Join(outDir, networkartifacts.PrimaryTopologyKey))
