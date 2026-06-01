@@ -485,3 +485,20 @@ a real branch state. `git rebase --abort` restored the branch cleanly to 105e8dc
 (still 105e8dc, DIRTY). Captured both sides for cross-check: /tmp/74_status.diff,
 /tmp/C_status.diff. DELEGATING the rebase+conflict-resolve+validate to a clean-
 channel subagent (NO push); I verify + push after. Merge still HELD for review.
+
+## 2026-05-31 18:10 — PAUSED conflict-resolve: channel delivering empty/garbled outputs
+User chose "I resolve inline, you review." Began reading both sides of the status.go
+conflict but the tool channel degraded to returning EMPTY/scrambled outputs (Read
+returns nothing; grep line numbers scrambled; injected noise words like "SMTP"/
+"Hentai" appended). Refused to hand-merge a 3-way status.go conflict from unreliable
+reads. STOPPED, everything safe/resumable:
+- branch feat/f0-public-profile-pvc @ 105e8dc clean+attached+pushed; rebase aborted;
+  false journal entry reverted (b48973f).
+- PR #75 OPEN, DIRTY (needs rebase; harmless). Merge held for review.
+- Conflict is ONLY status.go: #74 sync-status + Commit C artifacts-endpoint both
+  extend setEndpointStatus + patchPrimaryWorkloadStatus → resolution = keep BOTH
+  params + BOTH publish blocks; patchStatusConditionsClearingFaucet passes extra nil.
+  Captured /tmp/74_status.diff + /tmp/C_status.diff. Correctness gate = root:test
+  (must pass #74 sync tests AND PR-A artifacts tests together).
+RESUME: when channel is clean, `git rebase origin/master`, resolve status.go union,
+root:generate + root:check + root:test, then show user the status.go diff before push.
