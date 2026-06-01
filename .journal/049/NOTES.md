@@ -154,3 +154,20 @@ yes — folded into devnet/devnet down/status); ephemeral-by-default.
   fall through to ambient KUBECONFIG unchanged. `devnet` prints the switch + prior
   context; `devnet down` clears state + restores prior context. Isolation is now
   opt-in (`--isolate-kubeconfig`). Doc §5/§6-C/§7/§12/§13 updated.
+
+## 2026-06-01 — Refined into clean design doc
+
+User asked to refine into a NEW doc, history-free, design-only, with a hexagonal
+ports/adapters code architecture (type signatures, no full code), then delete the
+old one. Done: wrote `.journal/049/LOCAL_LIFECYCLE_DESIGN.md` and deleted
+`CLI_LIFECYCLE_DESIGN.md`. The new doc drops all rejected-alternatives/adversarial
+narrative and states decisions as facts. Architecture (§10): new ports under
+cli/internal — `cluster.Provisioner` (k3d shell-out adapter), `toolbin.Resolver`
+(pinned binary fetch+verify), `operator.Installer` (SSA over embedded rendered
+chart), `clusterstate.Store` (record + flock); a `lifecycle.Manager` use-case
+composes them; `kube.Client` reused unchanged for network apply/host access;
+`target.ResolveTarget` centralizes the targeting precedence; new ports get
+factories on Options + generated mocks. Phased plan + 3 open questions (verb name,
+wallet sequencing, ephemeral-vs-persist) retained.
+
+NEXT: paused again for user review of the refined doc.
