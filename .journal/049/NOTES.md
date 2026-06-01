@@ -66,3 +66,53 @@ Plan for this session:
 
 Open question to resolve with the user before writing: target location/format
 of the persisted design (journal design doc vs TECH_NOTES vs root DESIGN.md).
+
+## 2026-06-01 08:24 — First-pass design proposal written
+
+User chose: design lives under `.journal/049/`. Effort set to ultracode.
+Ran an iterative, agent-orchestrated process per the user's requested method.
+
+Two workflows run (background, structured outputs archived in the session
+transcript dir):
+1. `yacd-cli-lifecycle-ground` — 6 code-map agents (Explore) over cli/, kube
+   port, devconfig, charts/yacd, dev stack, build/release + 5 k3d/Helm
+   feasibility researchers. Key facts: kube.NewClient needs NO change to target
+   a new cluster (clientcmd from --kubeconfig/--context/KUBECONFIG/default);
+   `up NAME -f file` is used by CI e2e + Chainsaw + yacd-env against an EXISTING
+   cluster (the hard constraint); k3d create is non-idempotent + context always
+   `k3d-<name>`; registry should be opt-in (yacd pulls published ghcr.io images);
+   k3d-as-library pulls Docker SDK + client-go skew (favor shell-out); repo pins
+   tools via proto (host-only, so the shipped CLI needs its own in-Go XDG fetcher);
+   Helm crds/ are install-once.
+2. `yacd-cli-lifecycle-refine` — 3 alternative command surfaces + 5 adversarial
+   critics (feasibility / technical / user-need / contract-CI / completeness).
+
+Decisive refinements from the critics (all four forks resolved):
+- A: SEPARATE VERB, not overload `up`. The killer: CI selects its cluster via
+  AMBIENT `KUBECONFIG` (no --context flag); the CLI can't distinguish ambient
+  from default at the flag layer, so "provision unless explicit flag" breaks CI;
+  relaxing `up`'s ExactArgs(1)+required -f breaks pinned tests.
+- B: pre-render + SSA (not Helm SDK) — repo already does SSA; Helm crds/ are
+  install-once.
+- C: isolated managed kubeconfig; mechanism = set KUBECONFIG=<managed file> in
+  the child k3d process env (k3d clobbers ~/.kube/config by default otherwise).
+- D: shell-out to a pinned, checksum-verified binary (library = ~115 modules +
+  Docker SDK + client-go skew + Go 1.24.4 + logrus).
+New requirements surfaced: ClusterProvisioner + BinaryResolver ports (hexagonal
+seam like kube.Client); EnsureCluster state machine (partial-create recovery);
+cluster file lock (shared cluster raced by worktrees/invocations); version-skew/
+upgrade contract; embedded build-time checksum (not runtime checksums.txt);
+honest first-run progress (no 2-min promise); uninstall/cleanup + binary GC.
+BIGGEST product gap (HIGH): "fund an address" is NOT zero-config today — no
+wallet/keygen; topup needs a user-supplied addr_test… Needs operator-side
+funded-wallet bootstrap (DESIGN.md anticipates it). Flagged as top dependency.
+
+Wrote `.journal/049/CLI_LIFECYCLE_DESIGN.md` (first pass) with: user story,
+experience walkthrough, mental model, command surface, the 4 resolved forks,
+architecture+code overlay, adversarial findings→resolutions, rejected
+alternatives, the funded-wallet dependency, a phased plan, and 5 open decisions
+for the user (verb name; wallet sequencing; up targeting precedence; defer
+`cluster` nouns?; ephemeral-by-default?).
+
+NEXT: paused for user review of the proposal. Open decisions in §13 await the
+user's calls before any implementation.
