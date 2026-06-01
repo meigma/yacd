@@ -79,3 +79,38 @@ Gates green: `root:generate` (idempotent, no API change), `root:check`,
 Custom-public KEEPS the ConfigMap path (no regression). NOW: `root:test-e2e`
 running in background (chainsaw on real Kind, builds cardano-tools from source
 so it carries `sync`). After green: PR, then journal close.
+
+## 2026-05-31 20:30 — e2e exposed a genesis-hash gap; fixed; recovered a cwd slip
+First e2e FAILED (real bug, not flake): the `network-artifacts-sync` init synced
+9 artifacts fine and the follower-node started, but `cardano-db-sync` died with
+`NodeConfigParseError "key ByronGenesisHash not found"`. Root cause: the
+cardano-testnet create-env `configuration.yaml` on disk omits genesis hashes
+(cardano-node computes them; db-sync REQUIRES them), and the legacy ConfigMap
+publisher enriched only in-memory. PR-A's `stage` flattened the RAW on-disk
+config → served config lacked hashes. Invisible until PR-C made db-sync consume
+the served config. FIX (`b2dc24e`): `cardano-tools stage` now enriches
+configuration.yaml via the shared `generate.EnrichGenesisHashes` (cardano-cli;
+image ships it at /opt/cardano/bin + CARDANO_CLI). Injectable `Hasher` so unit
+tests fake it. Public `fetch` configs already ship hashes — untouched. stage
+unit test now references all four genesis files + asserts the hashes appear.
+
+ENVIRONMENTAL (not a PR-C problem): `test/chart` `TestManagerRBACMatchesControllerGen`
+fails LOCALLY with phantom `example.meigma.io/nginxdeployments` + `events`
+markers that exist NOWHERE in source (chart is clean, `go list ./...` shows no
+such pkg, grep/git-grep clean). PROVEN environmental: it fails identically on a
+clean `master` (c61e0a6) checkout with zero of my changes. Root cause is the
+local proto-go-shim `{{context.Compiler}}` bug degrading controller-gen's
+go/packages load (controller-gen errors outright when run directly). CI is green
+for master, so CI is unaffected. Do NOT "fix" RBAC — nothing is wrong.
+
+PROCESS SLIP (recovered): a `cd` in a compound Bash command didn't persist, so a
+later `git commit` landed the stage fix as `255b384` on LOCAL master instead of
+feat. Caught immediately via `git -C <abs> log`. Recovered: cherry-picked to
+feat (`b2dc24e`), `git reset --hard origin/master` on main (255b384 never
+pushed; master back at c61e0a6, clean). LESSON: use `git -C <abs-path>` and
+verify pwd; the session-046 garbled-state caution applies.
+
+State: feat has 6 commits (sync cmd, controller rewire, sidecar-spec fix, lint,
+chainsaw assert, genesis enrich). Targeted suites all green (cardanodbsync,
+cardanonetwork, cardano-tools, stage). e2e #2 re-running in background from the
+feat worktree (rebuilds cardano-tools from source). After green: push + PR.
