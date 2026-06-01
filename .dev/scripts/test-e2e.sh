@@ -7,7 +7,7 @@ command -v "$kind_bin" >/dev/null
 cluster="${KIND_CLUSTER:-yacd-test-e2e}"
 manager_image="${IMG:-example.com/yacd:v0.0.1}"
 faucet_image="${FAUCET_IMG:-example.com/yacd-faucet:v0.0.1}"
-cardano_testnet_image="ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4"
+cardano_testnet_image="ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.5"
 cardano_tools_image="ghcr.io/meigma/yacd/cardano-tools:11.0.1-yacd.0"
 kubeconfig_dir="$(mktemp -d)"
 kubeconfig="$kubeconfig_dir/kubeconfig"

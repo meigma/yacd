@@ -622,7 +622,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 
 	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[2]
 	assert.Equal(t, faucetSourceAddressInitContainerName, addressInitContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", addressInitContainer.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.5", addressInitContainer.Image)
 	assert.Equal(t, []string{faucetSourceAddressCommand}, addressInitContainer.Command)
 	addressInitArgs := strings.Join(addressInitContainer.Args, " ")
 	assert.Contains(t, addressInitArgs, "cardano-cli address build")
@@ -636,7 +636,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.Len(t, deployment.Spec.Template.Spec.Containers, 5)
 	nodeContainer := deployment.Spec.Template.Spec.Containers[0]
 	assert.Equal(t, cardanoNodeContainerName, nodeContainer.Name)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", nodeContainer.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.5", nodeContainer.Image)
 	assert.Equal(t, []string{"cardano-node"}, nodeContainer.Command)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, nodeContainer.TerminationMessagePath)
 	assert.Equal(t, []string{

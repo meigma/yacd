@@ -67,7 +67,7 @@ func TestDBSyncWorkloadBuilderBuildsExternalDatabaseWorkload(t *testing.T) {
 	pgPassInit := requireInitContainer(t, deployment, dbSyncPGPassInitName)
 	follower := requireContainer(t, deployment, followerNodeContainerName)
 	dbSyncContainer := requireContainer(t, deployment, dbSyncContainerName)
-	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.4", follower.Image)
+	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.5", follower.Image)
 	assert.Equal(t, "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0", pgPassInit.Image)
 	assert.Equal(t, "ghcr.io/intersectmbo/cardano-db-sync:13.7.1.0", dbSyncContainer.Image)
 	assert.Equal(t, []string{"/bin/sh", "-eu", "-c"}, pgPassInit.Command)
