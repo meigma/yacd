@@ -46,11 +46,10 @@ type Options struct {
 // flat served directory: the contract-key artifact files, the synthesized
 // connection.json, and an integrity manifest.json over all of them.
 //
-// It reuses the same flatten and connection assembly as the report verb
+// It uses the shared flatten and connection assembly
 // ([artifactset.ReadManifest], [artifactset.ReadArtifacts], and
-// [artifactset.Build]) so the staged directory and the ConfigMap report path
-// stay byte-for-byte aligned. manifest.json is written last so it covers
-// connection.json.
+// [artifactset.Build]) so the staged directory matches the contract artifact
+// layout. manifest.json is written last so it covers connection.json.
 //
 // ctx is accepted for symmetry with the other verbs; staging is local
 // filesystem work and does not block on it.
