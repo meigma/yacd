@@ -1,5 +1,22 @@
 # Changelog
 
+## [11.0.1-yacd.5](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.4...cardano-tools/v11.0.1-yacd.5) (2026-06-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cardano-tools:** remove the dead report verb (F0 PR-D) ([#81](https://github.com/meigma/yacd/issues/81))
+
+### Features
+
+* **cardanodbsync:** consume network artifacts over HTTP (F0 redesign, PR-C) ([#77](https://github.com/meigma/yacd/issues/77)) ([231ccde](https://github.com/meigma/yacd/commit/231ccdecd9ec05a6d1a83b6a0f84b28b4ed0daae))
+* **cardanonetwork:** serve network artifacts over HTTP (F0 redesign, PR-A) ([#75](https://github.com/meigma/yacd/issues/75)) ([c61e0a6](https://github.com/meigma/yacd/commit/c61e0a62a9f7cfb88e18b40a64ac919e60fe2fc8))
+
+
+### Build
+
+* **cardano-tools:** remove the dead report verb (F0 PR-D) ([#81](https://github.com/meigma/yacd/issues/81)) ([2b9bf84](https://github.com/meigma/yacd/commit/2b9bf84cea413c102d891235edb3a088a62507d7))
+
 ## [11.0.1-yacd.4](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.0...cardano-tools/v11.0.1-yacd.4) (2026-05-31)
 
 
