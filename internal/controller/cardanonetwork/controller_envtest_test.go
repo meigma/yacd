@@ -596,6 +596,44 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 
+	// Keep the primary Deployment continuously observed+available in the
+	// background for the rest of the test. ArtifactsReady derives from the serve
+	// sidecar's readiness, and every db-sync sidecar attach/detach bumps the
+	// Deployment generation (flipping it to progressing); re-stamping on a ticker
+	// rather than only inside specific wait loops keeps ArtifactsReady from
+	// flapping and starving the revision-handoff reconciles under CI load. This
+	// is a best-effort goroutine: it never touches *testing.T, and conflicts are
+	// ignored because the next tick re-reads the latest object.
+	go func() {
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current := &appsv1.Deployment{}
+				if err := apiClient.Get(ctx, deploymentKey, current); err != nil {
+					continue
+				}
+				current.Status.ObservedGeneration = current.Generation
+				current.Status.Replicas = 1
+				current.Status.UpdatedReplicas = 1
+				current.Status.ReadyReplicas = 1
+				current.Status.AvailableReplicas = 1
+				current.Status.Conditions = []appsv1.DeploymentCondition{{
+					Type:               appsv1.DeploymentAvailable,
+					Status:             corev1.ConditionTrue,
+					Reason:             "MinimumReplicasAvailable",
+					Message:            "Deployment has minimum availability.",
+					LastUpdateTime:     metav1.Now(),
+					LastTransitionTime: metav1.Now(),
+				}}
+				_ = apiClient.Status().Update(ctx, current)
+			}
+		}
+	}()
+
 	awaitArtifactsReady := func() {
 		require.Eventually(t, func() bool {
 			markAvailable()
