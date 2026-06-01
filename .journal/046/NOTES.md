@@ -526,3 +526,13 @@ root:check exit 0; root:test exit 0 / 0 failures (cardanonetwork envtest ok 39.9
 9e7e0df foundation. PR #75 conflict cleared. Merge still HELD for user review.
 NOTE: channel still intermittently garbling/injecting words; verified every git
 state via small commands + git ls-remote (remote SHA == local).
+
+## 2026-06-01 00:30 — PR #75 CI fully GREEN; ready to merge pending review
+On the rebased head 8cab88b, all required checks pass: ci ✅, cardano-tools-image
+✅, e2e ✅ (chainsaw KinD smoke success — confirms serve sidecar + artifacts
+Service work end-to-end in CI), Kusari ✅; 8 release dry-runs correctly skipping.
+gh mergeStateStatus = CLEAN. PR #75 (F0 redesign PR-A) is READY TO MERGE pending
+only human review. Merge HELD per user instruction ("pause before merging").
+Autonomous loop standing down — nothing actionable until the user reviews/merges.
+Next in the series after #75 merges: PR-C (db-sync over HTTP) → PR-B (node-from-PVC
++ ConfigMap deletion = mainnet F0 unblock) → PR-D (cleanup + digest pin).
