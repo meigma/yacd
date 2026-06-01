@@ -3,7 +3,7 @@
 //
 // A create-env state directory is nested (for example the primary topology is
 // at node-data/node1/topology.json) and carries no connection.json. The stage
-// verb reuses the report verb's flatten and connection assembly
+// verb uses the shared flatten and connection assembly
 // (internal/artifactset) to collect the contract-key artifact files and
 // synthesize connection.json, writes them flat under the output directory, then
 // writes an integrity manifest.json over every file. The result is the local

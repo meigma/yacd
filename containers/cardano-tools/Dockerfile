@@ -98,7 +98,7 @@ ARG CARDANO_NODE_VERSION
 ARG YACD_CARDANO_TOOLS_VERSION
 
 LABEL org.opencontainers.image.title="yacd-cardano-tools" \
-      org.opencontainers.image.description="YACD Cardano artifact utility (generate, fetch, serve, report) built with official IntersectMBO cardano-node release artifacts" \
+      org.opencontainers.image.description="YACD Cardano artifact utility (generate, fetch, serve, stage, sync) built with official IntersectMBO cardano-node release artifacts" \
       org.opencontainers.image.source="https://github.com/meigma/yacd" \
       org.opencontainers.image.url="https://github.com/meigma/yacd" \
       org.opencontainers.image.version="${YACD_CARDANO_TOOLS_VERSION}" \
