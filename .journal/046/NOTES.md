@@ -536,3 +536,21 @@ only human review. Merge HELD per user instruction ("pause before merging").
 Autonomous loop standing down — nothing actionable until the user reviews/merges.
 Next in the series after #75 merges: PR-C (db-sync over HTTP) → PR-B (node-from-PVC
 + ConfigMap deletion = mainnet F0 unblock) → PR-D (cleanup + digest pin).
+
+## 2026-06-01 00:48 — PR #75 MERGED (user LGTM); PR-A complete
+User approved ("LGTM"). Confirmed PR #75 OPEN/CLEAN, head==local 8cab88b, then
+`gh pr merge 75 --squash --auto` → MERGED at 2026-06-01T00:46:24Z. Squash commit
+c61e0a6 "feat(cardanonetwork): serve network artifacts over HTTP (F0 redesign,
+PR-A) (#75)" on master. Local master fast-forwarded. Removed the merged F0
+worktree (wt remove feat/f0-public-profile-pvc; tree matched master) and the stale
+integrated session-043 PR1 worktree (feat/cardano-tools-image-foundation). PR-A
+is DONE.
+
+F0 redesign status: PR-A (serve artifacts over HTTP, additive) DONE+merged. Remaining
+series (resume in a future session, branch fresh off master): PR-C (db-sync consumes
+configs over HTTP from the serve endpoint — must precede PR-B), PR-B (node reads from
+PVC + DELETE the network-artifacts ConfigMap + artifact-publisher RBAC + cardano-testnet
+publisher = the mainnet F0 unblock), PR-D (remove cardano-tools `report` verb, pin
+manager default cardano-tools image to a published digest, refresh DESIGN.md + chainsaw).
+Dev stack still UP on kind-yacd-dev (now orphaned — the F0 worktree that owned it was
+removed; tear down at session close via moon run root:dev-down, or it persists).
