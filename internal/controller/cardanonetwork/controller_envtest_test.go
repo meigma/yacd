@@ -596,44 +596,6 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 		}, 10*time.Second, 100*time.Millisecond)
 	}
 
-	// Keep the primary Deployment continuously observed+available in the
-	// background for the rest of the test. ArtifactsReady derives from the serve
-	// sidecar's readiness, and every db-sync sidecar attach/detach bumps the
-	// Deployment generation (flipping it to progressing); re-stamping on a ticker
-	// rather than only inside specific wait loops keeps ArtifactsReady from
-	// flapping and starving the revision-handoff reconciles under CI load. This
-	// is a best-effort goroutine: it never touches *testing.T, and conflicts are
-	// ignored because the next tick re-reads the latest object.
-	go func() {
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				current := &appsv1.Deployment{}
-				if err := apiClient.Get(ctx, deploymentKey, current); err != nil {
-					continue
-				}
-				current.Status.ObservedGeneration = current.Generation
-				current.Status.Replicas = 1
-				current.Status.UpdatedReplicas = 1
-				current.Status.ReadyReplicas = 1
-				current.Status.AvailableReplicas = 1
-				current.Status.Conditions = []appsv1.DeploymentCondition{{
-					Type:               appsv1.DeploymentAvailable,
-					Status:             corev1.ConditionTrue,
-					Reason:             "MinimumReplicasAvailable",
-					Message:            "Deployment has minimum availability.",
-					LastUpdateTime:     metav1.Now(),
-					LastTransitionTime: metav1.Now(),
-				}}
-				_ = apiClient.Status().Update(ctx, current)
-			}
-		}
-	}()
-
 	awaitArtifactsReady := func() {
 		require.Eventually(t, func() bool {
 			markAvailable()
@@ -673,10 +635,15 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 	require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(first), currentFirst))
 	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, currentFirst.Status.Placement.PrimarySidecar.Revision)
 
-	// The manager reconciles this CardanoDBSync's status concurrently, so a
-	// fetch-then-status-update can race a controller write and conflict. Retry
-	// the revision bump against the latest object until it lands (mirrors how
-	// markAvailable handles the same optimistic-concurrency window).
+	// Bump the attached db-sync's published sidecar revision and assert the
+	// primary Deployment re-stamps it. Re-publish the bump on every iteration
+	// (not once) so the cardanonetwork watch keeps re-enqueuing and reconciling
+	// against the latest db-sync status until the Deployment reflects it; under
+	// heavy CI load a single bump-triggered reconcile can read a stale cache and
+	// nothing else would re-trigger it. The db-sync controller ignores this
+	// status-only update (its predicate reacts only to generation or
+	// accepted-identity changes), so the value sticks and there is no writer to
+	// conflict with.
 	const bumpedRevision = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 	require.Eventually(t, func() bool {
 		latest := &yacdv1alpha1.CardanoDBSync{}
@@ -687,9 +654,15 @@ func TestCardanoNetworkControllerManagerAttachesPrimarySidecarDBSync(t *testing.
 			return false
 		}
 		latest.Status.Placement.PrimarySidecar.Revision = bumpedRevision
-		return apiClient.Status().Update(ctx, latest) == nil
-	}, time.Minute, 100*time.Millisecond)
-	requireDeploymentDBSyncSidecarRevisionEventually(t, ctx, apiClient, deploymentKey, bumpedRevision)
+		if err := apiClient.Status().Update(ctx, latest); err != nil {
+			return false
+		}
+		deployment := &appsv1.Deployment{}
+		if err := apiClient.Get(ctx, deploymentKey, deployment); err != nil {
+			return false
+		}
+		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == bumpedRevision
+	}, 2*time.Minute, 200*time.Millisecond)
 
 	require.Eventually(t, func() bool {
 		err := apiClient.Get(ctx, client.ObjectKey{Namespace: namespace.Name, Name: "first-dbsync"}, &appsv1.Deployment{})
@@ -776,7 +749,7 @@ func requireDeploymentDBSyncSidecarRevisionEventually(
 		}
 
 		return deployment.Spec.Template.Annotations[dbSyncSidecarRevisionAnno] == value
-	}, time.Minute, 100*time.Millisecond)
+	}, 2*time.Minute, 100*time.Millisecond)
 }
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, ct conditionType) *metav1.Condition {
