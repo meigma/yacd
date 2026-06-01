@@ -502,3 +502,27 @@ reads. STOPPED, everything safe/resumable:
   (must pass #74 sync tests AND PR-A artifacts tests together).
 RESUME: when channel is clean, `git rebase origin/master`, resolve status.go union,
 root:generate + root:check + root:test, then show user the status.go diff before push.
+
+## 2026-05-31 17:25 — Conflict RESOLVED (inline), branch rebased + green + pushed
+User chose "I resolve inline, you review." Resolved the status.go conflict myself
+with clean reads (3-way captured: /tmp/status_base.go, _master.go, _C.go).
+RESULT: `git rebase origin/master` actually completed (reflog: rebase finish);
+git auto-merged status.go EXCEPT one wrong-arity call it left for me. Merge is a
+clean union of two orthogonal changes:
+- patchPrimaryWorkloadStatus + patchPrimaryWorkloadAppliedStatus now carry BOTH
+  new params: `artifactsService *corev1.Service` (Commit C) AND
+  `syncStatus *CardanoNetworkSyncStatus` (#74).
+- setEndpointStatus gains artifactsService + the Endpoints.Artifacts publish block
+  (Commit C); setSyncStatus/clearSyncStatus retained (#74).
+- FIXED git's one miss: patchStatusConditionsClearingFaucet now passes the correct
+  nils for the 8-pointer merged signature. Amended into replayed Commit C (8cab88b)
+  so every commit compiles.
+VALIDATION (all green on rebased branch): go build cardanonetwork exit 0;
+root:generate idempotent (0 dirty — merged CRD+deepcopy carry both fields);
+root:check exit 0; root:test exit 0 / 0 failures (cardanonetwork envtest ok 39.9s —
+#74 sync tests AND PR-A artifacts tests pass together). Force-pushed
+(--force-with-lease); remote==local==8cab88b. New branch SHAs:
+8cab88b C / 2ced97c B / bb11a32 A producer / 33d4eb1 A1 / bd82317 + b31c52e +
+9e7e0df foundation. PR #75 conflict cleared. Merge still HELD for user review.
+NOTE: channel still intermittently garbling/injecting words; verified every git
+state via small commands + git ls-remote (remote SHA == local).
