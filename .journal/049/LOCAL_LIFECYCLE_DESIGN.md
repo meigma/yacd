@@ -172,27 +172,41 @@ the CLI lifecycle can ship ahead of it but is incomplete without it.
 
 The CLI already follows ports-and-adapters: `kube.Client` is a port,
 `kube.Adapter` its implementation, constructed by a factory on `Options` and
-mocked in tests. The lifecycle adds three new ports plus a state port and a
-use-case orchestrator, all under `cli/internal`, all mockable.
+mocked in tests. New port/adapter pairs follow the repo convention of a **port
+package** (interface + domain types + `doc.go`) with each **adapter as a
+subpackage beneath it** — so the port stays dependency-light and only the
+composition root imports the heavy adapters. The lifecycle adds three such ports
+plus a state port and a use-case orchestrator, all under `cli/internal`, all
+mockable.
 
 ### 10.1 Package layout
 
 ```
 cli/internal/
-  kube/          # UNCHANGED port, reused for network apply + host access
-  devconfig/     # UNCHANGED, reused (embedded default Environment)
-  render/        # UNCHANGED, reused (Environment -> CardanoNetwork)
-  cluster/       # NEW  port: local cluster runtime (+ k3d adapter)
-  toolbin/       # NEW  port: pinned tool-binary resolver (+ fetcher adapter)
-  operator/      # NEW  port: operator installer (+ SSA adapter, embedded manifests)
-  clusterstate/  # NEW  port: managed-cluster record + file lock (+ filesystem adapter)
-  lifecycle/     # NEW  use-case: Manager composing the ports
+  kube/              # UNCHANGED port (+ adapter), reused for network apply + host access
+  devconfig/         # UNCHANGED, reused (embedded default Environment)
+  render/            # UNCHANGED, reused (Environment -> CardanoNetwork)
+  cluster/           # NEW port: Provisioner + types  (cluster.go, doc.go)
+    k3d/             #   adapter: k3d shell-out
+  toolbin/           # NEW port: Resolver + types
+    ghrelease/       #   adapter: GitHub-release fetch + embedded-checksum verify
+  operator/          # NEW port: Installer + types
+    ssa/             #   adapter: server-side apply over embedded rendered manifests
+  clusterstate/      # NEW port: Store (record + lock) + types
+    file/            #   adapter: filesystem-backed store + flock
+  lifecycle/         # NEW use-case: Manager composing the ports
   cli/
-    devnet.go    # NEW  command subtree (devnet / down / status); thin
-    target.go    # NEW  shared targeting resolver (precedence in §6)
-    options.go   # extend: factories for the new ports
-  mocks/         # add generated mocks for the new ports
+    devnet.go        # NEW command subtree (devnet / down / status); thin
+    target.go        # NEW shared targeting resolver (precedence in §6)
+    options.go       # extend: factories for the new ports
+  mocks/             # generated mocks for the new port interfaces
 ```
+
+Each port package holds only its interface + domain types (+ `doc.go`); the
+adapter subpackage imports the port and implements it. So only `cluster/k3d`
+pulls the shell-out/exec machinery, only `operator/ssa` pulls the SSA client +
+embedded `fs.FS`, and consumers (commands, `lifecycle`) depend on the light port
+packages.
 
 ### 10.2 Ports
 
@@ -278,21 +292,23 @@ type Store interface {
 }
 ```
 
-### 10.3 Adapters
+### 10.3 Adapters (subpackages)
 
-- `cluster`: a k3d adapter implementing `Provisioner` by shelling out to a
-  resolved binary through an injected command runner (so the adapter is testable
-  without Docker). It owns the `EnsureCluster` state machine and the
-  partial-create rollback.
-- `toolbin`: a GitHub-release fetcher implementing `Resolver` — downloads the
-  pinned asset, verifies against the embedded digest, installs under XDG, GCs old
-  versions; injectable HTTP client.
-- `operator`: an SSA adapter implementing `Installer` over an embedded manifest
-  `fs.FS`, constructed against the managed cluster (`NewSSAInstaller(kubeconfig,
-  context string) (Installer, error)`), using a generic server-side-apply client
-  internally.
-- `clusterstate`: a filesystem-backed `Store` under `$XDG_STATE_HOME/yacd`
-  (record + `flock`).
+- `cluster/k3d` — implements `cluster.Provisioner` by shelling out to a resolved
+  k3d binary through an injected command runner (testable without Docker). Owns
+  the `EnsureCluster` state machine and partial-create rollback.
+  `k3d.New(resolver toolbin.Resolver, runner exec.Runner) *k3d.Provisioner`.
+- `toolbin/ghrelease` — implements `toolbin.Resolver`: downloads the pinned
+  `k3d-<os>-<arch>` asset, verifies against the embedded digest, installs under
+  XDG, GCs superseded versions; injectable HTTP client.
+  `ghrelease.New(pin toolbin.Pin, dir string, http HTTPDoer) *ghrelease.Resolver`.
+- `operator/ssa` — implements `operator.Installer` over an embedded manifest
+  `fs.FS`, constructed against the managed cluster, using a generic
+  server-side-apply client internally (CRDs first, then RBAC/SA/Deployment,
+  label-based prune).
+  `ssa.New(kubeconfig, context string, manifests fs.FS) (operator.Installer, error)`.
+- `clusterstate/file` — implements `clusterstate.Store` under
+  `$XDG_STATE_HOME/yacd` (JSON record + `flock`). `file.New(dir string) *file.Store`.
 
 ### 10.4 Use-case orchestrator
 
@@ -330,8 +346,9 @@ cluster.
 
 ### 10.5 Wiring & shared targeting
 
-`Options` gains factory fields next to `KubeClientFactory` (defaulting to the real
-adapters, overridable by tests):
+`Options` gains factory fields next to `KubeClientFactory` (defaulting to the
+subpackage adapters — `k3d.New`, `ghrelease.New`, `ssa.New`, `file.New` —
+overridable by tests):
 
 ```go
 ClusterProvisionerFactory func(cluster.Spec) (cluster.Provisioner, error)
