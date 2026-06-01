@@ -44,7 +44,6 @@ func bundleServer(t *testing.T, files map[string][]byte) (*httptest.Server, []by
 		_, _ = w.Write(manifestRaw)
 	})
 	for name, body := range files {
-		body := body
 		mux.HandleFunc("/"+name, func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write(body)
 		})
