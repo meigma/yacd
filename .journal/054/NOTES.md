@@ -196,3 +196,17 @@ Next: watch PR #89 CI (new dep gofrs/flock → Kusari will scan; expect pass). A
 merge, **P6 (devnet all-in-one)** is unblocked — composes toolbin+cluster+clusterstate
 +operator(ssa)+kube via lifecycle.Manager + the devnet command subtree + targeting
 resolver. P7 (hardening) after. Dev stack still up.
+
+## 2026-06-02 10:50 — PR #89 merged (Phase 3 done)
+
+CI green: `ci` PASS (3m13s), **Kusari PASS** (1m43s — gofrs/flock dep scanned clean),
+`cardano-tools-image` PASS; `e2e` pending-but-unaffected (CLI-only). Squash-merged →
+`1c12560` on master. Worktree removed + branch deleted. release-please will queue
+another patch bump.
+
+**Phases done this session: P5 (#86), P2 (#88), P3 (#89).** Plan status:
+P1✅ P4✅ P5✅ P2✅ **P3✅** | remaining: **P6** (devnet all-in-one — now unblocked,
+deps P2/P3/P5 all ✅) → P7 (hardening). P6 is the first user-facing milestone and the
+biggest slice (lifecycle.Manager + devnet/down/status commands + shared targeting
+resolver wired into all verbs + context switch/restore + the embedded default network
++ progress output). Dev stack still up.
