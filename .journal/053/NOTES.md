@@ -120,3 +120,46 @@ release `v0.1.0` is intentionally left for the user to Publish (their decision);
 unblocked: P4 (funded wallet → v0.2.0) and P5 (operator install embedding the
 release). Per the plan, P2 (toolbin) / P3 (cluster) are independent and can start
 in parallel.
+
+## 2026-06-01 21:05 — Phase 4 funded-wallet: implementation landed on branch
+
+New task: execute session-049 plan Phase 4 (funded wallet, operator-side, ships
+in v0.2.0). Plan written + approved (`~/.claude/plans`). Key decisions: cardano-
+testnet create-env has NO `--initial-funds` (verified against the published
+binary), so the operator GENERATES the wallet key (user-owned, stored in an owned
+Secret) and FUNDS it via the existing faucet `/v1/topups` path, confirming
+on-chain via Kupo. User chose: WalletReady gates aggregate Ready; default funding
+100,000 ADA.
+
+Implemented on worktree `feat/funded-wallet` (off `a2cbdf3`), committed `370a1d7`:
+- `internal/cardano/wallet` (new pure pkg): ed25519 keygen → cardano-cli text
+  envelopes + addr_test derivation (reuses Apollo via the faucet's logic, which
+  was lifted here; `sources.go` now calls it). Golden test pinned to a real
+  `cardano-cli address build` vector (seed 0x01*32 →
+  addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0).
+- API: `spec.chainAPI.wallet{enabled,fundingLovelace}` + `status.wallet
+  {address,keySecretName,funded,fundedTxID}` + `WalletReady` condition; CRD +
+  deepcopy regenerated.
+- Controller (cardanonetwork): owned `<net>-wallet` Secret create-once (mirrors
+  faucet_auth.go; key material NEVER regenerated); funding orchestration in
+  `wallet.go` gated on Faucet+Kupo ready — Kupo REST confirm (balance = source of
+  truth, self-heal) + faucet POST via injectable seams in `wallet_funding.go`
+  (plain net/http; verified the manager pulls NO ogmigo/gorilla/kugo, only
+  Apollo address/key/bech32). WalletReady wired into AggregateReady (gates Ready
+  when enabled); funding error → Degraded; pending → Progressing (15s requeue).
+  Validation: wallet requires local + faucet + kupo + fundingLovelace ≤ faucet
+  max. Teardown deletes the wallet Secret only on explicit disable (not on
+  degrade — it's the user's key). No new RBAC.
+- examples/local/yacd.yaml: wallet enabled (100k ADA) + faucet maxTopUpLovelace
+  raised to 100000000000.
+- Tests: wallet golden; controller unit tests (settings validation, create-once
+  preserve, funding state machine via mocked seams: disabled/pending/confirmed/
+  submit-once/no-resubmit/funding-error→degraded/confirm-error→degraded);
+  manager-backed envtest extended (wallet Secret + status.wallet.address; confirmer
+  override returns funded so Ready gating still reaches True); Chainsaw asserts the
+  `<net>-wallet` Secret + WalletReady=True + status.wallet.funded on the real
+  localnet.
+
+Green: `root:test` + `root:check` pass; `git diff --check` clean. `root:test-e2e`
+(real funding path) running now. Next: e2e green → open PR → cut v0.2.0 (auto
+0.1.0→0.2.0, no Release-As) with the same pause-before-merge gate.
