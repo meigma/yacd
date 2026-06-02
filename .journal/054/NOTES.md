@@ -36,3 +36,53 @@ Plan: awaiting the user's specific instruction on which phase to start. Will sel
 create an implementation worktree and run `moon run root:dev-up` once the work is
 scoped (note: the dev stack matters for operator-side work like P5's SSA install
 testing; pure CLI port work P2/P3 may not need it, TBD per instructions).
+
+## 2026-06-02 08:31 — Phase 5 implemented (operator install via SSA)
+
+User chose Phase 5. Plan approved (digest-pin images + pin install namespace to
+`yacd-system`). Implemented on worktree/branch `feat/cli-operator-install` (from
+master `8c388cd`). Dev stack `kind-yacd-dev` started once via `root:dev-up` (exit 0).
+
+What landed (commit `38cc848`):
+- `cli/internal/operator/` port: `InstallSpec`/`State`/`Installer` + pure
+  `Decide(embedded, state)` reconcile (x/mod/semver). doc.go/operator.go/
+  reconcile.go + table test.
+- `cli/internal/operator/ssa/` adapter: `New(kubeconfig, ctx, fs.FS)`,
+  `EnsureOperator`/`OperatorState`. Parses embedded multi-doc YAML →
+  unstructured, applies CRDs first + waits Established (typed apiextensionsv1),
+  then SSA-applies the workload in a stable kind order under field owner
+  `yacd-cli` (+ForceOwnership), namespace-defaulting namespaced objects via the
+  RESTMapper scope, label-based prune (`yacd.meigma.io/install=operator`) over a
+  fixed GVK set that **excludes CRDs**. Version read from the manager
+  Deployment's `app.kubernetes.io/version` label (no ConfigMap). Install ns
+  pinned to `yacd-system`; foreign ns rejected.
+- `embed.go` `//go:embed manifests/operator.yaml`; manifest rendered by
+  `.dev/scripts/render-operator-chart.sh` (`helm template … --include-crds
+  --no-hooks` + `--set-string image.digest`/`faucet.image.digest` to the v0.1.1
+  published digests). Version label stays appVersion `v0.1.1` (the reconcile
+  source of truth); digests live only in the render script (bump on release).
+- Wiring: `render-operator-chart` Moon task + inlined into `root:generate`
+  AFTER controller-gen (so CRD changes flow into the embed same pass); manifest
+  added to generate outputs + `check.sh` drift guard. `.mockery.yml` gained
+  `operator.Installer` → `cli/internal/mocks/installer.go`.
+
+Verification (all green): `moon run root:generate` (render idempotent, mock
+written), `moon run root:check` (fmt/lint/helm/drift), `moon run root:test`
+(full suite). New envtest test starts envtest with NO preloaded CRDs and proves:
+install from embedded manifests, CRDs Established, namespace defaulting,
+cluster-scoped get no ns, idempotent re-apply, stray-labeled object pruned,
+`OperatorState` version, **asserts NOT Ready** (envtest has no
+kube-controller-manager), refuse-on-newer (`ErrNewerOperator`), foreign-ns
+rejection. Pure tests: Decide table, manifest parse/empty-skip, kind ordering,
+embedded version == v0.1.1, Available predicate.
+
+Deliberately NOT done (scope/decisions):
+- Live `Ready` (Deployment Available with the digest image) is the one thing
+  envtest can't prove. NOT run against `kind-yacd-dev` (would take Helm field
+  ownership from Tilt and break the dev loop). It's already evidenced by session
+  053's published-chart smoke using the SAME v0.1.1 digests, and is the P6
+  gated k3d e2e's job. Left as deferred.
+- No devnet commands / cluster provisioning / lifecycle wiring / Options factory
+  (P3/P6).
+
+Next: push branch, open PR. Then P2 (toolbin) / P3 (cluster) remain before P6.
