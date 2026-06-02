@@ -625,3 +625,34 @@
   (chart + images) so the CLI has a reliable install target; the funded-wallet
   bootstrap (operator-side) lands before the devnet phase as `v0.2.0`. Docs
   deferred to a separate session.
+- **Operator releases are live (session 053).** Plan Phase 1 shipped **`v0.1.0`**
+  and Phase 4 shipped **`v0.1.1`** through release-please → `release.yml`. NOTE the
+  plan said "v0.2.0" for the wallet, but the repo's `release-please-config.json`
+  has `bump-patch-for-minor-pre-major: true`, so pre-1.0 `feat`s bump the PATCH
+  digit (0.1.0 → 0.1.1, not 0.2.0). **Phase 5 embeds `0.1.1`** (the latest), not
+  0.2.0. Published, attested refs: manager
+  `ghcr.io/meigma/yacd:v0.1.1@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21`,
+  faucet `ghcr.io/meigma/yacd/faucet:v0.1.1@sha256:826f8d52f0a4b0f607e2293cf72a8217de27700b5e5f1b35e1af86ef18fd3f66`,
+  chart `oci://ghcr.io/meigma/yacd/chart:0.1.1@sha256:a8d24dfaa19a4af0279ed26654ff36a44e5cf50a05a5e0ffa02481688a5a049f`.
+  The first-ever real root `release.yml` run worked; the GitHub draft releases are
+  left for a human to Publish (GHCR artifacts publish immediately on the release-PR
+  merge regardless).
+- **Funded developer wallet (session 053, PR #84, in v0.1.1).** Opt-in
+  `spec.chainAPI.wallet{enabled,fundingLovelace}` on LOCAL CardanoNetworks
+  (requires faucet + kupo; rejected otherwise / on public). The controller
+  generates an ed25519 payment key ONCE into an owned `<net>-wallet` Secret
+  (`payment.skey`/`payment.vkey` cardano-cli text envelopes + `address`); the key
+  is NEVER regenerated (would strand funds) — only an explicit `enabled:false`
+  deletes the Secret (degrade preserves it). It publishes `status.wallet`
+  (address/keySecretName/funded/fundedTxID), funds the address once via the faucet
+  `/v1/topups` after Faucet+Kupo are ready, and confirms on-chain via a plain Kupo
+  REST GET (on-chain balance is the source of truth → self-heals). `WalletReady`
+  gates aggregate `Ready` when enabled; a definitive faucet 4xx rejection →
+  `Degraded`, transient connectivity errors retry as pending. Default funding
+  100,000 ADA (example faucet `maxTopUpLovelace` raised to fit). Address derivation
+  is the shared pure pkg `internal/cardano/wallet` (reuses Apollo via the faucet's
+  logic; `services/faucet/.../sources.go` now delegates to it), golden-tested vs a
+  real `cardano-cli address build` vector. Funder/confirmer are injectable seams
+  (`walletFunderOverride`/`walletConfirmerOverride`) using plain `net/http` — the
+  MANAGER pulls NO ogmigo/Gorilla-WebSocket/kugo (verified via `go list -deps
+  ./cmd`); keep it that way.

@@ -211,3 +211,17 @@ WalletReady=True, and Kupo shows the wallet address holding exactly
 State: **Phase 4 complete.** Open: the GitHub draft release `v0.1.1` is left for
 the user to Publish (their decision). Dev stack (kind-yacd-dev) still up. P5
 (operator install) can now embed v0.1.1; P2/P3 independent.
+
+## 2026-06-02 07:14 — Close
+
+Session closed. Both phases landed and are released:
+- Phase 1: operator **v0.1.0** — PR #83 (redirect) + PR #7 (release), published.
+- Phase 4: funded developer wallet — PR #84 (`0103d6c`) + PR #85 (release **v0.1.1**,
+  `8c388cd`), published; smoke-verified the wallet holds 100k ADA on-chain.
+
+Hand-off state: master fast-forwarded to `8c388cd`; `feat/funded-wallet` worktree
+removed; dev stack (`kind-yacd-dev`) torn down (`root:dev-down`); only the unrelated
+`oidc-smoke` kind cluster remains. GitHub draft releases `v0.1.0` + `v0.1.1` are
+left UNPUBLISHED for the user to Publish. SUMMARY.md written with NEXT STEPS
+(Phase 5 embeds 0.1.1; P2/P3 independent); INDEX row → complete; TECH_NOTES updated
+with the wallet feature + release refs + the pre-1.0 patch-bump convention.
