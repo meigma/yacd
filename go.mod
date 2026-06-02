@@ -9,6 +9,7 @@ require (
 	github.com/alecthomas/kong v1.15.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/go-logr/logr v1.4.3
+	github.com/gofrs/flock v0.13.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/rogpeppe/go-internal v1.14.1
 	github.com/spf13/cobra v1.10.2

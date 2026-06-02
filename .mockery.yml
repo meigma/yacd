@@ -20,3 +20,9 @@ packages:
   github.com/meigma/yacd/cli/internal/toolbin:
     interfaces:
       Resolver:
+  github.com/meigma/yacd/cli/internal/cluster:
+    interfaces:
+      Provisioner:
+  github.com/meigma/yacd/cli/internal/clusterstate:
+    interfaces:
+      Store:
