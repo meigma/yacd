@@ -144,3 +144,16 @@ real CDN redirect, verified digest, ran `k3d version` → v5.9.0 (2.0s). No new
 go.mod deps (stdlib only).
 
 Next: watch PR #88 CI. Then P3 (cluster + clusterstate, depends on P2/toolbin).
+
+## 2026-06-02 09:33 — PR #88 merged (Phase 2 done)
+
+CI: `ci` PASS (1m35s), **Kusari PASS** (21s — no RBAC/manifest/new-deps to flag,
+unlike P5). `e2e`/`cardano-tools-image` were still running at merge but are
+structurally unaffected (CLI-only change; e2e builds the manager image + runs
+Chainsaw, no `cli/` dependency). Squash-merged → `bc2f739` on master; worktree
+removed + branch deleted. release-please will queue another patch bump for the
+`feat(cli)`.
+
+**Phases done this session: P5 (#86) + P2 (#88).** Plan status:
+P1✅ P4✅ P5✅ P2✅ | remaining: **P3** (cluster+clusterstate, needs P2 ✓ now) →
+P6 (devnet, needs P2/P3/P5 — P2✓ P5✓, blocked on P3) → P7. Dev stack still up.
