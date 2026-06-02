@@ -163,3 +163,51 @@ Implemented on worktree `feat/funded-wallet` (off `a2cbdf3`), committed `370a1d7
 Green: `root:test` + `root:check` pass; `git diff --check` clean. `root:test-e2e`
 (real funding path) running now. Next: e2e green → open PR → cut v0.2.0 (auto
 0.1.0→0.2.0, no Release-As) with the same pause-before-merge gate.
+
+## 2026-06-01 22:18 — Phase 4 funded wallet PUBLISHED as v0.1.1; smoke green
+
+e2e debugging + release:
+- First e2e run failed at the disable-faucet phase: the example now enables the
+  wallet (which requires the faucet), so disabling the faucet alone tripped the
+  `wallet requires faucet/kupo` validation. Fixed: the disable patch now also
+  disables the wallet and asserts the wallet Secret is torn down +
+  WalletReady→WalletDisabled.
+- Second run failed at the FIRST readiness gate: the controller funded the wallet
+  the instant FaucetReady flipped True, before the primary Pod was a live faucet
+  Service endpoint (node container still starting) → connection refused →
+  WalletFundingFailed/Degraded → `up --wait` gave up. Fixed (`fix` commit): treat
+  transient funding/confirmation connectivity errors as retryable pending (not
+  Degraded); only a definitive faucet 4xx rejection degrades.
+- Third e2e run GREEN (real localnet: wallet generated, funded via the live
+  faucet, confirmed via Kupo, Ready=True with wallet gating, then clean disable).
+
+PR #84 (`feat(cardanonetwork): bootstrap a funded developer wallet for local
+networks`) — all CI green incl. Linux e2e — squash-merged to master `0103d6c`.
+
+Release version decision: release-please computed **0.1.1** (not the plan's
+"0.2.0") because the repo's `release-please-config.json` sets
+`bump-patch-for-minor-pre-major: true` (pre-1.0 features bump the patch digit).
+User chose to accept the natural **0.1.1** over forcing 0.2.0. So the wallet
+ships as v0.1.1 (the version P5 will embed — supersedes the plan's "v0.2.0"
+naming).
+
+Release PR #85 (`release 0.1.1`) merged → release-please tagged `v0.1.1` + draft
+release → `release.yml` succeeded (all 10 jobs). Published refs:
+- Manager: `ghcr.io/meigma/yacd:v0.1.1`
+  `@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21`
+- Faucet:  `ghcr.io/meigma/yacd/faucet:v0.1.1`
+  `@sha256:826f8d52f0a4b0f607e2293cf72a8217de27700b5e5f1b35e1af86ef18fd3f66`
+- Chart:   `oci://ghcr.io/meigma/yacd/chart` `0.1.1`
+  `@sha256:a8d24dfaa19a4af0279ed26654ff36a44e5cf50a05a5e0ffa02481688a5a049f`
+  (appVersion v0.1.1)
+
+Published-chart smoke (throwaway kind, deleted after) — PASS: `helm install` the
+published 0.1.1 chart (no overrides) → operator `ghcr.io/meigma/yacd:v0.1.1`
+Available; `yacd up` a wallet-enabled local net → Ready; status.wallet.funded=true,
+WalletReady=True, and Kupo shows the wallet address holding exactly
+100,000,000,000 lovelace (100,000 ADA) in 1 UTxO; faucet sidecar = published
+`faucet:v0.1.1`.
+
+State: **Phase 4 complete.** Open: the GitHub draft release `v0.1.1` is left for
+the user to Publish (their decision). Dev stack (kind-yacd-dev) still up. P5
+(operator install) can now embed v0.1.1; P2/P3 independent.
