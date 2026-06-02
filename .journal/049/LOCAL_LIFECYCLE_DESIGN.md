@@ -396,7 +396,8 @@ context)` — no change to the `kube` port itself.
   cluster → operator → embedded default network → wait → result output (incl. the
   magic-interpolated `exec` tip hint) + progress streaming.
 - **Slice 3 — hardening.** Failure mapping, `--purge` uninstall + binary GC,
-  docs/quickstart + first-run banner, WSL2 validation, ARM multi-arch CI guard.
+  first-run banner, WSL2 validation, ARM multi-arch CI guard. (User documentation
+  is handled separately.)
 - **Dependency — funded-wallet bootstrap** (§8): operator/CRD work; sequence
   relative to Slice 2 per the open question below.
 

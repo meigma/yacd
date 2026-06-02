@@ -29,10 +29,15 @@ order. Do not pull later-phase scope forward to "save a PR."
   a Go library; overload `up` with provisioning; build a `yacd cluster
   create|list` noun group; implement `--persist`, a local registry, multi-node, or
   mainnet quickstart. These are explicitly out of scope per the design.
+- **Documentation is out of scope.** No phase ships user documentation
+  (quickstart, README, guides) or help-text polish — docs are handled as a whole
+  in a separate session. Implement cobra command metadata minimally (`Use`/
+  `Short`); runtime output the feature needs (progress, next-step hints, the
+  first-run banner) is behavior, not docs, and stays in scope.
 - **Definition of done (per PR).** Builds; `root:check`/`root:test` green;
   `root:generate` idempotent (`git diff --check` clean); new code is tested;
-  user-facing changes update help text/docs; Conventional Commit PR title;
-  PR body links this plan + the design doc and names the phase.
+  Conventional Commit PR title; PR body links this plan + the design doc and names
+  the phase.
 
 ## Dependency graph
 
@@ -80,7 +85,7 @@ beyond what the release requires.
   `0.1.0` brings the operator Deployment to Available, and a representative
   `CardanoNetwork` reaches Ready.
 - The canonical chart OCI ref + version and the published image refs are recorded
-  (e.g., in the PR body / TECH_NOTES) for Phase 4 to pin against.
+  in the PR body for Phase 4 to pin against.
 
 **Verification.** Existing release-dry-run + e2e; one manual install-from-published
 smoke into a throwaway cluster.
@@ -251,7 +256,7 @@ testing.
 
 ## Phase 6 — Hardening & UX
 
-**Goal.** Make first-run and failure paths legible, and ship the docs/cleanup
+**Goal.** Make first-run and failure paths legible, and ship the cleanup/guards
 that make the tool safe to "just try."
 
 **Depends on.** P5.
@@ -260,24 +265,24 @@ that make the tool safe to "just try."
 unavailable, host port conflict, disk pressure / pod eviction, checksum mismatch,
 version mismatch); Docker/VM-disk preflight; `devnet down --purge` (cluster +
 managed state + fetched binaries) and binary GC surfacing; the first-run banner
-(what was created + where + the cleanup command); a quickstart doc; WSL2
-validation; an ARM multi-arch CI guard for the operator/Cardano images.
+(what was created + where + the cleanup command); WSL2 validation; an ARM
+multi-arch CI guard for the operator/Cardano images.
 
-**Out of scope.** New behavior beyond messaging/cleanup/docs; `--persist`.
+**Out of scope.** New behavior beyond messaging/cleanup/guards; `--persist`;
+documentation (handled in a separate docs session).
 
 **Guardrails.**
 - Map adapter errors to human messages at the command layer; don't leak raw
   output. Don't promise a fixed first-run time — frame it as image-pull-bound.
 - `--purge` must remove the full on-disk footprint described in the design.
-- Docs are a deliverable, not an afterthought; update command help/long-desc.
 
 **Exit criteria.**
 - Each named failure mode produces a specific, actionable message (covered by
   tests where the error is synthesizable).
 - `devnet down --purge` leaves no yacd-created cluster, state, or binaries; GC
   keeps only the current pinned binary.
-- Quickstart doc exists; WSL2 path validated; CI fails if a published operator/
-  Cardano image loses its arm64 manifest.
+- WSL2 path validated; CI fails if a published operator/Cardano image loses its
+  arm64 manifest.
 
 **Verification.** Unit tests for the error mapper and GC; manual WSL2 run; the ARM
 guard exercised in CI.
