@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/meigma/yacd/compare/v0.1.0...v0.1.1) (2026-06-02)
+
+
+### Features
+
+* **cardanonetwork:** bootstrap a funded developer wallet for local networks ([#84](https://github.com/meigma/yacd/issues/84)) ([0103d6c](https://github.com/meigma/yacd/commit/0103d6ca6c10c793391af6acdcad0e0e083dc586))
+
 ## 0.1.0 (2026-06-02)
 
 
