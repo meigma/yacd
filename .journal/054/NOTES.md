@@ -157,3 +157,42 @@ removed + branch deleted. release-please will queue another patch bump for the
 **Phases done this session: P5 (#86) + P2 (#88).** Plan status:
 P1✅ P4✅ P5✅ P2✅ | remaining: **P3** (cluster+clusterstate, needs P2 ✓ now) →
 P6 (devnet, needs P2/P3/P5 — P2✓ P5✓, blocked on P3) → P7. Dev stack still up.
+
+## 2026-06-02 10:44 — Phase 3 (cluster + clusterstate) implemented + PR #89
+
+User chose P3. Plan approved (file lock = **gofrs/flock**; lock composed by P6 not
+inside cluster/k3d). Branch `feat/cli-cluster`. NOTE: initial `wt switch --base ^`
+branched from STALE local master (941c0c0, pre-P2); `git merge --ff-only
+origin/master` moved it to bc2f739 (toolbin present) — untracked files survived.
+
+Landed (PR #89):
+- `cli/internal/exec/`: `Runner` iface + `OS()` os/exec adapter (the repo had no
+  command-runner seam). Hand-faked in tests (records call order).
+- `cli/internal/cluster/`: `Provisioner` port + Spec/Info/Status +
+  `ManagedName`/`ManagedContext`/`K3sImage` consts (k3s pinned **v1.32.5-k3s1** =
+  k3d v5.9.0's default).
+- `cli/internal/cluster/k3d/`: `New(resolver,runner)` + injectable `prober` field;
+  `EnsureCluster` state machine (absent→create / healthy→no-op /
+  unhealthy→delete+recreate) with partial-create rollback via
+  `context.WithoutCancel`. **Key k3d facts (verified live): `cluster list <name>`
+  exits non-zero when absent → list WITHOUT name + filter JSON; `serversRunning>=1`
+  = control plane up; create flags `--image --wait --timeout
+  --kubeconfig-update-default --kubeconfig-switch-context`.** Health = injectable
+  `/healthz` DoRaw(ctx) probe, run only when running. `DeleteCluster` tolerant of
+  absent (isNoClusterFound "no cluster" substring).
+- `cli/internal/clusterstate/` + `/file/`: Record/Store + `DefaultDir`
+  ($XDG_STATE_HOME/yacd); JSON record atomic temp+rename 0600/0700; `Lock(ctx)` =
+  gofrs/flock `TryLockContext(100ms)`. Lock is P6's to compose (ports decoupled).
+- `.mockery.yml` += cluster.Provisioner + clusterstate.Store → mocks. +gofrs/flock
+  v0.13.0 (direct).
+
+Verification: `root:generate` idempotent, `root:check`, `root:test` all green.
+Unit: full state machine (create/no-op/heal/rollback + JSON parse + absent-delete),
+clusterstate round-trip+perms+corrupt+**lock serialization**, exec stderr capture.
+**LIVE test RAN locally** (`YACD_CLUSTER_LIVE=1`, Docker via dev stack): real k3d
+v5.9.0 → real cluster create → idempotent no-op → out-of-band delete → heal, 54s PASS.
+
+Next: watch PR #89 CI (new dep gofrs/flock → Kusari will scan; expect pass). After
+merge, **P6 (devnet all-in-one)** is unblocked — composes toolbin+cluster+clusterstate
++operator(ssa)+kube via lifecycle.Manager + the devnet command subtree + targeting
+resolver. P7 (hardening) after. Dev stack still up.
