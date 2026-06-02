@@ -111,3 +111,36 @@ patch release PR, 0.1.1→0.1.2, for the `feat(cli)` — gated, not auto-release
 (cluster+clusterstate, needs P2), then P6 (devnet, needs P2/P3/P5), P7. P5's
 live-`Ready` proof is the P6 gated k3d e2e's job (already evidenced by session
 053's published-chart smoke with the same v0.1.1 digests). Dev stack still up.
+
+## 2026-06-02 09:28 — Phase 2 (toolbin) implemented + PR #88
+
+User chose P2 next. Plan approved (pin k3d **v5.9.0**; live test gated by env-var
+skip). Branch `feat/cli-toolbin` from master `941c0c0`.
+
+Landed (commit on branch, PR #88):
+- `cli/internal/toolbin/` port: `Resolver` iface, `Pin{Version,AssetURL,SHA256
+  map[os/arch]}`, local `HTTPDoer` seam (defined in toolbin, NOT imported from
+  cli — keeps dep direction adapter→port), `DefaultDir()` (XDG_DATA_HOME/yacd/bin,
+  ~/.local/share fallback). doc.go/toolbin.go/toolbin_test.go.
+- `cli/internal/toolbin/ghrelease/` adapter: `New(pin,dir,doer)` + `Resolve()`:
+  pre-staged `YACD_K3D_PATH` escape → digest cache hit → fetch → verify embedded
+  SHA256 → atomic install (CreateTemp+Write+Chmod 0o755+Rename) → GC superseded
+  `k3d-*`. **Redirect handling is the key twist vs cardano-tools fetch**: GH
+  release assets 302 to `release-assets.githubusercontent.com`, so the adapter
+  manually follows redirects but allow-lists GitHub download hosts
+  (`github.com`, `*.githubusercontent.com`) and rejects others; `DefaultHTTPClient()`
+  returns an http.Client with `CheckRedirect → ErrUseLastResponse` so the adapter
+  (not the client) controls following. Digest is the real guard (fail-closed on
+  mismatch). pin.go: `DefaultK3dPin` = v5.9.0 + 4 digests from checksums.txt.
+- `.mockery.yml` += `toolbin.Resolver` → `cli/internal/mocks/resolver.go`.
+
+Verification: `root:generate` idempotent, `root:check` (fmt/lint — fixed an
+`unparam` on a test helper), `root:test` all green. Mocked unit suite covers
+download/verify/install (0o755), CDN-redirect follow, disallowed-host reject,
+digest-mismatch fail-closed, pre-staged skip (0 calls), cache hit (0 calls), GC,
+unsupported platform, host-allowlist predicate. **Live test RAN locally**
+(`YACD_TOOLBIN_LIVE=1`, darwin/arm64): really downloaded k3d v5.9.0, followed the
+real CDN redirect, verified digest, ran `k3d version` → v5.9.0 (2.0s). No new
+go.mod deps (stdlib only).
+
+Next: watch PR #88 CI. Then P3 (cluster + clusterstate, depends on P2/toolbin).
