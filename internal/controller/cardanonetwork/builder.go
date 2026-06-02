@@ -26,6 +26,8 @@ type primaryWorkloadResources struct {
 	FaucetService         *corev1.Service
 	ArtifactsService      *corev1.Service
 	FaucetAuthSecret      *corev1.Secret
+	WalletSecret          *corev1.Secret
+	Wallet                walletSettings
 	DBSyncAttached        bool
 }
 
@@ -33,6 +35,21 @@ type chainAPISettings struct {
 	Ogmios ogmiosSettings
 	Kupo   kupoSettings
 	Faucet faucetSettings
+	Wallet walletSettings
+}
+
+// walletSettings is the resolved developer-wallet configuration. The wallet is
+// an operator-managed payment key (generated and funded by the controller, not
+// a pod sidecar), so it carries no image or port — only whether to bootstrap
+// one, how much to fund it, and the owned Secret name.
+type walletSettings struct {
+	// enabled is whether the controller bootstraps a developer wallet.
+	// Requires local mode plus the faucet and kupo enabled.
+	enabled bool
+	// fundingLovelace is the amount the controller funds the wallet with.
+	fundingLovelace int64
+	// secretName is the owned Secret that holds the wallet key envelopes.
+	secretName string
 }
 
 // primaryWorkloadBuilder converts a CardanoNetwork spec into the desired
@@ -152,6 +169,13 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	var walletSecret *corev1.Secret
+	if chainAPI.Wallet.enabled {
+		walletSecret, err = b.walletSecret(network, chainAPI.Wallet)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// The artifacts Service fronts the always-on serve sidecar, which is wired
 	// for LOCAL and CURATED PUBLIC networks only (the same gate the Deployment
 	// uses to add the serve container); custom-public has neither.
@@ -173,6 +197,8 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		FaucetService:         faucetService,
 		ArtifactsService:      artifactsService,
 		FaucetAuthSecret:      faucetAuthSecret,
+		WalletSecret:          walletSecret,
+		Wallet:                chainAPI.Wallet,
 		DBSyncAttached:        b.dbSyncAttachment != nil,
 	}, nil
 }
@@ -244,7 +270,43 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 		return chainAPISettings{}, err
 	}
 
-	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, Faucet: faucet}, nil
+	wallet, err := resolveWalletSettings(network, plan, faucet, kupo)
+	if err != nil {
+		return chainAPISettings{}, err
+	}
+
+	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, Faucet: faucet, Wallet: wallet}, nil
+}
+
+// resolveWalletSettings resolves the developer-wallet configuration and runs
+// its cross-component invariants. The wallet is a local-only convenience that
+// the operator funds through the faucet, so it requires local mode plus the
+// faucet and kupo enabled, and its funding amount must fit the faucet's
+// per-request maximum. Returns the disabled zero value when the wallet is not
+// requested.
+func resolveWalletSettings(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, faucet faucetSettings, kupo kupoSettings) (walletSettings, error) {
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Wallet == nil || !network.Spec.ChainAPI.Wallet.Enabled {
+		return walletSettings{}, nil
+	}
+	if !plan.isLocal() {
+		return walletSettings{}, unsupportedSpec("developer wallet is supported only for local networks")
+	}
+	if !faucet.enabled {
+		return walletSettings{}, unsupportedSpec("developer wallet requires the faucet to be enabled")
+	}
+	if !kupo.enabled {
+		return walletSettings{}, unsupportedSpec("developer wallet requires kupo to be enabled")
+	}
+	fundingLovelace := network.Spec.ChainAPI.Wallet.FundingLovelace
+	if fundingLovelace > faucet.maxTopUpLovelace {
+		return walletSettings{}, unsupportedSpec("developer wallet fundingLovelace %d exceeds faucet maxTopUpLovelace %d", fundingLovelace, faucet.maxTopUpLovelace)
+	}
+
+	return walletSettings{
+		enabled:         true,
+		fundingLovelace: fundingLovelace,
+		secretName:      primaryWalletSecretName(network),
+	}, nil
 }
 
 func (b primaryWorkloadBuilder) networkPlan(network *yacdv1alpha1.CardanoNetwork) (primaryNetworkPlan, error) {

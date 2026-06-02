@@ -71,6 +71,12 @@ type CardanoNetworkReconciler struct {
 
 	// timingProberOverride replaces the served-artifact timing prober in tests.
 	timingProberOverride cardanoNetworkTimingProber
+
+	// walletFunderOverride replaces the faucet wallet funder in tests.
+	walletFunderOverride walletFunder
+
+	// walletConfirmerOverride replaces the Kupo wallet confirmer in tests.
+	walletConfirmerOverride walletConfirmer
 }
 
 // +kubebuilder:rbac:groups=yacd.meigma.io,resources=cardanonetworks,verbs=get;list;watch
@@ -148,6 +154,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			faucetReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
+			walletReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			artifactsReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -168,7 +175,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.ArtifactsService, resources.FaucetAuthSecret, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.ArtifactsService, resources.FaucetAuthSecret, resources.Wallet, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -237,7 +244,8 @@ func primaryWorkloadRequeueResult(
 ) (ctrl.Result, bool) {
 	if ready.Status != metav1.ConditionTrue &&
 		(ready.Reason == string(conditionReasonDeploymentProgressing) ||
-			ready.Reason == string(conditionReasonDBSyncAttachmentPending)) {
+			ready.Reason == string(conditionReasonDBSyncAttachmentPending) ||
+			ready.Reason == string(conditionReasonWalletFundingPending)) {
 		return ctrl.Result{RequeueAfter: primaryWorkloadReadinessRequeueAfter}, true
 	}
 	if ogmiosEnabled {
@@ -264,6 +272,8 @@ type primaryWorkloadApplyResults struct {
 	ArtifactsService       controllerutil.OperationResult
 	FaucetAuthSecret       controllerutil.OperationResult
 	FaucetAuthSecretObject *corev1.Secret
+	WalletSecret           controllerutil.OperationResult
+	WalletSecretObject     *corev1.Secret
 }
 
 // unchanged reports whether every owned child was already in the desired
@@ -277,7 +287,8 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 		r.KupoService == controllerutil.OperationResultNone &&
 		r.FaucetService == controllerutil.OperationResultNone &&
 		r.ArtifactsService == controllerutil.OperationResultNone &&
-		r.FaucetAuthSecret == controllerutil.OperationResultNone
+		r.FaucetAuthSecret == controllerutil.OperationResultNone &&
+		r.WalletSecret == controllerutil.OperationResultNone
 }
 
 // applyPrimaryWorkloadResources applies the primary workload bundle in
@@ -340,6 +351,15 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 
 	if resources.FaucetAuthSecret == nil {
 		results.FaucetAuthSecret, err = r.deletePrimaryFaucetAuthSecret(ctx, network)
+		if err != nil {
+			return results, err
+		}
+	}
+
+	if resources.WalletSecret != nil {
+		results.WalletSecret, results.WalletSecretObject, err = r.applyPrimaryWalletSecret(ctx, resources.WalletSecret)
+	} else {
+		results.WalletSecret, err = r.deletePrimaryWalletSecret(ctx, network)
 	}
 
 	return results, err
@@ -410,6 +430,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		ogmiosReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		kupoReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		faucetReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
+		walletReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		artifactsReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr

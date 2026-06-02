@@ -307,6 +307,30 @@ type ChainAPISpec struct {
 	// faucet configures the faucet sidecar and Service.
 	// +optional
 	Faucet *FaucetSpec `json:"faucet,omitempty"`
+
+	// wallet configures a pre-funded developer wallet bootstrapped for local
+	// development networks.
+	// +optional
+	Wallet *WalletSpec `json:"wallet,omitempty"`
+}
+
+// WalletSpec configures a pre-funded developer wallet that the controller
+// bootstraps for local development networks, so a developer owns a funded
+// address from day zero. It requires the faucet and Kupo to be enabled and is
+// supported in local mode only.
+type WalletSpec struct {
+	// enabled controls whether the controller bootstraps a developer wallet.
+	// +kubebuilder:default=false
+	// +required
+	Enabled bool `json:"enabled"`
+
+	// fundingLovelace is the amount the controller funds the wallet with on
+	// first bring-up, through the faucet. It must not exceed the faucet's
+	// maxTopUpLovelace.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=100000000000
+	// +required
+	FundingLovelace int64 `json:"fundingLovelace"`
 }
 
 // OgmiosSpec configures the default Ogmios chain API.
@@ -422,6 +446,10 @@ type CardanoNetworkStatus struct {
 	// +optional
 	Faucet *FaucetStatus `json:"faucet,omitempty"`
 
+	// wallet publishes the bootstrapped developer wallet details.
+	// +optional
+	Wallet *WalletStatus `json:"wallet,omitempty"`
+
 	// sync reports the primary node's chain synchronization status as inferred
 	// from in-cluster sources.
 	// +optional
@@ -440,6 +468,7 @@ type CardanoNetworkStatus struct {
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
 	// - "FaucetReady": the faucet is enabled and available through its Service
+	// - "WalletReady": the developer wallet is bootstrapped and funded on-chain
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain its desired state
 	//
@@ -578,6 +607,27 @@ type FaucetStatus struct {
 	// used by mutating faucet requests.
 	// +optional
 	AuthSecretName string `json:"authSecretName,omitempty"`
+}
+
+// WalletStatus reports the bootstrapped developer wallet.
+type WalletStatus struct {
+	// address is the wallet's enterprise testnet payment address
+	// (addr_test...).
+	// +optional
+	Address string `json:"address,omitempty"`
+
+	// keySecretName is the same-namespace Secret holding the wallet's signing
+	// and verification key envelopes.
+	// +optional
+	KeySecretName string `json:"keySecretName,omitempty"`
+
+	// funded reports whether the wallet's funding has been confirmed on-chain.
+	// +optional
+	Funded bool `json:"funded,omitempty"`
+
+	// fundedTxID is the faucet transaction that funded the wallet.
+	// +optional
+	FundedTxID string `json:"fundedTxID,omitempty"`
 }
 
 // ServiceEndpointStatus reports a cluster-local Service endpoint.

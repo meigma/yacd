@@ -407,6 +407,27 @@ func (b primaryWorkloadBuilder) faucetAuthSecret(network *yacdv1alpha1.CardanoNe
 	return secret, nil
 }
 
+// walletSecret builds the opaque Secret that carries the bootstrapped developer
+// wallet's payment key envelopes and address. Like the faucet auth Secret, the
+// data map is populated by the apply phase (the builder stays pure and cannot
+// generate key material).
+func (b primaryWorkloadBuilder) walletSecret(network *yacdv1alpha1.CardanoNetwork, settings walletSettings) (*corev1.Secret, error) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      settings.secretName,
+			Namespace: network.Namespace,
+			Labels:    primaryWorkloadLabels(network),
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
+		return nil, fmt.Errorf("set wallet Secret owner reference: %w", err)
+	}
+
+	return secret, nil
+}
+
 // persistentVolumeClaimAnnotations carries the accepted localnet fingerprint
 // and (optionally) the requested storage class on the primary PVC. The PVC
 // apply path validates these against the live object before allowing the

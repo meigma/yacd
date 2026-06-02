@@ -267,6 +267,17 @@ spec:
                 name: phase4-smoke-faucet-auth
               type: Opaque
         - assert:
+            # The developer wallet Secret carries the bootstrapped payment key
+            # envelopes and the derived address. Funding is proven by the
+            # Ready=True gate below (WalletReady requires on-chain confirmation).
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                namespace: yacd-smoke
+                name: phase4-smoke-wallet
+              type: Opaque
+        - assert:
             # F0 PR-B1: there is no longer a <net>-network-artifacts ConfigMap
             # or artifact-publisher SA/Role/RoleBinding. Artifacts are staged on
             # the node-state PVC and exposed through the owned serve Service.
@@ -326,6 +337,10 @@ spec:
                 faucet_port="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.port}' 2>/dev/null || true)"
                 faucet_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.url}' 2>/dev/null || true)"
                 faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
+                wallet_ready="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="WalletReady")].status}' 2>/dev/null || true)"
+                wallet_address="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.wallet.address}' 2>/dev/null || true)"
+                wallet_funded="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.wallet.funded}' 2>/dev/null || true)"
+                wallet_key_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.wallet.keySecretName}' 2>/dev/null || true)"
                 artifacts_service_name="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.artifacts.serviceName}' 2>/dev/null || true)"
                 artifacts_endpoint_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.artifacts.url}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
@@ -334,6 +349,10 @@ spec:
                   [ "${ogmios_ready}" = "True" ] &&
                   [ "${kupo_ready}" = "True" ] &&
                   [ "${faucet_ready}" = "True" ] &&
+                  [ "${wallet_ready}" = "True" ] &&
+                  [ "${wallet_funded}" = "true" ] &&
+                  [ "${wallet_key_secret}" = "phase4-smoke-wallet" ] &&
+                  [ -n "${wallet_address}" ] &&
                   [ "${progressing}" = "False" ] &&
                   [ "${degraded}" = "False" ] &&
                   [ "${service_name}" = "phase4-smoke-node" ] &&
@@ -807,7 +826,10 @@ spec:
             content: |
               set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442},"faucet":{"enabled":false,"port":8080,"defaultSource":"utxo1","minTopUpLovelace":1000000,"maxTopUpLovelace":10000000000}}}}'
+              # The developer wallet requires the faucet and kupo, so it must be
+              # disabled in the same patch; otherwise the spec is rejected as
+              # unsupported. Disabling it also tears down the owned wallet Secret.
+              kubectl patch cardanonetwork -n yacd-smoke phase4-smoke --type=merge -p '{"spec":{"chainAPI":{"wallet":{"enabled":false,"fundingLovelace":100000000000},"kupo":{"enabled":false,"image":"cardanosolutions/kupo:v2.11.0","port":1442},"faucet":{"enabled":false,"port":8080,"defaultSource":"utxo1","minTopUpLovelace":1000000,"maxTopUpLovelace":100000000000}}}}'
               for _ in $(seq 1 60); do
                 if kubectl get service -n yacd-smoke phase4-smoke-kupo >/dev/null 2>&1; then
                   sleep 5
@@ -818,6 +840,10 @@ spec:
                   continue
                 fi
                 if kubectl get secret -n yacd-smoke phase4-smoke-faucet-auth >/dev/null 2>&1; then
+                  sleep 5
+                  continue
+                fi
+                if kubectl get secret -n yacd-smoke phase4-smoke-wallet >/dev/null 2>&1; then
                   sleep 5
                   continue
                 fi
@@ -832,6 +858,8 @@ spec:
                 kupo_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.kupo.serviceName}' 2>/dev/null || true)"
                 faucet_endpoint="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.faucet.serviceName}' 2>/dev/null || true)"
                 faucet_auth_secret="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.faucet.authSecretName}' 2>/dev/null || true)"
+                wallet_reason="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.conditions[?(@.type=="WalletReady")].reason}' 2>/dev/null || true)"
+                wallet_address="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.wallet.address}' 2>/dev/null || true)"
                 artifacts_endpoint_url="$(kubectl get cardanonetwork -n yacd-smoke phase4-smoke -o jsonpath='{.status.endpoints.artifacts.url}' 2>/dev/null || true)"
                 if [ "${ready}" = "True" ] &&
                   [ "${node_ready}" = "True" ] &&
@@ -841,6 +869,8 @@ spec:
                   [ "${kupo_reason}" = "KupoDisabled" ] &&
                   [ "${faucet_ready}" = "False" ] &&
                   [ "${faucet_reason}" = "FaucetDisabled" ] &&
+                  [ "${wallet_reason}" = "WalletDisabled" ] &&
+                  [ -z "${wallet_address}" ] &&
                   [ -z "${kupo_endpoint}" ] &&
                   [ -z "${faucet_endpoint}" ] &&
                   [ -z "${faucet_auth_secret}" ] &&
