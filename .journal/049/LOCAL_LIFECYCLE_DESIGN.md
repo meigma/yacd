@@ -24,7 +24,7 @@ devnet. Every step is idempotent and re-runnable. Teardown is clean and complete
 **Out of scope (v1).** Multi-node local clusters; public mainnet quickstart; a
 local image registry / operator-image inner loop (that remains on the separate
 KinD + Tilt dev stack); Windows-native (WSL2 is the Windows path); chain-data
-persistence across cluster deletion (`--persist` is a later addition).
+persistence (ephemeral only — `--persist`/bind-mounts are out of scope).
 
 ## 3. The experience
 
@@ -71,7 +71,7 @@ New:
 | Command | Purpose |
 |---|---|
 | `yacd devnet [--bare]` | Zero-config all-in-one (takes no name). Ensure the singleton cluster → ensure/upgrade operator → (unless `--bare`) apply the embedded **default local devnet** network (named `devnet`) → wait Ready → print endpoints + funded wallet + next steps. `--bare` stops after the operator (cluster + operator only). The only verb that provisions a cluster. Always operates on the managed cluster. |
-| `yacd devnet down` | Delete the k3d cluster (operator, all networks, managed context) in one shot. `--keep-data` preserves a bind-mounted chain-data dir; `--purge` also removes fetched binaries and managed state. Warns that ephemeral chain data is discarded. |
+| `yacd devnet down` | Delete the k3d cluster (operator, all networks, managed context) in one shot; `--purge` also removes fetched binaries and managed state. Chain data is ephemeral and is discarded. |
 | `yacd devnet status` | One view: Docker reachable? k3d binary + pinned version? cluster up? operator version + Ready? networks + endpoints? |
 
 Unchanged: `up NAME -f FILE`, `down NAME`, `list`, `info NAME`, `topup NAME`,
@@ -156,12 +156,13 @@ reported.
 local Environment** (Conway, single pool, Ogmios + Kupo + faucet), so no input
 file is needed. Custom or additional networks use `yacd up NAME -f FILE`.
 
-**Dependency.** The user story's "fund an address" requires the developer to own
-a funded address on day zero. The default devnet must therefore ship at least one
-**pre-generated, pre-funded wallet** (operator bootstraps keys into a Secret), and
-the CLI surfaces its address (and a key-export path) in `devnet`/`info` output.
-This is operator/CRD work and is a prerequisite for the story to be fully met;
-the CLI lifecycle can ship ahead of it but is incomplete without it.
+**Dependency (sequenced before the all-in-one).** The user story's "fund an
+address" requires the developer to own a funded address on day zero. The default
+devnet ships at least one **pre-generated, pre-funded wallet** (operator
+bootstraps keys into a Secret), and the CLI surfaces its address (and a key-export
+path) in `devnet`/`info` output. This is operator/CRD work delivered in the
+operator release the CLI embeds, so `devnet` shows a real funded address from day
+one.
 
 ## 9. Behavior details
 
@@ -230,8 +231,7 @@ package cluster
 type Spec struct {
     Name     string        // managed cluster name -> context "k3d-<Name>"
     K3sImage string        // pinned, e.g. rancher/k3s:v1.33.x-k3s1
-    DataDir  string        // host bind-mount for chain data ("" = ephemeral)
-    Timeout  time.Duration
+    Timeout  time.Duration // chain data is ephemeral; no host bind-mount
 }
 
 type Info struct {
@@ -398,13 +398,7 @@ context)` — no change to the `kube` port itself.
 - **Slice 3 — hardening.** Failure mapping, `--purge` uninstall + binary GC,
   first-run banner, WSL2 validation, ARM multi-arch CI guard. (User documentation
   is handled separately.)
-- **Dependency — funded-wallet bootstrap** (§8): operator/CRD work; sequence
-  relative to Slice 2 per the open question below.
+- **Funded-wallet bootstrap** (§8): operator/CRD work, sequenced **before** the
+  all-in-one and shipped in the embedded operator release, so the default devnet
+  is funded from day one.
 
-## 12. Open questions
-
-1. **Verb name** — `devnet` vs `dev` / `quickstart` / `start`.
-2. **Funded-wallet sequencing** — build the operator-side funded wallet before the
-   all-in-one (story fully met on day one) or ship the lifecycle first?
-3. **Chain-data default** — ephemeral for v1 with `--persist` later, or persist by
-   default given the "build against it" use case?

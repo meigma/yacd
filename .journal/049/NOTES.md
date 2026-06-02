@@ -192,3 +192,24 @@ Open questions restated in the plan: verb name (resolve before P5); wallet
 sequencing (P7 before/after P5); ephemeral-vs-persist (post-plan).
 
 NEXT: paused for user review of the plan.
+
+## 2026-06-01 — Open questions resolved; plan/design updated
+
+User resolved all three open questions:
+- Verb name = `devnet` (kept).
+- Funded wallet = BEFORE the devnet phase. Restructured: wallet is now its own
+  operator-side phase (Phase 4), cut as the next operator release (v0.2.0), which
+  the operator-install (P5) + devnet (P6) phases embed — so `devnet` shows a real
+  funded address day one. P1 (cut v0.1.0) stays the foundation/install target.
+  New plan order: P1 release v0.1.0 → P2 toolbin → P3 cluster+clusterstate →
+  P4 funded-wallet (operator, v0.2.0) → P5 operator install (embed v0.2.0) →
+  P6 devnet → P7 hardening.
+- Chain data = ephemeral only; persistence out of scope. Dropped --persist /
+  --keep-data / DataDir bind-mount from design (§2/§5/§10.2) and plan.
+
+Removed the now-resolved open-questions section from the design; plan opens with a
+"Resolved decisions" block. Also (prior turn) excluded user-doc creation from the
+plan — handled in a separate docs session.
+
+Rewrote LOCAL_LIFECYCLE_PLAN.md for the new ordering; targeted edits to
+LOCAL_LIFECYCLE_DESIGN.md. NEXT: paused for user review.
