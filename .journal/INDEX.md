@@ -54,3 +54,4 @@
 | 051 | 2026-06-01 | New session | in-progress | Session started via `session-new`; awaiting the user's request. |
 | 052 | 2026-06-01 | New session | in-progress | Session started via `session-new`; awaiting the user's request. |
 | 053 | 2026-06-01 | Local lifecycle Phases 1 + 4 — operator v0.1.0 release + funded developer wallet (v0.1.1) | complete | Cut the operator's first published release (v0.1.0, PRs #83/#7) then shipped an operator-bootstrapped funded developer wallet for local networks (PRs #84/#85, released as v0.1.1); both verified by published-chart smoke, with the funded wallet holding 100k ADA on-chain. |
+| 054 | 2026-06-02 | Local lifecycle plan — continue from Phase 2/3/5 | in-progress | Continuing the session-049 local-lifecycle plan after Phases 1+4 shipped; awaiting the user's instruction on which remaining phase (P2 toolbin / P3 cluster / P5 SSA install) to start. |
