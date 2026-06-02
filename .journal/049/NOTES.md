@@ -213,3 +213,19 @@ plan — handled in a separate docs session.
 
 Rewrote LOCAL_LIFECYCLE_PLAN.md for the new ordering; targeted edits to
 LOCAL_LIFECYCLE_DESIGN.md. NEXT: paused for user review.
+
+## 2026-06-01 18:02 — Close
+
+Session 049 closed. Design-only session — **no implementation PRs** (all output
+is journal artifacts on `journal/jmgilman`; the journal branch is never PR'd).
+Phase 1 of the close protocol was a verified no-op: no session-049 implementation
+branch exists and master does not track `.journal`.
+
+Hand-off: the two produced documents are ready for execution —
+`.journal/049/LOCAL_LIFECYCLE_DESIGN.md` (design) and
+`.journal/049/LOCAL_LIFECYCLE_PLAN.md` (phased plan, one PR per phase). A new
+session will begin executing the plan, starting at **Phase 1 — cut operator
+`v0.1.0`** (precondition: coordinate with the F0 series, now largely landed per
+session 048). Docs are deferred to a separate session. SUMMARY.md written;
+INDEX.md row set to complete; TECH_NOTES.md updated with a durable pointer to the
+design+plan; auto-memory `cli-local-runtime-k3d` records the runtime decision.

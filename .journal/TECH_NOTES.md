@@ -605,3 +605,23 @@
   in later sessions. Remaining findings with concrete reproductions and
   suggested fixes include F0 and F2/F4; consult the report before touching the
   relevant code paths.
+- The yacd CLI's planned "all-in-one" local lifecycle (`yacd devnet`) is designed
+  and phased in `.journal/049/LOCAL_LIFECYCLE_DESIGN.md` +
+  `LOCAL_LIFECYCLE_PLAN.md` (session 049, design-only, approved; execution not yet
+  started). Decided: single end-user runtime **k3d** (KinD stays for controller
+  testing — see auto-memory `cli-local-runtime-k3d`); `yacd devnet` is a NEW verb
+  (no name) ensuring one singleton managed cluster (`k3d-yacd`) + operator + a
+  default local network, leaving `up`/`down` untouched to preserve the CI/Chainsaw
+  contract (CI selects clusters via ambient `KUBECONFIG`, indistinguishable from a
+  default at the CLI flag layer); operator installed by embedding a
+  build-time-rendered chart and applying via SSA (not the Helm SDK, not
+  ctlptl/k3d-as-library); pinned k3d binary auto-fetched to an XDG path with a
+  build-time-embedded checksum; the kubectl context is switched **and** yacd
+  tracks/pins its own managed context (runtime by fixed cluster name is the source
+  of truth, `$XDG_STATE_HOME/yacd` is a supplementary record + flock); chain data
+  ephemeral-only. New CLI ports (`cluster`, `toolbin`, `operator`, `clusterstate`)
+  follow port-package + adapter-subpackage layout; `lifecycle.Manager`
+  orchestrates; `kube.Client` reused. Plan **Phase 1 = cut operator `v0.1.0`**
+  (chart + images) so the CLI has a reliable install target; the funded-wallet
+  bootstrap (operator-side) lands before the devnet phase as `v0.2.0`. Docs
+  deferred to a separate session.
