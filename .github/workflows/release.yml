@@ -2,6 +2,9 @@
 # assets with GoReleaser, publishes the container image and Helm chart to GHCR,
 # attests those artifact classes through GitHub-native attestations, and leaves
 # draft publication as a human decision after inspection.
+#
+# The operator ships on a pre-1.0 line (v0.1.x); the first published release is
+# v0.1.0.
 
 name: Release
 
