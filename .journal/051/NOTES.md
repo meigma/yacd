@@ -67,3 +67,36 @@ CNV-09 margin regex escaped. NOT committed — paused for user review.
 
 Next: await review; on approval, decide whether to keep both files or replace
 the original, and whether the gaps/cross-refs warrant follow-up test work.
+
+## 2026-06-01 17:48 — Coverage audit complete + plan made canonical
+User approved the revised plan. Actions: deleted the old TEST_PLAN.md, promoted
+TEST_PLAN_REVISED.md → canonical `.journal/051/TEST_PLAN.md` (185 rows).
+
+Then ran ultracode workflow `audit-test-coverage` (148 agents, ~7.5M tok, 22m):
+15 group auditors graded each requirement against EXISTING tests
+(satisfied/partial/not-satisfied), every satisfied+not-satisfied verdict
+adversarially re-checked (skeptic pokes holes in "satisfied", hunts coverage for
+"not-satisfied"), then a synthesis pass.
+
+Result — **74 satisfied (40%) / 86 partial (46%) / 25 not-satisfied (14%)**.
+Strong at unit tiers (CLI/HST/TOP, FCT/FTX, TLS/PIN, Kong opts); thin at the two
+apiserver tiers. THREE structural weaknesses:
+  1. **CardanoNetwork CRD admission is entirely unguarded** — there is NO
+     api/v1alpha1/cardanonetwork_validation_test.go at all (CardanoDBSync HAS one).
+     Whole CNV cluster (mode XOR, enum closure, port range, margin pattern,
+     defaulting) unverified at apiserver. Highest-leverage gap.
+  2. **Reconcile-output contracts proven only by fake-client unit tests where the
+     plan wants Env** (DBS-01/02/03/05/06, DBD-02, CNI-02/03/04, CNL-06...). The
+     primary-sidecar happy-path manager envtest REMOVED in 048 was never replaced.
+  3. **E2E is a single manager-smoke suite** — never drives CLI down/run/exec/
+     connect, never asserts GC cascade (CNL-10/DBF-09/CLI-09), never sends an
+     unauth metrics request (MGR-07), no chart-render guard (HLM-02/03).
+Per-group: CNL+CNP+API strongest (14S/11P/0N); CNV+CNI weakest (0S/8P/7N).
+
+Output: `.journal/051/TEST_COVERAGE_ANALYSIS.md` — exec summary, 7-item
+prioritized roadmap, quick wins, biggest holes, level-mismatch themes, + a full
+185-row per-category appendix (ID | Scenario | Status | Covering tests | Gap).
+
+Committed journal artifacts (plan + analysis + this checkpoint). Next: await user
+direction — likely candidates are closing gap cluster #1 (cardanonetwork
+validation envtest) and/or the low-effort unit quick-wins.
