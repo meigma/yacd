@@ -17,8 +17,9 @@ import (
 
 	apolloBech32 "github.com/Salvionied/apollo/crypto/bech32"
 	apolloAddress "github.com/Salvionied/apollo/serialization/Address"
-	apolloKey "github.com/Salvionied/apollo/serialization/Key"
 	"github.com/fxamacker/cbor/v2"
+
+	"github.com/meigma/yacd/internal/cardano/wallet"
 )
 
 const (
@@ -741,19 +742,8 @@ func validateFundingSource(sourceName string, address string, verificationKeyByt
 }
 
 func deriveTestnetPaymentAddress(verificationKeyBytes []byte) (string, error) {
-	verificationKey := apolloKey.VerificationKey{Payload: verificationKeyBytes}
-	paymentHash, err := verificationKey.Hash()
-	if err != nil {
-		return "", err
-	}
-
-	address := apolloAddress.Address{
-		PaymentPart: paymentHash[:],
-		Network:     apolloAddress.TESTNET,
-		AddressType: apolloAddress.KEY_NONE,
-		HeaderByte:  0b01100000,
-		Hrp:         addressHRP,
-	}
-
-	return address.String(), nil
+	// Address derivation is shared with the operator's developer-wallet
+	// bootstrap so the faucet and the controller can never compute an address
+	// two different ways.
+	return wallet.DeriveTestnetAddress(verificationKeyBytes)
 }

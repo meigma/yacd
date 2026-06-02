@@ -14,7 +14,12 @@ spec:
         port: 8080
         defaultSource: utxo1
         minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
+        # Raised so the operator can fund the developer wallet (100,000 ADA)
+        # through the faucet within the per-request maximum.
+        maxTopUpLovelace: 100000000000
+      wallet:
+        enabled: true
+        fundingLovelace: 100000000000
     local:
       networkMagic: 42
       era: conway
