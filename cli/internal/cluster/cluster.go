@@ -31,6 +31,13 @@ type Spec struct {
 	// Timeout bounds cluster creation. Chain data is ephemeral; there is no
 	// host bind-mount.
 	Timeout time.Duration
+
+	// KubeconfigPath is the kubeconfig the health probe reads to reach an
+	// existing cluster's API. It is supplied from the saved state record so a
+	// running cluster is not judged unhealthy (and deleted) merely because the
+	// current ambient kubeconfig no longer references its context. Empty uses
+	// the standard loading rules.
+	KubeconfigPath string
 }
 
 // DefaultSpec returns the spec for the singleton managed cluster.

@@ -42,8 +42,10 @@ func (p *Provisioner) list(ctx context.Context, bin string, name string) (cluste
 }
 
 // statusVia derives Status from a cluster list, probing API health only when the
-// cluster is running.
-func (p *Provisioner) statusVia(ctx context.Context, bin string, name string) (cluster.Status, error) {
+// cluster is running. The probe reads kubeconfig (empty uses the standard
+// loading rules) so callers can target the file where the cluster's context
+// actually lives rather than the current ambient default.
+func (p *Provisioner) statusVia(ctx context.Context, bin string, name string, kubeconfig string) (cluster.Status, error) {
 	entry, found, err := p.list(ctx, bin, name)
 	if err != nil {
 		return cluster.Status{}, err
@@ -59,18 +61,19 @@ func (p *Provisioner) statusVia(ctx context.Context, bin string, name string) (c
 		K3sImage: cluster.K3sImage,
 	}
 	if status.Running {
-		status.Healthy = p.prober(ctx, "", status.Context) == nil
+		status.Healthy = p.prober(ctx, kubeconfig, status.Context) == nil
 	}
 
 	return status, nil
 }
 
-// Status reports the observed state of the named cluster.
+// Status reports the observed state of the named cluster. It probes health
+// through the standard kubeconfig loading rules.
 func (p *Provisioner) Status(ctx context.Context, name string) (cluster.Status, error) {
 	bin, err := p.resolver.Resolve(ctx)
 	if err != nil {
 		return cluster.Status{}, fmt.Errorf("resolve k3d: %w", err)
 	}
 
-	return p.statusVia(ctx, bin, name)
+	return p.statusVia(ctx, bin, name, "")
 }

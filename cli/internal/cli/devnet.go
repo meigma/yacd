@@ -32,14 +32,17 @@ func newDevnetCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Bring up a local Cardano devnet (cluster, operator, and a funded network)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			manager, err := commandContext.newLifecycleManager()
-			if err != nil {
+			if err := rejectExplicitTarget(commandContext); err != nil {
 				return err
 			}
-
 			timeout := commandContext.viper.GetDuration("timeout")
 			if timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0")
+			}
+
+			manager, err := commandContext.newLifecycleManager()
+			if err != nil {
+				return err
 			}
 
 			environment, err := devconfig.Load(bytes.NewReader(defaultDevnetEnvYAML))
@@ -79,6 +82,9 @@ func newDevnetDownCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Delete the managed devnet cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectExplicitTarget(commandContext); err != nil {
+				return err
+			}
 			timeout := commandContext.viper.GetDuration("timeout")
 			if timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0")
@@ -111,6 +117,9 @@ func newDevnetStatusCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Show the managed devnet cluster, operator, and network status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := rejectExplicitTarget(commandContext); err != nil {
+				return err
+			}
 			manager, err := commandContext.newLifecycleManager()
 			if err != nil {
 				return err

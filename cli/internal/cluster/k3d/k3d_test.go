@@ -101,6 +101,29 @@ func TestEnsureClusterNoOpWhenHealthy(t *testing.T) {
 	assert.True(t, info.Running)
 }
 
+func TestEnsureClusterProbesHealthThroughSpecKubeconfig(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte(runningClusterJSON)},
+	}}
+	var probedKubeconfig string
+	prober := func(_ context.Context, kubeconfig, _ string) error {
+		probedKubeconfig = kubeconfig
+		return nil
+	}
+	prov := newProvisioner(runner, prober)
+
+	spec := devSpec()
+	spec.KubeconfigPath = "/tmp/saved-kubeconfig"
+	_, err := prov.EnsureCluster(context.Background(), spec)
+	require.NoError(t, err)
+
+	// A running cluster whose context lives in the recorded kubeconfig must be
+	// probed there, not through the ambient default, so it is not deleted when
+	// the current kubeconfig no longer references it.
+	assert.Equal(t, "/tmp/saved-kubeconfig", probedKubeconfig)
+	assert.Equal(t, []string{"list"}, runner.subcommands(), "healthy cluster must not be recreated")
+}
+
 func TestEnsureClusterHealsWhenUnhealthy(t *testing.T) {
 	runner := &fakeRunner{responses: map[string]scriptedResponse{
 		"list":   {stdout: []byte(runningClusterJSON)},

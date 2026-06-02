@@ -19,7 +19,7 @@ func (p *Provisioner) EnsureCluster(ctx context.Context, spec cluster.Spec) (clu
 		return cluster.Info{}, fmt.Errorf("resolve k3d: %w", err)
 	}
 
-	status, err := p.statusVia(ctx, bin, spec.Name)
+	status, err := p.statusVia(ctx, bin, spec.Name, spec.KubeconfigPath)
 	if err != nil {
 		return cluster.Info{}, err
 	}

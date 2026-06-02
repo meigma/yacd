@@ -145,15 +145,15 @@ func TestDevnetStatus(t *testing.T) {
 		assert.Contains(t, out, "devnet/devnet")
 	})
 
-	t.Run("cluster absent prints a hint, not an error", func(t *testing.T) {
+	t.Run("no record prints a hint without probing the runtime", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		m, run := newDevnetRoot(t, &stdout, &stderr)
 
-		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
 		m.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
 
 		require.NoError(t, run("devnet", "status"))
 		assert.Contains(t, stdout.String(), "Run `yacd devnet`")
+		m.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything)
 	})
 
 	t.Run("cluster absent but record present clears the stale record", func(t *testing.T) {
@@ -168,6 +168,27 @@ func TestDevnetStatus(t *testing.T) {
 		assert.Contains(t, stderr.String(), "cleared stale state")
 		assert.Contains(t, stdout.String(), "Run `yacd devnet`")
 	})
+}
+
+func TestDevnetRejectsExplicitTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  string
+	}{
+		{"kubeconfig", "YACD_KUBECONFIG"},
+		{"context", "YACD_KUBE_CONTEXT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(tc.env, "explicit-value")
+			var stdout, stderr bytes.Buffer
+			// The guard rejects before any cluster/store/operator call.
+			_, run := newDevnetRoot(t, &stdout, &stderr)
+
+			err := run("devnet")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "manages its own cluster")
+		})
+	}
 }
 
 func TestDevnetRejectsNonPositiveTimeout(t *testing.T) {

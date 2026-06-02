@@ -38,6 +38,14 @@ func (m *Manager) defaults() {
 func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 	m.defaults()
 
+	// Bound the whole operation, including lock acquisition, by the timeout so a
+	// stuck or concurrent run cannot hang past the advertised maximum.
+	if o.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, o.Timeout)
+		defer cancel()
+	}
+
 	release, err := m.State.Lock(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("acquire cluster lock: %w", err)
@@ -51,17 +59,27 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 		prior = ""
 	}
 
+	existing, found, err := m.State.Load()
+	if err != nil {
+		return Result{}, fmt.Errorf("load cluster state: %w", err)
+	}
+
+	// Probe an existing cluster's health through the kubeconfig the record says
+	// it lives in, so a running cluster is not deleted just because the ambient
+	// kubeconfig no longer references its context.
+	spec := cluster.DefaultSpec(o.Timeout)
+	if found {
+		spec.KubeconfigPath = existing.KubeconfigPath
+	}
+
 	m.Report.Step("Ensuring local cluster %q", cluster.ManagedName)
-	info, err := m.Provisioner.EnsureCluster(ctx, cluster.DefaultSpec(o.Timeout))
+	info, err := m.Provisioner.EnsureCluster(ctx, spec)
 	if err != nil {
 		return Result{}, fmt.Errorf("ensure cluster: %w", err)
 	}
 	m.Report.Done("Cluster %q ready (context %q)", info.Name, info.Context)
 
-	record, err := m.reconcileRecord(info, prior)
-	if err != nil {
-		return Result{}, err
-	}
+	record := m.buildRecord(info, prior, existing, found)
 	if err := m.State.Save(record); err != nil {
 		return Result{}, fmt.Errorf("save cluster state: %w", err)
 	}
@@ -140,16 +158,12 @@ func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.In
 	return state, nil
 }
 
-// reconcileRecord builds the cluster record to persist, preserving the user's
-// real prior context across re-runs. It is also the record-repair path: a
-// missing record against a live cluster is rebuilt, and a stale one is
-// corrected, because Up always saves a fresh record derived from the runtime.
-func (m *Manager) reconcileRecord(info cluster.Info, prior string) (clusterstate.Record, error) {
-	existing, found, err := m.State.Load()
-	if err != nil {
-		return clusterstate.Record{}, fmt.Errorf("load cluster state: %w", err)
-	}
-
+// buildRecord builds the cluster record to persist from the runtime info and
+// the previously loaded record, preserving the user's real prior context across
+// re-runs. It is also the record-repair path: a missing record against a live
+// cluster is rebuilt, and a stale one is corrected, because Up always saves a
+// fresh record derived from the runtime.
+func (m *Manager) buildRecord(info cluster.Info, prior string, existing clusterstate.Record, found bool) clusterstate.Record {
 	priorContext := prior
 	// On a warm re-run the captured context is already the managed one; never
 	// record that as the prior, or teardown would restore to it and strand the
@@ -168,7 +182,7 @@ func (m *Manager) reconcileRecord(info cluster.Info, prior string) (clusterstate
 		PriorContext:   priorContext,
 		K3dVersion:     m.K3dVersion,
 		KubeconfigPath: info.KubeconfigPath,
-	}, nil
+	}
 }
 
 // Down deletes the managed cluster, restores the prior kubectl context, and
@@ -226,14 +240,22 @@ func (m *Manager) Down(ctx context.Context, o DownOptions) error {
 func (m *Manager) Status(ctx context.Context) (Report, error) {
 	m.defaults()
 
-	clusterStatus, err := m.Provisioner.Status(ctx, cluster.ManagedName)
-	if err != nil {
-		return Report{}, fmt.Errorf("cluster status: %w", err)
-	}
-
+	// Load the cheap record first. With no record this CLI has not provisioned a
+	// managed cluster, so report absent without resolving the pinned k3d binary
+	// (which would fetch it on a cache miss) just to probe a runtime we have no
+	// record of. A managed cluster always leaves a record, so the only case this
+	// skips is an out-of-band cluster, which `yacd devnet` reconciles.
 	record, found, err := m.State.Load()
 	if err != nil {
 		return Report{}, fmt.Errorf("load cluster state: %w", err)
+	}
+	if !found {
+		return Report{Cluster: cluster.Status{Exists: false}}, nil
+	}
+
+	clusterStatus, err := m.Provisioner.Status(ctx, cluster.ManagedName)
+	if err != nil {
+		return Report{}, fmt.Errorf("cluster status: %w", err)
 	}
 
 	report := Report{Cluster: clusterStatus, Record: record, HasRecord: found}

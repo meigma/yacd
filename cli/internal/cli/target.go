@@ -61,6 +61,27 @@ func (commandContext *commandContext) resolveKubeClient(cfg RuntimeConfig) (kube
 	return client, target, nil
 }
 
+// rejectExplicitTarget fails when an explicit kube target was given to a devnet
+// subcommand. devnet provisions and manages its own cluster and kubeconfig, so
+// --kubeconfig/--context (and their YACD_* env vars) do not apply to it;
+// silently ignoring them while mutating the ambient kubeconfig would be
+// surprising. They remain supported on the network verbs (up, info, ...).
+func rejectExplicitTarget(commandContext *commandContext) error {
+	runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
+	if err != nil {
+		return err
+	}
+	if runtimeConfig.Kubeconfig != "" || runtimeConfig.KubeContext != "" {
+		return fmt.Errorf(
+			"devnet manages its own cluster and kubeconfig; --kubeconfig/--context " +
+				"(and YACD_KUBECONFIG/YACD_KUBE_CONTEXT) are not supported here — " +
+				"they apply to the network verbs such as `yacd up` and `yacd info`",
+		)
+	}
+
+	return nil
+}
+
 // isManagedTarget reports whether a resolved target came from the tracked
 // managed devnet cluster: no explicit target was given (so the resolver could
 // fall through to the record) and a context was resolved (so a record existed).

@@ -217,6 +217,26 @@ func TestManagerUp(t *testing.T) {
 		assert.Equal(t, "minikube", saved.PriorContext)
 	})
 
+	t.Run("probes existing-cluster health through the recorded kubeconfig", func(t *testing.T) {
+		tc := newTestContext(t, "")
+		tc.expectLock()
+		tc.store.EXPECT().Load().
+			Return(clusterstate.Record{KubeconfigPath: "/tmp/saved-kubeconfig", PriorContext: "minikube"}, true, nil)
+		var gotSpec cluster.Spec
+		tc.provisioner.EXPECT().EnsureCluster(mock.Anything, mock.Anything).
+			Run(func(_ context.Context, spec cluster.Spec) { gotSpec = spec }).Return(managedInfo, nil)
+		tc.store.EXPECT().Save(mock.Anything).Return(nil)
+		tc.installer.EXPECT().EnsureOperator(mock.Anything, mock.Anything).
+			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
+		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
+		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
+		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+
+		_, err := tc.manager.Up(context.Background(), upOptions(t, false))
+		require.NoError(t, err)
+		assert.Equal(t, "/tmp/saved-kubeconfig", gotSpec.KubeconfigPath)
+	})
+
 	t.Run("rebuilds a missing record against a live cluster", func(t *testing.T) {
 		tc := newTestContext(t, "")
 		tc.expectLock()
@@ -337,15 +357,27 @@ func TestManagerStatus(t *testing.T) {
 		assert.Len(t, report.Networks, 1)
 	})
 
-	t.Run("cluster absent: returns early without operator or network calls", func(t *testing.T) {
+	t.Run("no record: reports absent without probing the runtime", func(t *testing.T) {
 		tc := newTestContext(t, "")
-		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
 		tc.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
 
 		report, err := tc.manager.Status(context.Background())
 		require.NoError(t, err)
 		assert.False(t, report.Cluster.Exists)
-		assert.Empty(t, report.Networks)
+		assert.False(t, report.HasRecord)
+		tc.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything)
+		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything)
+	})
+
+	t.Run("record present but cluster gone: probes and reports absent", func(t *testing.T) {
+		tc := newTestContext(t, "")
+		tc.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
+		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
+
+		report, err := tc.manager.Status(context.Background())
+		require.NoError(t, err)
+		assert.False(t, report.Cluster.Exists)
+		assert.True(t, report.HasRecord)
 		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything)
 	})
 }
