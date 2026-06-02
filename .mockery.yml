@@ -17,3 +17,6 @@ packages:
   github.com/meigma/yacd/cli/internal/operator:
     interfaces:
       Installer:
+  github.com/meigma/yacd/cli/internal/toolbin:
+    interfaces:
+      Resolver:
