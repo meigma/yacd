@@ -120,14 +120,18 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	root.PersistentFlags().String("log-format", "text", "Log format: text, json")
 
-	root.AddCommand(newUpCommand(ctx))
-	root.AddCommand(newDownCommand(ctx))
-	root.AddCommand(newListCommand(ctx))
-	root.AddCommand(newInfoCommand(ctx))
-	root.AddCommand(newTopUpCommand(ctx))
-	root.AddCommand(newRunCommand(ctx))
-	root.AddCommand(newExecCommand(ctx))
-	root.AddCommand(newConnectCommand(ctx))
+	// The network verbs resolve their target through the shared resolver, so
+	// each is wrapped to clear a stale managed-cluster record when it targeted
+	// a managed cluster that has since disappeared. devnet manages the cluster
+	// itself and reconciles directly.
+	root.AddCommand(ctx.withManagedReconcile(newUpCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newDownCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newListCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newInfoCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newTopUpCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newRunCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newExecCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newConnectCommand(ctx)))
 	root.AddCommand(newDevnetCommand(ctx))
 
 	return root

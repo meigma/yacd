@@ -120,6 +120,12 @@ func newDevnetStatusCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			// status is the reconciliation point: a record for a cluster that no
+			// longer exists is stale, so clear it and let the user know.
+			if !report.Cluster.Exists && report.HasRecord {
+				commandContext.clearManagedStateRecord()
+			}
+
 			return printDevnetStatus(commandContext.out, report)
 		},
 	}

@@ -155,6 +155,19 @@ func TestDevnetStatus(t *testing.T) {
 		require.NoError(t, run("devnet", "status"))
 		assert.Contains(t, stdout.String(), "Run `yacd devnet`")
 	})
+
+	t.Run("cluster absent but record present clears the stale record", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		m, run := newDevnetRoot(t, &stdout, &stderr)
+
+		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
+		m.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
+		m.store.EXPECT().Clear().Return(nil)
+
+		require.NoError(t, run("devnet", "status"))
+		assert.Contains(t, stderr.String(), "cleared stale state")
+		assert.Contains(t, stdout.String(), "Run `yacd devnet`")
+	})
 }
 
 func TestDevnetRejectsNonPositiveTimeout(t *testing.T) {

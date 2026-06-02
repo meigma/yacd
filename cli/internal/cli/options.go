@@ -148,5 +148,10 @@ type commandContext struct {
 	operatorInstaller    OperatorInstallerFactory
 	clusterState         ClusterStateFactory
 	k3dVersion           string
-	logger               *slog.Logger
+	// managedEngaged records, for the duration of one command, whether the
+	// shared target resolver fell through to the tracked managed devnet
+	// cluster. The managed-reconcile wrapper reads it to decide whether a
+	// failure warrants an orphaned-state check.
+	managedEngaged bool
+	logger         *slog.Logger
 }
