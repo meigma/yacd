@@ -86,3 +86,28 @@ Deliberately NOT done (scope/decisions):
   (P3/P6).
 
 Next: push branch, open PR. Then P2 (toolbin) / P3 (cluster) remain before P6.
+
+## 2026-06-02 09:05 — PR #86 merged
+
+PR #86 opened. CI green: `ci`, `e2e` (6m20s), `cardano-tools-image` all PASSED.
+**Kusari Inspector** failed (the only red). All Kusari findings were pre-existing
+operator RBAC — the `yacd-manager-role` secrets verbs
+(create/delete/get/list/patch/watch) + services verbs
+(create/delete/get/list/patch/update/watch) are **byte-identical** to
+`charts/yacd/templates/rbac-manager.yaml` (controller-gen'd, shipped in v0.1.1).
+My embed is a faithful `helm template` copy — zero new privilege. Kusari passed
+on #84 only because it skips Helm templates (invalid standalone YAML); my
+rendered `operator.yaml` is the first concrete YAML it scans. Weakening the RBAC
+would break the controllers (they create/delete/patch faucet/wallet/pgpass
+Secrets + node/ogmios/kupo/metrics Services), so that was off the table.
+`master` is **not a protected branch** → Kusari is advisory, non-blocking.
+
+User chose **merge as-is**. Posted an accepted-risk comment on #86 explaining the
+above, then squash-merged → `941c0c0` on master. Removed the worktree + deleted
+the merged branch `feat/cli-operator-install`. (release-please will queue a
+patch release PR, 0.1.1→0.1.2, for the `feat(cli)` — gated, not auto-released.)
+
+**Phase 5 is DONE+merged.** Remaining local-lifecycle plan: P2 (toolbin), P3
+(cluster+clusterstate, needs P2), then P6 (devnet, needs P2/P3/P5), P7. P5's
+live-`Ready` proof is the P6 gated k3d e2e's job (already evidenced by session
+053's published-chart smoke with the same v0.1.1 digests). Dev stack still up.
