@@ -656,3 +656,50 @@
   (`walletFunderOverride`/`walletConfirmerOverride`) using plain `net/http` — the
   MANAGER pulls NO ogmigo/Gorilla-WebSocket/kugo (verified via `go list -deps
   ./cmd`); keep it that way.
+- **`yacd devnet` local-lifecycle ports — P5/P2/P3 IMPLEMENTED (session 054), P6/P7
+  remain.** All new code is library-only under `cli/internal/` (port pkg = interface
+  + types + doc.go; adapter = subpackage with `New(...)`); nothing is wired into
+  `cli/internal/cli/options.go` yet (that is P6). Each port has a generated mock in
+  `cli/internal/mocks` (`.mockery.yml`). Shipped:
+  - **operator install (P5, PR #86):** `operator.Installer` port (`InstallSpec`/
+    `State` + pure `Decide` semver reconcile) + `operator/ssa` adapter. Installs the
+    operator by **server-side apply of a build-time-rendered, `//go:embed`'d copy of
+    `charts/yacd`** — no Helm SDK / no network pull at runtime. `.dev/scripts/
+    render-operator-chart.sh` renders `manifests/operator.yaml` (helm template
+    `--include-crds --no-hooks`, manager+faucet **digest-pinned to v0.1.1**), run
+    inside `root:generate` AFTER controller-gen and drift-guarded by `root:check`.
+    Apply = CRDs-first + wait Established (typed apiextensionsv1) → workload in stable
+    kind order, namespace-defaulted via RESTMapper, field owner `yacd-cli`. Install ns
+    **pinned to `yacd-system`** (foreign ns rejected; the chart's RBAC subjects are
+    baked to it). Version read from the manager Deployment's `app.kubernetes.io/
+    version` label (no ConfigMap). Label-based prune over a fixed GVK set that
+    **excludes CRDs**. Live `Ready` (Deployment Available) is NOT envtest-provable →
+    P6 k3d e2e (already evidenced by session 053's published-chart smoke).
+  - **toolbin (P2, PR #88):** `toolbin.Resolver` port + `toolbin/ghrelease` adapter
+    resolves a pinned **k3d v5.9.0** binary: pre-staged (`YACD_K3D_PATH`) → digest
+    cache hit → fetch+verify(embedded SHA256)+atomic install(chmod 0o755)+GC.
+    **GitHub release assets 302 to `release-assets.githubusercontent.com`, so the
+    fetch allow-lists GitHub download hosts and follows the redirect** (the embedded
+    digest is the real guard). `DefaultK3dPin` (version+URL template+4 os/arch
+    digests from the release `checksums.txt`) + `DefaultDir` ($XDG_DATA_HOME/yacd/bin).
+  - **cluster + clusterstate (P3, PR #89):** `exec.Runner` seam (+`OS()`);
+    `cluster.Provisioner` port (+`ManagedName`/`ManagedContext`/`K3sImage` consts; k3s
+    pinned `v1.32.5-k3s1` = k3d v5.9.0's default) + `cluster/k3d` adapter
+    (`EnsureCluster` state machine over the toolbin-resolved binary: absent→create /
+    healthy→no-op / unhealthy→delete+recreate, partial-create rollback via
+    `context.WithoutCancel`; injectable `/healthz` prober). **`k3d cluster list
+    <name>` exits non-zero when absent → list WITHOUT a name + filter the JSON;
+    `serversRunning>=1` = control plane up.** `clusterstate.Store` port (+`DefaultDir`
+    $XDG_STATE_HOME/yacd) + `clusterstate/file` adapter (atomic JSON record 0600/0700
+    + **gofrs/flock** ctx-aware `Lock(ctx)`). The lock is **composed by P6, NOT held
+    inside cluster/k3d** (keeps the ports independently mockable). Gated live tests:
+    `YACD_TOOLBIN_LIVE` / `YACD_CLUSTER_LIVE` (real network / real Docker).
+  - **Maintenance:** on an operator release bump, update the digests in
+    `render-operator-chart.sh` + re-render; on a k3d bump, update
+    `ghrelease.DefaultK3dPin` + `cluster.K3sImage`. New deps this session (all
+    direct): `golang.org/x/mod`, `k8s.io/apiextensions-apiserver`, `github.com/gofrs/flock`.
+  - **P6/P7 hand-off:** see `.journal/054/SUMMARY.md` "Remaining Work" — P6 builds
+    `lifecycle.Manager` + the `devnet` command subtree + a single shared targeting
+    resolver (Design §6 precedence) wired into every verb + the `Options` factory
+    fields, composing all of the above. The managed-context tier must only engage
+    when a managed cluster exists so CI/Chainsaw (explicit KUBECONFIG) stay unaffected.

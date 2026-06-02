@@ -210,3 +210,20 @@ deps P2/P3/P5 all ✅) → P7 (hardening). P6 is the first user-facing milestone
 biggest slice (lifecycle.Manager + devnet/down/status commands + shared targeting
 resolver wired into all verbs + context switch/restore + the embedded default network
 + progress output). Dev stack still up.
+
+## 2026-06-02 12:08 — Close
+
+Session closed. Three phases shipped + merged this session, all library-only under
+`cli/internal/`:
+- **P5** operator install via SSA — PR #86 (`941c0c0`).
+- **P2** toolbin pinned k3d resolver — PR #88 (`bc2f739`).
+- **P3** cluster + clusterstate provisioning core — PR #89 (`1c12560`).
+
+Local `master` fast-forwarded to `1c12560`; all impl worktrees/branches removed; dev
+stack brought DOWN (Kind cluster + registry deleted). `SUMMARY.md` written with a
+detailed **Remaining Work** hand-off (P6 devnet all-in-one — now fully unblocked — and
+P7 hardening); `INDEX.md` row → complete; `TECH_NOTES.md` gained a durable bullet on
+the implemented lifecycle ports/adapters + pins + maintenance. Plan status:
+`P1✅ P4✅ P5✅ P2✅ P3✅ | P6 ⬜ P7 ⬜`. Next agent: start with P6 (the big,
+user-facing slice) per `.journal/049/LOCAL_LIFECYCLE_{PLAN,DESIGN}.md` and the
+SUMMARY's Remaining Work section.
