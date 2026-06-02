@@ -43,6 +43,7 @@ func printInfo(out io.Writer, info infoOutput) error {
 	printConditionsInfo(w, info.Conditions)
 	printEndpointsInfo(w, info.Endpoints)
 	printFaucetInfo(w, info.Faucet)
+	printWalletInfo(w, info.Wallet)
 	return w.err
 }
 
@@ -120,6 +121,21 @@ func printFaucetInfo(w *infoWriter, faucet *faucetOutput) {
 	}
 	w.println("\nFaucet:")
 	w.printf("  Auth Secret: %s\n", faucet.AuthSecretName)
+}
+
+// printWalletInfo writes the Wallet section when the controller has
+// bootstrapped a developer wallet. It is suppressed entirely otherwise to keep
+// non-wallet networks' output compact.
+func printWalletInfo(w *infoWriter, wallet *walletOutput) {
+	if wallet == nil || wallet.Address == "" {
+		return
+	}
+	w.println("\nWallet:")
+	w.printf("  Address: %s\n", wallet.Address)
+	if wallet.KeySecretName != "" {
+		w.printf("  Key Secret: %s\n", wallet.KeySecretName)
+	}
+	w.printf("  Funded: %t\n", wallet.Funded)
 }
 
 // printEndpointInfo writes a single endpoint entry. A nil endpoint renders

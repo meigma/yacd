@@ -57,10 +57,7 @@ running.`,
 				return err
 			}
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
 				return err
 			}

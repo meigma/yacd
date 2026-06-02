@@ -7,7 +7,16 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/meigma/yacd/cli/internal/cluster"
+	"github.com/meigma/yacd/cli/internal/cluster/k3d"
+	"github.com/meigma/yacd/cli/internal/clusterstate"
+	"github.com/meigma/yacd/cli/internal/clusterstate/file"
+	"github.com/meigma/yacd/cli/internal/exec"
 	"github.com/meigma/yacd/cli/internal/kube"
+	"github.com/meigma/yacd/cli/internal/operator"
+	"github.com/meigma/yacd/cli/internal/operator/ssa"
+	"github.com/meigma/yacd/cli/internal/toolbin"
+	"github.com/meigma/yacd/cli/internal/toolbin/ghrelease"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -41,6 +50,30 @@ func NewRootCommand(options Options) *cobra.Command {
 			return newKupoConfirmer(kupoURL)
 		}
 	}
+	if options.ClusterProvisionerFactory == nil {
+		options.ClusterProvisionerFactory = func() (cluster.Provisioner, error) {
+			dir, err := toolbin.DefaultDir()
+			if err != nil {
+				return nil, err
+			}
+			resolver := ghrelease.New(ghrelease.DefaultK3dPin, dir, ghrelease.DefaultHTTPClient())
+			return k3d.New(resolver, exec.OS()), nil
+		}
+	}
+	if options.OperatorInstallerFactory == nil {
+		options.OperatorInstallerFactory = func(kubeconfig, kubeContext string) (operator.Installer, error) {
+			return ssa.New(kubeconfig, kubeContext, ssa.Manifests)
+		}
+	}
+	if options.ClusterStateFactory == nil {
+		options.ClusterStateFactory = func() (clusterstate.Store, error) {
+			dir, err := clusterstate.DefaultDir()
+			if err != nil {
+				return nil, err
+			}
+			return file.New(dir), nil
+		}
+	}
 	options.Build = options.Build.withDefaults()
 
 	ctx := &commandContext{
@@ -51,6 +84,10 @@ func NewRootCommand(options Options) *cobra.Command {
 		kubeClientFactory:    options.KubeClientFactory,
 		httpClient:           options.HTTPClient,
 		utxoConfirmerFactory: options.UTxOConfirmerFactory,
+		clusterProvisioner:   options.ClusterProvisionerFactory,
+		operatorInstaller:    options.OperatorInstallerFactory,
+		clusterState:         options.ClusterStateFactory,
+		k3dVersion:           ghrelease.DefaultK3dPin.Version,
 		logger:               slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
@@ -91,6 +128,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newRunCommand(ctx))
 	root.AddCommand(newExecCommand(ctx))
 	root.AddCommand(newConnectCommand(ctx))
+	root.AddCommand(newDevnetCommand(ctx))
 
 	return root
 }

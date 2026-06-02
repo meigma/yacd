@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
-	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/spf13/cobra"
 )
 
@@ -28,10 +27,7 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
 				return err
 			}
@@ -72,7 +68,15 @@ type infoOutput struct {
 	Network            networkOutput     `json:"network"`
 	Endpoints          endpointsOutput   `json:"endpoints"`
 	Faucet             *faucetOutput     `json:"faucet,omitempty"`
+	Wallet             *walletOutput     `json:"wallet,omitempty"`
 	Conditions         []conditionOutput `json:"conditions"`
+}
+
+// walletOutput projects the optional developer-wallet status sub-resource.
+type walletOutput struct {
+	Address       string `json:"address,omitempty"`
+	KeySecretName string `json:"keySecretName,omitempty"`
+	Funded        bool   `json:"funded,omitempty"`
 }
 
 // networkOutput projects the CardanoNetwork.Status.Network sub-status.
@@ -147,6 +151,13 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 	if network.Status.Faucet != nil {
 		info.Faucet = &faucetOutput{
 			AuthSecretName: network.Status.Faucet.AuthSecretName,
+		}
+	}
+	if network.Status.Wallet != nil {
+		info.Wallet = &walletOutput{
+			Address:       network.Status.Wallet.Address,
+			KeySecretName: network.Status.Wallet.KeySecretName,
+			Funded:        network.Status.Wallet.Funded,
 		}
 	}
 

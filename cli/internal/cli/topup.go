@@ -64,11 +64,11 @@ func newTopUpCommand(commandContext *commandContext) *cobra.Command {
 				}
 			}
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, target, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
+				return err
+			}
+			if err := announceManagedTarget(commandContext.err, runtimeConfig, target); err != nil {
 				return err
 			}
 

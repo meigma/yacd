@@ -79,10 +79,7 @@ piped or non-terminal invocations (CI) stream without a TTY.`,
 				return fmt.Errorf("a command is required: yacd exec NAME -- command [args...]")
 			}
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
 				return err
 			}

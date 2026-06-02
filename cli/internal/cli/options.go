@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/meigma/yacd/cli/internal/cluster"
+	"github.com/meigma/yacd/cli/internal/clusterstate"
 	"github.com/meigma/yacd/cli/internal/kube"
+	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/spf13/viper"
 )
 
@@ -70,6 +73,24 @@ type UTxOConfirmer interface {
 // factory that returns a mock.
 type UTxOConfirmerFactory func(kupoURL string) UTxOConfirmer
 
+// ClusterProvisionerFactory constructs the managed-cluster provisioner. The
+// default factory (set in NewRootCommand) resolves the pinned k3d binary and
+// wires the k3d adapter; tests inject a factory that returns a mock. It is a
+// factory so the error-prone binary/dir resolution is deferred to run time.
+type ClusterProvisionerFactory func() (cluster.Provisioner, error)
+
+// OperatorInstallerFactory constructs an operator installer bound to a
+// kubeconfig and context. The default factory (set in NewRootCommand) wraps the
+// SSA adapter with the embedded chart; tests inject a factory that returns a
+// mock.
+type OperatorInstallerFactory func(kubeconfig, kubeContext string) (operator.Installer, error)
+
+// ClusterStateFactory constructs the managed-cluster state store. The default
+// factory (set in NewRootCommand) resolves the XDG state dir and wraps the file
+// adapter; tests inject a factory that returns a mock. It is a factory so the
+// error-prone dir resolution is deferred to run time.
+type ClusterStateFactory func() (clusterstate.Store, error)
+
 // Options customises root command construction. All fields are optional;
 // nil fields are filled with the production defaults (stdin/stdout/stderr,
 // a fresh Viper, the real kube.NewClient, http.DefaultClient).
@@ -97,6 +118,19 @@ type Options struct {
 	// UTxOConfirmerFactory constructs the chain-index confirmer used by
 	// topup --await. Tests inject a factory that returns a mock.
 	UTxOConfirmerFactory UTxOConfirmerFactory
+
+	// ClusterProvisionerFactory constructs the managed-cluster provisioner
+	// used by `devnet`. Tests inject a factory that returns a mock.
+	ClusterProvisionerFactory ClusterProvisionerFactory
+
+	// OperatorInstallerFactory constructs the operator installer used by
+	// `devnet`. Tests inject a factory that returns a mock.
+	OperatorInstallerFactory OperatorInstallerFactory
+
+	// ClusterStateFactory constructs the managed-cluster state store used by
+	// `devnet` and the shared target resolver. Tests inject a factory that
+	// returns a mock.
+	ClusterStateFactory ClusterStateFactory
 }
 
 // commandContext is the per-process runtime each subcommand reads at RunE
@@ -110,5 +144,9 @@ type commandContext struct {
 	kubeClientFactory    KubeClientFactory
 	httpClient           HTTPDoer
 	utxoConfirmerFactory UTxOConfirmerFactory
+	clusterProvisioner   ClusterProvisionerFactory
+	operatorInstaller    OperatorInstallerFactory
+	clusterState         ClusterStateFactory
+	k3dVersion           string
 	logger               *slog.Logger
 }
