@@ -171,3 +171,24 @@ factories on Options + generated mocks. Phased plan + 3 open questions (verb nam
 wallet sequencing, ephemeral-vs-persist) retained.
 
 NEXT: paused again for user review of the refined doc.
+
+## 2026-06-01 — Design approved (LGTM); plan written
+
+User approved the design (LGTM) after clarifications on cluster-vs-clusterstate,
+the port/adapter-subpackage layout, and state storage (fixed cluster name =
+runtime source of truth; $XDG_STATE_HOME/yacd = supplementary record+lock).
+
+Wrote `.journal/049/LOCAL_LIFECYCLE_PLAN.md`: multi-phase, one PR per phase, each
+with Goal/Depends/In-scope/Out-of-scope/Guardrails/Exit-criteria/Verification.
+No code (guidance/guardrails only). Per user direction, **Phase 1 = cut v0.1.0 of
+the operator + Helm chart** (the CLI's install path has nothing reliable to
+install otherwise). Phases: 1 release v0.1.0 → 2 toolbin → 3 cluster+clusterstate
+→ 4 operator install (embeds v0.1.0 chart) → 5 devnet all-in-one (first
+end-to-end) → 6 hardening+docs → 7 funded-wallet bootstrap (operator-side, gates
+P5's funded-wallet UX, sequence per open question). Global conventions + a
+dependency graph + a precondition that v0.1.0 not be cut mid-F0-redesign.
+
+Open questions restated in the plan: verb name (resolve before P5); wallet
+sequencing (P7 before/after P5); ephemeral-vs-persist (post-plan).
+
+NEXT: paused for user review of the plan.
