@@ -3,13 +3,18 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
 	"github.com/meigma/yacd/cli/internal/clusterstate"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/meigma/yacd/cli/internal/render"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
+
+// operatorPollInterval is how often Up polls operator readiness after install.
+const operatorPollInterval = 3 * time.Second
 
 // defaults fills the Reporter and context seams with their production
 // implementations when the caller left them nil.
@@ -66,9 +71,9 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("build operator installer: %w", err)
 	}
-	state, err := installer.EnsureOperator(ctx, operator.InstallSpec{})
+	state, err := m.ensureOperatorReady(ctx, installer, o.Timeout)
 	if err != nil {
-		return Result{}, fmt.Errorf("install operator: %w", err)
+		return Result{}, err
 	}
 	m.Report.Done("Operator %s ready", state.Version)
 
@@ -102,6 +107,37 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 	m.Report.Done("Network %q ready", o.NetworkName)
 
 	return Result{Target: target, Cluster: info, Operator: state, Network: ready}, nil
+}
+
+// ensureOperatorReady installs or upgrades the operator and then waits for its
+// manager Deployment to report Available, bounded by timeout. The SSA install
+// applies the chart but does not wait for the workload, so a first-run install
+// returns not-ready while the image pulls. Waiting here keeps the reported state
+// and the "operator ready" progress honest, and makes `devnet --bare` return a
+// usable operator rather than one that is still starting.
+func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.Installer, timeout time.Duration) (operator.State, error) {
+	state, err := installer.EnsureOperator(ctx, operator.InstallSpec{})
+	if err != nil {
+		return operator.State{}, fmt.Errorf("install operator: %w", err)
+	}
+	if state.Ready {
+		return state, nil
+	}
+
+	m.Report.Substep("Waiting for the operator to become ready")
+	err = wait.PollUntilContextTimeout(ctx, operatorPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+		current, err := installer.OperatorState(ctx)
+		if err != nil {
+			return false, err
+		}
+		state = current
+		return state.Ready, nil
+	})
+	if err != nil {
+		return state, fmt.Errorf("operator did not become ready: %w", err)
+	}
+
+	return state, nil
 }
 
 // reconcileRecord builds the cluster record to persist, preserving the user's
@@ -153,9 +189,12 @@ func (m *Manager) Down(ctx context.Context, o DownOptions) error {
 	}
 	defer func() { _ = release() }()
 
+	// The runtime is authoritative; a corrupt or unreadable record must not
+	// block teardown of the real cluster. Proceed without it and clear it below.
 	record, found, err := m.State.Load()
 	if err != nil {
-		return fmt.Errorf("load cluster state: %w", err)
+		m.Report.Substep("Ignoring unreadable cluster state: %v", err)
+		found = false
 	}
 
 	m.Report.Step("Deleting cluster %q", cluster.ManagedName)

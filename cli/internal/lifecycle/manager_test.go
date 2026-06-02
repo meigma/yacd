@@ -236,6 +236,25 @@ func TestManagerUp(t *testing.T) {
 		assert.Equal(t, managedInfo.KubeconfigPath, saved.KubeconfigPath)
 	})
 
+	t.Run("waits for the operator to become ready when install returns not-ready", func(t *testing.T) {
+		tc := newTestContext(t, "minikube")
+		tc.expectLock()
+		tc.provisioner.EXPECT().EnsureCluster(mock.Anything, mock.Anything).Return(managedInfo, nil)
+		tc.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
+		tc.store.EXPECT().Save(mock.Anything).Return(nil)
+		tc.installer.EXPECT().EnsureOperator(mock.Anything, mock.Anything).
+			Return(operator.State{Installed: true, Ready: false, Version: "v0.1.1"}, nil)
+		tc.installer.EXPECT().OperatorState(mock.Anything).
+			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
+		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
+		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
+		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+
+		result, err := tc.manager.Up(context.Background(), upOptions(t, false))
+		require.NoError(t, err)
+		assert.True(t, result.Operator.Ready)
+	})
+
 	t.Run("propagates an operator refusal without applying a network", func(t *testing.T) {
 		tc := newTestContext(t, "minikube")
 		tc.expectLock()
@@ -271,6 +290,19 @@ func TestManagerDown(t *testing.T) {
 		require.NoError(t, tc.manager.Down(context.Background(), lifecycle.DownOptions{}))
 		assert.Equal(t, "/home/dev/.kube/config", restoredPath)
 		assert.Equal(t, "minikube", restoredContext)
+	})
+
+	t.Run("tears down even when the state record is unreadable", func(t *testing.T) {
+		tc := newTestContext(t, "")
+		tc.expectLock()
+		tc.store.EXPECT().Load().Return(clusterstate.Record{}, false, errors.New("corrupt cluster.json"))
+		tc.provisioner.EXPECT().DeleteCluster(mock.Anything, cluster.ManagedName).Return(nil)
+		restoreCalled := false
+		tc.manager.RestoreContext = func(string, string) error { restoreCalled = true; return nil }
+		tc.store.EXPECT().Clear().Return(nil)
+
+		require.NoError(t, tc.manager.Down(context.Background(), lifecycle.DownOptions{}))
+		assert.False(t, restoreCalled, "an unreadable record yields no prior context to restore")
 	})
 
 	t.Run("no record: deletes and clears without restoring", func(t *testing.T) {
