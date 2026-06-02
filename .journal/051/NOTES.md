@@ -100,3 +100,39 @@ prioritized roadmap, quick wins, biggest holes, level-mismatch themes, + a full
 Committed journal artifacts (plan + analysis + this checkpoint). Next: await user
 direction — likely candidates are closing gap cluster #1 (cardanonetwork
 validation envtest) and/or the low-effort unit quick-wins.
+
+## 2026-06-01 18:24 — TEST_COVERAGE_PLAN.md (phased remediation) written
+Synthesized the audit + the CLI-testing proposal into a phased, PR-per-phase
+remediation plan reaching 100% parity with TEST_PLAN.md. Output:
+`.journal/051/TEST_COVERAGE_PLAN.md`.
+
+Process: (1) joined the audit (status+gap) with the plan's recommended Level per
+row; (2) deterministically partitioned all 111 non-satisfied rows into phases by
+script and VERIFIED the partition (unique, covers-all, no omission); (3) ultracode
+workflow `draft-coverage-plan` (12 agents) drafted each phase grounded in real
+test files + the analysis gap text, plus a completeness critic.
+
+Critic confirmed parity (111 rows, 0 dup, 0 omission) and flagged 3 fixes I
+applied: split the 20-row P5 into P5 (CardanoNetwork admission, NEW
+cardanonetwork_validation_test.go) + P6 (CardanoDBSync admission hardening,
+existing file); moved CNI-03 into the CN reconcile phase; clarified the TWO
+distinct E2E harnesses (P9 extends existing chainsaw; P10 adds a NEW Go test/e2e
+harness for CLI verbs — they are independent).
+
+Final shape: **12 phases, 1 PR each, every phase has objective/description/
+approach/files/success/exit/deps/size/risks.** P1-P4 unit (helm-render, faucet,
+cli, config/tools/pins). P5-P8 envtest (CN admission [new file], DBSync admission,
+CN reconcile/identity, DBSync reconcile/placement — P8 restores the sidecar
+manager envtest removed in 048). P9 chainsaw (GC cascade by deleting the PARENT
+not the namespace; metrics-authz negative + fix the dead go_goroutines grep).
+P10 Go CLI e2e harness (boilerplate, 0 rows; builds via ko NOT the broken
+docker-build path; //go:build e2e; root:test-e2e-cli). P11 drives
+down/run/exec/connect. P12 gated/manual real-binary + public (CNP-01/03,
+CTN-01/02, MGR-10, TLS-01). Drafts caught real details (--include-crds needed for
+CRDs under charts/yacd/crds; envtest-no-GC nuance for CNI-03).
+
+Deliverables this session (all in .journal/051/, committed): TEST_PLAN.md
+(verified, canonical), TEST_COVERAGE_ANALYSIS.md (185-row audit), and now
+TEST_COVERAGE_PLAN.md (12-phase remediation). Next: await user direction —
+likely start executing P1 (helm-render + manager) or P5 (CN admission, highest
+leverage).
