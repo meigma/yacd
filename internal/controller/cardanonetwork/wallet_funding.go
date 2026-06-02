@@ -24,6 +24,18 @@ const (
 	walletConfirmTimeout = 5 * time.Second
 )
 
+// walletFundingRejectedError marks a funding attempt the faucet definitively
+// rejected (an HTTP 4xx), as opposed to a transient connectivity error worth
+// retrying. The controller escalates a rejection to Degraded while retrying
+// transient errors.
+type walletFundingRejectedError struct {
+	message string
+}
+
+func (e walletFundingRejectedError) Error() string {
+	return e.message
+}
+
 // walletFunder builds and submits a funding transaction that pays the wallet
 // address through the faucet. It is a narrow port so tests can fund without a
 // running faucet. Kept HTTP-only (the operator never imports the faucet's
@@ -128,7 +140,14 @@ func (f defaultWalletFunder) Fund(ctx context.Context, faucetURL string, token s
 		return "", err
 	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("faucet returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
+		message := fmt.Sprintf("faucet returned HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(payload)))
+		// A 4xx is a definitive rejection of the request (not a transient
+		// connectivity error), so the controller should stop retrying and
+		// surface it; 5xx and connection errors stay retryable.
+		if response.StatusCode >= 400 && response.StatusCode < 500 {
+			return "", walletFundingRejectedError{message: message}
+		}
+		return "", fmt.Errorf("%s", message)
 	}
 
 	var decoded faucetTopUpResponse

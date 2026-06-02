@@ -13,6 +13,7 @@ package cardanonetwork
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -164,7 +165,9 @@ func (r *CardanoNetworkReconciler) primaryWalletReadyCondition(
 	confirmed, err := r.walletConfirmer().Confirmed(confirmCtx, kupoURL, address, settings.fundingLovelace)
 	cancelConfirm()
 	if err != nil {
-		return walletReadyCondition(metav1.ConditionFalse, conditionReasonWalletFundingFailed, fmt.Sprintf("Confirming wallet funding through Kupo failed: %v", err)), walletStatus, true, nil
+		// Kupo is still coming up or briefly unreachable: keep waiting and retry
+		// rather than degrading on a transient confirmation error.
+		return walletReadyCondition(metav1.ConditionFalse, conditionReasonWalletFundingPending, fmt.Sprintf("Confirming wallet funding through Kupo failed; will retry: %v", err)), walletStatus, false, nil
 	}
 	if confirmed {
 		walletStatus.Funded = true
@@ -191,7 +194,14 @@ func (r *CardanoNetworkReconciler) primaryWalletReadyCondition(
 	txID, err := r.walletFunder().Fund(fundCtx, faucetURL, token, address, settings.fundingLovelace)
 	cancelFund()
 	if err != nil {
-		return walletReadyCondition(metav1.ConditionFalse, conditionReasonWalletFundingFailed, fmt.Sprintf("Funding the wallet through the faucet failed: %v", err)), walletStatus, true, nil
+		// Only a definitive faucet rejection (HTTP 4xx) degrades; transient
+		// connectivity errors during faucet start-up are retried as pending so a
+		// startup race does not brick `up --wait`.
+		var rejected walletFundingRejectedError
+		if errors.As(err, &rejected) {
+			return walletReadyCondition(metav1.ConditionFalse, conditionReasonWalletFundingFailed, fmt.Sprintf("Funding the wallet through the faucet was rejected: %v", err)), walletStatus, true, nil
+		}
+		return walletReadyCondition(metav1.ConditionFalse, conditionReasonWalletFundingPending, fmt.Sprintf("Funding the wallet through the faucet failed; will retry: %v", err)), walletStatus, false, nil
 	}
 
 	walletStatus.FundedTxID = txID

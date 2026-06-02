@@ -234,11 +234,23 @@ func TestPrimaryWalletReadyConditionFundingLifecycle(t *testing.T) {
 		assert.False(t, degraded)
 	})
 
-	t.Run("funding error degrades", func(t *testing.T) {
+	t.Run("transient funding error retries without degrading", func(t *testing.T) {
 		reconciler, network, settings, kupoSvc, faucetSvc := setup(t,
 			walletConfirmerFunc(func(context.Context, string, string, int64) (bool, error) { return false, nil }),
 			walletFunderFunc(func(context.Context, string, string, string, int64) (string, error) {
-				return "", errors.New("faucet rejected")
+				return "", errors.New("connection refused")
+			}), "")
+		condition, _, degraded, err := reconciler.primaryWalletReadyCondition(ctx, network, settings, conditionTrue(conditionReasonFaucetReady), conditionTrue(conditionReasonKupoReady), kupoSvc, faucetSvc)
+		require.NoError(t, err)
+		assert.Equal(t, string(conditionReasonWalletFundingPending), condition.Reason)
+		assert.False(t, degraded, "a transient connectivity error must be retried, not degraded")
+	})
+
+	t.Run("rejected funding degrades", func(t *testing.T) {
+		reconciler, network, settings, kupoSvc, faucetSvc := setup(t,
+			walletConfirmerFunc(func(context.Context, string, string, int64) (bool, error) { return false, nil }),
+			walletFunderFunc(func(context.Context, string, string, string, int64) (string, error) {
+				return "", walletFundingRejectedError{message: "faucet returned HTTP 400"}
 			}), "")
 		condition, _, degraded, err := reconciler.primaryWalletReadyCondition(ctx, network, settings, conditionTrue(conditionReasonFaucetReady), conditionTrue(conditionReasonKupoReady), kupoSvc, faucetSvc)
 		require.NoError(t, err)
@@ -246,14 +258,14 @@ func TestPrimaryWalletReadyConditionFundingLifecycle(t *testing.T) {
 		assert.True(t, degraded)
 	})
 
-	t.Run("confirmation error degrades", func(t *testing.T) {
+	t.Run("confirmation error retries without degrading", func(t *testing.T) {
 		reconciler, network, settings, kupoSvc, faucetSvc := setup(t,
 			walletConfirmerFunc(func(context.Context, string, string, int64) (bool, error) { return false, errors.New("kupo down") }),
 			walletFunderFunc(func(context.Context, string, string, string, int64) (string, error) { return "", nil }), "")
 		condition, _, degraded, err := reconciler.primaryWalletReadyCondition(ctx, network, settings, conditionTrue(conditionReasonFaucetReady), conditionTrue(conditionReasonKupoReady), kupoSvc, faucetSvc)
 		require.NoError(t, err)
-		assert.Equal(t, string(conditionReasonWalletFundingFailed), condition.Reason)
-		assert.True(t, degraded)
+		assert.Equal(t, string(conditionReasonWalletFundingPending), condition.Reason)
+		assert.False(t, degraded)
 	})
 }
 
