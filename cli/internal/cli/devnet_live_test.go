@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
@@ -19,17 +20,19 @@ import (
 //
 // It is opt-in: set YACD_DEVNET_LIVE=1 (with Docker running) to run it. It is
 // skipped in the default suite because it needs Docker, the network, and
-// several minutes. It isolates its cluster-state record under a temp XDG dir;
-// the k3d binary cache (XDG_DATA_HOME) is left alone so the pinned binary is
-// reused. It uses the real default kubeconfig (~/.kube/config) because that is
-// where k3d merges the managed context and the cluster adapter reports it; the
-// teardown restores the prior current-context, and deleting the cluster removes
-// its kubeconfig entry, so the file returns to its baseline.
+// several minutes. It isolates its kubeconfig and cluster-state record under a
+// temp dir so it does not touch the developer's real ~/.kube/config or XDG
+// state; the k3d binary cache (XDG_DATA_HOME) is left alone so the pinned
+// binary is reused. Pointing KUBECONFIG at a temp file also exercises the
+// KUBECONFIG-aware path: k3d merges the managed context there and the cluster
+// adapter must report that same file (not ~/.kube/config) for the operator
+// install and apply to succeed.
 func TestDevnetLifecycleLive(t *testing.T) {
 	if os.Getenv("YACD_DEVNET_LIVE") == "" {
 		t.Skip("set YACD_DEVNET_LIVE=1 (with Docker running) to run the live devnet lifecycle test")
 	}
 
+	t.Setenv("KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig"))
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 
 	// Always attempt teardown, even if an assertion fails mid-way.

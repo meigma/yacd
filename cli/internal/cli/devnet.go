@@ -37,6 +37,11 @@ func newDevnetCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			timeout := commandContext.viper.GetDuration("timeout")
+			if timeout <= 0 {
+				return fmt.Errorf("--timeout must be greater than 0")
+			}
+
 			environment, err := devconfig.Load(bytes.NewReader(defaultDevnetEnvYAML))
 			if err != nil {
 				return fmt.Errorf("load default devnet environment: %w", err)
@@ -48,7 +53,7 @@ func newDevnetCommand(commandContext *commandContext) *cobra.Command {
 				Env:         *environment,
 				NetworkName: devnetNetworkName,
 				Namespace:   devnetNetworkName,
-				Timeout:     commandContext.viper.GetDuration("timeout"),
+				Timeout:     timeout,
 			})
 			if err != nil {
 				return err
@@ -74,12 +79,17 @@ func newDevnetDownCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Delete the managed devnet cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			timeout := commandContext.viper.GetDuration("timeout")
+			if timeout <= 0 {
+				return fmt.Errorf("--timeout must be greater than 0")
+			}
+
 			manager, err := commandContext.newLifecycleManager()
 			if err != nil {
 				return err
 			}
 			if err := manager.Down(cmd.Context(), lifecycle.DownOptions{
-				Timeout: commandContext.viper.GetDuration("timeout"),
+				Timeout: timeout,
 			}); err != nil {
 				return err
 			}

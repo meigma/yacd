@@ -157,6 +157,22 @@ func TestDevnetStatus(t *testing.T) {
 	})
 }
 
+func TestDevnetRejectsNonPositiveTimeout(t *testing.T) {
+	for _, args := range [][]string{
+		{"devnet", "--timeout", "0s"},
+		{"devnet", "down", "--timeout", "0s"},
+	} {
+		var stdout, stderr bytes.Buffer
+		// No port mocks are exercised: the timeout guard rejects before any
+		// cluster, store, or operator call.
+		_, run := newDevnetRoot(t, &stdout, &stderr)
+
+		err := run(args...)
+		require.Error(t, err, "args %v", args)
+		assert.Contains(t, err.Error(), "--timeout must be greater than 0")
+	}
+}
+
 // TestDefaultDevnetEnvIsValid guards the embedded default environment against
 // drift from examples/local/yacd.yaml: it must parse, be a local network, and
 // carry the funded-wallet defaults the devnet UX promises.

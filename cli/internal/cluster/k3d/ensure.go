@@ -63,14 +63,23 @@ func (p *Provisioner) create(ctx context.Context, bin string, spec cluster.Spec)
 }
 
 // infoFor reports the Info for a created/healthy cluster. k3d merges the context
-// into the default kubeconfig via --kubeconfig-update-default.
+// into the default kubeconfig via --kubeconfig-update-default, which honours the
+// KUBECONFIG env var, so the reported path must resolve the same way (and not
+// assume ~/.kube/config) or downstream consumers would look in the wrong file.
 func (p *Provisioner) infoFor(name string) cluster.Info {
 	return cluster.Info{
 		Name:           name,
 		Context:        "k3d-" + name,
-		KubeconfigPath: clientcmd.RecommendedHomeFile,
+		KubeconfigPath: defaultKubeconfigPath(),
 		Running:        true,
 	}
+}
+
+// defaultKubeconfigPath resolves the kubeconfig file k3d's
+// --kubeconfig-update-default writes to: the first KUBECONFIG entry when the env
+// var is set, otherwise ~/.kube/config.
+func defaultKubeconfigPath() string {
+	return clientcmd.NewDefaultClientConfigLoadingRules().GetDefaultFilename()
 }
 
 // DeleteCluster deletes the named cluster, tolerating an absent one.
