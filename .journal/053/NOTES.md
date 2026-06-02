@@ -76,3 +76,47 @@ draft state, so the merge publishes images+chart immediately + attestations; onl
 the GitHub release stays draft for manual Publish. Awaiting explicit user go to
 merge PR #7. This will be the first-ever real run of `release.yml` (dry-runs skip
 publish) — will babysit and fix-forward if the publish/attest tail breaks.
+
+## 2026-06-01 19:39 — v0.1.0 PUBLISHED; published-chart smoke green
+
+User gave go. Merged release PR #7 (squash `a2cbdf3`) → release-please tagged
+**`v0.1.0`** + created a draft GitHub release → `release.yml` fired (the
+first-ever real root release run) and **succeeded across all 10 jobs**: binary
+assets, manager image (amd64+arm64), faucet image (amd64+arm64), the two image
+releases, helm chart release, inspection summary. No first-run breakage — the
+publish/OCI-push/attest tail (untested by dry-runs) worked first try.
+
+Canonical published refs (record for P4/P5 to pin against):
+- Manager: `ghcr.io/meigma/yacd:v0.1.0`
+  `@sha256:cb3d42ecc52283d55ddecf6b7fdee00c2eea2cc44daf28f7ccf8c54aaab7a7f5`
+  (linux/amd64 + linux/arm64)
+- Faucet:  `ghcr.io/meigma/yacd/faucet:v0.1.0`
+  `@sha256:d4ae37c9322cb1b97ba2914edf48502f39af26e578686c9eccc4ef5efd06568b`
+  (amd64 + arm64)
+- Chart:   `oci://ghcr.io/meigma/yacd/chart` version `0.1.0`
+  `@sha256:27647a75c13db57432ce650dd12d47274869dbe260f819ea7b9f2b920f7985f6`
+  (appVersion `v0.1.0`)
+- Binaries: `yacd_0.1.0_{darwin,linux}_{amd64,arm64}` on the draft GitHub release.
+- All three artifact classes carry GitHub-native attestations.
+
+Published-chart smoke (the key Phase-1 exit criterion) — PASS:
+- Throwaway `kind` cluster `yacd-v010-smoke` (isolated kubeconfig; deleted after).
+- `helm install yacd oci://ghcr.io/meigma/yacd/chart --version 0.1.0` with NO
+  overrides → operator Deployment `Available=True`; both CRDs installed; the
+  rendered + running manager image resolved by default to the published
+  `ghcr.io/meigma/yacd:v0.1.0` (digest `cb3d42ec…`).
+- `yacd up phase4-smoke -n yacd-smoke -f examples/local/yacd.yaml` (same path as
+  the chainsaw e2e) → `CardanoNetwork` **Ready=True** (Degraded=False;
+  Node/Ogmios/Kupo/Faucet/Artifacts Ready=True; endpoints published). Faucet
+  sidecar ran the published `ghcr.io/meigma/yacd/faucet:v0.1.0`; cardano-tools
+  digest-pinned `11.0.1-yacd.5`, cardano-testnet `11.0.1-yacd.5`, ogmios
+  v6.14.0, kupo v2.11.0 — all expected defaults.
+  (NodeSynchronized/NodeProgressing False = `NetworkTimingUnavailable`,
+  expected visibility-only localnet state, not part of aggregate Ready.)
+
+State: **Phase 1 essentially complete.** Open items: (1) the GitHub draft
+release `v0.1.0` is intentionally left for the user to Publish (their decision);
+(2) prune the merged `chore/release-v0.1.0` worktree at wrap-up. Next plan phases
+unblocked: P4 (funded wallet → v0.2.0) and P5 (operator install embedding the
+release). Per the plan, P2 (toolbin) / P3 (cluster) are independent and can start
+in parallel.
