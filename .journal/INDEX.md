@@ -53,3 +53,4 @@
 | 050 | 2026-06-01 | F0 redesign — PR-D (final cleanup + docs) | complete | Landed PR-D and closed the F0 series: removed the dead cardano-tools `report` verb (#81), released + digest-pinned the manager's cardano-tools image to `11.0.1-yacd.5` (#76/#82) and dropped the e2e build+load hack; DESIGN.md needed no change, and a scoped `Release-As: yacd@1.0.0` fixed a versioning leak into the root release PR. |
 | 051 | 2026-06-01 | New session | in-progress | Session started via `session-new`; awaiting the user's request. |
 | 052 | 2026-06-01 | New session | in-progress | Session started via `session-new`; awaiting the user's request. |
+| 053 | 2026-06-01 | Local lifecycle Phase 1 — cut operator v0.1.0 | in-progress | Executing the session-049 plan starting at Phase 1: drive release-please/`release.yml` to a published operator release + Helm chart as the CLI's install target. |
