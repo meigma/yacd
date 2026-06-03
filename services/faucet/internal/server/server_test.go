@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 	"github.com/meigma/yacd/services/faucet/internal/topup"
 	"github.com/stretchr/testify/assert"
@@ -141,7 +142,7 @@ func TestHandlerReturnsSourceNotFound(t *testing.T) {
 func TestHandlerSubmitsTopUp(t *testing.T) {
 	t.Parallel()
 
-	submitter := &fakeSubmitter{result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}}}
+	submitter := &fakeSubmitter{result: tx.Result{TxID: "abc123", SpentInputKeys: []string{testInputKey}}}
 	response := performTopUpRequest(
 		t,
 		testHandlerWithSubmitter(t, testDefaultSource, submitter),
@@ -396,7 +397,7 @@ func TestHandlerTopUpReloadsAuthTokenFile(t *testing.T) {
 	handler := NewHandlerWithAuthTokenFile(
 		store,
 		topup.NewService(store, &fakeSubmitter{
-			result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
+			result: tx.Result{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
 		}, topup.Config{MaxLovelace: 10_000_000}),
 		"/token",
 		func(string) (string, error) {
@@ -462,11 +463,11 @@ func testHandler(t *testing.T, defaultSource string) http.Handler {
 	t.Helper()
 
 	return testHandlerWithSubmitter(t, defaultSource, &fakeSubmitter{
-		result: topup.ChainResult{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
+		result: tx.Result{TxID: "abc123", SpentInputKeys: []string{testInputKey}},
 	})
 }
 
-func testHandlerWithSubmitter(t *testing.T, defaultSource string, submitter topup.TransactionSubmitter) http.Handler {
+func testHandlerWithSubmitter(t *testing.T, defaultSource string, submitter tx.Submitter) http.Handler {
 	t.Helper()
 
 	rootDir := t.TempDir()
@@ -597,15 +598,15 @@ func mustDeriveTestnetPaymentAddress(verificationKeyHex string) string {
 }
 
 type fakeSubmitter struct {
-	result   topup.ChainResult
+	result   tx.Result
 	err      error
-	requests []topup.ChainRequest
+	requests []tx.Request
 }
 
-func (f *fakeSubmitter) SubmitTopUp(_ context.Context, request topup.ChainRequest) (topup.ChainResult, error) {
+func (f *fakeSubmitter) Submit(_ context.Context, request tx.Request) (tx.Result, error) {
 	f.requests = append(f.requests, request)
 	if f.err != nil {
-		return topup.ChainResult{}, f.err
+		return tx.Result{}, f.err
 	}
 	if len(f.result.SpentInputKeys) == 0 {
 		f.result.SpentInputKeys = []string{testInputKey}
