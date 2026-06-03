@@ -26,3 +26,22 @@ Current state of the world:
 Plan: wait for the user's request before doing substantive work. Dev stack not
 started yet (start it only once an implementation worktree is selected, if the
 work is operator/controller implementation).
+
+## 2026-06-03 — Branch + change 1: `yacd list` defaults to all namespaces
+Session is a series of one-off CLI changes sharing ONE branch/PR off master.
+- Worktree/branch: `feat/cli-list-all-namespaces` @ `.wt/feat-cli-list-all-namespaces`
+  (based on `origin/master` 79761f2). No dev stack started — CLI-only work uses
+  k3d + published image, not Tilt/KinD (session 056 lesson).
+- **Change 1 done + committed (`0847e9f`):** `yacd list` now lists ALL namespaces
+  by default; `-A`/`--all-namespaces` removed; `-n` still scopes to one namespace.
+  Rationale: one-env-per-namespace identity model made the namespace-scoped default
+  routinely empty (`yacd devnet` → `yacd list` returned nothing). Empty namespace
+  was already the adapter's all-namespaces convention (`kube/client.go`); dropped
+  the `DefaultNamespace()` fallback in `list.go`. Tests rewritten in `list_test.go`
+  (TestListDefaultsToAllNamespaces + TestListEmptyResultAllNamespaces; deleted the
+  -A test). `moon run root:test` + `root:check` green; `list --help` confirms no -A.
+- **Follow-up (NOT this PR):** `-A`/"all namespaces" docs references live only on
+  the unmerged `docs/mkdocs-site` branch (PR #91): `docs/reference/cli.md`,
+  `docs/developer/getting-started.md`, `docs/developer/networks.md`. Per decision,
+  the docs session fixes these before #91 merges. Master README is unaffected.
+- More one-off changes to come on this same branch.
