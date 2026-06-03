@@ -14,20 +14,19 @@ import (
 )
 
 // newListCommand wires the `yacd list` subcommand. It lists CardanoNetworks
-// in the active namespace (or across all namespaces with -A) and projects
-// each into name/namespace/mode/ready/endpoints, rendered as a table or, with
-// --json, as machine-readable JSON.
+// across all namespaces by default, or a single namespace when one is given
+// with -n, and projects each into name/namespace/mode/ready/endpoints,
+// rendered as a table or, with --json, as machine-readable JSON.
 func newListCommand(commandContext *commandContext) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List YACD environments in the cluster",
+		Short: "List YACD environments across all namespaces (or one with -n)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
 			if err != nil {
 				return err
 			}
-			allNamespaces := commandContext.viper.GetBool("all-namespaces")
 			jsonOutput := commandContext.viper.GetBool("json")
 
 			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
@@ -35,13 +34,8 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			namespace := ""
-			if !allNamespaces {
-				namespace = strings.TrimSpace(runtimeConfig.Namespace)
-				if namespace == "" {
-					namespace = kubeClient.DefaultNamespace()
-				}
-			}
+			// An empty namespace lists across all namespaces; -n scopes to one.
+			namespace := strings.TrimSpace(runtimeConfig.Namespace)
 
 			networks, err := kubeClient.ListCardanoNetworks(cmd.Context(), namespace)
 			if err != nil {
@@ -64,11 +58,10 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 				return nil
 			}
 
-			return printList(commandContext.out, items, namespace, allNamespaces)
+			return printList(commandContext.out, items, namespace)
 		},
 	}
 
-	cmd.Flags().BoolP("all-namespaces", "A", false, "List CardanoNetworks across all namespaces")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
@@ -167,11 +160,12 @@ func endpointURL(endpoint *yacdv1alpha1.ServiceEndpointStatus) string {
 
 // printList renders the projected items as an aligned table. An empty result
 // is reported explicitly, with the search scope, so the user can tell "none"
-// from a filtering error.
-func printList(out io.Writer, items []listItem, namespace string, allNamespaces bool) error {
+// from a filtering error. A non-empty namespace means the result was scoped to
+// that namespace; an empty namespace means all namespaces were searched.
+func printList(out io.Writer, items []listItem, namespace string) error {
 	if len(items) == 0 {
 		message := "No CardanoNetworks found."
-		if !allNamespaces {
+		if namespace != "" {
 			message = fmt.Sprintf("No CardanoNetworks found in namespace %q.", namespace)
 		}
 		if _, err := fmt.Fprintln(out, message); err != nil {

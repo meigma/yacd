@@ -63,7 +63,6 @@ func TestListRendersTable(t *testing.T) {
 	}
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
 	client.EXPECT().ListCardanoNetworks(mock.Anything, "team-a").Return(networks, nil)
 
 	var stdout bytes.Buffer
@@ -90,12 +89,18 @@ func TestListRendersTable(t *testing.T) {
 	assert.Contains(t, output, "false")
 }
 
-func TestListUsesDefaultNamespaceWhenUnset(t *testing.T) {
-	t.Setenv("YACD_NAMESPACE", "")
+func TestListDefaultsToAllNamespaces(t *testing.T) {
+	t.Parallel()
 
+	networks := []yacdv1alpha1.CardanoNetwork{
+		listTestNetwork("team-a", "devnet", yacdv1alpha1.CardanoNetworkModeLocal, true),
+		listTestNetwork("team-b", "preview", yacdv1alpha1.CardanoNetworkModePublic, false),
+	}
+
+	// No -n and no DefaultNamespace() expectation: list must search every
+	// namespace by passing an empty namespace, never the kubeconfig default.
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Once()
-	client.EXPECT().ListCardanoNetworks(mock.Anything, "default-ns").Return(nil, nil)
+	client.EXPECT().ListCardanoNetworks(mock.Anything, "").Return(networks, nil)
 
 	var stdout bytes.Buffer
 	root := NewRootCommand(Options{
@@ -106,20 +111,16 @@ func TestListUsesDefaultNamespaceWhenUnset(t *testing.T) {
 	root.SetArgs([]string{"list"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
-	assert.Contains(t, stdout.String(), `No CardanoNetworks found in namespace "default-ns".`)
+	output := stdout.String()
+	assert.Contains(t, output, "team-a")
+	assert.Contains(t, output, "team-b")
 }
 
-func TestListAllNamespacesPassesEmptyNamespace(t *testing.T) {
+func TestListEmptyResultAllNamespaces(t *testing.T) {
 	t.Parallel()
 
-	networks := []yacdv1alpha1.CardanoNetwork{
-		listTestNetwork("team-a", "devnet", yacdv1alpha1.CardanoNetworkModeLocal, true),
-		listTestNetwork("team-b", "preview", yacdv1alpha1.CardanoNetworkModePublic, false),
-	}
-
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().ListCardanoNetworks(mock.Anything, "").Return(networks, nil)
+	client.EXPECT().ListCardanoNetworks(mock.Anything, "").Return([]yacdv1alpha1.CardanoNetwork{}, nil)
 
 	var stdout bytes.Buffer
 	root := NewRootCommand(Options{
@@ -127,20 +128,17 @@ func TestListAllNamespacesPassesEmptyNamespace(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 	})
-	root.SetArgs([]string{"list", "-A"})
+	root.SetArgs([]string{"list"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
-	output := stdout.String()
-	assert.Contains(t, output, "team-a")
-	assert.Contains(t, output, "team-b")
+	assert.Equal(t, "No CardanoNetworks found.\n", stdout.String())
 }
 
 func TestListEmptyResultReportsNone(t *testing.T) {
 	t.Parallel()
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
-	client.EXPECT().ListCardanoNetworks(mock.Anything, mock.Anything).Return([]yacdv1alpha1.CardanoNetwork{}, nil)
+	client.EXPECT().ListCardanoNetworks(mock.Anything, "team-a").Return([]yacdv1alpha1.CardanoNetwork{}, nil)
 
 	var stdout bytes.Buffer
 	root := NewRootCommand(Options{
@@ -163,7 +161,6 @@ func TestListJSONOutputShape(t *testing.T) {
 	}
 
 	client := newKubeMock(t)
-	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
 	client.EXPECT().ListCardanoNetworks(mock.Anything, "team-a").Return(networks, nil)
 
 	var stdout bytes.Buffer
