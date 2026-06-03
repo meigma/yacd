@@ -130,7 +130,7 @@ func TestDevnetStatus(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		m, run := newDevnetRoot(t, &stdout, &stderr)
 
-		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).
+		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).
 			Return(cluster.Status{Exists: true, Running: true, Healthy: true, Context: cluster.ManagedContext}, nil)
 		m.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
 		m.installer.EXPECT().OperatorState(mock.Anything).
@@ -153,14 +153,14 @@ func TestDevnetStatus(t *testing.T) {
 
 		require.NoError(t, run("devnet", "status"))
 		assert.Contains(t, stdout.String(), "Run `yacd devnet`")
-		m.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything)
+		m.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything, mock.Anything)
 	})
 
 	t.Run("cluster absent but record present clears the stale record", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		m, run := newDevnetRoot(t, &stdout, &stderr)
 
-		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
+		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).Return(cluster.Status{Exists: false}, nil)
 		m.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
 		m.store.EXPECT().Clear().Return(nil)
 

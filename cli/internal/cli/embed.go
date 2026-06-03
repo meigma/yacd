@@ -10,3 +10,11 @@ import _ "embed"
 //
 //go:embed devnet.yaml
 var defaultDevnetEnvYAML []byte
+
+// defaultInitEnvYAML is the fully-commented developer environment template
+// `yacd init` prints to stdout. Its active (uncommented) portion is a valid
+// batteries-included local network; commented blocks document the rest of the
+// API. init_test.go guards the active config against drift from the real schema.
+//
+//go:embed init.yaml
+var defaultInitEnvYAML []byte

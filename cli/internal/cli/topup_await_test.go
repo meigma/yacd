@@ -57,12 +57,16 @@ func TestAwaitConfirmationSurfacesLastQueryErrorOnTimeout(t *testing.T) {
 	assert.Contains(t, err.Error(), "kupo unreachable")
 }
 
-func TestTopUpAwaitRequiresKupoURL(t *testing.T) {
+func TestTopUpAwaitRequiresKupoURLWhenFaucetOverridden(t *testing.T) {
 	t.Parallel()
 
-	// --await without a Kupo URL must fail before any cluster contact: the
-	// mock has no expectations, so any client call would fail the test.
+	// An explicit --faucet-url suppresses the self-forward, so topup cannot
+	// derive a Kupo URL from a forwarded endpoint; --await then requires
+	// --kupo-url. The command must fail at the await-kupo check, before the
+	// trust gate reads any Secret.
 	client := newKubeMock(t)
+	client.EXPECT().DefaultNamespace().Return("devnet").Maybe()
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
 
 	var stderr bytes.Buffer
 	root := NewRootCommand(Options{
@@ -70,11 +74,45 @@ func TestTopUpAwaitRequiresKupoURL(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 	})
-	root.SetArgs([]string{"topup", "devnet", "--address", "addr_test1dest", "--lovelace", "2000000", "--await"})
+	root.SetArgs([]string{"topup", "devnet", "2000000", "--address", "addr_test1dest", "--faucet-url", "http://127.0.0.1:9", "--await"})
 
 	err := root.ExecuteContext(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--await requires a Kupo URL")
+	client.AssertNotCalled(t, "GetSecretValue", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestTopUpAwaitUsesForwardedKupo proves the standalone --await path: with no
+// --kupo-url and no --faucet-url, topup self-forwards and derives the loopback
+// Kupo URL from the same session, so --await works without any extra flags.
+func TestTopUpAwaitUsesForwardedKupo(t *testing.T) {
+	t.Parallel()
+
+	client := topupSelfForwardClient(t)
+
+	httpMock := newHTTPMock(t)
+	httpMock.EXPECT().Do(mock.Anything).Return(successfulTopUpHTTPResponse(), nil)
+
+	confirmer := mocks.NewUTxOConfirmer(t)
+	confirmer.EXPECT().TransactionIDs(mock.Anything, "addr_test1dest").Return([]string{"abc123"}, nil)
+	var gotKupoURL string
+
+	root := NewRootCommand(Options{
+		Out:               &bytes.Buffer{},
+		Err:               &bytes.Buffer{},
+		Viper:             viper.New(),
+		HTTPClient:        httpMock,
+		KubeClientFactory: kubeClientFactory(client),
+		UTxOConfirmerFactory: func(kupoURL string) UTxOConfirmer {
+			gotKupoURL = kupoURL
+
+			return confirmer
+		},
+	})
+	root.SetArgs([]string{"topup", "devnet", "2000000", "--address", "addr_test1dest", "--await"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.Equal(t, "http://127.0.0.1:40002", gotKupoURL, "--await must reuse the forwarded loopback Kupo")
 }
 
 func TestTopUpAwaitRejectsMalformedKupoURLBeforeClusterContact(t *testing.T) {
@@ -103,8 +141,8 @@ func TestTopUpAwaitRejectsMalformedKupoURLBeforeClusterContact(t *testing.T) {
 				KubeClientFactory: kubeClientFactory(client),
 			})
 			root.SetArgs([]string{
-				"topup", "devnet",
-				"--address", "addr_test1dest", "--lovelace", "2000000",
+				"topup", "devnet", "2000000",
+				"--address", "addr_test1dest",
 				"--await", "--kupo-url", tc.kupoURL,
 			})
 
@@ -146,8 +184,8 @@ func TestTopUpAwaitConfirmsOnChain(t *testing.T) {
 		},
 	})
 	root.SetArgs([]string{
-		"topup", "devnet",
-		"--address", "addr_test1dest", "--lovelace", "2000000",
+		"topup", "devnet", "2000000",
+		"--address", "addr_test1dest",
 		"--faucet-url", faucetServer.URL,
 		"--await", "--kupo-url", "http://127.0.0.1:1442",
 	})
@@ -194,8 +232,8 @@ func TestTopUpAwaitQueriesRequestedAddressNotEcho(t *testing.T) {
 		UTxOConfirmerFactory: func(string) UTxOConfirmer { return confirmer },
 	})
 	root.SetArgs([]string{
-		"topup", "devnet",
-		"--address", "addr_test1dest", "--lovelace", "2000000",
+		"topup", "devnet", "2000000",
+		"--address", "addr_test1dest",
 		"--faucet-url", faucetServer.URL,
 		"--await", "--kupo-url", "http://127.0.0.1:1442",
 	})
@@ -233,8 +271,8 @@ func TestTopUpAwaitReadsKupoURLFromEnv(t *testing.T) {
 		},
 	})
 	root.SetArgs([]string{
-		"topup", "devnet",
-		"--address", "addr_test1dest", "--lovelace", "2000000",
+		"topup", "devnet", "2000000",
+		"--address", "addr_test1dest",
 		"--faucet-url", faucetServer.URL, "--await",
 	})
 

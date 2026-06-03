@@ -133,6 +133,8 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(ctx.withManagedReconcile(newExecCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newConnectCommand(ctx)))
 	root.AddCommand(newDevnetCommand(ctx))
+	// init only prints an embedded template — no cluster contact, so no reconcile.
+	root.AddCommand(newInitCommand(ctx))
 
 	return root
 }

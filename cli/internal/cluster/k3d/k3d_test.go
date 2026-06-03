@@ -195,7 +195,7 @@ func TestStatusReportsExistenceAndHealth(t *testing.T) {
 	}}
 	prov := newProvisioner(runner, healthyProber)
 
-	status, err := prov.Status(context.Background(), "yacd")
+	status, err := prov.Status(context.Background(), "yacd", "")
 	require.NoError(t, err)
 	assert.True(t, status.Exists)
 	assert.True(t, status.Running)
@@ -210,7 +210,113 @@ func TestStatusReportsAbsentCluster(t *testing.T) {
 	}}
 	prov := newProvisioner(runner, proberThatPanics)
 
-	status, err := prov.Status(context.Background(), "yacd")
+	status, err := prov.Status(context.Background(), "yacd", "")
 	require.NoError(t, err)
 	assert.False(t, status.Exists)
+}
+
+func TestEnsureClusterNoOpReturnsRecordedKubeconfig(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte(runningClusterJSON)},
+	}}
+	prov := newProvisioner(runner, healthyProber)
+
+	spec := devSpec()
+	spec.KubeconfigPath = "/home/dev/.kube/recorded"
+	info, err := prov.EnsureCluster(context.Background(), spec)
+	require.NoError(t, err)
+
+	// The healthy no-op must report the recorded kubeconfig (where the context
+	// lives), not the ambient default, so the saved state record stays correct
+	// and a later run is not pointed at the wrong file.
+	assert.Equal(t, "/home/dev/.kube/recorded", info.KubeconfigPath)
+	assert.Equal(t, []string{"list"}, runner.subcommands())
+}
+
+func TestEnsureClusterNoOpFallsBackToDefaultKubeconfig(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte(runningClusterJSON)},
+	}}
+	prov := newProvisioner(runner, healthyProber)
+
+	// No recorded path (out-of-band cluster, no record): fall back to a non-empty
+	// default rather than an empty path.
+	info, err := prov.EnsureCluster(context.Background(), devSpec())
+	require.NoError(t, err)
+	assert.NotEmpty(t, info.KubeconfigPath)
+}
+
+func TestEnsureClusterAbortsOnConfigProbeError(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte(runningClusterJSON)},
+	}}
+	// A kubeconfig/context load failure is not evidence of unhealth.
+	prober := func(context.Context, string, string) error {
+		return &probeConfigError{errors.New(`context "k3d-yacd" does not exist`)}
+	}
+	prov := newProvisioner(runner, prober)
+
+	_, err := prov.EnsureCluster(context.Background(), devSpec())
+	require.Error(t, err)
+	assert.Equal(t, []string{"list"}, runner.subcommands(),
+		"a kubeconfig-load probe error must not delete+recreate a healthy cluster")
+}
+
+func TestStatusProbesThroughGivenKubeconfig(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte(runningClusterJSON)},
+	}}
+	var probed string
+	prober := func(_ context.Context, kubeconfig, _ string) error {
+		probed = kubeconfig
+		return nil
+	}
+	prov := newProvisioner(runner, prober)
+
+	_, err := prov.Status(context.Background(), "yacd", "/home/dev/.kube/recorded")
+	require.NoError(t, err)
+	assert.Equal(t, "/home/dev/.kube/recorded", probed)
+}
+
+func TestCreateReportsContextError(t *testing.T) {
+	tests := []struct {
+		name   string
+		newCtx func() (context.Context, context.CancelFunc)
+		expect string
+	}{
+		{
+			name: "cancelled",
+			newCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, func() {}
+			},
+			expect: "cancelled",
+		},
+		{
+			name: "timed out",
+			newCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			expect: "timed out",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{responses: map[string]scriptedResponse{
+				"list":   {stdout: []byte("[]")},
+				"create": {err: errors.New("signal: killed")},
+				"delete": {},
+			}}
+			prov := newProvisioner(runner, proberThatPanics)
+
+			ctx, cancel := tt.newCtx()
+			defer cancel()
+			_, err := prov.EnsureCluster(ctx, devSpec())
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expect)
+			assert.NotContains(t, err.Error(), "signal: killed",
+				"a bounded run should report the cause, not the raw killed-process error")
+		})
+	}
 }

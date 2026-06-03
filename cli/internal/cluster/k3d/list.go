@@ -3,6 +3,7 @@ package k3d
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
@@ -61,19 +62,34 @@ func (p *Provisioner) statusVia(ctx context.Context, bin string, name string, ku
 		K3sImage: cluster.K3sImage,
 	}
 	if status.Running {
-		status.Healthy = p.prober(ctx, kubeconfig, status.Context) == nil
+		if probeErr := p.prober(ctx, kubeconfig, status.Context); probeErr != nil {
+			// A kubeconfig/context load failure is an environment problem, not
+			// evidence the cluster is unhealthy. Surface it as a hard error so
+			// EnsureCluster does not delete and recreate a healthy cluster (which
+			// would silently destroy its state). Only a genuine reachability
+			// failure marks the cluster unhealthy and eligible for healing.
+			var cfgErr *probeConfigError
+			if errors.As(probeErr, &cfgErr) {
+				return cluster.Status{}, fmt.Errorf("probe cluster %s health: %w", name, probeErr)
+			}
+			status.Healthy = false
+		} else {
+			status.Healthy = true
+		}
 	}
 
 	return status, nil
 }
 
-// Status reports the observed state of the named cluster. It probes health
-// through the standard kubeconfig loading rules.
-func (p *Provisioner) Status(ctx context.Context, name string) (cluster.Status, error) {
+// Status reports the observed state of the named cluster, probing API health
+// through kubeconfigPath (empty uses the standard loading rules). Callers pass
+// the recorded kubeconfig so health is judged against the file the cluster's
+// context actually lives in, not the current ambient default.
+func (p *Provisioner) Status(ctx context.Context, name string, kubeconfigPath string) (cluster.Status, error) {
 	bin, err := p.resolver.Resolve(ctx)
 	if err != nil {
 		return cluster.Status{}, fmt.Errorf("resolve k3d: %w", err)
 	}
 
-	return p.statusVia(ctx, bin, name, "")
+	return p.statusVia(ctx, bin, name, kubeconfigPath)
 }

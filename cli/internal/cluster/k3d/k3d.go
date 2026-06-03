@@ -15,6 +15,16 @@ import (
 // kubeconfig context. An empty kubeconfig path uses the default loading rules.
 type prober func(ctx context.Context, kubeconfig, kubeContext string) error
 
+// probeConfigError marks a health-probe failure caused by loading the
+// kubeconfig or resolving its context, rather than by the API server being
+// unreachable. A config failure is not evidence that the cluster is unhealthy,
+// so EnsureCluster surfaces it instead of deleting and recreating a cluster that
+// may be perfectly healthy.
+type probeConfigError struct{ err error }
+
+func (e *probeConfigError) Error() string { return e.err.Error() }
+func (e *probeConfigError) Unwrap() error { return e.err }
+
 // Provisioner implements cluster.Provisioner over a resolved k3d binary.
 type Provisioner struct {
 	resolver toolbin.Resolver
@@ -36,7 +46,9 @@ func (p *Provisioner) run(ctx context.Context, bin string, args ...string) ([]by
 }
 
 // defaultProbe pings the API server's /healthz endpoint through the named
-// context, honouring ctx for cancellation. A non-nil error means unreachable.
+// context, honouring ctx for cancellation. It returns a *probeConfigError when
+// the kubeconfig or context cannot be loaded (an environment problem), and a
+// plain error when the API itself is unreachable (genuine unhealth).
 func defaultProbe(ctx context.Context, kubeconfig, kubeContext string) error {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if path := strings.TrimSpace(kubeconfig); path != "" {
@@ -46,12 +58,12 @@ func defaultProbe(ctx context.Context, kubeconfig, kubeContext string) error {
 
 	cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
-		return fmt.Errorf("load kubeconfig for %s: %w", kubeContext, err)
+		return &probeConfigError{fmt.Errorf("load kubeconfig for %s: %w", kubeContext, err)}
 	}
 
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		return fmt.Errorf("build client for %s: %w", kubeContext, err)
+		return &probeConfigError{fmt.Errorf("build client for %s: %w", kubeContext, err)}
 	}
 
 	if _, err := clientset.Discovery().RESTClient().Get().AbsPath("/healthz").DoRaw(ctx); err != nil {

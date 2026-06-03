@@ -17,8 +17,9 @@ local YACD environment from a checked-in config file.
 - Local-mode `CardanoNetwork` reconciliation for one primary node with Ogmios
   as the default chain API, Kupo as the default chain index API, and an opt-in
   token-protected faucet for local top-ups.
-- Developer CLI under `cli/` with `up`, `down`, `list`, `info`, and `topup`
-  lifecycle commands, plus `run`, `connect`, and `exec` host-access verbs that
+- Developer CLI under `cli/` with `init` (print a commented `yacd.yaml`
+  template), `up`, `down`, `list`, `info`, and `topup` lifecycle commands, plus
+  `run`, `connect`, and `exec` host-access verbs that
   bridge the network's chain APIs to your tests through the `YACD_*` environment
   contract (see [docs/host-access.md](docs/host-access.md)).
 - Helm chart packaging for the manager deployment.
@@ -53,9 +54,11 @@ moon run root:test
 git diff --check
 ```
 
-Render the example local environment without changing the cluster:
+Scaffold a commented `yacd.yaml` to start from, or render the example local
+environment without changing the cluster:
 
 ```sh
+go run ./cli/cmd/yacd init > yacd.yaml
 go run ./cli/cmd/yacd up phase4-smoke -f examples/local/yacd.yaml --dry-run
 ```
 
@@ -80,9 +83,9 @@ go run ./cli/cmd/yacd run phase4-smoke -- go test ./e2e/...
 # Or hold the forwards open in one terminal and work in another:
 go run ./cli/cmd/yacd connect phase4-smoke
 
-# Fund a checked-in address and wait for on-chain confirmation:
-go run ./cli/cmd/yacd run phase4-smoke -- sh -c \
-  'yacd topup phase4-smoke --address addr_test... --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
+# Fund an address and wait for on-chain confirmation. topup forwards the faucet
+# (and Kupo, for --await) itself, so it needs no `yacd run` wrapper:
+go run ./cli/cmd/yacd topup phase4-smoke 1000000 --address addr_test... --await
 
 # cardano-cli reaches the node over its local socket, so use exec (in-pod):
 go run ./cli/cmd/yacd exec phase4-smoke -- cardano-cli query tip --testnet-magic 42

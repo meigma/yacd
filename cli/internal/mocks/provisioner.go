@@ -162,8 +162,8 @@ func (_c *Provisioner_EnsureCluster_Call) RunAndReturn(run func(ctx context.Cont
 }
 
 // Status provides a mock function for the type Provisioner
-func (_mock *Provisioner) Status(ctx context.Context, name string) (cluster.Status, error) {
-	ret := _mock.Called(ctx, name)
+func (_mock *Provisioner) Status(ctx context.Context, name string, kubeconfigPath string) (cluster.Status, error) {
+	ret := _mock.Called(ctx, name, kubeconfigPath)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Status")
@@ -171,16 +171,16 @@ func (_mock *Provisioner) Status(ctx context.Context, name string) (cluster.Stat
 
 	var r0 cluster.Status
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (cluster.Status, error)); ok {
-		return returnFunc(ctx, name)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (cluster.Status, error)); ok {
+		return returnFunc(ctx, name, kubeconfigPath)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string) cluster.Status); ok {
-		r0 = returnFunc(ctx, name)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) cluster.Status); ok {
+		r0 = returnFunc(ctx, name, kubeconfigPath)
 	} else {
 		r0 = ret.Get(0).(cluster.Status)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
-		r1 = returnFunc(ctx, name)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, name, kubeconfigPath)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -195,11 +195,12 @@ type Provisioner_Status_Call struct {
 // Status is a helper method to define mock.On call
 //   - ctx context.Context
 //   - name string
-func (_e *Provisioner_Expecter) Status(ctx interface{}, name interface{}) *Provisioner_Status_Call {
-	return &Provisioner_Status_Call{Call: _e.mock.On("Status", ctx, name)}
+//   - kubeconfigPath string
+func (_e *Provisioner_Expecter) Status(ctx interface{}, name interface{}, kubeconfigPath interface{}) *Provisioner_Status_Call {
+	return &Provisioner_Status_Call{Call: _e.mock.On("Status", ctx, name, kubeconfigPath)}
 }
 
-func (_c *Provisioner_Status_Call) Run(run func(ctx context.Context, name string)) *Provisioner_Status_Call {
+func (_c *Provisioner_Status_Call) Run(run func(ctx context.Context, name string, kubeconfigPath string)) *Provisioner_Status_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -209,9 +210,14 @@ func (_c *Provisioner_Status_Call) Run(run func(ctx context.Context, name string
 		if args[1] != nil {
 			arg1 = args[1].(string)
 		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
 		run(
 			arg0,
 			arg1,
+			arg2,
 		)
 	})
 	return _c
@@ -222,7 +228,7 @@ func (_c *Provisioner_Status_Call) Return(status cluster.Status, err error) *Pro
 	return _c
 }
 
-func (_c *Provisioner_Status_Call) RunAndReturn(run func(ctx context.Context, name string) (cluster.Status, error)) *Provisioner_Status_Call {
+func (_c *Provisioner_Status_Call) RunAndReturn(run func(ctx context.Context, name string, kubeconfigPath string) (cluster.Status, error)) *Provisioner_Status_Call {
 	_c.Call.Return(run)
 	return _c
 }
