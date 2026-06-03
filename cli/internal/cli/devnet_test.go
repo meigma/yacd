@@ -133,7 +133,7 @@ func TestDevnetStatus(t *testing.T) {
 		m.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).
 			Return(cluster.Status{Exists: true, Running: true, Healthy: true, Context: cluster.ManagedContext}, nil)
 		m.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
-		m.installer.EXPECT().OperatorState(mock.Anything).
+		m.installer.EXPECT().OperatorState(mock.Anything, mock.Anything).
 			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
 		m.client.EXPECT().ListCardanoNetworks(mock.Anything, "").
 			Return([]yacdv1alpha1.CardanoNetwork{*fundedNetwork()}, nil)

@@ -2,6 +2,13 @@ package operator
 
 import "context"
 
+// DefaultNamespace is the namespace the operator is installed into when the
+// caller leaves InstallSpec.Namespace empty. It is the single source of truth
+// for that default: the SSA adapter and the install command both defer to it,
+// and it is no longer a hard pin — any valid DNS-1123 namespace renders
+// correctly because the chart's RBAC subjects follow the Helm release namespace.
+const DefaultNamespace = "yacd-system"
+
 // InstallSpec describes a requested operator install.
 type InstallSpec struct {
 	// Namespace is the namespace the operator is installed into. It is a real
@@ -15,6 +22,22 @@ type InstallSpec struct {
 	// before rendering. The zero value renders the chart at its own defaults;
 	// callers that want the pinned, digest-tagged baseline pass Default().
 	Values Values
+}
+
+// Decision is the outcome of a dry-run install plan: the action the next
+// EnsureOperator would take, plus the versions that drove it. It is what the
+// install command prints under --dry-run without mutating the cluster.
+type Decision struct {
+	// Action is the install action Decide selected from the observed and
+	// embedded versions.
+	Action Action
+
+	// InstalledVersion is the in-cluster operator version, or empty when the
+	// operator is not installed.
+	InstalledVersion string
+
+	// TargetVersion is the embedded operator version this CLI would apply.
+	TargetVersion string
 }
 
 // State is the observed operator install state in a cluster.
@@ -46,9 +69,15 @@ type Installer interface {
 	// reflects the cluster after the apply.
 	EnsureOperator(ctx context.Context, spec InstallSpec) (State, error)
 
-	// OperatorState reports the current install state without mutating the
-	// cluster. It reads the default install namespace ("yacd-system") until
-	// this port grows a namespace argument; a non-default install (one created
-	// with InstallSpec.Namespace set) is not yet visible to this read path.
-	OperatorState(ctx context.Context) (State, error)
+	// Plan reports the action the next EnsureOperator would take for spec,
+	// without mutating the cluster: it renders the embedded chart for the
+	// target version, reads the install state in the resolved namespace, and
+	// runs the same Decide policy. A would-refuse plan returns the typed Decide
+	// error alongside the Decision, so callers can surface actionable guidance.
+	Plan(ctx context.Context, spec InstallSpec) (Decision, error)
+
+	// OperatorState reports the current install state of the operator in the
+	// given namespace without mutating the cluster. An empty namespace defaults
+	// to DefaultNamespace.
+	OperatorState(ctx context.Context, namespace string) (State, error)
 }

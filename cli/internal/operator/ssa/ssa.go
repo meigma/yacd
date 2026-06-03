@@ -25,8 +25,9 @@ import (
 // installNamespace is the default namespace the operator is installed into when
 // the caller leaves InstallSpec.Namespace empty. It is no longer a hard pin: any
 // valid DNS-1123 namespace renders correctly because the chart's RBAC subjects
-// follow the Helm release namespace.
-const installNamespace = "yacd-system"
+// follow the Helm release namespace. It aliases operator.DefaultNamespace so the
+// default lives in exactly one place.
+const installNamespace = operator.DefaultNamespace
 
 const (
 	// establishTimeout bounds the wait for applied CRDs to become Established.
@@ -189,11 +190,50 @@ func (i *installer) waitEstablished(ctx context.Context, names []string) error {
 	})
 }
 
+// Plan reports the action the next EnsureOperator would take for spec, without
+// mutating the cluster. It resolves the namespace, renders the embedded chart
+// for its target version, reads the install state in that namespace, and runs
+// the same Decide policy EnsureOperator uses. A would-refuse plan returns the
+// typed Decide error alongside the Decision so the caller can surface it.
+func (i *installer) Plan(ctx context.Context, spec operator.InstallSpec) (operator.Decision, error) {
+	namespace, err := resolveNamespace(spec.Namespace)
+	if err != nil {
+		return operator.Decision{}, err
+	}
+
+	objs, err := render(i.chart, namespace, spec.Values.ToHelmValues())
+	if err != nil {
+		return operator.Decision{}, err
+	}
+
+	target, err := versionFromObjects(objs)
+	if err != nil {
+		return operator.Decision{}, err
+	}
+
+	state, err := i.operatorState(ctx, namespace)
+	if err != nil {
+		return operator.Decision{}, err
+	}
+
+	action, decideErr := operator.Decide(target, state)
+	return operator.Decision{
+		Action:           action,
+		InstalledVersion: state.Version,
+		TargetVersion:    target,
+	}, decideErr
+}
+
 // OperatorState reports the install state from the manager Deployment in the
-// default install namespace. EnsureOperator reads state against the resolved
-// install namespace directly via operatorState.
-func (i *installer) OperatorState(ctx context.Context) (operator.State, error) {
-	return i.operatorState(ctx, installNamespace)
+// given namespace. An empty namespace defaults to installNamespace.
+// EnsureOperator reads state against the resolved install namespace directly
+// via operatorState.
+func (i *installer) OperatorState(ctx context.Context, namespace string) (operator.State, error) {
+	ns := strings.TrimSpace(namespace)
+	if ns == "" {
+		ns = installNamespace
+	}
+	return i.operatorState(ctx, ns)
 }
 
 // operatorState reports the install state from the manager Deployment in the

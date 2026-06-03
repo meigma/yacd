@@ -264,7 +264,7 @@ func TestManagerUp(t *testing.T) {
 		tc.store.EXPECT().Save(mock.Anything).Return(nil)
 		tc.installer.EXPECT().EnsureOperator(mock.Anything, mock.Anything).
 			Return(operator.State{Installed: true, Ready: false, Version: "v0.1.1"}, nil)
-		tc.installer.EXPECT().OperatorState(mock.Anything).
+		tc.installer.EXPECT().OperatorState(mock.Anything, mock.Anything).
 			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
@@ -370,7 +370,7 @@ func TestManagerStatus(t *testing.T) {
 		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).
 			Return(cluster.Status{Exists: true, Running: true, Healthy: true, Context: cluster.ManagedContext}, nil)
 		tc.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
-		tc.installer.EXPECT().OperatorState(mock.Anything).
+		tc.installer.EXPECT().OperatorState(mock.Anything, mock.Anything).
 			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
 		tc.client.EXPECT().ListCardanoNetworks(mock.Anything, "").
 			Return([]yacdv1alpha1.CardanoNetwork{*readyNetwork()}, nil)
@@ -391,7 +391,7 @@ func TestManagerStatus(t *testing.T) {
 		assert.False(t, report.Cluster.Exists)
 		assert.False(t, report.HasRecord)
 		tc.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything, mock.Anything)
-		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything)
+		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything, mock.Anything)
 	})
 
 	t.Run("record present but cluster gone: probes and reports absent", func(t *testing.T) {
@@ -403,6 +403,6 @@ func TestManagerStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, report.Cluster.Exists)
 		assert.True(t, report.HasRecord)
-		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything)
+		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything, mock.Anything)
 	})
 }
