@@ -703,3 +703,27 @@
     resolver (Design §6 precedence) wired into every verb + the `Options` factory
     fields, composing all of the above. The managed-context tier must only engage
     when a managed cluster exists so CI/Chainsaw (explicit KUBECONFIG) stay unaffected.
+- **`yacd devnet` all-in-one — P6 DONE (session 055, PR #90 `db7887b`).** The plan's
+  core sequence is complete (`P1✅ P4✅ P5✅ P2✅ P3✅ P6✅`); only **P7 (hardening &
+  UX)** remains. `cli/internal/lifecycle.Manager` orchestrates `Up`/`Down`/`Status`
+  under the clusterstate lock (composed at the command layer, not inside `cluster/k3d`);
+  `Up` is bounded by `--timeout` (lock + all phases), captures the prior kubectl context
+  before k3d switches it, and waits for operator Deployment readiness (SSA only applies).
+  Durable contracts: (1) **`cli/internal/cli/target.go:ResolveTarget`** is the single
+  precedence resolver (explicit `--kubeconfig`/`--context` or `YACD_*` > tracked managed
+  context from the **cheap clusterstate record, no Docker probe** > ambient). It is a
+  verified no-op for explicit-target (CI/Chainsaw) and never-ran (no record) callers, so
+  all existing verb tests pass unedited. (2) Every network verb is wrapped by
+  `withManagedReconcile` (root.go): a managed-targeted verb that FAILS probes
+  `Provisioner.Status` and, on `!Exists`, clears the stale record + prints a notice
+  (next call → ambient); `devnet status` reconciles likewise. Happy path never probes.
+  (3) **`devnet` rejects explicit `--kubeconfig`/`--context`** (it owns its cluster; the
+  isolate-kubeconfig feature is P7). (4) Cluster health is probed through the **recorded**
+  `cluster.Spec.KubeconfigPath` (not ambient), so a `KUBECONFIG` change can't get a healthy
+  cluster deleted; the `cluster/k3d` adapter reports the real default-kubeconfig target
+  (`clientcmd...GetDefaultFilename`, honoring `KUBECONFIG`), not hardcoded `~/.kube/config`.
+  (5) The default network is `cli/internal/cli/devnet.yaml`, a **byte copy** of
+  `examples/local/yacd.yaml` (`go:embed` can't escape the package dir), drift-guarded by
+  `TestDefaultDevnetEnvIsValid`. The gated live e2e is `YACD_DEVNET_LIVE`
+  (`cli/internal/cli/devnet_live_test.go`); it isolates `KUBECONFIG`+`XDG_STATE_HOME` to
+  temp dirs and is the regression test for the KUBECONFIG-honoring path.

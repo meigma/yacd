@@ -160,3 +160,15 @@ Four findings, all fixed:
   leaves a record; out-of-band clusters are reconciled by `devnet`). Tests updated.
 `root:check` + `root:test` green. **Live e2e re-run PASSED (97.8s)** — clean teardown,
 context restored. Pushed 3490031..2c86516.
+
+## 2026-06-02 17:20 — Close
+P6 merged and session closed. **PR #90 squash-merged (`db7887b`)** after four review
+rounds; all CI gates green (`ci`, `e2e`, Kusari, cardano-tools-image). Local `master`
+fast-forwarded `1c12560..db7887b`; impl worktree `feat/cli-devnet` removed; remote
+branch deleted; dev stack down (Kind cluster + registry deleted, no docker leftovers).
+Note: `gh pr merge --squash --delete-branch` errored on its LOCAL branch-delete
+("master already used by worktree") but the remote merge succeeded — verified via
+`gh pr view --json state` (MERGED), then ff'd master + deleted the remote branch by hand.
+Plan status: `P1✅ P4✅ P5✅ P2✅ P3✅ P6✅` — only **P7 (hardening & UX)** remains
+(incl. the `--isolate-kubeconfig` flag devnet currently rejects). SUMMARY + INDEX
+(→complete) + TECH_NOTES (P6 bullet) written.
