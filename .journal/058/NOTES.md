@@ -107,3 +107,29 @@ chart **in place**. Validated empirically (prototype: 10 templates + 2 CRDs,
   Second commit `629b518` on `refactor/operator-render-install`, pushed; **PR #94
   updated (body + design doc §5.1), still open / not merged**. CI running
   (ci/e2e/cardano-tools-image pending). Awaiting user review.
+
+## 2026-06-03 16:10 — PR1 merged; PR2 (`yacd install`) shipped (awaiting review)
+- **PR #94 (PR1) MERGED** to master (`ded61fa`, squash, type `refactor` so no
+  release bump). Post-merge master CI is **green** (`CI: completed success`,
+  incl e2e). Worktree + branches cleaned up via `wt remove -D`.
+- **PR2 = `yacd install` (PR #96, branch `feat/yacd-install`, OPEN / not merged).**
+  Built via workflow `wf_7089e486-fbd` (implement→test→4 reviewers→fix). Top-level
+  command: explicit-or-ambient targeting (NOT the managed-devnet record, NOT
+  withManagedReconcile, the opposite of devnet); `-n` namespace, `--wait`/
+  `--timeout` (bounds the whole op even with --wait=false), `--dry-run`; refusals
+  → actionable guidance + nonzero exit.
+- **Operator-port growth (closes the PR1-deferred gap):** `OperatorState(ctx,
+  namespace)`; new `Plan(ctx,spec)→Decision` (renders+reads+Decide, NO apply) for
+  dry-run; shared `operator.WaitForReady` extracted from lifecycle (devnet rewired,
+  behavior identical); `operator.DefaultNamespace` single source. New files
+  `operator/ready.go`, `cli/install.go`.
+- **Validation:** independently re-verified on-branch (build/vet clean, deny-list
+  empty, forced `-count=1` operator/ssa+cli+lifecycle envtest PASS, root:check +
+  root:test PASS). **LIVE on a throwaway k3d cluster:** `yacd install --wait` →
+  manager Deployment Available v0.1.1, both CRDs Established; `--dry-run` → no-op
+  re-apply; idempotent re-install. 14 command tests + 2 SSA Plan "no-apply"
+  envtests. Review = low/nit + 1 medium (non-default ns not proven in wait path);
+  all genuine fixes applied, 2 non-CLI-reachable lows deferred. PR #96 CI running.
+- **Next:** user review of PR #96. Then PR3 (optional): uninstall (`Remove` port +
+  CRD-deletion policy) + runtime version selection (OCI chart fetch). The release-
+  please root PR #87 will now carry PR2's `feat` (CLI release).
