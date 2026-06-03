@@ -82,3 +82,28 @@ exercise the new CLI path, and it's a shared singleton. Surfaced to the user.
 **Next:** user review of PR #94. After merge → PR2 (`yacd install` command). Open
 shaping decisions for PR2 recorded in the proposal §7 (no-flag targeting, command
 shape vs `operator` noun group, version-source fork for PR3).
+
+## 2026-06-03 15:30 — PR1 follow-up: in-place chart embed (killed the copy)
+User pushback on PR1's chart **duplication** (`cli/internal/operator/ssa/chart/`
+copy + sync script + drift guard = tech debt keeping two copies in sync). Asked
+if a build hook could avoid it. Key insight: **no build hook can** — `//go:embed`
+resolves at `go build` time and the IDE/`go test`/CI all call the toolchain
+directly, so a moon-only generate-the-copy step makes plain `go build` embed stale
+bytes / fail (non-hermetic). But the copy was never needed: `//go:embed` only bans
+`..`, and a Go file in `charts/` (an **ancestor** of `charts/yacd`) can embed the
+chart **in place**. Validated empirically (prototype: 10 templates + 2 CRDs,
+`_helpers.tpl` via `all:`, helm loader loads it), then implemented.
+- Added `charts/embed.go` (package `charts`, `//go:embed all:yacd` →
+  `charts.OperatorChart fs.FS` via `fs.Sub`). `ssa.New` takes the chart `fs.FS`;
+  root.go passes `charts.OperatorChart`. render.go walks the chart-rooted FS (`.`).
+- Removed: the whole `ssa/chart` copy (16 files), `ssa/embed.go`,
+  `sync-operator-chart.sh`, the moon `sync-operator-chart` task +
+  `embeddedChartSources` group + generate sync step, and the check.sh chart-copy
+  drift guard. gofmt now covers `charts/`; goSources tracks `charts/**/*.go`.
+- **Net +56 / −3178.** Single source of truth; CRDs flow controller-gen →
+  `charts/yacd/crds` → embed with zero sync. Build stays hermetic.
+- Gates re-verified on-branch: `go build`/`go vet` clean, forced `-count=1`
+  operator/ssa envtest PASS (30s), `moon run root:check` + `root:test` PASS.
+  Second commit `629b518` on `refactor/operator-render-install`, pushed; **PR #94
+  updated (body + design doc §5.1), still open / not merged**. CI running
+  (ci/e2e/cardano-tools-image pending). Awaiting user review.
