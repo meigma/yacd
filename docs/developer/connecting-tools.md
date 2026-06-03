@@ -130,21 +130,21 @@ names and shape, see the [endpoints.json schema](../reference/cli.md).
 
 ## Fund an address from a test
 
-`yacd topup NAME --address ADDR --lovelace N --await` funds `ADDR` through the
-faucet and polls Kupo until the funding transaction's output appears, so a test
-never races chain inclusion. `--await` requires a Kupo URL: pass `--kupo-url`,
-or run under `yacd run`, which sets `YACD_KUPO_URL` (the default `--kupo-url`
-source):
+`yacd topup NAME LOVELACE --address ADDR --await` funds `ADDR` through the faucet
+and polls Kupo until the funding transaction's output appears, so a test never
+races chain inclusion. `topup` self-forwards the faucet and Kupo on its own, so
+it needs no `yacd run` wrapper and no URL flags:
 
 ```sh
 export ADDR=addr_test1... # the address your test funds
-yacd run my-net -- sh -c \
-  'yacd topup my-net --address "$ADDR" --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
+yacd topup my-net 1000000 --address "$ADDR" --await
 ```
 
-The loopback faucet URL from a `run` or `connect` forward is exempt from the
-`topup` trust gate, so no `--trust-faucet-url` flag is needed against it. See
-the [CLI reference](../reference/cli.md) for all `topup` flags.
+Run inside `yacd run`, `topup` instead inherits the ambient `YACD_FAUCET_URL`
+and `YACD_KUPO_URL` and reuses those forwards rather than opening a second one.
+Either way the loopback faucet URL is exempt from the `topup` trust gate, so no
+`--trust-faucet-url` is needed. See the [CLI reference](../reference/cli.md) for
+all `topup` flags.
 
 ## See also
 

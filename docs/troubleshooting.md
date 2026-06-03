@@ -225,8 +225,9 @@ spec:
 ```
 
 To submit a top-up against a running local faucet, use
-[`yacd topup`](reference/cli.md). Kupo is required for the `--await` flag, which
-waits for the funding transaction to confirm on-chain.
+[`yacd topup NAME LOVELACE --address ADDR`](reference/cli.md); it self-forwards
+the faucet, so no `yacd run` wrapper is needed. Add `--await` to wait for
+on-chain confirmation (this needs Kupo, which is enabled by default).
 
 ## Image pull issues
 

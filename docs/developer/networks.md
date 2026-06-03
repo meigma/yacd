@@ -12,14 +12,20 @@ For what each Environment field means, see the
 copy-paste manifests, see [Recipes](../recipes.md). For every command flag and
 default, see the [CLI reference](../reference/cli.md).
 
-## Write a minimal Environment and apply it
+## Scaffold and apply an Environment
 
-An Environment file carries the `apiVersion`/`kind` envelope and a single
-`spec.network`. The identity (name and namespace) is supplied on the command
-line, not in the file.
+The quickest way to start is `yacd init`, which prints a fully-commented
+Environment to stdout. Redirect it to a file:
 
-Save the single-pool local manifest from [Recipes](../recipes.md) as
-`yacd.yaml`, then apply it:
+```sh
+yacd init > yacd.yaml
+```
+
+The generated `yacd.yaml` is a ready-to-run local devnet: a single-pool network
+with the faucet and a pre-funded wallet enabled. Its commented blocks document
+the rest of the API — chain-API image and port overrides, and a public/mainnet
+alternative — so you grow the config by uncommenting a whole block at a time.
+Edit it to taste, then apply it:
 
 ```sh
 yacd up dev -f yacd.yaml
@@ -27,14 +33,16 @@ yacd up dev -f yacd.yaml
 
 `yacd up` renders the Environment into a `CardanoNetwork` named `dev` in
 namespace `dev`, creates the namespace if needed, server-side-applies the
-network, and then waits until it reports `Ready`. Use `--wait=false` to apply
-without blocking, and `--timeout` to change the readiness deadline (default
-`12m`). See the [CLI reference](../reference/cli.md) for the full flag set.
+network, and waits until it reports `Ready`. The identity (name and namespace)
+comes from the command line, not the file. Use `--wait=false` to apply without
+blocking, and `--timeout` to change the readiness deadline (default `12m`). See
+the [CLI reference](../reference/cli.md) for the full flag set.
 
 !!! note
-    `spec.network.mode`, `spec.network.node.version`, and
-    `spec.network.node.port` must be written explicitly in the file; the loader
-    rejects a document that omits them. Local mode additionally requires
+    The `yacd init` template already spells these out, but if you write or trim a
+    file by hand: `spec.network.mode`, `spec.network.node.version`, and
+    `spec.network.node.port` must be written explicitly; the loader rejects a
+    document that omits them. Local mode additionally requires
     `spec.network.local` (with `networkMagic`, `era`, `timing.slotLength`,
     `timing.epochLength`, and `topology.pools.count`). See the
     [Environment file reference](../reference/environment.md) for the required
@@ -56,7 +64,7 @@ namespace is created and nothing is applied.
 
 ## Inspect running environments
 
-List the `CardanoNetwork` objects in the active namespace:
+List every `CardanoNetwork` across all namespaces:
 
 ```sh
 yacd list
@@ -67,11 +75,11 @@ The table shows `NAME`, `NAMESPACE`, `MODE`, `READY`, and a comma-separated
 published yet). `READY` reflects a fresh `Ready` condition, so a stale status is
 reported as not ready.
 
-List across every namespace with `-A`, or emit machine-readable JSON with
+Scope to a single namespace with `-n`, or emit machine-readable JSON with
 `--json`:
 
 ```sh
-yacd list -A
+yacd list -n dev
 yacd list --json
 ```
 
@@ -108,8 +116,10 @@ Public mode connects a node to a real Cardano network instead of a synthetic
 local chain. The `preview` and `preprod` test networks need no bootstrap and are
 the recommended way to develop against public-network data.
 
-Save the preview manifest from [Recipes](../recipes.md) as `yacd.yaml`, then
-apply it the same way:
+To switch the scaffolded config to a public network, set `spec.network.mode:
+public`, remove the `local:` block, and uncomment the `public:` block — the
+`yacd init` template marks exactly what to change. Or save the preview manifest
+from [Recipes](../recipes.md) as `yacd.yaml`. Then apply it the same way:
 
 ```sh
 yacd up preview -f yacd.yaml

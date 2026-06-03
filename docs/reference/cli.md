@@ -23,11 +23,12 @@ Commands:
 | `devnet` | Bring up a local Cardano devnet (cluster, operator, and a funded network). |
 | `devnet down` | Delete the managed devnet cluster. |
 | `devnet status` | Show the managed devnet cluster, operator, and network status. |
+| `init` | Print a commented `yacd.yaml` environment template to stdout. |
 | `up NAME` | Create or update a YACD environment and wait for readiness. |
 | `down NAME` | Delete a YACD environment and wait for clean removal. |
-| `list` | List YACD environments in the cluster. |
+| `list` | List YACD environments across all namespaces (or one with `-n`). |
 | `info NAME` | Print CardanoNetwork status and connection information. |
-| `topup NAME` | Submit a faucet top-up. |
+| `topup NAME LOVELACE` | Submit a faucet top-up (self-forwards the faucet). |
 | `run NAME [-- command ...]` | Run a command (or a shell) on the host with the `YACD_*` environment wired to forwarded endpoints. |
 | `connect NAME` | Forward a network's endpoints and hold them open until interrupted. |
 | `exec NAME -- command ...` | Run a command inside the primary node Pod (for socket-bound tools). |
@@ -102,6 +103,26 @@ Read-only unified view of the managed cluster, operator, and networks. Takes no
 flags beyond the [global flags](#global-flags). Prints a one-line hint when no
 managed cluster exists.
 
+## init
+
+```text
+yacd init
+```
+
+Prints a fully-commented developer environment template to stdout and takes no
+arguments or flags beyond the [global flags](#global-flags). The active
+configuration is a ready-to-run local devnet (faucet plus a pre-funded wallet);
+commented blocks document the rest of the API, including chain-API overrides and
+a public/mainnet alternative. Redirect it to a file and apply it:
+
+```sh
+yacd init > yacd.yaml
+yacd up dev -f yacd.yaml
+```
+
+See [Defining networks](../developer/networks.md) for the scaffold-and-edit
+workflow and the [Environment file reference](environment.md) for field details.
+
 ## up
 
 ```text
@@ -148,14 +169,14 @@ network that is already absent is reported as success.
 yacd list [flags]
 ```
 
-Lists CardanoNetworks in the active namespace (or across all namespaces with
-`-A`), projecting each into `name`, `namespace`, `mode`, `ready`, and published
-`endpoints`. Renders an aligned table by default or JSON with `--json`.
+Lists CardanoNetworks across all namespaces by default, projecting each into
+`name`, `namespace`, `mode`, `ready`, and published `endpoints`. Scope to a
+single namespace with the global `-n`/`--namespace` flag. Renders an aligned
+table by default or JSON with `--json`.
 
-| Flag | Short | Type | Default | Meaning |
-| --- | --- | --- | --- | --- |
-| `--all-namespaces` | `-A` | bool | `false` | List CardanoNetworks across all namespaces. |
-| `--json` | | bool | `false` | Print machine-readable JSON. |
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--json` | bool | `false` | Print machine-readable JSON. |
 
 The table columns are `NAME`, `NAMESPACE`, `MODE`, `READY`, `ENDPOINTS`.
 `READY` reflects a fresh `Ready` condition observed as `True` (a stale status is
@@ -204,18 +225,20 @@ empty objects.
 ## topup
 
 ```text
-yacd topup NAME [flags]
+yacd topup NAME LOVELACE [flags]
 ```
 
-Submits a faucet top-up. The flow resolves the target faucet URL (preferring the
-cluster-published endpoint unless `--faucet-url` overrides it), gates token
-transmission through the trust checks below, fetches the auth token from the
-published Secret, then `POST`s to the faucet's `/v1/topups` endpoint.
+Submits a faucet top-up. `LOVELACE` is a positional argument: the exact amount to
+send, which must be greater than 0. By default `topup` **self-forwards** — it
+opens a short-lived port-forward to the cluster faucet (and to Kupo when
+`--await` is set), so it works directly from your host with no `yacd run`
+wrapper. It gates token transmission through the trust checks below, fetches the
+auth token from the published Secret, then `POST`s to the faucet's `/v1/topups`
+endpoint.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--address` | string | `""` | Destination Cardano testnet address. Required. |
-| `--lovelace` | int | `0` | Exact lovelace amount to send. Required; must be greater than 0. |
 | `--source` | string | `""` | Faucet source name, for example `utxo1`. Empty lets the faucet pick a default. |
 | `--faucet-url` | string | `""` | Override the faucet URL from CardanoNetwork status. |
 | `--trust-faucet-url` | bool | `false` | Allow sending the faucet auth token to a custom non-loopback URL. |
@@ -229,18 +252,19 @@ The default target requires the CardanoNetwork to be faucet-ready: a fresh
 status with `Ready` and `FaucetReady` conditions `True`, a published faucet
 endpoint, and a published faucet auth Secret.
 
-The cluster-published faucet URL is a cluster-internal Service address
-(`http://<network>-faucet.<namespace>.svc.cluster.local:<port>`). It resolves
-from an in-cluster caller, but not from your host: run `topup` under
-[`yacd run`](#run), which forwards the faucet and exposes it as
-`$YACD_FAUCET_URL`, then pass `--faucet-url "$YACD_FAUCET_URL"`.
+Faucet transport: with no override, `topup` self-forwards the cluster-internal
+faucet Service to a loopback port for the duration of the request. Inside
+[`yacd run`](#run) it instead reuses the ambient `YACD_FAUCET_URL` (and
+`YACD_KUPO_URL` for `--await`) rather than opening a second forward. An explicit
+`--faucet-url` suppresses self-forwarding and targets that URL directly; with an
+override, `--await` needs an explicit `--kupo-url` (or `YACD_KUPO_URL`).
 
 !!! warning "The faucet token leaves the cluster only with explicit acks"
-    By default, the token is sent only to the cluster-published faucet URL or a
-    loopback target. `--faucet-url` pointing at a different non-loopback host
-    requires `--trust-faucet-url`; a trusted `http://` (plaintext) host
-    additionally requires `--allow-insecure-faucet-url`. These gates exist to
-    prevent token exfiltration and plaintext eavesdropping.
+    By default the token is sent only to a loopback target (the self-forwarded or
+    `run`-inherited faucet URL). An explicit `--faucet-url` at a non-loopback
+    host requires `--trust-faucet-url`; a trusted `http://` (plaintext) host
+    additionally requires `--allow-insecure-faucet-url`. These gates prevent
+    token exfiltration and plaintext eavesdropping.
 
 The `--json` output mirrors the faucet's success envelope:
 

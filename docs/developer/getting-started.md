@@ -85,11 +85,10 @@ For what the cluster, operator, and network are and how they relate, see
 
 ## 3. List and inspect the network
 
-List the networks in the cluster. Because `devnet` runs in its own `devnet`
-namespace, list across all namespaces with `-A`:
+List the networks in the cluster (`yacd list` shows every namespace by default):
 
 ```sh
-yacd list -A
+yacd list
 ```
 
 The `devnet` network you just created appears in the output. Inspect it in
@@ -123,21 +122,19 @@ the chain is producing blocks.
 
 ## 5. Fund an address
 
-The faucet runs inside the cluster, so reach it through `yacd run`, which
-forwards the faucet to a local port and exposes it as `$YACD_FAUCET_URL`.
-Replace `<address>` with a Cardano testnet address you control (the `Wallet`
-address from step 2 works), and `<lovelace>` with the amount to send
-(1 ADA = 1,000,000 lovelace):
+Use the local faucet to send funds to an address. `yacd topup` reaches the
+faucet on its own (it opens a short-lived port-forward), so no `yacd run`
+wrapper is needed. Replace `<address>` with a Cardano testnet address you
+control (the `Wallet` address from step 2 works), and `<lovelace>` with the
+amount to send (1 ADA = 1,000,000 lovelace):
 
 ```sh
-yacd run devnet -- sh -c \
-  'yacd topup devnet --address <address> --lovelace <lovelace> --faucet-url "$YACD_FAUCET_URL"'
+yacd topup devnet <lovelace> --address <address>
 ```
 
-Both `--address` and `--lovelace` are required, and `--lovelace` must be greater
-than zero. On success the faucet submits a funding transaction and `topup`
-prints the transaction ID. The loopback faucet URL that `run` exposes is exempt
-from the [trust gate](../concepts/security.md), so no extra flags are needed.
+`LOVELACE` is a positional argument and `--address` is required. On success the
+faucet submits a funding transaction and `topup` prints the transaction ID. Add
+`--await` to block until the funds are confirmed on-chain.
 
 !!! warning "The faucet is local-only"
     The faucet and its auth token are part of your local devnet only. Never
@@ -160,7 +157,8 @@ start fresh.
 
 ## Where to go next
 
-- [Working with networks](networks.md) — apply your own network definitions.
+- [Working with networks](networks.md) — scaffold your own config with `yacd
+  init` and apply it.
 - [Connecting tools](connecting-tools.md) — wire Ogmios, Kupo, and other tools
   to a network from your host.
 - [Funding](funding.md) — the full faucet and top-up workflow.

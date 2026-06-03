@@ -64,27 +64,27 @@ yacd info my-net --json
 
 ## 3. Send lovelace
 
-The faucet is a cluster-internal Service, so run `topup` through `yacd run`,
-which forwards the faucet to a local port and exposes it as `$YACD_FAUCET_URL`:
+Fund an address with an exact lovelace amount. `topup` reaches the faucet on its
+own — with no `--faucet-url` it opens a short-lived port-forward, POSTs, and
+tears it down — so it works directly from your host with no `yacd run` wrapper:
 
 ```sh
-yacd run my-net -- sh -c \
-  'yacd topup my-net --address addr_test1... --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL"'
+yacd topup my-net 1000000 --address addr_test1...
 ```
 
-`--address` and `--lovelace` are both required, and `--lovelace` must be greater
-than zero and within the faucet's configured min/max bounds. `topup` reads the
-auth token from the published Secret automatically, and the loopback URL that
-`run` exposes is exempt from the [trust gate](../concepts/security.md). On
-success it prints the transaction ID, source, lovelace, and destination. Add
-`--json` for a machine-readable result.
+`LOVELACE` is a positional argument, `--address` is required, and the amount must
+be greater than zero and within the faucet's configured min/max bounds. `topup`
+reads the auth token from the published Secret automatically, and the
+self-forwarded loopback URL is exempt from the
+[trust gate](../concepts/security.md). On success it prints the transaction ID,
+source, lovelace, and destination. Add `--json` for a machine-readable result.
 
-!!! note "Running `topup` without `run`"
-    Without `--faucet-url`, `topup` targets the faucet URL the cluster published
-    (`http://<network>-faucet.<namespace>.svc.cluster.local:<port>`). That name
-    resolves only from inside the cluster, so a bare `yacd topup` works for
-    in-cluster callers (such as a CI job running in a Pod) but not from your
-    host. From your host, bridge it with `yacd run` as shown above.
+!!! note "Inside `yacd run`, or with an override"
+    `topup` honors an ambient `YACD_FAUCET_URL` (set inside `yacd run`), so it
+    works unchanged there without opening a second forward. An explicit
+    `--faucet-url` suppresses self-forwarding; a custom non-loopback value then
+    requires `--trust-faucet-url` (and `--allow-insecure-faucet-url` for
+    `http://`).
 
 The full `topup` flag set — including `--source`, `--faucet-url`, the
 `--trust-faucet-url` / `--allow-insecure-faucet-url` trust gates, and the
@@ -98,22 +98,15 @@ until the funding transaction is actually confirmed on-chain, add `--await`,
 which polls [Kupo](https://cardanosolutions.github.io/kupo/) for the new output:
 
 ```sh
-yacd topup my-net --address addr_test1... --lovelace 1000000 --await
+yacd topup my-net 1000000 --address addr_test1... --await
 ```
 
-`--await` requires a Kupo URL. Pass `--kupo-url`, or run under `yacd run`, which
-sets `YACD_KUPO_URL` automatically:
-
-```sh
-yacd run my-net -- sh -c \
-  'yacd topup my-net --address "$ADDR" --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
-```
-
-The loopback faucet URL exposed by `run` is exempt from the trust gate, so no
-`--trust-faucet-url` is needed there. When the output appears, `topup` prints
-`Confirmed on-chain.` and exits. See
-[Host access and the `YACD_*` contract](connecting-tools.md) for how `run`
-bridges the cluster-internal endpoints to your host.
+When `topup` self-forwards it reuses that same session's Kupo, so `--await`
+needs no extra flags. When the output appears, `topup` prints `Confirmed
+on-chain.` and exits. If you override the faucet with `--faucet-url`, supply a
+matching `--kupo-url` for `--await`. See
+[Connecting tools and tests](connecting-tools.md) for how `run` bridges
+cluster-internal endpoints to your host.
 
 ## See also
 

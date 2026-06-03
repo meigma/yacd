@@ -4,6 +4,11 @@ Copy-paste manifests for the most common YACD setups. Each recipe is mirrored
 verbatim from a file under `examples/`. Use them as a starting point and adjust
 field values to suit your cluster.
 
+!!! tip
+    `yacd init` prints a commented version of the single-pool local devnet below,
+    ready to redirect into a file (`yacd init > yacd.yaml`). It is the quickest
+    way to start a custom network; see [Defining networks](developer/networks.md).
+
 Developer environment files (`kind: Environment`) are applied with the CLI:
 
 ```sh
