@@ -75,9 +75,10 @@ Try:
   yacd devnet down
 ```
 
-The `Wallet` line is a pre-funded developer address, and the network uses
-network magic `42`. Note both: you will use them in the steps below. The two
-commands under `Try:` are exactly the next two things you will run.
+!!! note "Keep these handy"
+    The `Wallet` line is a pre-funded developer address, and the network uses
+    network magic `42`. You will use both in the steps below, and the two
+    commands under `Try:` are exactly the next two things you will run.
 
 For what the cluster, operator, and network are and how they relate, see
 [Architecture](../concepts/architecture.md).
