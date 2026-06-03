@@ -186,3 +186,44 @@ read path.
 
 **Next:** launch P2 implement workflow (nail recipe → controller+init+genesis-edit →
 adversarial review → fix), then I live-validate on the dev stack, then PR + pause.
+
+## 2026-06-03 16:29 — P2 SHIPPED: genesis-funded faucet wallet (PR #97, live-proven, awaiting review)
+Empirically nailed the genesis recipe by running the REAL `cardano-testnet:11.0.1-yacd.5`
+image via docker create-env: `initialFunds` is a POPULATED map of hexAddr→lovelace
+(6×15M ADA; maxLovelaceSupply 100M → ~10M headroom); the local node config carries
+**NO ShelleyGenesisHash** (so NO hash recompute needed); a wallet's bech32 address
+**bech32-decodes exactly to its initialFunds key**; the image has sh/bech32/sed but
+**no jq**. So the mechanism is even simpler than the P2 plan said: **no RBAC, no jq, no
+hash recompute, no cardano-tools release.**
+
+Implemented via workflow `wf_ae95f05f-939` (implement → 3 adversarial lenses → fix →
+gate): 1 blocker fixed (envtest now asserts faucet-wallet Secret deletion on disable),
+rest minor nits. Design: controller GENERATES the faucet key (`wallet.New`, once,
+shared `applyWalletSecret` core with the dev wallet) + writes `<net>-wallet-faucet`
+Secret directly, **ensured BEFORE Build** so the address is injected into a new shell
+init container (`faucet-wallet-genesis-funding`, existing cardano-testnet image) that
+bech32-decodes the addr and **ADDS** an initialFunds entry (additive, default
+1,000,000 ADA = `defaultFaucetWalletFundingLovelace`, fits headroom; existing utxo
+sources untouched). Init order: create-env → faucet-wallet-genesis-funding →
+served-artifacts → faucet-source-addresses. Gated local+faucet-enabled.
+
+**Caught a stale-base issue:** PR #94 (other agent's operator-render) had merged to
+master (`ded61fa`); my P2 worktree was branched off the pre-#94 `88b8ba3`, so `git diff
+master` showed #94 as "reverted". My actual changes were disjoint (13 cardanonetwork
+files only) → committed + `git rebase origin/master` (clean), re-verified green.
+
+Gates (rebased, fresh): build/vet/gofmt/check clean, `root:test` PASS with
+**cardanonetwork envtest fresh 26s**. Boundary intact.
+
+**LIVE-PROVEN on the Kind dev stack** (real published tools image): applied a local
+faucet `CardanoNetwork` → **Ready=True, Degraded=False, FaucetReady=True**; init log
+"Funded faucet wallet 60dd1f87… with 1000000000000 lovelace"; `cardano-cli query utxo`
+showed the faucet addr `addr_test1vrw3lpl…` holding **1,000,000 ADA on-chain at
+genesis**. Test network deleted.
+
+Branch `feat/faucet-wallet-secret` (worktree `.wt/feat-faucet-wallet-secret`), commit
+`e6f6687`, **PR #97 open — NOT merged, awaiting human review.** Dev stack LEFT RUNNING
+(review pause; useful for P3/P4).
+
+**Next:** after PR #97 merges → P3 (CLI wallet store + verbs + direct submission via
+internal/cardano/tx), rebased on new master. Re-confirm the 5 open decisions before P3.
