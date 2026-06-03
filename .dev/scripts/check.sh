@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "== go format =="
-go_roots=(cli cmd containers/cardano-testnet containers/cardano-tools services test)
+go_roots=(charts cli cmd containers/cardano-testnet containers/cardano-tools services test)
 for optional_dir in api internal; do
   if [ -d "$optional_dir" ]; then
     go_roots+=("$optional_dir")
@@ -22,8 +22,7 @@ golangci-lint run --config .golangci.yml ./... --show-stats=false
 echo "== generated artifacts =="
 controller-gen object paths="./..."
 go test ./test/chart -run TestManagerRBACMatchesControllerGen -count=1
-bash .dev/scripts/render-operator-chart.sh
-git diff --exit-code -- api charts/yacd/crds cli/internal/operator/ssa/manifests
+git diff --exit-code -- api charts/yacd/crds
 
 echo "== helm chart =="
 chart="charts/yacd"

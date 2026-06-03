@@ -161,7 +161,7 @@ func TestManagerUp(t *testing.T) {
 		tc.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
 		var saved clusterstate.Record
 		tc.store.EXPECT().Save(mock.Anything).Run(func(r clusterstate.Record) { saved = r }).Return(nil)
-		tc.installer.EXPECT().EnsureOperator(mock.Anything, operator.InstallSpec{}).
+		tc.installer.EXPECT().EnsureOperator(mock.Anything, operator.InstallSpec{Values: operator.Default()}).
 			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)

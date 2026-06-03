@@ -79,7 +79,7 @@ func TestDevnetUp(t *testing.T) {
 	m.provisioner.EXPECT().EnsureCluster(mock.Anything, mock.Anything).Return(devnetInfo, nil)
 	m.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
 	m.store.EXPECT().Save(mock.Anything).Return(nil)
-	m.installer.EXPECT().EnsureOperator(mock.Anything, operator.InstallSpec{}).
+	m.installer.EXPECT().EnsureOperator(mock.Anything, operator.InstallSpec{Values: operator.Default()}).
 		Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
 	m.client.EXPECT().EnsureNamespace(mock.Anything, devnetNetworkName).Return(nil)
 	m.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)

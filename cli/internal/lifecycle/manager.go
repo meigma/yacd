@@ -134,7 +134,7 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 // and the "operator ready" progress honest, and makes `devnet --bare` return a
 // usable operator rather than one that is still starting.
 func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.Installer, timeout time.Duration) (operator.State, error) {
-	state, err := installer.EnsureOperator(ctx, operator.InstallSpec{})
+	state, err := installer.EnsureOperator(ctx, operator.InstallSpec{Values: operator.Default()})
 	if err != nil {
 		return operator.State{}, fmt.Errorf("install operator: %w", err)
 	}
