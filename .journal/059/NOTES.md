@@ -124,3 +124,34 @@ wallet store+verbs+direct submission; P4 cut over funding + delete the faucet
 
 **STATUS: paused for user review of the plan.** No code yet; no impl worktree;
 dev stack not started.
+
+## 2026-06-03 15:05 — Phase 1 shipped: extract chain-tx engine (PR #95, awaiting review)
+User approved executing the plan via per-phase workflows. Agreed cadence: fresh
+worktree off origin/master → workflow (implement → 3-lens adversarial review →
+fix → build/vet gate) → I re-verify + open PR → **PAUSE for human review before
+any merge** → after merge, rebase next phase on new master.
+
+**Phase 1 (pure refactor, no behavior change):** extracted the faucet's stateless
+chain-tx engine → new domain-pure `internal/cardano/tx` (`Submitter` port + `Apollo`
+adapter + `Request`/`Result`/`Error` + `doc.go`, mirrors localnet/dbsync). Faucet
+keeps its orchestration (bounds/locks/pending/sources.Store), adapts
+`sources.FundingSource` → `tx.Request`; `mapChainError` preserves `topup.Error`
+codes (HTTP behavior unchanged). Deleted faucet `topup/apollo` (git rename).
+
+Workflow `wf_b2a5ed7c-9c6` (6 agents): **0 must-fix** across regression /
+hexagonal+go-style / tests+boundary lenses; 1 minor fixed (doc the test-injection
+field), 1 deferred (`tx` coverage 53.9% — validation covered, rest is the live-
+Ogmios adapter). I re-verified on-branch: gofmt/build/vet clean, `root:check` ✅,
+`root:test` ✅ (incl. controller envtests), boundary holds (`go list -deps ./cmd`
+free of ogmigo/kugo/tx; faucet imports tx).
+
+Branch `refactor/cardano-tx-engine` (worktree `.wt/refactor-cardano-tx-engine`),
+commit `0ab7611`, **PR #95 open — NOT merged, awaiting human review.** No dev stack
+started (pure refactor; tests cover it).
+
+Open-decision defaults carried (re-confirm before P3): keep `topup` alias,
+`utxo1`-only as `faucet`, remove `spec.chainAPI.wallet`, ceiling 50, label
+`yacd.meigma.io/wallet=<name>`.
+
+**Next:** after PR #95 merges → P2 (controller surfaces the genesis key as the
+`faucet` wallet Secret), rebased on the new master.
