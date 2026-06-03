@@ -1,6 +1,6 @@
 ---
 title: CLI-native wallets + faucet removal — phased plan
-session: 058
+session: 059
 date: 2026-06-03
 status: proposed (awaiting review)
 related_sessions: [009, 053]
@@ -19,7 +19,7 @@ Kubernetes Secrets. The genesis funding key is surfaced as a well-known `faucet`
 wallet so a fresh local network ships with one funded, interactable wallet.
 
 This **supersedes** the standalone managed-wallet design discussed earlier in
-session 058 (CLI-side Secrets, fund+export only, CLI-imperative, no faucet
+this session (CLI-side Secrets, fund+export only, CLI-imperative, no faucet
 change). The faucet-removal reframing keeps every wallet decision from that
 design and additionally deletes the faucet service.
 
@@ -308,7 +308,7 @@ release; this is the same maintenance step noted in sessions 054/055.
 
 ## References
 
-- Earlier session-058 wallet design + decisions: `.journal/058/NOTES.md`.
+- Earlier wallet design + decisions: `.journal/059/NOTES.md`.
 - Analysis workflow `wf_1c108c99-0f2` (6-subsystem survey + 5-dimension design
   analysis). Verification workflow `wf_bb7e8066-c23` (modules / genesis-key /
   deletion-surface / CLI-tx feasibility).
