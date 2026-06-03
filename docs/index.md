@@ -30,7 +30,8 @@ yacd ships as two surfaces:
 ## Try it in one command
 
 A single `yacd devnet` provisions a local cluster, installs the operator, and
-applies a funded network:
+applies a funded network. It needs [Docker](https://www.docker.com/) running and
+fetches a pinned [k3d](https://k3d.io) binary on first use:
 
 ```sh
 yacd devnet

@@ -2,7 +2,7 @@
 
 Install the YACD operator on a remote Kubernetes cluster with [Helm](https://helm.sh) from the OCI chart published to GitHub Container Registry. The chart deploys the controller manager, its RBAC and ServiceAccount, a secured metrics Service, and the `CardanoNetwork` and `CardanoDBSync` CRDs.
 
-This page covers a remote install. For a local k3d cluster, the `yacd` CLI manages its own cluster lifecycle; see the [CLI reference](../reference/cli.md). For every chart value and manager flag, see the [configuration reference](../reference/configuration.md).
+This page covers a remote install. For a local [k3d](https://k3d.io) cluster, the `yacd` CLI manages its own cluster lifecycle; see the [CLI reference](../reference/cli.md). For every chart value and manager flag, see the [configuration reference](../reference/configuration.md).
 
 ## Prerequisites
 

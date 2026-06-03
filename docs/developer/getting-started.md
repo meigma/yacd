@@ -9,10 +9,13 @@ By the end you will have run a complete local development loop. For *why* the
 pieces fit together this way, see
 [Architecture](../concepts/architecture.md).
 
-!!! note "What you need"
-    A working [Docker](https://www.docker.com/) (or compatible container
-    runtime) so the CLI can create a local [k3d](https://k3d.io) cluster.
-    Everything else, including k3d itself, is provisioned for you.
+!!! note "Prerequisites"
+    `yacd devnet` needs a running [Docker](https://www.docker.com/) (or a
+    compatible container runtime), because [k3d](https://k3d.io) runs the local
+    cluster as containers. You do not install k3d yourself: on first run the CLI
+    downloads a pinned, checksum-verified k3d binary and caches it under
+    `~/.local/share/yacd/bin`, so the first `yacd devnet` is slower than later
+    ones.
 
 ## 1. Install the CLI
 

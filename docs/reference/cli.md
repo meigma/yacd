@@ -66,6 +66,11 @@ Brings a managed [k3d](https://k3d.io) cluster, the operator, and a default
 funded local network to a ready state in one command. Takes no `NAME` and no
 `--namespace` (it manages a fixed `devnet` network in a `devnet` namespace).
 
+`devnet` requires a running [Docker](https://www.docker.com/) (or compatible
+container runtime). It does not require a preinstalled k3d: on first use the CLI
+downloads a version-pinned, SHA256-verified k3d binary and caches it under
+`$XDG_DATA_HOME/yacd/bin` (default `~/.local/share/yacd/bin`).
+
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--bare` | bool | `false` | Stop after installing the operator; apply no network. |
