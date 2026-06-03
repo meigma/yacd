@@ -48,7 +48,15 @@ func (commandContext *commandContext) clearOrphanedManagedState(ctx context.Cont
 	if err != nil {
 		return
 	}
-	status, err := provisioner.Status(ctx, cluster.ManagedName)
+	store, err := commandContext.clusterState()
+	if err != nil {
+		return
+	}
+	// Probe health through the recorded kubeconfig (the file the cluster's
+	// context lives in), not the ambient default. Existence comes from the k3d
+	// runtime regardless, so a missing record just probes the default.
+	record, _, _ := store.Load()
+	status, err := provisioner.Status(ctx, cluster.ManagedName, record.KubeconfigPath)
 	if err != nil || status.Exists {
 		return
 	}

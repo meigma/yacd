@@ -337,12 +337,37 @@ func TestManagerDown(t *testing.T) {
 		require.NoError(t, tc.manager.Down(context.Background(), lifecycle.DownOptions{}))
 		assert.False(t, restoreCalled, "no record means no context to restore")
 	})
+
+	t.Run("clears the current-context when there was no prior", func(t *testing.T) {
+		tc := newTestContext(t, "")
+		tc.expectLock()
+		tc.store.EXPECT().Load().Return(clusterstate.Record{
+			ClusterName: cluster.ManagedName, Context: cluster.ManagedContext,
+			PriorContext: "", KubeconfigPath: "/home/dev/.kube/config",
+		}, true, nil)
+		tc.provisioner.EXPECT().DeleteCluster(mock.Anything, cluster.ManagedName).Return(nil)
+		var restoredPath, restoredContext string
+		restoreCalled := false
+		tc.manager.RestoreContext = func(path, context string) error {
+			restoreCalled = true
+			restoredPath, restoredContext = path, context
+			return nil
+		}
+		tc.store.EXPECT().Clear().Return(nil)
+
+		require.NoError(t, tc.manager.Down(context.Background(), lifecycle.DownOptions{}))
+		// An empty prior means the user had no current-context before devnet;
+		// clear it (restore to "") rather than leave k3d's delete repoint.
+		assert.True(t, restoreCalled, "an empty prior must clear the current-context")
+		assert.Equal(t, "/home/dev/.kube/config", restoredPath)
+		assert.Equal(t, "", restoredContext)
+	})
 }
 
 func TestManagerStatus(t *testing.T) {
 	t.Run("cluster present: reports operator and networks", func(t *testing.T) {
 		tc := newTestContext(t, "")
-		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).
+		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).
 			Return(cluster.Status{Exists: true, Running: true, Healthy: true, Context: cluster.ManagedContext}, nil)
 		tc.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
 		tc.installer.EXPECT().OperatorState(mock.Anything).
@@ -365,14 +390,14 @@ func TestManagerStatus(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, report.Cluster.Exists)
 		assert.False(t, report.HasRecord)
-		tc.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything)
+		tc.provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything, mock.Anything)
 		tc.installer.AssertNotCalled(t, "OperatorState", mock.Anything)
 	})
 
 	t.Run("record present but cluster gone: probes and reports absent", func(t *testing.T) {
 		tc := newTestContext(t, "")
 		tc.store.EXPECT().Load().Return(clusterstate.Record{Context: cluster.ManagedContext}, true, nil)
-		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
+		tc.provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).Return(cluster.Status{Exists: false}, nil)
 
 		report, err := tc.manager.Status(context.Background())
 		require.NoError(t, err)
