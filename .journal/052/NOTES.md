@@ -117,3 +117,39 @@ PR review/merge.
 Open/next: editorial polish pass on prose (drafts are accurate, code-grounded);
 GitHub Pages must be enabled (Settings → Pages → Source: GitHub Actions) for the
 deploy job to publish; after merge, `wt remove` the docs worktree.
+
+## 2026-06-03 — Review feedback + incorporate session 057 CLI changes
+Three rounds of user review on the live-served site (mkdocs serve on :8000):
+1. devnet prereqs — added Docker prereq + the k3d download/cache fact (pinned,
+   checksum-verified binary under ~/.local/share/yacd/bin) to getting-started,
+   index, and the CLI reference; linked k3d/Docker at first mention (commit 6919013).
+2. light/dark palette toggle defaulting to system preference (Material automatic
+   mode, default+slate, no custom colors) (3624a22).
+3. moved the "keep these handy" aside into a note callout (b09dfdd).
+
+Then the big one: **session 057 (PR #93, merged) changed three CLI behaviors my
+docs documented**, and 057's SUMMARY flagged the docs follow-up as a blocker for
+#91. Planned (approved) and executed:
+- Synced the branch: merged origin/master into docs/mkdocs-site (picks up #92 +
+  #93). One conflict — docs/host-access.md modified on master but deleted on my
+  branch (migrated to connecting-tools.md); resolved by keeping it deleted
+  (merge commit 10dbc27).
+- Corrected the now-stale forms I'd added: `yacd list -A` → bare `yacd list`
+  (057 made list default to all namespaces, dropped `-A`); topup-under-`yacd run`
+  → standalone `yacd topup NAME LOVELACE --address ADDR` (057 made topup
+  self-forward the faucet/Kupo + LOVELACE positional, `--lovelace` removed).
+  Updated getting-started, funding, networks, connecting-tools, cli.md,
+  troubleshooting.
+- **Made `yacd init` the default custom-network on-ramp** (user's call): networks.md
+  now leads with `yacd init > yacd.yaml` (scaffold → edit → up); added an `init`
+  reference section + Commands-table row; recipes.md tip. The init template is a
+  batteries-included local devnet (faucet+wallet).
+- Verified: mkdocs build --strict clean; `yacd init`→`up --dry-run` renders a
+  valid CardanoNetwork; init/topup/list `--help` match the docs; and a full live
+  smoke on a throwaway k3d cluster — `devnet --bare` → `init` → `up demo` (Ready)
+  → bare `list` (cross-namespace) → `topup demo 5000000 --address … --await`
+  (self-forward, "Confirmed on-chain") → clean teardown. Commit bf7fd98, pushed
+  to PR #91 (branch now also carries #93 via the merge).
+
+Doc-serve note: `uv run --with mkdocs-material==9.7.6 mkdocs serve` on :8000 was
+kept running across the review rounds for live iteration (still up).
