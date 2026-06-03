@@ -155,3 +155,34 @@ Open-decision defaults carried (re-confirm before P3): keep `topup` alias,
 
 **Next:** after PR #95 merges → P2 (controller surfaces the genesis key as the
 `faucet` wallet Secret), rebased on the new master.
+
+## 2026-06-03 15:41 — P1 merged; P2 mechanism PIVOT (generate + genesis-fund)
+PR #95 squash-merged (`88b8ba3`); master ff'd; P1 worktree/branch cleaned up.
+Created P2 worktree `.wt/feat-faucet-wallet-secret` off master.
+
+**P2 mechanism research (2 workflows):**
+- `wf_81bd5cd7-940` (4 agents): the deleted artifact-publisher SA pattern (session
+  048) is the only way to write a Secret from in-pod; re-adding it needs NEW manager
+  RBAC on serviceaccounts/roles/rolebindings + a new cardano-tools API-writing verb
+  + image release. Also confirmed: the distroless node container has no shell/cat/tar,
+  so CLI-side host extraction of the genesis key is BLOCKED.
+- User pushed back: "why can't the controller generate it and push to a secret before
+  starting the node?" → ran `wf_e7c8259c-a3b` (2 agents, repo+web). VERDICT: **the
+  controller CAN.** `create-env` has no fund-a-supplied-address flag, BUT Shelley
+  genesis `initialFunds` funds ANY arbitrary enterprise address (no key needed by the
+  node); editing it requires recomputing `ShelleyGenesisHash` (cardano-cli genesis
+  hash — `cardano-tools` already does this enrichment via EnrichGenesisHashes).
+
+**ADOPTED (cleaner) P2:** controller GENERATES the faucet key (`wallet.New`, once) +
+writes `<net>-wallet-faucet` Secret directly (existing RBAC, mirrors dev wallet); a
+PVC-only init container funds that address into the local genesis `initialFunds` +
+rehashes. **No publisher SA, no new RBAC, no API-writing verb.** Plan doc P2 section
+rewritten accordingly. Tradeoff: complexity moves from K8s RBAC → Cardano genesis
+surgery (supply accounting, hash, read-path) which is **live-only provable → dev
+stack required for P2.** Recipe details to nail first: repoint an existing
+initialFunds utxo entry to our addr (no supply math) vs add; shell+jq vs a
+cardano-tools genesis-fund verb (release only if jq absent); confirm node genesis
+read path.
+
+**Next:** launch P2 implement workflow (nail recipe → controller+init+genesis-edit →
+adversarial review → fix), then I live-validate on the dev stack, then PR + pause.

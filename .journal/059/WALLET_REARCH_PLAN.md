@@ -128,37 +128,53 @@ builds; Chainsaw still green.
 **Risks:** low. Pure move. Watch that `internal/cardano/tx` does NOT get pulled
 into `./cmd` (it won't unless the controller imports it — it must not).
 
-### Phase 2 — Surface the genesis key as the `faucet` wallet Secret (additive)
+### Phase 2 — Surface the `faucet` wallet Secret (generate + genesis-fund)
 
-**Scope:** The controller exposes the funded genesis `utxo1` key as a well-known
-`faucet` wallet Secret, using the existing narrow-SA in-pod publisher pattern.
+**Scope:** REVISED (session 059). The controller GENERATES the faucet wallet key
+itself and writes the Secret directly (mirroring today's dev wallet); a PVC-only
+init container makes the genesis fund that controller-chosen address via Shelley
+`initialFunds`. This avoids the in-pod API publisher entirely — **no narrow SA, no
+re-introduced serviceaccounts/roles/rolebindings RBAC, no API-writing tools verb.**
+(The earlier "extract create-env's utxo1 key via a publisher SA" plan is rejected:
+`create-env` can't fund a supplied address, but the controller doesn't need to —
+genesis `initialFunds` funds any arbitrary enterprise address with no key required
+by the node. Verified: workflow `wf_e7c8259c-a3b`.)
 
-- Controller creates an owned, empty `<net>-wallet-faucet` Secret shell (ownerRef
-  → CardanoNetwork; labels: managed wallet, name=`faucet`, source=genesis), plus a
-  `<net>-wallet-publisher` ServiceAccount + Role limited (by `resourceNames`) to
-  `get`/`patch` that one Secret — mirroring the existing
-  `<net>-artifact-publisher` SA pattern.
-- A **wallet-publisher init container** (tools image, projected SA token) reads
-  `/state/env/utxo-keys/utxo1/utxo.skey`, rewrites the envelope `type` to
-  `PaymentSigningKeyShelley_ed25519`, derives the address (cardano-cli, matching
-  the wallet golden test), and patches `payment.skey`/`payment.vkey`/`address`
-  into the Secret. Idempotent: skip if already populated (extract-once; never
-  overwrite — the address is funded, regeneration strands funds).
-- Additive: the faucet service, its source-address init, and the dev wallet all
-  keep working.
+- **Controller (no new RBAC):** generate the faucet payment key once via
+  `wallet.New()` → write the owned `<net>-wallet-faucet` Secret
+  (`payment.skey`/`payment.vkey`/`address`, labels: managed wallet, name=`faucet`,
+  source=genesis-funded), generate-once / never-regenerate (mirror
+  `applyPrimaryWalletSecret`). Pass the address + funding lovelace to the
+  genesis-funding init step via env.
+- **Genesis-funding init container (PVC-only, no API):** after `create-env`,
+  before the node boots, edit the local `shelley-genesis.json` so the controller's
+  address is funded via `initialFunds`, then recompute `ShelleyGenesisHash` in the
+  node config (`cardano-cli genesis hash`; YACD's `cardano-tools` already does this
+  enrichment). Idempotent.
+- **Open recipe details to nail first (live-validated):** (1) supply accounting —
+  prefer REPOINTING one existing utxo-key `initialFunds` entry to our address
+  (inherits its funds, no `maxLovelaceSupply` math) over naively adding one;
+  (2) edit tooling — shell+`jq` if the cardano-testnet image ships `jq`, else a
+  small `cardano-tools` genesis-fund step (still NO client-go/RBAC, just a tools
+  release); (3) confirm the local node reads the funded+rehashed genesis
+  (`/state/env` vs staged `/state/artifacts`).
+- Additive: the faucet service + dev wallet keep working until P4.
 
-**Key files:** `internal/controller/cardanonetwork/{init_container,resources,
-names,rbac}.go`; new publisher SA/Role manifests (Helm `charts/yacd/templates`).
+**Key files:** `internal/controller/cardanonetwork/{wallet,init_container,resources,
+builder,controller,apply,names}.go`; possibly `containers/cardano-tools` (only if a
+genesis-fund verb is needed) + `internal/cardano/wallet`.
 
-**Tests:** envtest — the `<net>-wallet-faucet` Secret shell + SA/Role are created
-and owned; a unit/golden test that the envelope conversion + derived address are
-correct. Live (k3d/Kind): after a fresh local network, the Secret holds a valid
-`payment.skey` whose address matches the on-chain funded genesis UTxO.
+**Tests:** unit/golden for key gen + Secret shape (reuse the existing wallet golden);
+envtest — the `<net>-wallet-faucet` Secret is created/owned + the genesis-funding
+init container is wired into the Deployment. **Live (dev stack, REQUIRED):** a fresh
+local network boots, the controller's faucet address shows the funded UTxO on-chain
+(`query utxo` / Kupo), and the Secret's key spends it.
 
-**Risks:** the extracted address must match the genesis-funded address — golden +
-live verify. The narrow publisher SA is a one-shot Secret write (get/patch on one
-named Secret), NOT the broad faucet-service RBAC we rejected earlier; note this
-distinction in the PR.
+**Risks:** the genesis surgery is the real risk and is live-only provable — supply
+accounting, the hash recompute matching what the node validates, and the genesis
+read path. This is why the dev stack is required for P2. The K8s side (generate +
+write Secret) is low-risk and mirrors the dev wallet. May split into a tools-image
+PR (if a genesis-fund verb is needed) + the controller PR.
 
 ### Phase 3 — CLI wallet store + verbs + CLI-side tx submission
 
