@@ -21,6 +21,7 @@ const (
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	mithrilBootstrapInitContainerName    = "mithril-bootstrap"
 	faucetSourceAddressInitContainerName = "faucet-source-addresses"
+	faucetWalletGenesisInitContainerName = "faucet-wallet-genesis-funding"
 	servedArtifactsInitContainerName     = "served-artifacts"
 	localnetStateVolumeName              = "localnet-state"
 	mithrilTmpVolumeName                 = "mithril-tmp"
@@ -144,6 +145,58 @@ done`,
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}
+}
+
+// faucetWalletGenesisFundingInitContainer builds the init container that adds a
+// genesis allocation for the well-known faucet wallet. It runs after create-env
+// (which writes shelley-genesis.json) and before the served-artifact stage init
+// flattens the env dir, so both the staged copy and the node boot from a funded
+// genesis on the first reconcile.
+//
+// It invokes the cardano-tools `fund-genesis` verb, which decodes the faucet
+// wallet address to its initialFunds map key and adds an additive allocation to
+// shelley-genesis.json (idempotent; existing entries untouched). The local
+// node's genesis carries no ShelleyGenesisHash, so no hash recompute is needed.
+func (b primaryWorkloadBuilder) faucetWalletGenesisFundingInitContainer(plan localnet.Plan, settings faucetWalletSettings, address string) (corev1.Container, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return corev1.Container{}, fmt.Errorf("faucet wallet address is required for genesis funding")
+	}
+	toolVersion := strings.TrimSpace(plan.Spec.Tool.Version)
+
+	return corev1.Container{
+		Name:            faucetWalletGenesisInitContainerName,
+		Image:           b.cardanoToolsImage(toolVersion),
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{cardanoToolsCommand},
+		Args: []string{
+			"fund-genesis",
+			"--env-dir", plan.Layout.EnvDir,
+			"--address", address,
+			"--lovelace", strconv.FormatInt(settings.fundingLovelace, 10),
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      localnetStateVolumeName,
+				MountPath: plan.Layout.StateDir,
+			},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: new(false),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+			ReadOnlyRootFilesystem: new(true),
+			RunAsGroup:             new(localnetToolsRunAsID),
+			RunAsNonRoot:           new(true),
+			RunAsUser:              new(localnetToolsRunAsID),
+			SeccompProfile: &corev1.SeccompProfile{
+				Type: corev1.SeccompProfileTypeRuntimeDefault,
+			},
+		},
+		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
+		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
+	}, nil
 }
 
 func (b primaryWorkloadBuilder) mithrilBootstrapInitContainer(plan publicnet.MithrilPlan) corev1.Container {

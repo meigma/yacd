@@ -907,6 +907,7 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedFaucetChildrenWhenDisabled
 	require.NoError(t, err)
 	requirePrimaryFaucetService(t, ctx, reconciler, network)
 	requirePrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	requirePrimaryFaucetWalletSecret(t, ctx, reconciler, network)
 
 	current := requireNetwork(t, ctx, reconciler, network)
 	current.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
@@ -921,6 +922,7 @@ func TestCardanoNetworkReconcilerReconcileDeletesOwnedFaucetChildrenWhenDisabled
 
 	assertNoPrimaryFaucetService(t, ctx, reconciler, network)
 	assertNoPrimaryFaucetAuthSecret(t, ctx, reconciler, network)
+	assertNoPrimaryFaucetWalletSecret(t, ctx, reconciler, network)
 	deployment := requirePrimaryDeployment(t, ctx, reconciler, network)
 	assert.NotContains(t, deployment.Spec.Template.Annotations, faucetAuthTokenHashAnno)
 	current = requireNetwork(t, ctx, reconciler, network)
@@ -953,7 +955,8 @@ func TestCardanoNetworkReconcilerReconcileIsIdempotent(t *testing.T) {
 	assert.Len(t, services.Items, 5)
 	var secrets corev1.SecretList
 	require.NoError(t, reconciler.List(ctx, &secrets))
-	assert.Len(t, secrets.Items, 1)
+	// The faucet auth Secret and the genesis-funded faucet wallet Secret.
+	assert.Len(t, secrets.Items, 2)
 }
 
 func TestCardanoNetworkReconcilerReconcilePatchesMutableDeploymentTemplate(t *testing.T) {
@@ -2651,6 +2654,23 @@ func requirePrimaryFaucetAuthSecret(
 	return secret
 }
 
+func requirePrimaryFaucetWalletSecret(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) *corev1.Secret {
+	t.Helper()
+
+	secret := &corev1.Secret{}
+	require.NoError(t, reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetWalletSecretName(network),
+	}, secret))
+
+	return secret
+}
+
 func assertDeploymentFaucetAuthTokenHash(t *testing.T, deployment *appsv1.Deployment, secret *corev1.Secret) {
 	t.Helper()
 
@@ -2894,6 +2914,21 @@ func assertNoPrimaryFaucetAuthSecret(
 		Name:      primaryFaucetAuthSecretName(network),
 	}, &corev1.Secret{})
 	assert.True(t, apierrors.IsNotFound(err), "expected faucet auth Secret to be absent, got %v", err)
+}
+
+func assertNoPrimaryFaucetWalletSecret(
+	t *testing.T,
+	ctx context.Context,
+	reconciler *CardanoNetworkReconciler,
+	network *yacdv1alpha1.CardanoNetwork,
+) {
+	t.Helper()
+
+	err := reconciler.Get(ctx, types.NamespacedName{
+		Namespace: network.Namespace,
+		Name:      primaryFaucetWalletSecretName(network),
+	}, &corev1.Secret{})
+	assert.True(t, apierrors.IsNotFound(err), "expected faucet wallet Secret to be absent, got %v", err)
 }
 
 func assertNoContainerNamed(t *testing.T, containers []corev1.Container, name string) {

@@ -36,6 +36,25 @@ const (
 	// carries the token. The Secret data map is shaped {faucetAuthTokenKey:
 	// []byte(token)}.
 	faucetAuthTokenKey = "token"
+
+	// walletNameLabel marks an owned wallet Secret with its well-known name so
+	// consumers (the CLI, dashboards) can select a specific wallet without
+	// parsing the Secret name. The developer wallet and the faucet wallet share
+	// the same Secret shape; this label distinguishes them.
+	walletNameLabel = "yacd.meigma.io/wallet-name"
+
+	// walletSourceLabel records how a wallet Secret is funded. The faucet wallet
+	// is allocated directly at genesis, unlike the developer wallet which is
+	// topped up at runtime through the faucet service.
+	walletSourceLabel = "yacd.meigma.io/wallet-source"
+
+	// faucetWalletName is the well-known wallet name for the genesis-funded
+	// faucet wallet.
+	faucetWalletName = "faucet"
+
+	// walletSourceGenesisFunded is the walletSourceLabel value for a wallet
+	// allocated at genesis.
+	walletSourceGenesisFunded = "genesis-funded"
 )
 
 // deployment builds the primary workload Deployment. It composes the
@@ -43,7 +62,7 @@ const (
 // faucet) and wires the init container that prepares the localnet environment.
 // The RecreateDeploymentStrategyType prevents two cardano-node instances
 // from running at once (they cannot share the underlying state PVC).
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings) (*appsv1.Deployment, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings, faucetWallet faucetWalletSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
@@ -67,9 +86,20 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if serveArtifacts {
 		containers = append(containers, b.serveContainer(network, plan))
 	}
-	initContainers := make([]corev1.Container, 0, 4)
+	initContainers := make([]corev1.Container, 0, 5)
 	if initContainer != nil {
 		initContainers = append(initContainers, *initContainer)
+	}
+	// The genesis-funding init must run after create-env (which writes the
+	// genesis) and before the LOCAL stage init below (which flattens the env
+	// dir onto the served-artifact subdirectory), so the staged copy and the
+	// node both see the funded genesis on the first reconcile.
+	if faucetWallet.enabled {
+		genesisFundingInit, err := b.faucetWalletGenesisFundingInitContainer(*plan.Localnet, faucetWallet, b.faucetWalletAddress)
+		if err != nil {
+			return nil, err
+		}
+		initContainers = append(initContainers, genesisFundingInit)
 	}
 	// Order matters: the LOCAL stage init reads the create-env output appended
 	// above, and the CURATED PUBLIC fetch init must run before any Mithril
@@ -423,6 +453,33 @@ func (b primaryWorkloadBuilder) walletSecret(network *yacdv1alpha1.CardanoNetwor
 
 	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
 		return nil, fmt.Errorf("set wallet Secret owner reference: %w", err)
+	}
+
+	return secret, nil
+}
+
+// faucetWalletSecret builds the opaque Secret that carries the well-known
+// faucet wallet's payment key envelopes and address. It shares the developer
+// wallet's data shape and create-once contract; the marker labels identify it
+// as the genesis-funded faucet wallet so consumers can select it directly. Like
+// the other key-bearing Secrets, the data map is populated by the apply phase
+// (the builder stays pure and cannot generate key material).
+func (b primaryWorkloadBuilder) faucetWalletSecret(network *yacdv1alpha1.CardanoNetwork, settings faucetWalletSettings) (*corev1.Secret, error) {
+	labels := primaryWorkloadLabels(network)
+	labels[walletNameLabel] = faucetWalletName
+	labels[walletSourceLabel] = walletSourceGenesisFunded
+
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      settings.secretName,
+			Namespace: network.Namespace,
+			Labels:    labels,
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
+		return nil, fmt.Errorf("set faucet wallet Secret owner reference: %w", err)
 	}
 
 	return secret, nil

@@ -105,6 +105,14 @@ const (
 	// the CardanoNetwork spec does not specify one.
 	defaultFaucetMaxLovelace = 10_000_000_000
 
+	// defaultFaucetWalletFundingLovelace is the genesis allocation granted to
+	// the well-known faucet wallet on local networks. 1,000,000 ADA sits well
+	// under the local genesis supply headroom (~10M ADA) yet is plenty for a
+	// devnet funding source that the CLI spends from. The allocation is added
+	// as a new initialFunds entry, so it never touches the faucet service's own
+	// utxo source.
+	defaultFaucetWalletFundingLovelace int64 = 1_000_000_000_000
+
 	// faucetServiceURLType is the scheme published on the faucet endpoint
 	// status.
 	faucetServiceURLType = "http"
