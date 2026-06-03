@@ -174,3 +174,13 @@ contexts + standup-demo + oidc-smoke intact).
 
 Diff: 13 files, +256/-51 (cli/internal only; mock regen). NOT yet committed/pushed — awaiting
 go-ahead on the PR.
+
+## 2026-06-02 20:06 — Close
+Session closed. **PR #92** (`fix(cli): keep devnet health checks on the recorded kubeconfig`,
+squash `79761f2`) **merged** to master with all CI green (`ci`, `e2e`, `cardano-tools-image`,
+Kusari); local `master` fast-forwarded; remote branch + impl worktree removed. The session
+delivered: a full manual functional test of `yacd devnet` (P0–P18, nearly all behaviors pass),
+the F1/F2/F3 (HIGH) + F4 (MEDIUM) findings, and the merged fix (live-verified). Machine left at
+baseline (no yacd clusters/state, current-context unset, bystanders intact). SUMMARY.md +
+INDEX.md written; TECH_NOTES.md updated with the kubeconfig-handling contract. Only P7 (devnet
+hardening/UX) remains of the local-lifecycle plan. Hand-off: nothing in flight.

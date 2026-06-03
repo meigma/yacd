@@ -727,3 +727,22 @@
   `TestDefaultDevnetEnvIsValid`. The gated live e2e is `YACD_DEVNET_LIVE`
   (`cli/internal/cli/devnet_live_test.go`); it isolates `KUBECONFIG`+`XDG_STATE_HOME` to
   temp dirs and is the regression test for the KUBECONFIG-honoring path.
+- **`yacd devnet` KUBECONFIG-handling hardening (session 056, PR #92 `79761f2`).** A manual
+  functional test found a HIGH-severity chain: switching `KUBECONFIG` between `devnet` runs
+  could silently delete+recreate a healthy cluster. Durable contract now: the managed
+  cluster's health/identity is keyed to the **recorded** kubeconfig (the clusterstate record's
+  `kubeconfigPath`), never the ambient `KUBECONFIG`. (1) `k3d.infoFor(name, kubeconfigPath)` —
+  the healthy no-op path returns `spec.KubeconfigPath` (where the probe reached it), only
+  create/heal returns `defaultKubeconfigPath()` (where k3d's `--kubeconfig-update-default`
+  wrote). (2) A kubeconfig/context **load** failure is a typed `probeConfigError`; `statusVia`
+  returns it as a hard error so `EnsureCluster` aborts instead of treating it as `Healthy=false`
+  and recreating — only a genuine `/healthz` failure marks the cluster unhealthy for healing.
+  (3) `cluster.Provisioner.Status` now takes `kubeconfigPath`; `lifecycle.Manager.Status` and
+  `cli/orphan.go` pass `record.KubeconfigPath` so reads probe the recorded file. (4)
+  `lifecycle.Down` **clears** current-context when the captured prior was empty (calls
+  `RestoreContext(path, "")` → `kube.SetCurrentContext(path,"")` blanks it) — otherwise k3d's
+  `cluster delete` repoints kubectl to an arbitrary remaining (possibly prod) context. Minor:
+  the duplicate `acquire cluster lock:` wrap was removed; create timeouts report
+  `timed out after <d>`/`cancelled` instead of raw `signal: killed`. NOTE for recon: the Kupo
+  endpoint port is **1442**; the `yacd.meigma.io/install=operator` label is stamped on CRDs but
+  CRDs are excluded from the SSA prune GVK set, so they are still never pruned.
