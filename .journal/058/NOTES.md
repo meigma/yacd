@@ -102,3 +102,46 @@ controller `status.wallet` dev wallet; pick the exact soft-ceiling number.
 **Next:** (pending user OK) write a short design doc + phased plan to
 `.journal/058/`, then implement on a fresh impl worktree (start dev stack then).
 Analysis artifacts: workflow run `wf_1c108c99-0f2`.
+
+## 2026-06-03 13:36 — Pivot: remove the faucet service entirely (CLI-native wallets)
+User proposed a larger refactor that SUPERSEDES the standalone wallet design:
+**remove the in-cluster faucet service altogether**, make the CLI own all
+wallet+funding (build/sign/submit txns directly via Apollo + forwarded
+Ogmios/Kupo, keys read from Secrets), and have the controller's only wallet job
+be exposing the genesis `utxo1` key as a well-known `faucet` wallet Secret.
+`topup` defaults source `--from faucet`, overridable to any wallet.
+
+Ran a 2nd verification workflow (`wf_bb7e8066-c23`, 4 Explore agents). Verified:
+- **Single Go module**; the CLI can already import root `internal/cardano/wallet`
+  (one agent wrongly said it couldn't — the Go `internal/` rule permits it
+  module-wide; the faucet does it). Only the faucet-scoped
+  `services/faucet/internal/topup` must relocate → `internal/cardano/tx` to be
+  CLI-importable. Keygen needs no move.
+- **No new third-party deps**: CLI already has ogmigo+kugo (topup --await); only
+  Apollo's tx-builder is added, already in-module. Gorilla-WS (Kusari) concern
+  unchanged. Manager stays clean (`go list -deps ./cmd` has no ogmigo/kugo/
+  Apollo-tx) as long as the controller never funds + `tx` stays out of ./cmd.
+- **Genesis key extraction is clean**: create-env generates+funds the genesis
+  utxo keys (can't inject, must extract); `GenesisUTxOSigningKey_ed25519` →
+  `PaymentSigningKeyShelley_ed25519` is a JSON type-field rename (same raw
+  ed25519+CBOR; faucet already spends these). Use the existing narrow-SA in-pod
+  publisher pattern (mirror `<net>-artifact-publisher`) to patch the key into a
+  controller-owned `<net>-wallet-faucet` Secret.
+- CLI already forwards Ogmios+Kupo (`forwardEndpoints`); deletion surface fully
+  enumerated (faucet service+image+jobs, sidecar+init+Service+auth Secret+rotation,
+  `spec.chainAPI.{faucet,wallet}`, FaucetReady/WalletReady, topup_trust token gate,
+  Chainsaw, examples, docs).
+
+**Verdict (mine, user-aligned):** worth doing — it's a net REDUCTION (delete a
+service+image+2 API blocks) that also ships the wallet UX, and moves funding out
+of the reconcile loop.
+
+**Plan written:** `.journal/058/WALLET_REARCH_PLAN.md` — 5 phases (strangler,
+each PR green): P1 extract tx engine → `internal/cardano/tx`; P2 controller
+surfaces the `faucet` wallet Secret (additive, narrow-SA init publisher); P3 CLI
+wallet store+verbs+direct submission; P4 cut over funding + delete the faucet
+(breaking CRD change); P5 release + docs. Open decisions captured with defaults
+(topup alias, utxo1-only, remove spec.chainAPI.wallet, ceiling=50, name label).
+
+**STATUS: paused for user review of the plan.** No code yet; no impl worktree;
+dev stack not started.
