@@ -184,3 +184,17 @@ tasks:
     options:
       cache: false
       runInCI: true
+
+  docs:
+    command: 'uv run --with mkdocs-material==9.7.6 mkdocs build --strict'
+    inputs:
+      - 'docs/**/*'
+      - 'mkdocs.yml'
+    options:
+      cache: false
+
+  docs-serve:
+    command: 'uv run --with mkdocs-material==9.7.6 mkdocs serve'
+    options:
+      cache: false
+      runInCI: false

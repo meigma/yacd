@@ -24,3 +24,6 @@ coverage.html
 
 # Claude
 .claude/scheduled_tasks.lock
+
+# Docs site build output
+site/
