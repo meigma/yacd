@@ -146,8 +146,13 @@
   (auto-creates + ownership-stamps the namespace via SSA `EnsureNamespace`,
   applies, waits Ready — `--wait` defaults TRUE, `--timeout` 12m; replaces the
   old `deploy`), `yacd down NAME` (delete + `WaitGone`, idempotent on NotFound,
-  `--timeout` 5m), `yacd list [-A|-n] [--json]` (projects name/namespace/mode/
+  `--timeout` 5m), `yacd list [-n] [--json]` (projects name/namespace/mode/
   ready/endpoints). `info`/`topup` adopt the same NAME-default-namespace model.
+  UPDATE (session 057, PR #93): `yacd list` now defaults to **all namespaces**
+  (`-A` removed; `-n` scopes to one). Rationale: the one-env-per-namespace model
+  made the namespace-scoped default routinely empty (`yacd devnet`→`yacd list`
+  showed nothing). Empty namespace was already the adapter's all-namespaces
+  convention (`kube/client.go`); `list` no longer consults `DefaultNamespace()`.
 - BREAKING (safe pre-1.0): the developer `Environment` document DROPPED its
   `metadata` block — identity comes only from the CLI. `Load` uses
   `yaml.UnmarshalStrict`, so any spec still carrying `metadata:` fails to parse.
@@ -190,9 +195,10 @@
   (in-pod, argv-only via an
   `env KEY=VAL` prefix — never a shell, so `$VAR` is not expanded — for
   socket-bound `cardano-cli`). `yacd topup --await` polls Kupo (vendored `kugo`)
-  for the funded UTxO; it requires `--kupo-url` or `YACD_KUPO_URL` and does not
-  self-forward; malformed Kupo URLs fail before cluster reads or faucet
-  submission. The verb docs + the versioned `YACD_*` table live in
+  for the funded UTxO; malformed Kupo URLs fail before cluster reads or faucet
+  submission. UPDATE (session 057, PR #93): topup now **self-forwards** —
+  see the dedicated topup bullet below; `--await` no longer requires `--kupo-url`
+  standalone. The verb docs + the versioned `YACD_*` table live in
   `docs/host-access.md`. Key contracts: the CLI resolves the primary Pod from
   the published node-to-node Service selector (no `internal/...` import) and
   pins the node container name + `/ipc/node.socket` as CLI-local constants;
@@ -746,3 +752,30 @@
   `timed out after <d>`/`cancelled` instead of raw `signal: killed`. NOTE for recon: the Kupo
   endpoint port is **1442**; the `yacd.meigma.io/install=operator` label is stamped on CRDs but
   CRDs are excluded from the SSA prune GVK set, so they are still never pruned.
+- **`yacd topup` self-forwards the faucet (session 057, PR #93).** topup no longer needs a
+  `yacd run` wrapper. With no faucet-URL override it opens a short-lived port-forward to the
+  faucet itself — reusing `forwardEndpoints` (extracted from `connectNetwork` in
+  `cli/internal/cli/forward.go`; reads no Secret, so the trust gate runs before any token
+  read) — POSTs, and closes. The same session forwards Kupo, so `topup --await` derives a
+  loopback Kupo URL and works standalone (no `--kupo-url`). Precedence in
+  `resolveFaucetTransport`: explicit `--faucet-url` OR ambient `YACD_FAUCET_URL` (inside
+  `yacd run`) → use it as-is (`custom`, trust-gated); else self-forward (loopback, exempt).
+  The `topup_trust.go` gate + the `AssertNotCalled(GetSecretValue)` no-token-leak invariant
+  are unchanged. **Arg change (breaking, pre-1.0):** `yacd topup NAME LOVELACE` — LOVELACE is a
+  required positional (the `--lovelace` flag is gone); `--address` stays a required flag
+  (deliberately NOT defaulted to the wallet address). Live-validated on k3d.
+- **`yacd init` (session 057, PR #93).** Prints a fully-commented developer `Environment`
+  template to **stdout** (`yacd init > yacd.yaml`; no flags, `NoArgs`, no kube). The template is
+  `//go:embed`'d at `cli/internal/cli/init.yaml` (var `defaultInitEnvYAML` in `embed.go`); its
+  active (uncommented) portion is a batteries-included local devnet (faucet + funded wallet,
+  mirrors `examples/local`), and commented blocks document the rest of the API. Because
+  `devconfig.Load` uses UnmarshalStrict + validateExplicitFields, every uncommented section must
+  be complete and optional sections are commented WHOLESALE. `init_test.go` drift-guards the
+  active config by loading it through `devconfig.Load`. Registered in `root.go` without
+  `withManagedReconcile`.
+- **Docs follow-up owed on the `docs/mkdocs-site` branch (PR #91, session 052, still open).**
+  Sessions 057's changes left stale references there that the docs session must fix before #91
+  merges: `docs/reference/cli.md` + `docs/developer/{getting-started,networks}.md` still show
+  `yacd list -A`; and any `topup`-under-`yacd run` / `--lovelace` examples need the new
+  standalone `yacd topup NAME LOVELACE` form. Master-tracked docs (README, docs/host-access.md)
+  were already updated in PR #93.

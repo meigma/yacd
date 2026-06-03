@@ -125,3 +125,18 @@ published operator. Results:
   (no prior to restore — the session-056 F4 path); no clusters/collateral left.
 - Removes the "pending live verification before PR" caveat. Branch is ready to
   push + open PR when the user wants (still no further one-offs requested yet).
+
+## 2026-06-03 11:40 — Close
+Session closed. All three CLI one-offs landed in **one squash-merged PR (#93,
+`b611645`)** to master; CI fully green (ci, e2e, cardano-tools-image, Kusari) and
+live-validated on a throwaway k3d devnet (init→up→Ready, list cross-namespace,
+standalone topup --await confirmed on-chain), then torn down clean.
+- Handoff: master fast-forwarded to `b611645`; remote + local `feat/cli-list-all-
+  namespaces` branch/worktree removed; no dev stack was ever started this session
+  (CLI-only; the validation devnet is gone).
+- Recorded: SUMMARY.md written; INDEX row 057 → complete; TECH_NOTES updated
+  (list all-ns default, topup self-forward, `yacd init`, and the stale "topup does
+  not self-forward" bullet corrected) + a docs-follow-up reminder bullet.
+- Open: docs fixes owed on the `docs/mkdocs-site` branch (PR #91) — stale `list -A`
+  and `topup`-under-`run`/`--lovelace` examples — before #91 merges. Sessions 051/052
+  remain in-progress (pre-existing).
