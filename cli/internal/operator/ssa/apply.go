@@ -2,10 +2,7 @@ package ssa
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,7 +12,6 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/yaml"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -70,35 +66,6 @@ var applyKindRank = map[string]int{
 	"RoleBinding":        4,
 	"Service":            5,
 	"Deployment":         6,
-}
-
-// parseManifests splits the embedded multi-document YAML into unstructured
-// objects, skipping empty documents (the chart's validate-values template
-// renders to nothing).
-func parseManifests(fsys fs.FS, path string) ([]*unstructured.Unstructured, error) {
-	file, err := fsys.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open embedded manifests %s: %w", path, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	decoder := yaml.NewYAMLOrJSONDecoder(file, 4096)
-	var objs []*unstructured.Unstructured
-	for {
-		raw := map[string]any{}
-		if err := decoder.Decode(&raw); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, fmt.Errorf("decode embedded manifests: %w", err)
-		}
-		if len(raw) == 0 {
-			continue
-		}
-		objs = append(objs, &unstructured.Unstructured{Object: raw})
-	}
-
-	return objs, nil
 }
 
 // partitionCRDs splits objects into CustomResourceDefinitions and everything

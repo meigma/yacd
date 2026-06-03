@@ -62,7 +62,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	}
 	if options.OperatorInstallerFactory == nil {
 		options.OperatorInstallerFactory = func(kubeconfig, kubeContext string) (operator.Installer, error) {
-			return ssa.New(kubeconfig, kubeContext, ssa.Manifests)
+			return ssa.New(kubeconfig, kubeContext, ssa.Chart)
 		}
 	}
 	if options.ClusterStateFactory == nil {

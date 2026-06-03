@@ -5,13 +5,16 @@ import (
 	"io/fs"
 )
 
-//go:embed manifests/operator.yaml
-var manifestsFS embed.FS
+// The all: prefix is mandatory: without it embed silently drops _helpers.tpl
+// (and any other file whose name begins with "_" or "."), and the render fails
+// on the missing named templates.
+//
+//go:embed all:chart
+var chartFS embed.FS
 
-// Manifests is the embedded, build-time-rendered operator chart that New
+// Chart is the embedded, drift-guarded copy of charts/yacd that New renders and
 // applies by default. It is exposed as an fs.FS so the composition root can pass
-// it to New and tests can substitute a synthetic filesystem.
-var Manifests fs.FS = manifestsFS
-
-// manifestPath is the path of the rendered manifest within Manifests.
-const manifestPath = "manifests/operator.yaml"
+// it to New and tests can substitute a synthetic filesystem. The copy is kept in
+// sync with the source chart by .dev/scripts/sync-operator-chart.sh (run at
+// root:generate) and guarded by root:check.
+var Chart fs.FS = chartFS

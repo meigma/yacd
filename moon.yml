@@ -31,6 +31,8 @@ fileGroups:
     - 'go.sum'
   chartSources:
     - 'charts/yacd/**/*'
+  embeddedChartSources:
+    - 'cli/internal/operator/ssa/chart/**/*'
   chainsawSources:
     - 'examples/**/*.yaml'
     - 'test/chainsaw/**/*.yaml'
@@ -76,6 +78,7 @@ tasks:
       - '@group(goSources)'
       - '@group(generatorSources)'
       - '@group(toolchainConfig)'
+      - '@group(embeddedChartSources)'
       - 'charts/yacd/**/*'
     options:
       cache: false
@@ -87,10 +90,10 @@ tasks:
         controller-gen object paths="./..."
         controller-gen crd:allowDangerousTypes=true paths="./..." output:crd:artifacts:config=charts/yacd/crds
       fi
-      # Render the operator chart into the manifests the CLI embeds. This runs
-      # AFTER controller-gen so a CRD change flows into the embedded manifest in
-      # the same generate pass.
-      bash .dev/scripts/render-operator-chart.sh
+      # Sync the operator chart into the in-package copy the CLI embeds and
+      # renders. This runs AFTER controller-gen so a CRD change flows into the
+      # embedded chart copy in the same generate pass.
+      bash .dev/scripts/sync-operator-chart.sh
       # Mockery v3 reads `go list` output via x/tools/go/packages. The proto
       # `go` shim mangles the templated `-f` argument it passes, so prepend
       # the real toolchain bin directory to PATH for this invocation only.
@@ -102,25 +105,25 @@ tasks:
       - '@group(chartSources)'
       - '@group(toolchainConfig)'
       - '.mockery.yml'
-      - '.dev/scripts/render-operator-chart.sh'
+      - '.dev/scripts/sync-operator-chart.sh'
       - 'cli/internal/**/*.go'
     outputs:
       - 'api/**/zz_generated.deepcopy.go'
       - 'charts/yacd/crds/**/*'
-      - 'cli/internal/operator/ssa/manifests/operator.yaml'
+      - 'cli/internal/operator/ssa/chart/**/*'
       - 'cli/internal/mocks/**/*.go'
     options:
       cache: false
       runInCI: false
 
-  render-operator-chart:
-    command: 'bash .dev/scripts/render-operator-chart.sh'
+  sync-operator-chart:
+    command: 'bash .dev/scripts/sync-operator-chart.sh'
     inputs:
       - '@group(chartSources)'
       - '@group(toolchainConfig)'
-      - '.dev/scripts/render-operator-chart.sh'
+      - '.dev/scripts/sync-operator-chart.sh'
     outputs:
-      - 'cli/internal/operator/ssa/manifests/operator.yaml'
+      - 'cli/internal/operator/ssa/chart/**/*'
     options:
       cache: false
       runInCI: false

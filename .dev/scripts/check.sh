@@ -22,8 +22,8 @@ golangci-lint run --config .golangci.yml ./... --show-stats=false
 echo "== generated artifacts =="
 controller-gen object paths="./..."
 go test ./test/chart -run TestManagerRBACMatchesControllerGen -count=1
-bash .dev/scripts/render-operator-chart.sh
-git diff --exit-code -- api charts/yacd/crds cli/internal/operator/ssa/manifests
+bash .dev/scripts/sync-operator-chart.sh
+git diff --exit-code -- api charts/yacd/crds cli/internal/operator/ssa/chart
 
 echo "== helm chart =="
 chart="charts/yacd"

@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -21,9 +22,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// installNamespace is the namespace the operator is installed into. It matches
-// the chart's render namespace; the chart's RBAC subjects are baked to it, so
-// this phase rejects any other target.
+// installNamespace is the default namespace the operator is installed into when
+// the caller leaves InstallSpec.Namespace empty. It is no longer a hard pin: any
+// valid DNS-1123 namespace renders correctly because the chart's RBAC subjects
+// follow the Helm release namespace.
 const installNamespace = "yacd-system"
 
 const (
@@ -34,19 +36,19 @@ const (
 	pollInterval = time.Second
 )
 
-// installer is the operator.Installer implementation. It applies the embedded,
-// build-time-rendered chart to a cluster by server-side apply.
+// installer is the operator.Installer implementation. It renders the embedded
+// chart in-memory and applies it to a cluster by server-side apply.
 type installer struct {
-	client    client.Client
-	mapper    apimeta.RESTMapper
-	manifests fs.FS
+	client client.Client
+	mapper apimeta.RESTMapper
+	chart  fs.FS
 }
 
 // New constructs an installer against the cluster selected by kubeconfig and
 // context (empty values defer to the standard kubeconfig loading rules). The
-// manifests filesystem holds the rendered chart; pass ssa.Manifests for the
+// chart filesystem holds the operator Helm chart; pass ssa.Chart for the
 // embedded default.
-func New(kubeconfig, kubeContext string, manifests fs.FS) (operator.Installer, error) {
+func New(kubeconfig, kubeContext string, chart fs.FS) (operator.Installer, error) {
 	restCfg, err := restConfig(kubeconfig, kubeContext)
 	if err != nil {
 		return nil, err
@@ -61,7 +63,7 @@ func New(kubeconfig, kubeContext string, manifests fs.FS) (operator.Installer, e
 		return nil, fmt.Errorf("create Kubernetes client: %w", err)
 	}
 
-	return &installer{client: c, mapper: c.RESTMapper(), manifests: manifests}, nil
+	return &installer{client: c, mapper: c.RESTMapper(), chart: chart}, nil
 }
 
 // restConfig loads a rest.Config from explicit kubeconfig path and context
@@ -80,16 +82,17 @@ func restConfig(kubeconfig, kubeContext string) (*rest.Config, error) {
 	return cfg, nil
 }
 
-// EnsureOperator reconciles the cluster to the embedded operator version.
+// EnsureOperator reconciles the cluster to the embedded operator version. It
+// resolves the install namespace (empty defaults to installNamespace; any other
+// value must be a valid DNS-1123 label), renders the embedded chart against it
+// and the spec's typed values, then applies the rendered objects.
 func (i *installer) EnsureOperator(ctx context.Context, spec operator.InstallSpec) (operator.State, error) {
-	if ns := strings.TrimSpace(spec.Namespace); ns != "" && ns != installNamespace {
-		return operator.State{}, fmt.Errorf(
-			"operator install namespace is pinned to %q in this version; %q is not supported",
-			installNamespace, ns,
-		)
+	namespace, err := resolveNamespace(spec.Namespace)
+	if err != nil {
+		return operator.State{}, err
 	}
 
-	objs, err := parseManifests(i.manifests, manifestPath)
+	objs, err := render(i.chart, namespace, spec.Values.ToHelmValues())
 	if err != nil {
 		return operator.State{}, err
 	}
@@ -99,7 +102,7 @@ func (i *installer) EnsureOperator(ctx context.Context, spec operator.InstallSpe
 		return operator.State{}, err
 	}
 
-	state, err := i.OperatorState(ctx)
+	state, err := i.operatorState(ctx, namespace)
 	if err != nil {
 		return operator.State{}, err
 	}
@@ -109,19 +112,35 @@ func (i *installer) EnsureOperator(ctx context.Context, spec operator.InstallSpe
 		return state, err
 	}
 
-	if err := i.apply(ctx, objs); err != nil {
+	if err := i.apply(ctx, objs, namespace); err != nil {
 		return operator.State{}, err
 	}
 
-	return i.OperatorState(ctx)
+	return i.operatorState(ctx, namespace)
 }
 
-// apply runs the idempotent install pipeline: ensure namespace, apply CRDs and
-// wait Established, apply the workload, then prune.
-func (i *installer) apply(ctx context.Context, objs []*unstructured.Unstructured) error {
+// resolveNamespace defaults an empty namespace to installNamespace and validates
+// any explicit value as a DNS-1123 label, the namespace naming rule.
+func resolveNamespace(requested string) (string, error) {
+	ns := strings.TrimSpace(requested)
+	if ns == "" {
+		return installNamespace, nil
+	}
+	if errs := validation.IsDNS1123Label(ns); len(errs) > 0 {
+		return "", fmt.Errorf("invalid install namespace %q: %s", ns, strings.Join(errs, "; "))
+	}
+	return ns, nil
+}
+
+// apply runs the idempotent install pipeline against the resolved namespace:
+// ensure the namespace, apply CRDs and wait Established, apply the workload, then
+// prune. The same namespace drives the first Namespace object, the apply-time
+// defaulting for namespaced objects, and the prune scope, so they agree with the
+// rendered RBAC subjects.
+func (i *installer) apply(ctx context.Context, objs []*unstructured.Unstructured, namespace string) error {
 	applied := make(map[objectKey]struct{}, len(objs)+1)
 
-	nsKey, err := applyObject(ctx, i.client, i.mapper, namespaceObject(installNamespace), installNamespace)
+	nsKey, err := applyObject(ctx, i.client, i.mapper, namespaceObject(namespace), namespace)
 	if err != nil {
 		return err
 	}
@@ -129,7 +148,7 @@ func (i *installer) apply(ctx context.Context, objs []*unstructured.Unstructured
 
 	crds, workload := partitionCRDs(objs)
 	for _, crd := range crds {
-		key, err := applyObject(ctx, i.client, i.mapper, crd, installNamespace)
+		key, err := applyObject(ctx, i.client, i.mapper, crd, namespace)
 		if err != nil {
 			return err
 		}
@@ -140,14 +159,14 @@ func (i *installer) apply(ctx context.Context, objs []*unstructured.Unstructured
 	}
 
 	for _, obj := range workload {
-		key, err := applyObject(ctx, i.client, i.mapper, obj, installNamespace)
+		key, err := applyObject(ctx, i.client, i.mapper, obj, namespace)
 		if err != nil {
 			return err
 		}
 		applied[key] = struct{}{}
 	}
 
-	return prune(ctx, i.client, i.mapper, installNamespace, applied)
+	return prune(ctx, i.client, i.mapper, namespace, applied)
 }
 
 // waitEstablished polls each named CRD until it reports Established=True.
@@ -170,9 +189,17 @@ func (i *installer) waitEstablished(ctx context.Context, names []string) error {
 	})
 }
 
-// OperatorState reports the install state from the manager Deployment.
+// OperatorState reports the install state from the manager Deployment in the
+// default install namespace. EnsureOperator reads state against the resolved
+// install namespace directly via operatorState.
 func (i *installer) OperatorState(ctx context.Context) (operator.State, error) {
-	deployment, err := i.managerDeployment(ctx)
+	return i.operatorState(ctx, installNamespace)
+}
+
+// operatorState reports the install state from the manager Deployment in the
+// given namespace.
+func (i *installer) operatorState(ctx context.Context, namespace string) (operator.State, error) {
+	deployment, err := i.managerDeployment(ctx, namespace)
 	if err != nil {
 		return operator.State{}, err
 	}
@@ -187,13 +214,13 @@ func (i *installer) OperatorState(ctx context.Context) (operator.State, error) {
 	}, nil
 }
 
-// managerDeployment returns the operator manager Deployment, or nil when none
-// exists. More than one match is an error: the install is ambiguous and must
-// not be reconciled blindly.
-func (i *installer) managerDeployment(ctx context.Context) (*appsv1.Deployment, error) {
+// managerDeployment returns the operator manager Deployment in the given
+// namespace, or nil when none exists. More than one match is an error: the
+// install is ambiguous and must not be reconciled blindly.
+func (i *installer) managerDeployment(ctx context.Context, namespace string) (*appsv1.Deployment, error) {
 	list := &appsv1.DeploymentList{}
 	err := i.client.List(ctx, list,
-		client.InNamespace(installNamespace),
+		client.InNamespace(namespace),
 		client.MatchingLabels{managerNameLabel: managerNameValue, controlPlaneLabel: controlPlaneValue},
 	)
 	if err != nil {
@@ -206,6 +233,6 @@ func (i *installer) managerDeployment(ctx context.Context) (*appsv1.Deployment, 
 	case 1:
 		return &list.Items[0], nil
 	default:
-		return nil, fmt.Errorf("ambiguous operator install: %d manager Deployments in %s", len(list.Items), installNamespace)
+		return nil, fmt.Errorf("ambiguous operator install: %d manager Deployments in %s", len(list.Items), namespace)
 	}
 }

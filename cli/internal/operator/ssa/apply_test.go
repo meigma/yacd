@@ -2,8 +2,8 @@ package ssa
 
 import (
 	"testing"
-	"testing/fstest"
 
+	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/mod/semver"
@@ -19,31 +19,6 @@ func unstructuredObject(apiVersion, kind, name string) *unstructured.Unstructure
 	obj.SetKind(kind)
 	obj.SetName(name)
 	return obj
-}
-
-func TestParseManifestsSkipsEmptyDocuments(t *testing.T) {
-	fsys := fstest.MapFS{
-		manifestPath: &fstest.MapFile{Data: []byte(`
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: a
----
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: b
----
-`)},
-	}
-
-	objs, err := parseManifests(fsys, manifestPath)
-	require.NoError(t, err)
-	require.Len(t, objs, 2, "empty documents must be skipped")
-	assert.Equal(t, "ServiceAccount", objs[0].GetKind())
-	assert.Equal(t, "Deployment", objs[1].GetKind())
 }
 
 func TestPartitionCRDsSeparatesAndOrders(t *testing.T) {
@@ -67,15 +42,15 @@ func TestPartitionCRDsSeparatesAndOrders(t *testing.T) {
 		"identity and permissions apply before the workload")
 }
 
-func TestVersionFromEmbeddedManifestsMatchesChartAppVersion(t *testing.T) {
-	objs, err := parseManifests(Manifests, manifestPath)
+func TestVersionFromEmbeddedChartMatchesChartAppVersion(t *testing.T) {
+	objs, err := render(Chart, installNamespace, operator.Default().ToHelmValues())
 	require.NoError(t, err)
 
 	version, err := versionFromObjects(objs)
 	require.NoError(t, err)
 
 	// Tracks charts/yacd/Chart.yaml appVersion; bump alongside an operator
-	// release re-render. This is the tripwire that the embedded manifest is in
+	// release re-sync. This is the tripwire that the embedded chart copy is in
 	// sync with the pinned release.
 	assert.Equal(t, "v0.1.1", version)
 	assert.True(t, semver.IsValid(version), "embedded version must be valid semver")
