@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,13 +23,15 @@ func (s *Store) Lock(ctx context.Context) (func() error, error) {
 		return nil, fmt.Errorf("create %s: %w", s.dir, err)
 	}
 
+	// Return the bare cause; the caller (lifecycle.Manager) owns the
+	// "acquire cluster lock:" context so the message is not wrapped twice.
 	lock := flock.New(filepath.Join(s.dir, lockName))
 	acquired, err := lock.TryLockContext(ctx, lockRetryInterval)
 	if err != nil {
-		return nil, fmt.Errorf("acquire cluster lock: %w", err)
+		return nil, err
 	}
 	if !acquired {
-		return nil, fmt.Errorf("acquire cluster lock: not acquired")
+		return nil, errors.New("not acquired")
 	}
 
 	return lock.Unlock, nil

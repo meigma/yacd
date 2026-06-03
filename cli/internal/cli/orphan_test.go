@@ -51,7 +51,7 @@ func TestManagedTargetOrphanReconcile(t *testing.T) {
 		store.EXPECT().Load().Return(managedRecord, true, nil)
 		client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").
 			Return(nil, errors.New("dial tcp: connection refused"))
-		provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).Return(cluster.Status{Exists: false}, nil)
+		provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).Return(cluster.Status{Exists: false}, nil)
 		store.EXPECT().Clear().Return(nil)
 
 		require.Error(t, run("info", "devnet"))
@@ -69,7 +69,7 @@ func TestManagedTargetOrphanReconcile(t *testing.T) {
 		store.EXPECT().Load().Return(managedRecord, true, nil)
 		client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").
 			Return(nil, errors.New("transient API error"))
-		provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName).
+		provisioner.EXPECT().Status(mock.Anything, cluster.ManagedName, mock.Anything).
 			Return(cluster.Status{Exists: true, Running: true}, nil)
 
 		require.Error(t, run("info", "devnet"))
@@ -88,7 +88,7 @@ func TestManagedTargetOrphanReconcile(t *testing.T) {
 			Return(nil, errors.New("connection refused"))
 
 		require.Error(t, run("info", "devnet"))
-		provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything)
+		provisioner.AssertNotCalled(t, "Status", mock.Anything, mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "Clear")
 	})
 }

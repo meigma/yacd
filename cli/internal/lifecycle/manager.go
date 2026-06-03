@@ -217,11 +217,18 @@ func (m *Manager) Down(ctx context.Context, o DownOptions) error {
 	}
 	m.Report.Done("Cluster %q removed", cluster.ManagedName)
 
-	if found && record.PriorContext != "" && record.PriorContext != cluster.ManagedContext {
+	// Return kubectl to its pre-devnet state. When a real prior context was
+	// captured, restore it; when there was none (the user had no current-context
+	// before devnet), clear it — otherwise k3d's `cluster delete` repoints
+	// current-context to an arbitrary remaining entry (possibly a production
+	// cluster), which the user never chose.
+	if found && record.PriorContext != cluster.ManagedContext {
 		if err := m.RestoreContext(record.KubeconfigPath, record.PriorContext); err != nil {
 			// Best-effort: the cluster is gone, so a dangling current-context is
 			// recoverable and must not fail the teardown.
 			m.Report.Substep("Could not restore kube context %q: %v", record.PriorContext, err)
+		} else if record.PriorContext == "" {
+			m.Report.Done("Cleared kube context (no prior context to restore)")
 		} else {
 			m.Report.Done("Restored kube context %q", record.PriorContext)
 		}
@@ -253,7 +260,7 @@ func (m *Manager) Status(ctx context.Context) (Report, error) {
 		return Report{Cluster: cluster.Status{Exists: false}}, nil
 	}
 
-	clusterStatus, err := m.Provisioner.Status(ctx, cluster.ManagedName)
+	clusterStatus, err := m.Provisioner.Status(ctx, cluster.ManagedName, record.KubeconfigPath)
 	if err != nil {
 		return Report{}, fmt.Errorf("cluster status: %w", err)
 	}

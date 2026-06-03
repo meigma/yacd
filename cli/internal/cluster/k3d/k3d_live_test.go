@@ -44,13 +44,13 @@ func TestEnsureClusterLive(t *testing.T) {
 	_, err = prov.EnsureCluster(ctx, spec)
 	require.NoError(t, err)
 
-	status, err := prov.Status(ctx, name)
+	status, err := prov.Status(ctx, name, "")
 	require.NoError(t, err)
 	assert.True(t, status.Exists && status.Running && status.Healthy, "cluster should be healthy")
 
 	// Out-of-band delete, then EnsureCluster heals (recreates).
 	require.NoError(t, prov.DeleteCluster(ctx, name))
-	gone, err := prov.Status(ctx, name)
+	gone, err := prov.Status(ctx, name, "")
 	require.NoError(t, err)
 	assert.False(t, gone.Exists, "cluster should be gone after delete")
 
@@ -59,7 +59,7 @@ func TestEnsureClusterLive(t *testing.T) {
 
 	_, err = prov.EnsureCluster(ctx, spec)
 	require.NoError(t, err)
-	healed, err := prov.Status(ctx, name)
+	healed, err := prov.Status(ctx, name, "")
 	require.NoError(t, err)
 	assert.True(t, healed.Exists && healed.Healthy, "cluster should heal")
 }

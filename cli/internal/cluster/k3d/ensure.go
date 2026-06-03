@@ -2,6 +2,7 @@ package k3d
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -28,7 +29,16 @@ func (p *Provisioner) EnsureCluster(ctx context.Context, spec cluster.Spec) (clu
 	case !status.Exists:
 		return p.create(ctx, bin, spec)
 	case status.Running && status.Healthy:
-		return p.infoFor(spec.Name), nil
+		// The cluster is healthy where the probe reached it: the recorded
+		// kubeconfig (spec.KubeconfigPath), or the ambient default when there is
+		// no record yet. Report that path so the operator/network clients and the
+		// saved state record reference the file the context actually lives in,
+		// rather than the current ambient KUBECONFIG (which may not list it).
+		kubeconfigPath := spec.KubeconfigPath
+		if kubeconfigPath == "" {
+			kubeconfigPath = defaultKubeconfigPath()
+		}
+		return p.infoFor(spec.Name, kubeconfigPath), nil
 	default:
 		// Present but not running, or running with an unreachable API server:
 		// delete and recreate.
@@ -54,23 +64,34 @@ func (p *Provisioner) create(ctx context.Context, bin string, spec cluster.Spec)
 	if _, err := p.run(ctx, bin, args...); err != nil {
 		// Best-effort rollback of any partially-created cluster, on a context
 		// that survives the (possibly cancelled or timed-out) parent so cleanup
-		// still runs. The original create error is what we return.
+		// still runs.
 		_, _ = p.run(context.WithoutCancel(ctx), bin, "cluster", "delete", spec.Name)
-		return cluster.Info{}, fmt.Errorf("create cluster %s: %w", spec.Name, err)
+		// Report a clear cause when the parent context bounded the run, rather
+		// than the raw "signal: killed" the killed subprocess surfaces.
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			return cluster.Info{}, fmt.Errorf("create cluster %s: timed out after %s", spec.Name, spec.Timeout)
+		case errors.Is(ctx.Err(), context.Canceled):
+			return cluster.Info{}, fmt.Errorf("create cluster %s: cancelled", spec.Name)
+		default:
+			return cluster.Info{}, fmt.Errorf("create cluster %s: %w", spec.Name, err)
+		}
 	}
 
-	return p.infoFor(spec.Name), nil
+	// On create/heal, k3d wrote the context into the default kubeconfig.
+	return p.infoFor(spec.Name, defaultKubeconfigPath()), nil
 }
 
-// infoFor reports the Info for a created/healthy cluster. k3d merges the context
-// into the default kubeconfig via --kubeconfig-update-default, which honours the
-// KUBECONFIG env var, so the reported path must resolve the same way (and not
-// assume ~/.kube/config) or downstream consumers would look in the wrong file.
-func (p *Provisioner) infoFor(name string) cluster.Info {
+// infoFor reports the Info for a created or healthy cluster, recording the
+// kubeconfig path the caller knows the context lives in. The create/heal path
+// passes defaultKubeconfigPath() (where --kubeconfig-update-default wrote it,
+// honouring KUBECONFIG); the healthy no-op path passes the recorded kubeconfig
+// so a later run is not pointed at the wrong file.
+func (p *Provisioner) infoFor(name, kubeconfigPath string) cluster.Info {
 	return cluster.Info{
 		Name:           name,
 		Context:        "k3d-" + name,
-		KubeconfigPath: defaultKubeconfigPath(),
+		KubeconfigPath: kubeconfigPath,
 		Running:        true,
 	}
 }

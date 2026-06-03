@@ -77,6 +77,7 @@ type Provisioner interface {
 	DeleteCluster(ctx context.Context, name string) error
 
 	// Status reports the observed state of the named cluster without mutating
-	// it.
-	Status(ctx context.Context, name string) (Status, error)
+	// it. kubeconfigPath is the kubeconfig the health probe reads to reach the
+	// cluster (the saved record's path); empty uses the standard loading rules.
+	Status(ctx context.Context, name string, kubeconfigPath string) (Status, error)
 }
