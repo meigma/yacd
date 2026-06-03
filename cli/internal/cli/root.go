@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/cluster"
 	"github.com/meigma/yacd/cli/internal/cluster/k3d"
 	"github.com/meigma/yacd/cli/internal/clusterstate"
@@ -62,7 +63,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	}
 	if options.OperatorInstallerFactory == nil {
 		options.OperatorInstallerFactory = func(kubeconfig, kubeContext string) (operator.Installer, error) {
-			return ssa.New(kubeconfig, kubeContext, ssa.Chart)
+			return ssa.New(kubeconfig, kubeContext, charts.OperatorChart)
 		}
 	}
 	if options.ClusterStateFactory == nil {

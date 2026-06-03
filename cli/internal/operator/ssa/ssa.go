@@ -46,8 +46,8 @@ type installer struct {
 
 // New constructs an installer against the cluster selected by kubeconfig and
 // context (empty values defer to the standard kubeconfig loading rules). The
-// chart filesystem holds the operator Helm chart; pass ssa.Chart for the
-// embedded default.
+// chart filesystem, rooted at the operator Helm chart, holds what is rendered
+// and applied; pass charts.OperatorChart for the embedded default.
 func New(kubeconfig, kubeContext string, chart fs.FS) (operator.Installer, error) {
 	restCfg, err := restConfig(kubeconfig, kubeContext)
 	if err != nil {

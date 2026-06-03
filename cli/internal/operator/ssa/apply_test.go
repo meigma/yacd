@@ -3,6 +3,7 @@ package ssa
 import (
 	"testing"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestPartitionCRDsSeparatesAndOrders(t *testing.T) {
 }
 
 func TestVersionFromEmbeddedChartMatchesChartAppVersion(t *testing.T) {
-	objs, err := render(Chart, installNamespace, operator.Default().ToHelmValues())
+	objs, err := render(charts.OperatorChart, installNamespace, operator.Default().ToHelmValues())
 	require.NoError(t, err)
 
 	version, err := versionFromObjects(objs)

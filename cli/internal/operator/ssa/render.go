@@ -17,9 +17,6 @@ import (
 )
 
 const (
-	// chartDir is the embed root holding the in-package chart copy.
-	chartDir = "chart"
-
 	// releaseName is the Helm release name the operator is rendered under. It
 	// drives the chart's resource name prefixes (yacd-*), so it is fixed rather
 	// than configurable.
@@ -71,12 +68,13 @@ func render(chartFS fs.FS, namespace string, values map[string]any) ([]*unstruct
 	return append(objs, crds...), nil
 }
 
-// bufferedFiles walks the embedded chart filesystem into the chart-relative
-// BufferedFiles loader.LoadFiles expects (names are relative to the chart root,
-// so the chartDir prefix is stripped).
+// bufferedFiles walks the embedded chart filesystem into the BufferedFiles
+// loader.LoadFiles expects. The filesystem is rooted at the chart (its entries
+// are Chart.yaml, templates/, crds/, ...), so the walk path is already the
+// chart-relative name loader wants.
 func bufferedFiles(chartFS fs.FS) ([]*loader.BufferedFile, error) {
 	var files []*loader.BufferedFile
-	err := fs.WalkDir(chartFS, chartDir, func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(chartFS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -87,9 +85,8 @@ func bufferedFiles(chartFS fs.FS) ([]*loader.BufferedFile, error) {
 		if err != nil {
 			return fmt.Errorf("read embedded chart file %s: %w", p, err)
 		}
-		rel := strings.TrimPrefix(p, chartDir+"/")
 		// loader expects forward-slash, chart-relative paths.
-		files = append(files, &loader.BufferedFile{Name: path.Clean(rel), Data: data})
+		files = append(files, &loader.BufferedFile{Name: path.Clean(p), Data: data})
 		return nil
 	})
 	if err != nil {

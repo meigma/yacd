@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,7 +40,7 @@ func newInstaller(t *testing.T) (*installer, crclient.Client) {
 	c, err := crclient.New(cfg, crclient.Options{Scheme: scheme})
 	require.NoError(t, err, "create client")
 
-	return &installer{client: c, mapper: c.RESTMapper(), chart: Chart}, c
+	return &installer{client: c, mapper: c.RESTMapper(), chart: charts.OperatorChart}, c
 }
 
 func TestEnsureOperatorInstallsFromEmbeddedChart(t *testing.T) {

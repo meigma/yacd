@@ -2,10 +2,9 @@
 // the operator Helm chart, rendered in-memory at install time. It is the adapter
 // behind the operator.Installer port.
 //
-// The chart is embedded as an in-package copy of charts/yacd (embed.go), kept in
-// sync by .dev/scripts/sync-operator-chart.sh and drift-guarded by root:check, so
-// install needs no network chart pull. render.go renders the chart through the
-// lean Helm subset (loader, chartutil, engine) — clientless, since the chart uses
+// The chart is embedded in place from charts/yacd by the charts package (no
+// copy), so install needs no network chart pull. render.go renders the chart
+// through the lean Helm subset (loader, chartutil, engine) — clientless, since the chart uses
 // no lookup — and adds the chart's CRDObjects, reproducing helm template
 // --include-crds --no-hooks. New constructs a controller-runtime client against
 // the target cluster; EnsureOperator resolves the install namespace, renders the

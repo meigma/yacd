@@ -4,6 +4,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func objectIdentity(obj *unstructured.Unstructured) string {
 
 func renderDefault(t *testing.T, namespace string) []*unstructured.Unstructured {
 	t.Helper()
-	objs, err := render(Chart, namespace, operator.Default().ToHelmValues())
+	objs, err := render(charts.OperatorChart, namespace, operator.Default().ToHelmValues())
 	require.NoError(t, err)
 	return objs
 }
