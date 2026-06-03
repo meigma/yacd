@@ -45,17 +45,7 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 		return nil, err
 	}
 
-	specs := forwardSpecs(network)
-	if len(specs) == 0 {
-		return nil, fmt.Errorf("cardanonetwork %s/%s publishes no chain-API endpoints to forward", namespace, name)
-	}
-
-	podName, err := kubeClient.PrimaryPodName(ctx, namespace, name)
-	if err != nil {
-		return nil, err
-	}
-
-	session, err := kubeClient.Forward(ctx, namespace, podName, specs)
+	session, endpoints, err := forwardEndpoints(ctx, kubeClient, network, namespace, name)
 	if err != nil {
 		return nil, err
 	}
@@ -71,13 +61,38 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 		_ = session.Close()
 		return nil, err
 	}
+
+	return &connectedSession{session: session, env: env, endpoints: endpoints}, nil
+}
+
+// forwardEndpoints forwards a ready network's published chain-API endpoints and
+// returns the live session plus the token-free loopback endpoints document. It
+// reads no Secret, so callers (notably topup) can run their trust gate before
+// fetching any token. The caller owns the returned session and must Close it;
+// forwardEndpoints closes it itself only when a later step here fails.
+func forwardEndpoints(ctx context.Context, kubeClient kube.Client, network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (kube.ForwardSession, endpointsDocument, error) {
+	specs := forwardSpecs(network)
+	if len(specs) == 0 {
+		return nil, endpointsDocument{}, fmt.Errorf("cardanonetwork %s/%s publishes no chain-API endpoints to forward", namespace, name)
+	}
+
+	podName, err := kubeClient.PrimaryPodName(ctx, namespace, name)
+	if err != nil {
+		return nil, endpointsDocument{}, err
+	}
+
+	session, err := kubeClient.Forward(ctx, namespace, podName, specs)
+	if err != nil {
+		return nil, endpointsDocument{}, err
+	}
+
 	endpoints, err := newEndpointsDocument(network, session.LocalPort)
 	if err != nil {
 		_ = session.Close()
-		return nil, err
+		return nil, endpointsDocument{}, err
 	}
 
-	return &connectedSession{session: session, env: env, endpoints: endpoints}, nil
+	return session, endpoints, nil
 }
 
 // forwardSpecs returns the port-forward specs for a network's published

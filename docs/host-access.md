@@ -17,7 +17,7 @@ This page is a reference for that contract. It assumes a network is already
 | `yacd run NAME -- <cmd>` | Establish scoped port-forwards to the chain APIs, inject the `YACD_*` environment, run `<cmd>` on the host, and tear the forwards down when it exits. No command drops into `$SHELL`. The command's exit code is propagated. This is the primary test/CI path. |
 | `yacd connect NAME` | Hold the forwards open in the foreground (one terminal) while you work in another, writing the loopback URLs to `.yacd/<network>/endpoints.json`. Re-establishes dropped forwards; runs until Ctrl-C. |
 | `yacd exec NAME -- <cmd>` | Run `<cmd>` **inside** the primary node Pod, for tools that reach the node over its local Unix socket. |
-| `yacd topup NAME --await …` | Fund an address through the faucet and wait for the funding transaction to be confirmed on-chain. |
+| `yacd topup NAME LOVELACE --address ADDR` | Fund an address through the faucet, self-forwarding the faucet so no `yacd run` wrapper is needed. Add `--await` to wait for on-chain confirmation. |
 
 ## `run` vs `exec`: which one?
 
@@ -114,20 +114,32 @@ the faucet token**. Its ports are only live while `connect` is running. A clean
 disconnect removes the file, and a dropped forward removes the stale file before
 re-establishing, reassigning local ports, and writing a fresh document.
 
-## Funding with `topup --await`
+## Funding with `topup`
 
-`yacd topup NAME --address ADDR --lovelace N --await` funds `ADDR` through the
-faucet and then polls Kupo until the funding transaction's output appears, so a
-test never races chain inclusion. `--await` requires a Kupo URL: pass
-`--kupo-url`, or run under `yacd run` (which sets `YACD_KUPO_URL`):
+`yacd topup NAME LOVELACE --address ADDR` funds `ADDR` through the faucet.
+`topup` reaches the faucet on its own: with no `--faucet-url`, it opens a
+short-lived port-forward to the faucet (and Kupo), POSTs, and tears it down — so
+it works directly from the host with no `yacd run` wrapper:
 
 ```sh
-yacd run my-net -- sh -c \
-  'yacd topup my-net --address "$ADDR" --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
+yacd topup my-net 1000000 --address "$ADDR"
 ```
 
-The loopback faucet URL is exempt from the `topup` trust gate, so no
-`--trust-faucet-url` flag is needed against a `run`/`connect` forward.
+Add `--await` to poll Kupo until the funding transaction's output appears, so a
+test never races chain inclusion. When `topup` self-forwards it reuses that same
+session's Kupo, so `--await` needs no extra flags:
+
+```sh
+yacd topup my-net 1000000 --address "$ADDR" --await
+```
+
+`topup` also honors an ambient `YACD_FAUCET_URL`/`YACD_KUPO_URL`, so it still
+works unchanged inside `yacd run` (no second forward is opened). The loopback
+faucet URL — whether self-forwarded or inherited from `run`/`connect` — is exempt
+from the `topup` trust gate, so no `--trust-faucet-url` flag is needed. An
+explicit `--faucet-url` suppresses self-forwarding; a custom non-loopback value
+then requires `--trust-faucet-url` (and `--allow-insecure-faucet-url` for
+`http://`), and `--await` with an override needs an explicit `--kupo-url`.
 
 ## See also
 
