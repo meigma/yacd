@@ -10,10 +10,10 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/meigma/yacd/services/faucet/internal/server"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 	"github.com/meigma/yacd/services/faucet/internal/topup"
-	topupapollo "github.com/meigma/yacd/services/faucet/internal/topup/apollo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -136,7 +136,7 @@ func NewRootCommand(options Options) *cobra.Command {
 				runtimeConfig.UTXOKeysDir,
 				runtimeConfig.DefaultSource,
 			)
-			transactionSubmitter := topupapollo.Client{
+			transactionSubmitter := tx.Apollo{
 				OgmiosURL:      runtimeConfig.OgmiosURL,
 				KupoURL:        runtimeConfig.KupoURL,
 				RequestTimeout: runtimeConfig.ChainRequestTimeout,

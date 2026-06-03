@@ -1,4 +1,4 @@
-package apollo
+package tx
 
 import (
 	"bytes"
@@ -17,8 +17,6 @@ import (
 	apolloUTxO "github.com/Salvionied/apollo/serialization/UTxO"
 	"github.com/Salvionied/apollo/serialization/Value"
 	"github.com/SundaeSwap-finance/ogmigo/v6"
-	"github.com/meigma/yacd/services/faucet/internal/sources"
-	"github.com/meigma/yacd/services/faucet/internal/topup"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,47 +32,24 @@ var (
 	testOtherTransactionIDBytes = bytes.Repeat([]byte{0x04}, 32)
 )
 
-func TestSourceKeyAddressDerivesTestnetAddress(t *testing.T) {
-	t.Parallel()
-
-	address, err := sourceKeyAddress(testFundingSource())
-
-	require.NoError(t, err)
-	assert.NoError(t, sources.ValidateTestnetAddress(address))
-	assert.Contains(t, address, "addr_test1")
-}
-
-func TestSourceKeyAddressRejectsMalformedKeys(t *testing.T) {
-	t.Parallel()
-
-	source := testFundingSource()
-	source.VerificationKeyHex = "abcd"
-
-	address, err := sourceKeyAddress(source)
-
-	require.Error(t, err)
-	assert.Empty(t, address)
-	assertTopUpCode(t, err, topup.CodeInvalidRequest)
-}
-
-func TestClientSubmitTopUpRequiresEndpoints(t *testing.T) {
+func TestApolloSubmitRequiresEndpoints(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name   string
-		client Client
+		client Apollo
 		want   string
 	}{
 		{
 			name: "missing Ogmios",
-			client: Client{
+			client: Apollo{
 				KupoURL: "http://127.0.0.1:1442",
 			},
 			want: "Ogmios URL is required",
 		},
 		{
 			name: "missing Kupo",
-			client: Client{
+			client: Apollo{
 				OgmiosURL: "ws://127.0.0.1:1337",
 			},
 			want: "Kupo URL is required",
@@ -84,62 +59,62 @@ func TestClientSubmitTopUpRequiresEndpoints(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := tt.client.SubmitTopUp(context.Background(), testChainRequest())
+			_, err := tt.client.Submit(context.Background(), testRequest())
 
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.want)
-			assertTopUpCode(t, err, topup.CodeChainUnavailable)
+			assertEngineCode(t, err, CodeChainUnavailable)
 		})
 	}
 }
 
-func TestClientSubmitTopUpValidatesRequestBeforeNetwork(t *testing.T) {
+func TestApolloSubmitValidatesRequestBeforeNetwork(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name    string
-		mutate  func(*topup.ChainRequest)
+		mutate  func(*Request)
 		wantErr string
 	}{
 		{
 			name: "missing source name",
-			mutate: func(request *topup.ChainRequest) {
-				request.Source.Name = ""
+			mutate: func(request *Request) {
+				request.SourceName = ""
 			},
 			wantErr: "source name is required",
 		},
 		{
 			name: "missing source address",
-			mutate: func(request *topup.ChainRequest) {
-				request.Source.Address = ""
+			mutate: func(request *Request) {
+				request.SourceAddress = ""
 			},
 			wantErr: "invalid source",
 		},
 		{
 			name: "missing destination",
-			mutate: func(request *topup.ChainRequest) {
+			mutate: func(request *Request) {
 				request.DestinationAddress = ""
 			},
 			wantErr: "destination address is required",
 		},
 		{
 			name: "zero lovelace",
-			mutate: func(request *topup.ChainRequest) {
+			mutate: func(request *Request) {
 				request.Lovelace = 0
 			},
 			wantErr: "lovelace must be positive",
 		},
 		{
 			name: "destination equals source",
-			mutate: func(request *topup.ChainRequest) {
-				request.DestinationAddress = request.Source.Address
+			mutate: func(request *Request) {
+				request.DestinationAddress = request.SourceAddress
 			},
 			wantErr: "destination address must not equal source address",
 		},
 		{
 			name: "bad verification key",
-			mutate: func(request *topup.ChainRequest) {
-				request.Source.VerificationKeyHex = "abcd"
+			mutate: func(request *Request) {
+				request.VerificationKeyHex = "abcd"
 			},
 			wantErr: "invalid source",
 		},
@@ -148,14 +123,14 @@ func TestClientSubmitTopUpValidatesRequestBeforeNetwork(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			request := testChainRequest()
+			request := testRequest()
 			tt.mutate(&request)
 
-			_, err := Client{}.SubmitTopUp(context.Background(), request)
+			_, err := Apollo{}.Submit(context.Background(), request)
 
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
-			assertTopUpCode(t, err, topup.CodeInvalidRequest)
+			assertEngineCode(t, err, CodeInvalidRequest)
 		})
 	}
 }
@@ -263,7 +238,7 @@ func TestValidateTransaction(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.wantErr)
-			assertTopUpCode(t, err, topup.CodeChainUnavailable)
+			assertEngineCode(t, err, CodeChainUnavailable)
 		})
 	}
 }
@@ -274,14 +249,14 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 	t.Run("success with empty response id", func(t *testing.T) {
 		t.Parallel()
 
-		tx := testTransaction(t, testDestinationAddress)
-		expectedID, err := tx.TransactionBody.Id()
+		transaction := testTransaction(t, testDestinationAddress)
+		expectedID, err := transaction.TransactionBody.Id()
 		require.NoError(t, err)
 		submitter := &fakeOgmiosSubmitter{
 			response: &ogmigo.SubmitTxResponse{},
 		}
 
-		txID, err := Client{submitter: submitter}.submitSignedTransaction(context.Background(), tx)
+		txID, err := Apollo{submitter: submitter}.submitSignedTransaction(context.Background(), transaction)
 
 		require.NoError(t, err)
 		assert.Equal(t, hex.EncodeToString(expectedID.Payload), txID)
@@ -291,14 +266,14 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 	t.Run("success with matching response id", func(t *testing.T) {
 		t.Parallel()
 
-		tx := testTransaction(t, testDestinationAddress)
-		expectedID, err := tx.TransactionBody.Id()
+		transaction := testTransaction(t, testDestinationAddress)
+		expectedID, err := transaction.TransactionBody.Id()
 		require.NoError(t, err)
 		submitter := &fakeOgmiosSubmitter{
 			response: &ogmigo.SubmitTxResponse{ID: strings.ToUpper(hex.EncodeToString(expectedID.Payload))},
 		}
 
-		txID, err := Client{submitter: submitter}.submitSignedTransaction(context.Background(), tx)
+		txID, err := Apollo{submitter: submitter}.submitSignedTransaction(context.Background(), transaction)
 
 		require.NoError(t, err)
 		assert.Equal(t, hex.EncodeToString(expectedID.Payload), txID)
@@ -308,7 +283,7 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 	t.Run("mismatched response id", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := Client{
+		_, err := Apollo{
 			submitter: &fakeOgmiosSubmitter{
 				response: &ogmigo.SubmitTxResponse{ID: strings.Repeat("0", 64)},
 			},
@@ -316,7 +291,7 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "returned transaction id")
-		assertTopUpCode(t, err, topup.CodeChainUnavailable)
+		assertEngineCode(t, err, CodeChainUnavailable)
 	})
 
 	t.Run("protocol rejection", func(t *testing.T) {
@@ -328,14 +303,14 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 			},
 		}
 
-		_, err := Client{submitter: submitter}.submitSignedTransaction(
+		_, err := Apollo{submitter: submitter}.submitSignedTransaction(
 			context.Background(),
 			testTransaction(t, testDestinationAddress),
 		)
 
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "rejected by Ogmios: code 3117")
-		assertTopUpCode(t, err, topup.CodeChainUnavailable)
+		assertEngineCode(t, err, CodeChainUnavailable)
 	})
 
 	t.Run("transport failure", func(t *testing.T) {
@@ -343,31 +318,25 @@ func TestSubmitSignedTransactionHandlesOgmiosResponse(t *testing.T) {
 
 		submitter := &fakeOgmiosSubmitter{err: errors.New("websocket failed")}
 
-		_, err := Client{submitter: submitter}.submitSignedTransaction(
+		_, err := Apollo{submitter: submitter}.submitSignedTransaction(
 			context.Background(),
 			testTransaction(t, testDestinationAddress),
 		)
 
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "submit top-up transaction to Ogmios")
-		assertTopUpCode(t, err, topup.CodeChainUnavailable)
+		assert.ErrorContains(t, err, "submit funding transaction to Ogmios")
+		assertEngineCode(t, err, CodeChainUnavailable)
 	})
 }
 
-func testChainRequest() topup.ChainRequest {
-	return topup.ChainRequest{
-		Source:             testFundingSource(),
-		DestinationAddress: testDestinationAddress,
-		Lovelace:           1_000_000,
-	}
-}
-
-func testFundingSource() sources.FundingSource {
-	return sources.FundingSource{
-		Name:               "utxo1",
-		Address:            testSourceAddress,
+func testRequest() Request {
+	return Request{
+		SourceName:         "utxo1",
+		SourceAddress:      testSourceAddress,
 		VerificationKeyHex: testSourceVerificationHex,
 		SigningKeyHex:      testSourceSigningHex,
+		DestinationAddress: testDestinationAddress,
+		Lovelace:           1_000_000,
 	}
 }
 
@@ -458,12 +427,12 @@ func (f *fakeOgmiosSubmitter) SubmitTx(_ context.Context, data string) (*ogmigo.
 	return f.response, nil
 }
 
-func assertTopUpCode(t *testing.T, err error, code string) {
+func assertEngineCode(t *testing.T, err error, code string) {
 	t.Helper()
 
-	var topupErr *topup.Error
-	require.ErrorAs(t, err, &topupErr)
-	assert.Equal(t, code, topupErr.Code)
+	var txErr *Error
+	require.ErrorAs(t, err, &txErr)
+	assert.Equal(t, code, txErr.Code)
 }
 
 func deriveTestVerificationKeyHex(signingKeyHex string) string {
@@ -478,7 +447,7 @@ func deriveTestVerificationKeyHex(signingKeyHex string) string {
 }
 
 func mustDeriveTestnetPaymentAddress(verificationKeyHex string) string {
-	address, err := sources.DeriveTestnetPaymentAddress(verificationKeyHex)
+	address, err := DeriveTestnetPaymentAddress(verificationKeyHex)
 	if err != nil {
 		panic(err)
 	}
