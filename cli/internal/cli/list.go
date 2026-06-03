@@ -30,10 +30,7 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 			allNamespaces := commandContext.viper.GetBool("all-namespaces")
 			jsonOutput := commandContext.viper.GetBool("json")
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
 				return err
 			}

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/spf13/cobra"
 )
 
@@ -47,10 +46,7 @@ to the command instead of being parsed by yacd.`,
 			}
 			command := runCommandLine(args[1:])
 
-			kubeClient, err := commandContext.kubeClientFactory(kube.Config{
-				Kubeconfig: runtimeConfig.Kubeconfig,
-				Context:    runtimeConfig.KubeContext,
-			})
+			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
 				return err
 			}
