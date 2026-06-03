@@ -66,3 +66,54 @@ Deliverable: `.journal/052/DOCS_PROPOSAL.md` (the proposal). Plan file:
 Next: await user review of the proposal. If approved, the build is a separate
 implementation session (worktree off master) following the phased plan in the
 proposal; no dev stack needed for docs work.
+
+## 2026-06-02 — Built the docs site (PR #91)
+User approved the plan, chose the COMPLETE option for all 3 open decisions
+(funding its own page, troubleshooting included, concepts split arch+security),
+and asked me to run a workflow to implement it: wave 1 = rough drafts, work split
+into discrete per-component agents grounding in code, then two review phases
+(1 = accuracy spot-check, 2 = run the code/examples and report).
+
+Setup: created implementation worktree `docs/mkdocs-site` off master at
+`.wt/docs-mkdocs-site` (NOT the journal worktree). Prebuilt the CLI to
+`/tmp/yacd-docs-bin` and captured all `--help` to `/tmp/yacd-help.txt` as agent
+grounding. Confirmed toolchain: go 1.26, uv (mkdocs-material 9.7.6), helm v4,
+k3d v5.8.3, docker up. Found the operator installs from a build-time-rendered
+EMBEDDED manifest (`cli/internal/operator/ssa/manifests/operator.yaml`) pinning
+the manager to a published digest `ghcr.io/meigma/yacd@sha256:5d53ca82…`, so
+`yacd devnet` works without a published 1.0.0 release.
+
+Workflow `yacd-docs-build` (38 agents, ~1.9M subagent tokens, ~11m): Scaffold
+(mkdocs.yml + 17-page tree + Moon tasks root:docs/root:docs-serve + Pages CI +
+green build; git-moved docs/host-access.md → developer/connecting-tools.md) →
+Draft+Accuracy pipeline (one draft agent per page, then a per-page accuracy
+reviewer that audits vs code and fixes in place) → Execute review (build+links,
+CLI conformance, manifest validation; report-only). Accuracy pass fixed 11 real
+issues (invented `kubectl` prereq, duplicated inline manifests, broken anchor,
+mis-attributed "admission webhook" → CRD CEL validation, `connect` wrongly said
+to set YACD_*, strict-decoder error shape, etc.). Execute pass: `mkdocs build
+--strict` clean, helm lint/template pass, every CLI flag/default matches the
+binary, all 8 recipes byte-match examples/ + pass CRD-schema + dry-run.
+
+Live smoke (main loop, against a real `yacd devnet` on k3d, context k3d-yacd):
+`info`/`exec query tip`/`run` YACD_* injection all matched docs. Caught TWO
+host-workflow bugs static review could not:
+  1. bare `yacd topup` from the host fails — it targets the cluster-internal
+     faucet DNS (`devnet-faucet.devnet.svc.cluster.local`), unreachable from
+     host. Must wrap in `yacd run -- sh -c '... --faucet-url "$YACD_FAUCET_URL"'`
+     (verified working; tx fccae773…). Fixed getting-started.md, funding.md, and
+     added a reachability note to reference/cli.md.
+  2. `yacd list` (no -n) looks in the kubeconfig default namespace and misses a
+     network in its own namespace; tutorial needs `yacd list -A`. Fixed
+     getting-started.md.
+Tore down the devnet cleanly (no orphaned k3d clusters).
+
+Shipped: PR **#91** `docs: add MkDocs documentation site with Diátaxis
+structure` (branch `docs/mkdocs-site`, 17 pages + mkdocs.yml + moon tasks +
+docs.yml CI). The docs CI `build` job passed; `deploy` correctly skips on PRs.
+`moon run root:docs` works. Worktree `.wt/docs-mkdocs-site` left in place pending
+PR review/merge.
+
+Open/next: editorial polish pass on prose (drafts are accurate, code-grounded);
+GitHub Pages must be enabled (Settings → Pages → Source: GitHub Actions) for the
+deploy job to publish; after merge, `wt remove` the docs worktree.
