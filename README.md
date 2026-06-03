@@ -80,9 +80,9 @@ go run ./cli/cmd/yacd run phase4-smoke -- go test ./e2e/...
 # Or hold the forwards open in one terminal and work in another:
 go run ./cli/cmd/yacd connect phase4-smoke
 
-# Fund a checked-in address and wait for on-chain confirmation:
-go run ./cli/cmd/yacd run phase4-smoke -- sh -c \
-  'yacd topup phase4-smoke --address addr_test... --lovelace 1000000 --faucet-url "$YACD_FAUCET_URL" --await'
+# Fund an address and wait for on-chain confirmation. topup forwards the faucet
+# (and Kupo, for --await) itself, so it needs no `yacd run` wrapper:
+go run ./cli/cmd/yacd topup phase4-smoke 1000000 --address addr_test... --await
 
 # cardano-cli reaches the node over its local socket, so use exec (in-pod):
 go run ./cli/cmd/yacd exec phase4-smoke -- cardano-cli query tip --testnet-magic 42
