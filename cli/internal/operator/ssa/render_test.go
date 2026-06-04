@@ -92,6 +92,67 @@ func TestRenderPresenceOfCoreObjects(t *testing.T) {
 	findObject(t, objs, "ClusterRole", "yacd-metrics-reader")
 }
 
+// renderWithExtra renders the chart at Default() with the given Extra override
+// layer folded in, exercising the same ToHelmValues -> render path the install
+// command uses for -f/--set values.
+func renderWithExtra(t *testing.T, extra map[string]any) ([]*unstructured.Unstructured, error) {
+	t.Helper()
+	vals := operator.Default()
+	vals.Extra = extra
+	return render(charts.OperatorChart, installNamespace, vals.ToHelmValues())
+}
+
+// TestRenderOverrideReachesDeployment proves a user override (replicaCount=2 via
+// Extra) flows through ToHelmValues and the renderer into the manager
+// Deployment's spec.replicas, confirming -f/--set values actually take effect.
+func TestRenderOverrideReachesDeployment(t *testing.T) {
+	objs, err := renderWithExtra(t, map[string]any{"replicaCount": 2})
+	require.NoError(t, err)
+
+	deployment := findObject(t, objs, "Deployment", "yacd-controller-manager")
+	// The rendered YAML round-trips numbers through the unstructured decoder, so
+	// spec.replicas arrives as a float64; compare its numeric value.
+	replicas, found, err := unstructured.NestedFieldNoCopy(deployment.Object, "spec", "replicas")
+	require.NoError(t, err)
+	require.True(t, found, "deployment must declare replicas")
+	assert.EqualValues(t, 2, replicas, "override replicaCount must reach the rendered Deployment")
+}
+
+// TestRenderImageTagOverrideKeepsDigestPin proves the headline Model-A invariant
+// end to end through the renderer: with a user --set image.tag override present
+// (folded through Extra exactly as the install path does), the manager container
+// image is STILL the embedded digest, because the chart renders repository@digest
+// and Default()'s digest survives the deep-merge. This guards against a future
+// ToHelmValues merge change silently letting a tag override repoint the image.
+func TestRenderImageTagOverrideKeepsDigestPin(t *testing.T) {
+	const wantManagerImage = "ghcr.io/meigma/yacd@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
+
+	objs, err := renderWithExtra(t, map[string]any{"image": map[string]any{"tag": "v9.9.9"}})
+	require.NoError(t, err)
+
+	deployment := findObject(t, objs, "Deployment", "yacd-controller-manager")
+	containers, found, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+	require.NoError(t, err)
+	require.True(t, found, "deployment must declare containers")
+	require.Len(t, containers, 1)
+
+	manager, ok := containers[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, wantManagerImage, manager["image"],
+		"a --set image.tag override must be shadowed by the surviving digest pin")
+}
+
+// TestRenderSchemaInvalidOverrideFails proves a schema-violating override fails
+// fast at render time with a schema-validation error rather than producing a
+// malformed object set. The chart schema types replicaCount as an integer, so a
+// string value is rejected before any template renders.
+func TestRenderSchemaInvalidOverrideFails(t *testing.T) {
+	_, err := renderWithExtra(t, map[string]any{"replicaCount": "not-an-int"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "schema validation",
+		"a schema-violating override must fail with a schema-validation error")
+}
+
 // findObject returns the single object of the given kind/name, failing the test
 // if absent.
 func findObject(t *testing.T, objs []*unstructured.Unstructured, kind, name string) *unstructured.Unstructured {

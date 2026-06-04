@@ -33,7 +33,21 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 			"installs when absent, upgrades an older same-major install, re-applies an\n" +
 			"equal version to heal drift, and refuses a newer or major-mismatched\n" +
 			"in-cluster version with actionable guidance. Use --dry-run to preview the\n" +
-			"action without changing the cluster.",
+			"action without changing the cluster.\n\n" +
+			"The default operator image is digest-pinned to the version this CLI\n" +
+			"embeds; the supported way to change the operator version is to upgrade the\n" +
+			"CLI. The -f/--set/--set-string flags customize OPERATIONAL chart values\n" +
+			"(replicas, resources, scheduling, logging, metrics, and so on). -f reads\n" +
+			"YAML values files (repeatable, later files win); --set and --set-string\n" +
+			"take inline key=value overrides in Helm syntax (--set-string forces string\n" +
+			"values). Precedence, later wins: -f files (in order) < --set < --set-string\n" +
+			"(this is a fixed precedence and intentionally does not interleave --set and\n" +
+			"--set-string by argument order the way Helm does). These override values are\n" +
+			"validated against the chart's schema, so a bad value fails fast (under\n" +
+			"--dry-run too). Because user values deep-merge over the defaults, a --set\n" +
+			"image.tag is ineffective (the chart renders repository@digest and the pinned\n" +
+			"digest wins), but a --set image.digest or image.repository WILL repoint the\n" +
+			"operator image and is not a supported configuration.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
@@ -45,14 +59,44 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 			timeout := commandContext.viper.GetDuration("timeout")
 			dryRun := commandContext.viper.GetBool("dry-run")
 
+			// Read the value-override flags straight off the command rather than
+			// through viper: viper's StringArray binding mangles the Helm --set comma
+			// syntax (each "a=1,b=2" line must reach strvals intact).
+			valueFiles, err := cmd.Flags().GetStringArray("values")
+			if err != nil {
+				return err
+			}
+			setValues, err := cmd.Flags().GetStringArray("set")
+			if err != nil {
+				return err
+			}
+			setStringValues, err := cmd.Flags().GetStringArray("set-string")
+			if err != nil {
+				return err
+			}
+
+			userOverrides, err := buildUserOverrides(valueFiles, setValues, setStringValues)
+			if err != nil {
+				return err
+			}
+
 			installer, err := commandContext.operatorInstaller(runtimeConfig.Kubeconfig, runtimeConfig.KubeContext)
 			if err != nil {
 				return err
 			}
 
+			// Model A: the pinned typed Image/FaucetImage stay, and the user
+			// overrides ride in Extra, which ToHelmValues deep-merges on top. The
+			// embedded digest shadows a --set image.tag (the chart renders
+			// repository@digest), so the default install stays digest-pinned for
+			// operational knobs; image.digest/image.repository overrides do still win
+			// through the merge and are an unsupported configuration, not blocked here.
+			vals := operator.Default()
+			vals.Extra = userOverrides
+
 			spec := operator.InstallSpec{
 				Namespace: runtimeConfig.Namespace,
-				Values:    operator.Default(),
+				Values:    vals,
 			}
 			resolvedNamespace := runtimeConfig.Namespace
 			if resolvedNamespace == "" {
@@ -79,6 +123,9 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Bool("wait", true, "Wait for the operator to become ready")
 	cmd.Flags().Duration("timeout", 5*time.Minute, "Maximum time to wait for the operator to become ready")
 	cmd.Flags().Bool("dry-run", false, "Report the planned action without changing the cluster")
+	cmd.Flags().StringArrayP("values", "f", nil, "Path to a YAML file with operational chart value overrides (repeatable; later files win)")
+	cmd.Flags().StringArray("set", nil, "Set an operational chart value (Helm --set syntax, repeatable)")
+	cmd.Flags().StringArray("set-string", nil, "Set an operational chart value forced to a string (Helm --set-string syntax, repeatable)")
 
 	return cmd
 }

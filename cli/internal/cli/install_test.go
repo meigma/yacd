@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
@@ -346,4 +348,180 @@ func TestInstallRefuseReturnsActionableError(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, operator.ErrNewerOperator)
 	assert.Contains(t, err.Error(), "upgrade the CLI")
+}
+
+// captureSpec wires EnsureOperator to record the spec it receives (and return a
+// ready state) so value-flag tests can assert the Values the command assembled.
+// The returned pointer is populated when the command runs.
+func captureSpec(installer *mocks.Installer) *operator.InstallSpec {
+	captured := &operator.InstallSpec{}
+	installer.EXPECT().
+		EnsureOperator(mock.Anything, mock.Anything).
+		Run(func(_ context.Context, spec operator.InstallSpec) {
+			*captured = spec
+		}).
+		Return(readyState(), nil)
+	return captured
+}
+
+// writeValuesFile writes content to a temp file in t.TempDir() and returns its
+// path, for exercising the -f/--values flag.
+func writeValuesFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "values.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	return path
+}
+
+func TestInstallSetFlagBuildsExtra(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// --set parses inline key=value with typed scalar inference: strvals reads
+	// "2" as an int64, not a string. The override lands in Values.Extra (model A),
+	// leaving the pinned typed fields untouched.
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install", "--set", "replicaCount=2"))
+
+	assert.Equal(t, map[string]any{"replicaCount": int64(2)}, spec.Values.Extra)
+}
+
+func TestInstallValuesFileBuildsExtra(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// -f reads a YAML values file; its parsed tree becomes the override layer.
+	// sigs.k8s.io/yaml routes through JSON, so nested maps survive as
+	// map[string]any (numbers would arrive as float64, so this file sticks to
+	// string-map and nested values to keep the assertion type-exact).
+	file := writeValuesFile(t, "nodeSelector:\n  disktype: ssd\nresources:\n  limits:\n    cpu: \"500m\"\n")
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install", "-f", file))
+
+	assert.Equal(t, map[string]any{
+		"nodeSelector": map[string]any{"disktype": "ssd"},
+		"resources":    map[string]any{"limits": map[string]any{"cpu": "500m"}},
+	}, spec.Values.Extra)
+}
+
+func TestInstallValuePrecedence(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// Precedence, later wins: -f a.yaml < -f b.yaml < --set. File a sets
+	// nodeSelector.disktype=hdd and a commonLabels entry; file b overrides
+	// disktype=ssd while leaving the label alone (deep-merge, not replace); --set
+	// then lands a fresh key on top of the merged file tree.
+	fileA := writeValuesFile(t, "nodeSelector:\n  disktype: hdd\ncommonLabels:\n  team: platform\n")
+	fileB := writeValuesFile(t, "nodeSelector:\n  disktype: ssd\n")
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install", "-f", fileA, "-f", fileB, "--set", "commonAnnotations.owner=qa"))
+
+	assert.Equal(t, map[string]any{
+		"nodeSelector":      map[string]any{"disktype": "ssd"},
+		"commonLabels":      map[string]any{"team": "platform"},
+		"commonAnnotations": map[string]any{"owner": "qa"},
+	}, spec.Values.Extra)
+}
+
+func TestInstallPrecedenceSharedKeyLaterSourceWins(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// The headline "later wins" claim, asserted on keys SHARED across sources (not
+	// just additions). A -f file, a --set, and a --set-string all set replicaCount;
+	// the chain -f < --set < --set-string means --set-string must win the conflict.
+	// nameOverride is set by both -f and --set-string (no --set) to lock the
+	// -f < --set-string boundary independently.
+	file := writeValuesFile(t, "replicaCount: 5\nnameOverride: fromfile\n")
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install",
+		"-f", file,
+		"--set", "replicaCount=2",
+		"--set-string", "replicaCount=9",
+		"--set-string", "nameOverride=fromset"))
+
+	// --set-string replicaCount=9 wins over both -f (5) and --set (2), and is
+	// forced to a string; nameOverride is the --set-string value, beating the file.
+	assert.Equal(t, map[string]any{
+		"replicaCount": "9",
+		"nameOverride": "fromset",
+	}, spec.Values.Extra)
+}
+
+func TestInstallSetStringWinsOverSetOnSharedKey(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// The --set < --set-string boundary in isolation: the same key set by both
+	// must resolve to the --set-string (string) value. This precedence is fixed and
+	// intentionally independent of CLI argument order, so --set-string appearing
+	// BEFORE --set on the command line still wins.
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install",
+		"--set-string", "replicaCount=stringwins",
+		"--set", "replicaCount=2"))
+
+	assert.Equal(t, map[string]any{"replicaCount": "stringwins"}, spec.Values.Extra)
+}
+
+func TestInstallSetStringForcesString(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// --set-string forces the value to a string, in contrast to --set's int64
+	// inference for the same "2" literal.
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install", "--set-string", "replicaCount=2"))
+
+	assert.Equal(t, map[string]any{"replicaCount": "2"}, spec.Values.Extra)
+}
+
+func TestInstallMalformedSetReturnsError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// A malformed --set (a bad list index) fails fast during override assembly,
+	// before any apply: EnsureOperator must never be reached.
+	err := run("install", "--set", "a[b]=1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse --set")
+	installer.AssertNotCalled(t, "EnsureOperator", mock.Anything, mock.Anything)
+}
+
+func TestInstallMissingValuesFileReturnsError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// A missing -f file is reported with a clear read error and no apply happens.
+	err := run("install", "-f", filepath.Join(t.TempDir(), "no-such-file.yaml"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read values file")
+	installer.AssertNotCalled(t, "EnsureOperator", mock.Anything, mock.Anything)
+}
+
+func TestInstallOverridesPreserveImagePins(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	installer, _, run := newInstallRoot(t, &stdout, &stderr)
+
+	// Model A invariant: user overrides ride in Extra and never clobber the
+	// typed Default() pins. With a --set override present, the spec still carries
+	// the digest-pinned manager and faucet images byte-for-byte from Default().
+	spec := captureSpec(installer)
+
+	require.NoError(t, run("install", "--set", "replicaCount=2"))
+
+	wantDefault := operator.Default()
+	assert.Equal(t, wantDefault.Image, spec.Values.Image)
+	assert.Equal(t, wantDefault.FaucetImage, spec.Values.FaucetImage)
+	assert.NotEmpty(t, spec.Values.Image.Digest)
+	assert.NotEmpty(t, spec.Values.FaucetImage.Digest)
+	// The override is isolated to Extra.
+	assert.Equal(t, map[string]any{"replicaCount": int64(2)}, spec.Values.Extra)
 }

@@ -44,10 +44,28 @@ func render(chartFS fs.FS, namespace string, values map[string]any) ([]*unstruct
 		return nil, fmt.Errorf("load embedded chart: %w", err)
 	}
 
-	renderVals, err := chartutil.ToRenderValues(ch, values,
-		chartutil.ReleaseOptions{Name: releaseName, Namespace: namespace}, nil)
+	// Validate the user-supplied values against the chart's values.schema.json
+	// before rendering so a bad override fails fast with a clear message rather
+	// than producing a malformed object set (or rendering past an invalid knob).
+	// Coalescing folds the supplied values onto the chart defaults exactly as the
+	// render below will, so validation sees the same effective tree. This runs for
+	// both EnsureOperator and Plan, so --dry-run validates too.
+	//
+	// ToRenderValues also coalesces and (by default) validates against the schema,
+	// so we run it with schema validation skipped to avoid validating twice; this
+	// explicit block owns the schema check and its clearer error label.
+	coalesced, err := chartutil.CoalesceValues(ch, values)
 	if err != nil {
 		return nil, fmt.Errorf("coalesce chart values: %w", err)
+	}
+	if err := chartutil.ValidateAgainstSchema(ch, coalesced); err != nil {
+		return nil, fmt.Errorf("values failed schema validation: %w", err)
+	}
+
+	renderVals, err := chartutil.ToRenderValuesWithSchemaValidation(ch, values,
+		chartutil.ReleaseOptions{Name: releaseName, Namespace: namespace}, nil, true)
+	if err != nil {
+		return nil, fmt.Errorf("build chart render values: %w", err)
 	}
 
 	rendered, err := engine.Render(ch, renderVals)
