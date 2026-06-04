@@ -1,35 +1,48 @@
 # Installation
 
-Install the YACD operator on a remote Kubernetes cluster with [Helm](https://helm.sh) from the OCI chart published to GitHub Container Registry. The chart deploys the controller manager, its RBAC and ServiceAccount, a secured metrics Service, and the `CardanoNetwork` and `CardanoDBSync` CRDs.
+The YACD operator can be installed two equivalent ways: with the `yacd` CLI, which renders and applies the bundled chart directly (no Helm required), or with [Helm](https://helm.sh) from the OCI chart published to GitHub Container Registry. Either way deploys the controller manager, its RBAC and ServiceAccount, a secured metrics Service, and the `CardanoNetwork` and `CardanoDBSync` CRDs.
 
-This page covers a remote install. For a local [k3d](https://k3d.io) cluster, the `yacd` CLI manages its own cluster lifecycle; see the [CLI reference](../reference/cli.md). For every chart value and manager flag, see the [configuration reference](../reference/configuration.md).
+This page covers installing onto an existing cluster. For a local [k3d](https://k3d.io) cluster, the `yacd` CLI manages its own cluster lifecycle — `yacd devnet` installs the operator for you; see the [CLI reference](../reference/cli.md). For every chart value and manager flag, see the [configuration reference](../reference/configuration.md).
 
 ## Prerequisites
 
 - A Kubernetes cluster, version 1.29 or later (the chart sets `kubeVersion: ">= 1.29.0-0"`).
-- Helm 3.8 or later, which can pull OCI charts.
 - `kubectl` configured against the target cluster.
+- For `yacd install`: the [`yacd` CLI](../reference/cli.md#install) on your `PATH` (no Helm needed).
+- For the Helm path: Helm 3.8 or later, which can pull OCI charts.
 
 ## Install
 
-Install the chart into a namespace, creating the namespace if it does not exist. Replace `<version>` with the release version you want (for example `0.1.1`) and `<namespace>` with your target namespace.
+=== "yacd install"
 
-```sh
-helm install yacd oci://ghcr.io/meigma/yacd/chart \
-  --version <version> \
-  --namespace <namespace> \
-  --create-namespace
-```
+    `yacd install` renders the operator's bundled chart in memory and applies it to the cluster your kubeconfig points at. It installs the operator when absent and upgrades it otherwise, then waits for the manager to become ready.
 
-The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.1.1` ships `appVersion` `v0.1.1`). To discover the chart metadata before installing, run:
+    ```sh
+    yacd install --namespace <namespace>
+    ```
 
-```sh
-helm show chart oci://ghcr.io/meigma/yacd/chart --version <version>
-```
+    The namespace defaults to `yacd-system` and is created if it does not exist. `--wait` (default true) blocks until the manager Deployment is Available, up to `--timeout` (default `5m`). Preview the action without changing the cluster with `--dry-run`. The operator version is the one this CLI embeds; to move it, upgrade the CLI. Pass operational value overrides with `-f`/`--set`/`--set-string` — see the [CLI reference](../reference/cli.md#install).
 
-The chart bundles the CRDs under `charts/yacd/crds/`, so Helm installs `cardanonetworks.yacd.meigma.io` and `cardanodbsyncs.yacd.meigma.io` as part of the release. You do not apply CRDs separately.
+=== "Helm"
 
-To override any value, pass `--set` or `-f values.yaml`. The full value surface (image, metrics, RBAC, leader election, manager logging, Kyverno, security context, scheduling) lives in the [configuration reference](../reference/configuration.md).
+    Install the chart into a namespace, creating it if it does not exist. Replace `<version>` with the release version you want (for example `0.1.1`) and `<namespace>` with your target namespace.
+
+    ```sh
+    helm install yacd oci://ghcr.io/meigma/yacd/chart \
+      --version <version> \
+      --namespace <namespace> \
+      --create-namespace
+    ```
+
+    The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.1.1` ships `appVersion` `v0.1.1`). To inspect the chart metadata before installing:
+
+    ```sh
+    helm show chart oci://ghcr.io/meigma/yacd/chart --version <version>
+    ```
+
+    Override values with `--set` or `-f values.yaml`.
+
+Both methods bundle the CRDs `cardanonetworks.yacd.meigma.io` and `cardanodbsyncs.yacd.meigma.io`, so you do not apply CRDs separately. The full value surface (image, metrics, RBAC, leader election, manager logging, Kyverno, security context, scheduling) lives in the [configuration reference](../reference/configuration.md).
 
 ## Verify
 
@@ -49,16 +62,26 @@ Operators drive networks with the same `yacd` verbs documented in the [CLI refer
 
 ## Upgrading
 
-Upgrade to a new chart version in place:
+=== "yacd install"
 
-```sh
-helm upgrade yacd oci://ghcr.io/meigma/yacd/chart \
-  --version <version> \
-  --namespace <namespace>
-```
+    Re-run `yacd install` against the cluster. It upgrades an older same-major install and re-applies an equal version to heal drift; it refuses a newer or major-mismatched in-cluster version with actionable guidance. Because the operator version is pinned to the CLI, **upgrade the CLI to move the operator version**, then re-run:
 
-!!! warning "Helm does not upgrade bundled CRDs"
-    The CRDs ship under the chart's `crds/` directory. Helm installs those CRDs on first install but **never upgrades or deletes them** on `helm upgrade` or `helm uninstall`. When a release changes a CRD schema, apply the updated definitions yourself before or after the upgrade:
+    ```sh
+    yacd install --namespace <namespace>
+    ```
+
+=== "Helm"
+
+    Upgrade to a new chart version in place:
+
+    ```sh
+    helm upgrade yacd oci://ghcr.io/meigma/yacd/chart \
+      --version <version> \
+      --namespace <namespace>
+    ```
+
+!!! warning "Helm does not upgrade bundled CRDs (Helm path only)"
+    `yacd install` re-renders the CRDs from the embedded chart, so they travel with the CLI version. Helm, by contrast, installs the CRDs under the chart's `crds/` directory on first install but **never upgrades or deletes them** on `helm upgrade` or `helm uninstall`. When a release changes a CRD schema, apply the updated definitions yourself before or after the Helm upgrade:
 
     ```sh
     kubectl apply -f https://raw.githubusercontent.com/meigma/yacd/v<version>/charts/yacd/crds/yacd.meigma.io_cardanonetworks.yaml
@@ -79,34 +102,51 @@ The release workflow attests the manager image, faucet image, and Helm chart wit
 
 Enabling it requires a running Kyverno installation in the cluster. When enabled with no explicit `imageReferences`, the policy verifies the configured manager and faucet image repositories, requiring a keyless Sigstore attestation from the `meigma/yacd` release workflow. To enable it:
 
-```sh
-helm upgrade yacd oci://ghcr.io/meigma/yacd/chart \
-  --version <version> \
-  --namespace <namespace> \
-  --set kyverno.imageVerification.enabled=true
-```
+=== "yacd install"
+
+    ```sh
+    yacd install --namespace <namespace> \
+      --set kyverno.imageVerification.enabled=true
+    ```
+
+=== "Helm"
+
+    ```sh
+    helm upgrade yacd oci://ghcr.io/meigma/yacd/chart \
+      --version <version> \
+      --namespace <namespace> \
+      --set kyverno.imageVerification.enabled=true
+    ```
 
 The attestor issuer, subject pattern, Rekor URL, validation failure action, and image references are all configurable; see the `kyverno.imageVerification.*` values in the [configuration reference](../reference/configuration.md). To verify a pulled chart or image directly with the GitHub CLI instead of at admission time, use `gh attestation verify`.
 
 ## Uninstall
 
-Remove the release:
+!!! note "`yacd uninstall` is not yet available"
+    Removing the operator is a manual step today; the path depends on how you installed it.
 
-```sh
-helm uninstall yacd --namespace <namespace>
-```
+=== "yacd install"
+
+    Delete the install namespace (which removes the manager Deployment, ServiceAccount, Services, and namespaced RBAC) and the chart's cluster-scoped RBAC:
+
+    ```sh
+    kubectl delete namespace <namespace>
+    kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/name=yacd
+    ```
+
+=== "Helm"
+
+    Remove the release:
+
+    ```sh
+    helm uninstall yacd --namespace <namespace>
+    ```
 
 !!! warning "CRDs and custom resources are not removed"
-    `helm uninstall` does not delete the CRDs installed from `crds/`, and it does not delete any `CardanoNetwork` or `CardanoDBSync` resources you created. Delete those resources first if you want the operator to tear down their owned runtime children, then remove the CRDs manually once nothing depends on them:
+    Neither path deletes the CRDs or any `CardanoNetwork` or `CardanoDBSync` resources you created. Delete those resources first if you want the operator to tear down their owned runtime children, then remove the CRDs once nothing depends on them:
 
     ```sh
     kubectl delete cardanonetworks --all --all-namespaces
     kubectl delete cardanodbsyncs --all --all-namespaces
     kubectl delete crd cardanonetworks.yacd.meigma.io cardanodbsyncs.yacd.meigma.io
     ```
-
-To remove the namespace if you created it solely for YACD:
-
-```sh
-kubectl delete namespace <namespace>
-```

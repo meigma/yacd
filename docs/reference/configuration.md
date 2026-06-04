@@ -3,11 +3,19 @@
 Reference for configuring the YACD operator. There are two layers:
 
 1. **Helm chart values** — what you set in `values.yaml` (or `--set`) when you
-   install the chart. These render the operator Deployment, RBAC, metrics
-   Service, and the optional Kyverno image-verification policy.
+   install the operator. Both `helm install` and `yacd install` consume these
+   values; `yacd install` takes them via `-f`/`--set`/`--set-string` and
+   validates them against the chart schema. They render the operator Deployment,
+   RBAC, metrics Service, and the optional Kyverno image-verification policy.
 2. **Manager flags** — the command-line flags the manager process accepts. The
    chart translates the relevant values into these flags automatically; set them
    directly only when running the manager binary outside the chart.
+
+!!! note "Operator image with `yacd install`"
+    With `yacd install`, the operator image is digest-pinned to the CLI build, so
+    `image.tag` is inert and the supported way to change the operator version is
+    to upgrade the CLI. The other operational values behave the same across both
+    install methods.
 
 This page documents the operator's own configuration. For the `yacd` CLI flags,
 environment variables, and `endpoints.json` schema, see

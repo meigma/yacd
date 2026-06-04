@@ -6,6 +6,11 @@ it down. Each `yacd` command keys off a `NAME` argument; the `NAME` becomes the
 `CardanoNetwork` name and, unless you pass `--namespace`, the namespace as well,
 so each environment lands in its own isolated namespace by default.
 
+!!! note "These commands need the operator"
+    `yacd up` and the verbs below assume the YACD operator is installed in the
+    target cluster. `yacd devnet` installs it into a local cluster for you; for
+    any other cluster, run [`yacd install`](../operator/installation.md) first.
+
 For what each Environment field means, see the
 [Environment file reference](../reference/environment.md) and the
 [CardanoNetwork reference](../reference/cardanonetwork.md). For complete,

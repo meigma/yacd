@@ -23,6 +23,7 @@ Commands:
 | `devnet` | Bring up a local Cardano devnet (cluster, operator, and a funded network). |
 | `devnet down` | Delete the managed devnet cluster. |
 | `devnet status` | Show the managed devnet cluster, operator, and network status. |
+| `install` | Install or upgrade the YACD operator on a cluster. |
 | `init` | Print a commented `yacd.yaml` environment template to stdout. |
 | `up NAME` | Create or update a YACD environment and wait for readiness. |
 | `down NAME` | Delete a YACD environment and wait for clean removal. |
@@ -102,6 +103,53 @@ yacd devnet status
 Read-only unified view of the managed cluster, operator, and networks. Takes no
 flags beyond the [global flags](#global-flags). Prints a one-line hint when no
 managed cluster exists.
+
+## install
+
+```text
+yacd install [flags]
+```
+
+Installs or upgrades the YACD operator on the targeted cluster, then waits for
+the manager to become ready. The target is the explicit `--kubeconfig`/`--context`
+(or the `YACD_KUBECONFIG`/`YACD_KUBE_CONTEXT` variables), otherwise the ambient
+current-context; `install` never targets the managed devnet. The global
+`-n`/`--namespace` flag selects the install namespace and defaults to
+`yacd-system` (created if absent).
+
+`install` reconciles the cluster to the operator version this CLI embeds: it
+installs when absent, upgrades an older same-major install, re-applies an equal
+version to heal drift, and refuses a newer or major-mismatched in-cluster version
+with actionable guidance. The operator image is digest-pinned to the embedded
+version; the supported way to change the operator version is to upgrade the CLI.
+
+| Flag | Short | Type | Default | Meaning |
+| --- | --- | --- | --- | --- |
+| `--wait` | | bool | `true` | Wait for the manager Deployment to become Available. |
+| `--timeout` | | duration | `5m0s` | Maximum time to wait for readiness (also bounds a `--dry-run` plan's reads). Must be greater than 0 when `--wait` is set. |
+| `--dry-run` | | bool | `false` | Report the planned action without changing the cluster. |
+| `--values` | `-f` | stringArray | `[]` | Path to a YAML file of operational chart value overrides (repeatable; later files win). |
+| `--set` | | stringArray | `[]` | Set an operational chart value (Helm `--set` syntax, repeatable). |
+| `--set-string` | | stringArray | `[]` | Set an operational chart value forced to a string (repeatable). |
+
+The override flags customize **operational** chart values (replicas, resources,
+scheduling, logging, metrics, and so on), validated against the chart's schema so
+a bad value fails fast (under `--dry-run` too). Precedence, later wins: `-f` files
+(in order) < `--set` < `--set-string`. Because user values deep-merge over the
+defaults, `--set image.tag` is ineffective (the chart renders `repository@digest`
+and the pinned digest wins); `--set image.digest` or `image.repository` do
+repoint the operator image but are not a supported configuration.
+
+`--dry-run` prints the action the next install would take and changes nothing:
+
+```text
+Plan: install operator (installed none -> v0.1.1) in namespace yacd-system
+```
+
+See [Installation](../operator/installation.md) for the full operator-install
+workflow (including the Helm alternative), and the
+[configuration reference](configuration.md) for every value the override flags
+accept.
 
 ## init
 

@@ -24,8 +24,9 @@ yacd ships as two surfaces:
 
 === "Running on a cluster"
 
-    Install the operator into an existing Kubernetes cluster so a team can share
-    YACD-managed networks. See [Operator installation](operator/installation.md).
+    Install the operator into an existing Kubernetes cluster — one `yacd install`,
+    or Helm — so a team can share YACD-managed networks. See
+    [Operator installation](operator/installation.md).
 
 ## Try it in one command
 
