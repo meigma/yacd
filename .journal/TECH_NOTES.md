@@ -813,3 +813,37 @@
   is unchanged. **PR3 (NOT done):** `yacd uninstall` (`Installer.Remove` + explicit
   CRD-deletion policy) + runtime version selection (OCI chart fetch from
   `ghcr.io/meigma/yacd/chart`). See `.journal/058/OPERATOR_INSTALL_PROPOSAL.md` §7/§8.
+- **CLI-native wallets / faucet removal (session 059, P1–P3 shipped; P4–P5 remain).**
+  Plan: `.journal/059/WALLET_REARCH_PLAN.md`. The goal is to delete the in-cluster faucet
+  service and have the CLI own all wallet management + funding. SHIPPED so far:
+  - `internal/cardano/tx` is the domain-pure chain-tx engine (Submitter port + `Apollo`
+    adapter: build/validate/sign/submit one funding tx given key hex + addresses + lovelace
+    + Ogmios/Kupo URLs). The MANAGER (`./cmd`) MUST stay free of ogmigo/kugo/`internal/
+    cardano/tx`; keep `tx` out of its import graph and never make the controller fund.
+  - On LOCAL faucet-enabled networks the controller GENERATES a `faucet` payment wallet once
+    into `<net>-wallet-faucet` (labels `yacd.meigma.io/wallet-name=faucet` +
+    `wallet-source=genesis-funded`; data payment.skey/vkey/address; ownerRef→network) and a
+    PVC-only init container runs `yacd-cardano-tools fund-genesis --env-dir --address
+    --lovelace` to add an `initialFunds` allocation to `/state/env/shelley-genesis.json`
+    BEFORE the node boots (no hash recompute — the local node config carries no
+    ShelleyGenesisHash). cardano-tools is pinned at **11.0.1-yacd.6** (`internal/cardano/
+    toolsimage`). Funding amount default `defaultFaucetWalletFundingLovelace=1_000_000 ADA`.
+  - `yacd wallet {list,add,topup,export,remove}` (`cli/internal/cli/wallet*.go` +
+    `cli/internal/wallet` store). WALLET selector = name | pubkey-hex | bech32 address.
+    Funding self-forwards Ogmios+Kupo (`forwardEndpoints`), reads the source (faucet or
+    `--from`) Secret, decodes envelopes via `wallet.DecodePaymentKeyEnvelope` (manager-safe),
+    submits via `internal/cardano/tx`, confirms via the kugo path. The standalone `yacd topup`
+    is GONE (folded into `wallet topup`; faucet = default source). The dev wallet
+    (`spec.chainAPI.wallet`) is UNTOUCHED + still faucet-HTTP-funded — P4 removes it.
+  - **REMAINING: P4** = cut `devnet`/dev-wallet funding to the CLI + delete the faucet
+    service / image / sidecar / Service / auth-Secret + `spec.chainAPI.{faucet,wallet}` +
+    conditions + rewrite Chainsaw/examples; **P5** = faucet-free release + re-render the CLI's
+    embedded chart + docs.
+  - **KNOWN follow-up:** Apollo's `OgmiosChainContext.GenesisParams` fails its
+    `ogmigo.GenesisConfig("shelley")` websocket read (close 1006) on every funding and
+    `fmt.Printf`s to stdout (now redirected to stderr in `wallet_fund.go`). HARMLESS today —
+    the empty `Base.GenesisParameters{}` fallback is unused (fees come from
+    `LatestEpochParams`, which succeeds; TTL is slot-based) — but a latent trap if a tx
+    feature ever needs genesis constants. Root cause = the SundaeSwap ogmigo client on the
+    discontinued Gorilla WebSocket toolkit (Kusari-flagged); the durable fix is to move off
+    ogmigo / use Ogmios HTTP queries, folded into P4/P5.

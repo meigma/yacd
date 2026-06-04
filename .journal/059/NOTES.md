@@ -404,3 +404,16 @@ succeeds (Apollo falls back to defaults). Lower priority now that --json is clea
 
 #106 = 2 commits (feature `27dc75e` + fixes `c765310`), **OPEN, NOT merged, awaiting review.**
 Dev stack still up.
+
+## 2026-06-04 06:53 — Close
+User approved (`SGTM, merge`). Squash-merged **#106 → `0b3a629`**; master fast-forwarded;
+the `feat/cli-wallet-verbs` worktree + local/remote branch removed. **All session-059
+work (P1–P3) is landed** across #95/#98/#99/#97/#106 (see SUMMARY). The **dev stack was
+brought down** (`root:dev-down`; Kind cluster deleted) — no Kind/Tilt/registry left running.
+
+**Hand-off:** the CLI now owns wallet management + funding (direct Ogmios/Kupo txns); the
+in-cluster faucet service + `spec.chainAPI.{faucet,wallet}` still exist and are **removed in
+P4** (the big breaking PR), followed by **P5** (faucet-free release + embedded-chart re-render
++ docs). Resume from `.journal/059/WALLET_REARCH_PLAN.md` P4 and the SUMMARY "Open Threads".
+Carried: the ogmigo/Apollo Ogmios-client replacement (websocket-1006/genesis follow-up).
+SUMMARY.md + INDEX (059 → complete) + TECH_NOTES written. Session closed.
