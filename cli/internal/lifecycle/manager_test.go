@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,9 +41,6 @@ spec:
         defaultSource: utxo1
         minTopUpLovelace: 1000000
         maxTopUpLovelace: 100000000000
-      wallet:
-        enabled: true
-        fundingLovelace: 100000000000
     local:
       networkMagic: 42
       era: conway
@@ -120,7 +118,7 @@ func loadEnv(t *testing.T) devconfig.Environment {
 }
 
 // readyNetwork returns a CardanoNetwork that WaitReady accepts: a fresh Ready
-// condition plus the wallet/endpoints/magic the command layer surfaces.
+// condition plus the endpoints/magic the command layer surfaces.
 func readyNetwork() *yacdv1alpha1.CardanoNetwork {
 	magic := int64(42)
 	return &yacdv1alpha1.CardanoNetwork{
@@ -132,7 +130,6 @@ func readyNetwork() *yacdv1alpha1.CardanoNetwork {
 				Ogmios: &yacdv1alpha1.ServiceEndpointStatus{URL: "ws://ogmios.devnet.svc:1337"},
 				Kupo:   &yacdv1alpha1.ServiceEndpointStatus{URL: "http://kupo.devnet.svc:1442"},
 			},
-			Wallet: &yacdv1alpha1.WalletStatus{Address: "addr_test1xyz", Funded: true},
 			Conditions: []metav1.Condition{{
 				Type:               "Ready",
 				Status:             metav1.ConditionTrue,
@@ -141,6 +138,24 @@ func readyNetwork() *yacdv1alpha1.CardanoNetwork {
 			}},
 		},
 	}
+}
+
+// faucetWalletAddress is the genesis-funded faucet wallet address the stubbed
+// Secret read surfaces as the network's funded wallet.
+const faucetWalletAddress = "addr_test1xyz"
+
+// expectFaucetWallet stubs the faucet wallet Secret read that Up performs to
+// surface the network's genesis-funded wallet address.
+func (tc *testContext) expectFaucetWallet() {
+	tc.client.EXPECT().GetSecret(mock.Anything, "devnet", "devnet-wallet-faucet").
+		Return(&corev1.Secret{Data: map[string][]byte{"address": []byte(faucetWalletAddress)}}, nil)
+}
+
+// expectFaucetWalletAbsent stubs the faucet wallet Secret read as not-found, the
+// state of an operator that predates the genesis-funded faucet wallet.
+func (tc *testContext) expectFaucetWalletAbsent() {
+	tc.client.EXPECT().GetSecret(mock.Anything, "devnet", "devnet-wallet-faucet").
+		Return(nil, errors.New(`secrets "devnet-wallet-faucet" not found`))
 }
 
 func upOptions(t *testing.T, bare bool) lifecycle.UpOptions {
@@ -166,6 +181,7 @@ func TestManagerUp(t *testing.T) {
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWallet()
 
 		result, err := tc.manager.Up(context.Background(), upOptions(t, false))
 		require.NoError(t, err)
@@ -174,7 +190,7 @@ func TestManagerUp(t *testing.T) {
 		assert.Equal(t, cluster.ManagedContext, result.Target.Context)
 		assert.Equal(t, "v0.1.1", result.Operator.Version)
 		require.NotNil(t, result.Network)
-		assert.Equal(t, "addr_test1xyz", result.Network.Status.Wallet.Address)
+		assert.Equal(t, "addr_test1xyz", result.WalletAddress)
 		// The captured prior is a real context, so it is recorded for restore.
 		assert.Equal(t, "minikube", saved.PriorContext)
 		assert.Equal(t, cluster.ManagedContext, saved.Context)
@@ -211,6 +227,7 @@ func TestManagerUp(t *testing.T) {
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWallet()
 
 		_, err := tc.manager.Up(context.Background(), upOptions(t, false))
 		require.NoError(t, err)
@@ -231,6 +248,7 @@ func TestManagerUp(t *testing.T) {
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWallet()
 
 		_, err := tc.manager.Up(context.Background(), upOptions(t, false))
 		require.NoError(t, err)
@@ -249,6 +267,7 @@ func TestManagerUp(t *testing.T) {
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWallet()
 
 		_, err := tc.manager.Up(context.Background(), upOptions(t, false))
 		require.NoError(t, err)
@@ -269,6 +288,7 @@ func TestManagerUp(t *testing.T) {
 		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
 		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWallet()
 
 		result, err := tc.manager.Up(context.Background(), upOptions(t, false))
 		require.NoError(t, err)
@@ -288,6 +308,28 @@ func TestManagerUp(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "newer")
 		tc.client.AssertNotCalled(t, "ApplyCardanoNetwork", mock.Anything, mock.Anything)
+	})
+
+	t.Run("surfaces no wallet when the faucet wallet is absent", func(t *testing.T) {
+		// An operator that predates the genesis-funded faucet wallet has no such
+		// Secret; bring-up must still succeed with an empty wallet address rather
+		// than failing.
+		tc := newTestContext(t, "minikube")
+		tc.expectLock()
+		tc.provisioner.EXPECT().EnsureCluster(mock.Anything, mock.Anything).Return(managedInfo, nil)
+		tc.store.EXPECT().Load().Return(clusterstate.Record{}, false, nil)
+		tc.store.EXPECT().Save(mock.Anything).Return(nil)
+		tc.installer.EXPECT().EnsureOperator(mock.Anything, mock.Anything).
+			Return(operator.State{Installed: true, Ready: true, Version: "v0.1.1"}, nil)
+		tc.client.EXPECT().EnsureNamespace(mock.Anything, "devnet").Return(nil)
+		tc.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
+		tc.client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork(), nil)
+		tc.expectFaucetWalletAbsent()
+
+		result, err := tc.manager.Up(context.Background(), upOptions(t, false))
+		require.NoError(t, err)
+		require.NotNil(t, result.Network)
+		assert.Empty(t, result.WalletAddress)
 	})
 }
 

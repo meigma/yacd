@@ -123,8 +123,8 @@ func printFaucetInfo(w *infoWriter, faucet *faucetOutput) {
 	w.printf("  Auth Secret: %s\n", faucet.AuthSecretName)
 }
 
-// printWalletInfo writes the Wallet section when the controller has
-// bootstrapped a developer wallet. It is suppressed entirely otherwise to keep
+// printWalletInfo writes the Wallet section when the network has a
+// genesis-funded faucet wallet. It is suppressed entirely otherwise to keep
 // non-wallet networks' output compact.
 func printWalletInfo(w *infoWriter, wallet *walletOutput) {
 	if wallet == nil || wallet.Address == "" {
@@ -135,7 +135,6 @@ func printWalletInfo(w *infoWriter, wallet *walletOutput) {
 	if wallet.KeySecretName != "" {
 		w.printf("  Key Secret: %s\n", wallet.KeySecretName)
 	}
-	w.printf("  Funded: %t\n", wallet.Funded)
 }
 
 // printEndpointInfo writes a single endpoint entry. A nil endpoint renders

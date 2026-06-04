@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/meigma/yacd/cli/internal/kube"
@@ -22,6 +23,9 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 	client.EXPECT().
 		GetCardanoNetwork(mock.Anything, "env-ns", "devnet").
 		Return(readyNetwork("env-ns"), nil)
+	client.EXPECT().
+		GetSecret(mock.Anything, "env-ns", "devnet-wallet-faucet").
+		Return(faucetWalletSecret("addr_test1info"), nil)
 
 	var capturedConfig kube.Config
 	factory := func(config kube.Config) (kube.Client, error) {
@@ -63,6 +67,9 @@ func TestInfoDefaultsNamespaceToName(t *testing.T) {
 	client.EXPECT().
 		GetCardanoNetwork(mock.Anything, "devnet", "devnet").
 		Return(readyNetwork("devnet"), nil)
+	client.EXPECT().
+		GetSecret(mock.Anything, "devnet", "devnet-wallet-faucet").
+		Return(faucetWalletSecret("addr_test1info"), nil)
 
 	var stdout bytes.Buffer
 	root := NewRootCommand(Options{
@@ -74,4 +81,30 @@ func TestInfoDefaultsNamespaceToName(t *testing.T) {
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	assert.Contains(t, stdout.String(), `"namespace": "devnet"`)
+}
+
+func TestInfoOmitsWalletWhenFaucetWalletAbsent(t *testing.T) {
+	t.Setenv("YACD_NAMESPACE", "")
+
+	// An operator that predates the genesis-funded faucet wallet has no such
+	// Secret; info must still render, simply without a wallet section.
+	client := newKubeMock(t)
+	client.EXPECT().DefaultNamespace().Return("default-ns").Maybe()
+	client.EXPECT().
+		GetCardanoNetwork(mock.Anything, "devnet", "devnet").
+		Return(readyNetwork("devnet"), nil)
+	client.EXPECT().
+		GetSecret(mock.Anything, "devnet", "devnet-wallet-faucet").
+		Return(nil, errors.New(`secrets "devnet-wallet-faucet" not found`))
+
+	var stdout bytes.Buffer
+	root := NewRootCommand(Options{
+		Out:               &stdout,
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+	})
+	root.SetArgs([]string{"info", "devnet", "--json"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.NotContains(t, stdout.String(), `"wallet"`)
 }

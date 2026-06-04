@@ -207,8 +207,8 @@ func printDevnetUp(out io.Writer, result lifecycle.Result, bare bool) error {
 			w.printf("  Kupo:     %s\n", endpoint.URL)
 		}
 	}
-	if network.Status.Wallet != nil && network.Status.Wallet.Address != "" {
-		w.printf("  Wallet:   %s\n", network.Status.Wallet.Address)
+	if result.WalletAddress != "" {
+		w.printf("  Wallet:   %s\n", result.WalletAddress)
 	}
 
 	magic := defaultDevnetMagic

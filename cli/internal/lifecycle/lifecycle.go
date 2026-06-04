@@ -92,6 +92,11 @@ type Result struct {
 
 	// Network is the Ready default network, or nil when Bare.
 	Network *yacdv1alpha1.CardanoNetwork
+
+	// WalletAddress is the genesis-funded faucet wallet's address, surfaced as
+	// the network's funded wallet. Empty when the wallet is not resolvable (for
+	// example an operator that predates the genesis-funded faucet wallet).
+	WalletAddress string
 }
 
 // Report is the unified devnet status view.

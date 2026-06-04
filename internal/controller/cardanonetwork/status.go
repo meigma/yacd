@@ -21,7 +21,7 @@ func (r *CardanoNetworkReconciler) patchStatusConditionsClearingFaucet(
 	acceptedIdentity acceptedNetworkIdentity,
 	conditions ...metav1.Condition,
 ) error {
-	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
+	return r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nil, nil, nil, nil, nil, nil, nil, true, conditions...)
 }
 
 // patchPrimaryWorkloadAppliedStatus computes per-component readiness for
@@ -39,7 +39,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	faucetService *corev1.Service,
 	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
-	wallet walletSettings,
 	dbSyncAttached bool,
 	dbSyncAttachmentCondition metav1.Condition,
 ) (metav1.Condition, error) {
@@ -63,10 +62,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 	if err != nil {
 		return metav1.Condition{}, err
 	}
-	walletReady, walletStatus, walletFundingFailed, err := r.primaryWalletReadyCondition(ctx, network, wallet, faucetReady, kupoReady, kupoService, faucetService)
-	if err != nil {
-		return metav1.Condition{}, err
-	}
 
 	// Derive ArtifactsReady from served-artifacts availability (the artifacts
 	// Service and the always-on serve sidecar container's readiness) rather than
@@ -77,16 +72,11 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 		return metav1.Condition{}, err
 	}
 	syncStatus, nodeSynchronized, nodeProgressing := r.primaryNodeSyncStatusConditions(ctx, network, ogmiosService, artifactsReady.Status == metav1.ConditionTrue, artifactsReady.Message)
-	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, walletReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil, wallet.enabled)
+	ready := readyCondition(dbSyncAttachmentReady, nodeReady, ogmiosReady, kupoReady, faucetReady, artifactsReady, dbSyncAttached, kupoService != nil, faucetService != nil)
 
-	// A live funding failure is the one wallet state that escalates to Degraded;
-	// "awaiting confirmation" stays a progressing (pending) state via Ready.
 	degraded := degradedCondition(metav1.ConditionFalse, conditionReasonReconcileSucceeded, conditionMessagePrimaryWorkloadApplied)
-	if walletFundingFailed {
-		degraded = degradedCondition(metav1.ConditionTrue, conditionReasonWalletFundingFailed, walletReady.Message)
-	}
 
-	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, artifactsService, faucetAuthSecret, walletStatus, syncStatus, false,
+	if err := r.patchPrimaryWorkloadStatus(ctx, network, networkPlan, acceptedIdentity, nodeService, ogmiosService, kupoService, faucetService, artifactsService, faucetAuthSecret, syncStatus, false,
 		degraded,
 		progressingForReadyCondition(ready),
 		ready,
@@ -97,7 +87,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadAppliedStatus(
 		ogmiosReady,
 		kupoReady,
 		faucetReady,
-		walletReady,
 		artifactsReady,
 	); err != nil {
 		return metav1.Condition{}, err
@@ -120,7 +109,6 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	faucetService *corev1.Service,
 	artifactsService *corev1.Service,
 	faucetAuthSecret *corev1.Secret,
-	walletStatus *yacdv1alpha1.WalletStatus,
 	syncStatus *yacdv1alpha1.CardanoNetworkSyncStatus,
 	clearFaucet bool,
 	conditions ...metav1.Condition,
@@ -133,11 +121,9 @@ func (r *CardanoNetworkReconciler) patchPrimaryWorkloadStatus(
 	if nodeService != nil {
 		setEndpointStatus(network, nodeService, ogmiosService, kupoService, faucetService, artifactsService)
 		setFaucetStatus(network, faucetAuthSecret)
-		setWalletStatus(network, walletStatus)
 		setSyncStatus(network, syncStatus)
 	} else if clearFaucet {
 		clearFaucetStatus(network)
-		clearWalletStatus(network)
 		clearSyncStatus(network)
 	}
 	ctrlstatus.SetObserved(&network.Status.Conditions, network.Generation, conditions...)
@@ -271,22 +257,4 @@ func setFaucetStatus(network *yacdv1alpha1.CardanoNetwork, faucetAuthSecret *cor
 	network.Status.Faucet = &yacdv1alpha1.FaucetStatus{
 		AuthSecretName: faucetAuthSecret.Name,
 	}
-}
-
-// setWalletStatus publishes the bootstrapped developer wallet details into
-// CardanoNetwork status. The CLI consumes status.wallet.address to surface the
-// funded address; a nil walletStatus (wallet disabled) clears it.
-func setWalletStatus(network *yacdv1alpha1.CardanoNetwork, walletStatus *yacdv1alpha1.WalletStatus) {
-	if walletStatus == nil {
-		network.Status.Wallet = nil
-		return
-	}
-
-	network.Status.Wallet = walletStatus.DeepCopy()
-}
-
-// clearWalletStatus removes the wallet details from CardanoNetwork status. Used
-// on the Degraded path so the wallet status does not lag a torn-down network.
-func clearWalletStatus(network *yacdv1alpha1.CardanoNetwork) {
-	network.Status.Wallet = nil
 }

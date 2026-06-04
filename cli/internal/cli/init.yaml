@@ -4,9 +4,10 @@
 #   yacd up NAME -f yacd.yaml      # NAME is also the namespace by default
 # (or let `yacd devnet` manage a local cluster + a default network for you).
 #
-# The active config below is a ready-to-run LOCAL devnet with a faucet and a
-# pre-funded wallet. Commented blocks show the rest of the API — uncomment a
-# WHOLE block at a time (every field shown in a block is required together).
+# The active config below is a ready-to-run LOCAL devnet. Enabling the faucet
+# gives it a genesis-funded `faucet` wallet you spend from with `yacd wallet
+# topup`. Commented blocks show the rest of the API — uncomment a WHOLE block at
+# a time (every field shown in a block is required together).
 # More: https://github.com/meigma/yacd and docs/host-access.md.
 
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
@@ -41,20 +42,16 @@ spec:
       #   image: cardanosolutions/kupo:v2.11.0
       #   port: 1442
 
-      # Faucet: funds addresses on the local network (local mode only; needs Ogmios + Kupo).
+      # Faucet (local mode only): makes the controller generate a genesis-funded
+      # `faucet` wallet that holds the initial supply. It is the network's funded
+      # wallet and the default source for `yacd wallet topup NAME WALLET LOVELACE`.
       faucet:
         enabled: true
         port: 8080
-        defaultSource: utxo1            # generated UTxO source used when a request omits one.
+        defaultSource: utxo1            # generated UTxO source the genesis wallet derives from.
         minTopUpLovelace: 1000000       # 1 ADA = 1_000_000 lovelace.
-        maxTopUpLovelace: 100000000000  # must be >= wallet.fundingLovelace below.
+        maxTopUpLovelace: 100000000000
         # image: ghcr.io/my/faucet:tag  # override the faucet image (else controller default).
-
-      # Pre-funded developer wallet (local mode only; needs faucet + Kupo).
-      # The controller generates a key once and funds it through the faucet.
-      wallet:
-        enabled: true
-        fundingLovelace: 100000000000   # 100,000 ADA.
 
     # ---- LOCAL mode (required when mode: local; remove when mode: public) ----
     local:
@@ -72,7 +69,7 @@ spec:
     # ---- PUBLIC mode (alternative to LOCAL) ----------------------------------
     # To join a public network: set `mode: public`, delete the `local:` block
     # above, and uncomment this. Public mode rejects explicit kupo/faucet
-    # `enabled: true` and the wallet. Mainnet also needs `bootstrap.mithril` and
+    # `enabled: true`. Mainnet also needs `bootstrap.mithril` and
     # `node.storage.size` >= 300Gi.
     # public:
     #   profile: preview         # one of: preview | preprod | mainnet.

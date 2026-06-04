@@ -94,48 +94,10 @@ func (r *CardanoNetworkReconciler) deletePrimaryFaucetAuthSecret(
 	return operationResultDeleted, nil
 }
 
-// deletePrimaryWalletSecret deletes the developer wallet Secret when the
-// CardanoNetwork spec turns the wallet off after it had been enabled. Unlike
-// the degrade path, an explicit disable is a deliberate request to discard the
-// wallet, so the owned Secret (and the key the developer held) is removed.
-func (r *CardanoNetworkReconciler) deletePrimaryWalletSecret(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-) (controllerutil.OperationResult, error) {
-	desired := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      primaryWalletSecretName(network),
-			Namespace: network.Namespace,
-		},
-	}
-	if err := controllerutil.SetControllerReference(network, desired, r.Scheme); err != nil {
-		return controllerutil.OperationResultNone, fmt.Errorf("set desired wallet Secret owner reference: %w", err)
-	}
-
-	current := &corev1.Secret{}
-	// Secrets are not in the manager cache; live-read to avoid a cache miss
-	// looking like a non-existent object.
-	err := r.liveReader().Get(ctx, ctrlmetadata.ObjectKey(desired), current)
-	if apierrors.IsNotFound(err) {
-		return controllerutil.OperationResultNone, nil
-	}
-	if err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-	if err := validateControllerOwner(current, desired); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-	if err := r.Delete(ctx, current); err != nil {
-		return controllerutil.OperationResultNone, err
-	}
-
-	return operationResultDeleted, nil
-}
-
 // deletePrimaryFaucetWalletSecret deletes the well-known faucet wallet Secret
 // when the CardanoNetwork no longer gates it on (faucet disabled or a switch
-// away from local mode). Like the developer wallet, an explicit disable is a
-// deliberate request to discard the wallet, so the owned Secret is removed.
+// away from local mode). An explicit disable is a deliberate request to discard
+// the wallet, so the owned Secret is removed.
 func (r *CardanoNetworkReconciler) deletePrimaryFaucetWalletSecret(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,

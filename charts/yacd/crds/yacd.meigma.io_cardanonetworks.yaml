@@ -320,29 +320,6 @@ spec:
                     - image
                     - port
                     type: object
-                  wallet:
-                    description: |-
-                      wallet configures a pre-funded developer wallet bootstrapped for local
-                      development networks.
-                    properties:
-                      enabled:
-                        default: false
-                        description: enabled controls whether the controller bootstraps
-                          a developer wallet.
-                        type: boolean
-                      fundingLovelace:
-                        default: 100000000000
-                        description: |-
-                          fundingLovelace is the amount the controller funds the wallet with on
-                          first bring-up, through the faucet. It must not exceed the faucet's
-                          maxTopUpLovelace.
-                        format: int64
-                        minimum: 1
-                        type: integer
-                    required:
-                    - enabled
-                    - fundingLovelace
-                    type: object
                 type: object
               local:
                 description: |-
@@ -677,7 +654,6 @@ spec:
                   - "OgmiosReady": Ogmios is enabled and connected to the primary node
                   - "KupoReady": Kupo is enabled and synchronized enough to serve its API
                   - "FaucetReady": the faucet is enabled and available through its Service
-                  - "WalletReady": the developer wallet is bootstrapped and funded on-chain
                   - "Progressing": the resource is being created or updated
                   - "Degraded": the resource failed to reach or maintain its desired state
 
@@ -951,28 +927,6 @@ spec:
                         minimum: 0
                         type: integer
                     type: object
-                type: object
-              wallet:
-                description: wallet publishes the bootstrapped developer wallet details.
-                properties:
-                  address:
-                    description: |-
-                      address is the wallet's enterprise testnet payment address
-                      (addr_test...).
-                    type: string
-                  funded:
-                    description: funded reports whether the wallet's funding has been
-                      confirmed on-chain.
-                    type: boolean
-                  fundedTxID:
-                    description: fundedTxID is the faucet transaction that funded
-                      the wallet.
-                    type: string
-                  keySecretName:
-                    description: |-
-                      keySecretName is the same-namespace Secret holding the wallet's signing
-                      and verification key envelopes.
-                    type: string
                 type: object
             type: object
         required:
