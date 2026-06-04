@@ -11,19 +11,22 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 )
 
-// TestDefaultPinsReleaseDigests proves the offline default install stays
-// digest-pinned to the published manager release.
-func TestDefaultPinsReleaseDigests(t *testing.T) {
+// TestDefaultUsesAppVersionTag proves the default install sets only the image
+// repository, leaving tag and digest empty so the chart renders
+// repository:appVersion (the operator release this CLI ships with).
+func TestDefaultUsesAppVersionTag(t *testing.T) {
 	values := Default()
 
 	assert.Equal(t, defaultManagerRepository, values.Image.Repository)
-	assert.Equal(t, defaultManagerDigest, values.Image.Digest)
-	assert.Empty(t, values.Image.Tag, "digest pin leaves tag empty")
+	assert.Empty(t, values.Image.Digest, "default leaves the digest empty so the chart uses its appVersion tag")
+	assert.Empty(t, values.Image.Tag, "default leaves the tag empty so the chart defaults it to appVersion")
 
 	helmValues := values.ToHelmValues()
 	image, ok := helmValues["image"].(map[string]any)
 	require.True(t, ok, "image sub-tree must be present")
-	assert.Equal(t, defaultManagerDigest, image["digest"])
+	assert.Equal(t, defaultManagerRepository, image["repository"])
+	_, hasDigest := image["digest"]
+	assert.False(t, hasDigest, "empty digest is omitted so the chart's appVersion tag applies")
 	_, hasTag := image["tag"]
 	assert.False(t, hasTag, "empty tag is omitted so the chart default applies")
 }

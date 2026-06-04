@@ -1,17 +1,12 @@
 package operator
 
-// Default image references that pin the operator install to the published
-// release. They reproduce the digest pinning the render script used to inject
-// via --set-string image.digest, moved into Go so the default install stays
-// digest-pinned and tamper-evident, offline. When cutting a new operator
-// release, bump these alongside charts/yacd/Chart.yaml appVersion.
-const (
-	// defaultManagerRepository is the published operator manager image.
-	defaultManagerRepository = "ghcr.io/meigma/yacd"
-
-	// defaultManagerDigest pins the manager image to the v0.1.1 release digest.
-	defaultManagerDigest = "sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
-)
+// defaultManagerRepository is the published operator manager image. The default
+// install sets only the repository and leaves the tag and digest unset, so the
+// chart renders repository:appVersion (its own Chart.yaml appVersion). Operator
+// and CLI release together under one version, so that appVersion tag always
+// resolves to the matching, already-published manager image. The supported way
+// to change the operator version is to upgrade the CLI.
+const defaultManagerRepository = "ghcr.io/meigma/yacd"
 
 // Image identifies a container image by repository plus an optional tag or
 // digest. When Digest is set it wins over Tag (matching the chart's
@@ -122,18 +117,16 @@ func mergeValues(dst, src map[string]any) {
 	}
 }
 
-// Default returns the pinned, offline baseline that reproduces today's install:
-// the digest-pinned manager image, leader election on, secure metrics, and
-// json/info logging. It mirrors the chart's own defaults (which already set
-// secure metrics, leader election on, and json/info logging) and only adds the
-// release digest, so the rendered Deployment is byte-equivalent to a
-// `helm template … --set-string image.digest=…` render at the chart's default
-// values.
+// Default returns the baseline install: the manager image pinned to the chart's
+// appVersion (repository:appVersion, the operator release this CLI ships with),
+// leader election on, secure metrics, and json/info logging. It sets only the
+// image repository; leaving the tag and digest empty lets the chart default the
+// tag to its appVersion, so the rendered Deployment matches a plain
+// `helm template` at the chart's default values.
 func Default() Values {
 	return Values{
 		Image: Image{
 			Repository: defaultManagerRepository,
-			Digest:     defaultManagerDigest,
 		},
 	}
 }
