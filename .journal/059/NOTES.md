@@ -328,3 +328,43 @@ Apollo's tx-builder (ogmigo+kugo already present); the MANAGER must stay tx-free
 Launched P3 **design** workflow `wf_91bc901b-be8` (3 agents: CLI/kube surface; tx-funding
 path + envelope decode; store/verbs/selector) → file-by-file plan. **Next:** review the
 design, then implement (workflow) + live-validate (dev-up from P3 worktree), PR + pause.
+
+## 2026-06-03 20:11 — P3 SHIPPED: CLI wallet verbs + direct tx submission (PR #106, live-proven)
+Design (`wf_91bc901b-be8`) nailed the recipe: envelope→raw-hex decode = `wallet.
+DecodePaymentKeyEnvelope` (manager-safe, reuses the faucet CBOR recipe); funding =
+resolve selector → read source Secret → decode → forwardEndpoints(Ogmios+Kupo) →
+tx.Apollo.Submit → reuse awaitConfirmation; store = labeled Secrets matching P2's
+wallet-name/wallet-source labels.
+
+Implemented via `wf_d4c977bd-e2a` (7 agents, 2 sequential passes: foundation → verbs):
+correctness lens **0 findings**; boundary lens confirmed manager tx-free + seam injected;
+tests lens 4 must-fix gaps (--from, readiness gating, partial-failure, export edge cases)
+all FIXED. Files: new `cli/internal/wallet` store pkg (store/selector/names + embedded
+adjectives.txt/nouns.txt), `cli/internal/cli/wallet*.go` verbs + `wallet_fund.go` helper +
+`wallet_await.go` (renamed from topup_await.go), `wallet.DecodePaymentKeyEnvelope` +
+golden test, kube.Client Secret ops + regen'd mocks + a `tx.Submitter` mock/seam. DELETED
+the standalone topup (topup.go/_trust.go/_transport.go/_test.go + mocks/http_doer.go).
+
+Verified: gofmt/build/vet clean, root:check ✅, root:test ✅ (cli/internal/cli + cli/internal/
+wallet + internal/cardano/wallet fresh-pass). **Manager boundary holds**: `go list -deps
+./cmd` tx-free; CLI imports tx; wallet pkg manager-safe.
+
+**LIVE-PROVEN on the Kind dev stack** (operator with P2 → faucet wallet): built the CLI,
+applied a faucet network (Ready 40s), then `yacd wallet add fw --name alice --topup
+1000000000 --await` → the CLI built+signed+submitted a real funding tx from the faucet
+wallet (tx `1198bc05…`), **confirmed on-chain**; `cardano-cli query utxo` → alice holds
+**1,000,000,000 lovelace**; `wallet list` shows alice (managed-by-cli); `wallet export`
+wrote `0600` `.skey`/`.vkey`/`.addr`, the `.skey` a valid `PaymentSigningKeyShelley_ed25519`
+envelope. Test network deleted.
+
+**Known non-blocking follow-up:** Apollo chain-context init logs a transient Ogmios
+websocket close-1006 during funding (the ogmigo/Gorilla-WS dep the analysis flagged); the
+tx still succeeds. Quiet/handle later (e.g. ogmigo.NopLogger or a retry).
+
+Branch `feat/cli-wallet-verbs` (worktree `.wt/feat-cli-wallet-verbs`), commit `27dc75e`,
+base current (origin/master still 911f663 — no stale-base this time). **PR #106 OPEN — NOT
+merged, awaiting review.** Dev stack LEFT UP (P4 needs it).
+
+**Next:** after #106 merges → **P4** (cut over devnet/dev-wallet funding to the CLI, then
+DELETE the in-cluster faucet service + `spec.chainAPI.{faucet,wallet}` + conditions +
+Chainsaw/examples/release). The big breaking PR.
