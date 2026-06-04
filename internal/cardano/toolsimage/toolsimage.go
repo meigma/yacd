@@ -20,14 +20,14 @@ const (
 	// Revision is the YACD packaging revision suffix. The published image tag
 	// is "<toolVersion>-<Revision>" (for example "11.0.1-yacd.5"), tracking the
 	// upstream cardano-node version with a separate YACD packaging counter.
-	Revision = "yacd.5"
+	Revision = "yacd.6"
 
 	// Digest pins the built-in reference to a specific published manifest so a
 	// no-override install always resolves the exact image YACD was tested
 	// against, regardless of tag mutation. It is the multi-arch image index
 	// digest of "<Repository>:<toolVersion>-<Revision>"; update it together with
 	// Revision on every cardano-tools release.
-	Digest = "sha256:d3283ca5fc925f6ec01f61a54371e5ad1934088614b7cde1e1e1915424662fc4"
+	Digest = "sha256:02fcb64d0d3e5d63dfa13484068eacbdc7ae34694fdb51cfa733763fbc433188"
 )
 
 // Reference resolves the cardano-tools image reference for a given Cardano tool

@@ -55,6 +55,14 @@ func primaryWalletSecretName(network *yacdv1alpha1.CardanoNetwork) string {
 	return ctrlnames.DNSLabelWithSuffix(network.Name, "wallet")
 }
 
+// primaryFaucetWalletSecretName returns the DNS-label name of the well-known
+// faucet wallet Secret. Unlike the developer wallet, the faucet wallet is
+// funded directly at genesis (not through the faucet service) and serves as the
+// local funding source the CLI later spends from.
+func primaryFaucetWalletSecretName(network *yacdv1alpha1.CardanoNetwork) string {
+	return ctrlnames.DNSLabelWithSuffix(network.Name, "wallet-faucet")
+}
+
 // nodeToNodeHost is the in-cluster DNS name of the primary node-to-node
 // Service. It depends on the namespace, so it is derived from the network
 // object rather than precomputed.

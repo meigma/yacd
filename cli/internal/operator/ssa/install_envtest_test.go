@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,10 +40,10 @@ func newInstaller(t *testing.T) (*installer, crclient.Client) {
 	c, err := crclient.New(cfg, crclient.Options{Scheme: scheme})
 	require.NoError(t, err, "create client")
 
-	return &installer{client: c, mapper: c.RESTMapper(), manifests: Manifests}, c
+	return &installer{client: c, mapper: c.RESTMapper(), chart: charts.OperatorChart}, c
 }
 
-func TestEnsureOperatorInstallsFromEmbeddedManifests(t *testing.T) {
+func TestEnsureOperatorInstallsFromEmbeddedChart(t *testing.T) {
 	ctx := context.Background()
 	inst, c := newInstaller(t)
 
@@ -133,11 +134,144 @@ func TestEnsureOperatorRefusesNewerInstalledVersion(t *testing.T) {
 	assert.Equal(t, "v0.9.9", state.Version, "observed state is returned alongside the refusal")
 }
 
-func TestEnsureOperatorRejectsForeignNamespace(t *testing.T) {
+func TestPlanOnEmptyClusterReportsInstallAndMutatesNothing(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	// Plan's load-bearing contract: it renders + reads + Decides without mutating
+	// the cluster. On a fresh cluster it must report ActionInstall at the embedded
+	// target version with no installed version and no error.
+	decision, err := inst.Plan(ctx, operator.InstallSpec{})
+	require.NoError(t, err)
+	assert.Equal(t, operator.ActionInstall, decision.Action)
+	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+	assert.Empty(t, decision.InstalledVersion, "nothing is installed yet")
+
+	// And it applied nothing: no manager Deployment and no CRD exist afterward.
+	err = c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, &appsv1.Deployment{})
+	assert.True(t, apierrors.IsNotFound(err), "Plan must not create the manager Deployment")
+
+	err = c.Get(ctx, crclient.ObjectKey{Name: "cardanonetworks.yacd.meigma.io"}, &apiextensionsv1.CustomResourceDefinition{})
+	assert.True(t, apierrors.IsNotFound(err), "Plan must not apply CRDs")
+}
+
+func TestPlanRefusesNewerInstalledVersionWithoutMutating(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	// Seed a newer same-major operator so the policy refuses, then assert Plan
+	// surfaces the typed refusal and the observed version while changing nothing.
+	_, err := inst.EnsureOperator(ctx, operator.InstallSpec{})
+	require.NoError(t, err)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, deployment))
+	deployment.Labels[versionLabel] = "v0.9.9"
+	require.NoError(t, c.Update(ctx, deployment))
+
+	decision, err := inst.Plan(ctx, operator.InstallSpec{})
+	require.ErrorIs(t, err, operator.ErrNewerOperator)
+	assert.Equal(t, operator.ActionRefuse, decision.Action)
+	assert.Equal(t, "v0.9.9", decision.InstalledVersion)
+	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+
+	// Plan did not touch the seeded Deployment: its version label still reads the
+	// newer value, proving Plan never re-applied the embedded manifest set.
+	after := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, after))
+	assert.Equal(t, "v0.9.9", after.Labels[versionLabel], "Plan must not overwrite the installed version")
+}
+
+func TestEnsureOperatorInstallsIntoRequestedNamespace(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	const ns = "elsewhere"
+	state, err := inst.EnsureOperator(ctx, operator.InstallSpec{Namespace: ns})
+	require.NoError(t, err)
+	assert.True(t, state.Installed)
+
+	// The Deployment and other namespaced objects land in the requested
+	// namespace, and the rendered RBAC subjects follow it too.
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-controller-manager"}, deployment))
+
+	binding := &rbacv1.ClusterRoleBinding{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Name: "yacd-manager-rolebinding"}, binding))
+	require.Len(t, binding.Subjects, 1)
+	assert.Equal(t, ns, binding.Subjects[0].Namespace, "RBAC subject namespace follows the install namespace")
+}
+
+func TestEnsureOperatorRejectsInvalidNamespace(t *testing.T) {
 	ctx := context.Background()
 	inst, _ := newInstaller(t)
 
-	_, err := inst.EnsureOperator(ctx, operator.InstallSpec{Namespace: "elsewhere"})
+	_, err := inst.EnsureOperator(ctx, operator.InstallSpec{Namespace: "Not_Valid"})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pinned")
+	assert.Contains(t, err.Error(), "invalid install namespace")
+}
+
+// TestEnsureOperatorNamespaceFlexibility is the headline benefit of rendering
+// the chart at install time: a non-"yacd-system" install keeps the namespaced
+// objects and the RBAC subjects that reference them in agreement. It asserts
+// the ServiceAccount, leader-election Role/RoleBinding, metrics Service, and
+// Deployment all land in the requested namespace, AND that every RBAC subject
+// (ClusterRoleBinding and RoleBinding) references that same namespace.
+func TestEnsureOperatorNamespaceFlexibility(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	const ns = "yacd-test-ns"
+	require.NotEqual(t, installNamespace, ns, "must install into a non-default namespace")
+
+	state, err := inst.EnsureOperator(ctx, operator.InstallSpec{Namespace: ns})
+	require.NoError(t, err)
+	assert.True(t, state.Installed)
+	assert.Equal(t, "v0.1.1", state.Version)
+
+	// Namespaced objects land in the requested namespace.
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-controller-manager"}, deployment))
+
+	sa := &corev1.ServiceAccount{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-controller-manager"}, sa))
+
+	service := &corev1.Service{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-controller-manager-metrics-service"}, service))
+
+	leaderRole := &rbacv1.Role{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-leader-election-role"}, leaderRole))
+
+	leaderBinding := &rbacv1.RoleBinding{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: ns, Name: "yacd-leader-election-rolebinding"}, leaderBinding))
+
+	// They are NOT in the default namespace (the old pin would have landed here).
+	err = c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, &appsv1.Deployment{})
+	assert.True(t, apierrors.IsNotFound(err), "nothing should land in the default namespace")
+
+	// Every RBAC subject references the install namespace, so subjects and the
+	// namespaced ServiceAccount they bind agree.
+	managerBinding := &rbacv1.ClusterRoleBinding{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Name: "yacd-manager-rolebinding"}, managerBinding))
+	assertSubjectsInNamespace(t, managerBinding.Subjects, ns)
+
+	metricsAuthBinding := &rbacv1.ClusterRoleBinding{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Name: "yacd-metrics-auth-rolebinding"}, metricsAuthBinding))
+	assertSubjectsInNamespace(t, metricsAuthBinding.Subjects, ns)
+
+	assertSubjectsInNamespace(t, leaderBinding.Subjects, ns)
+}
+
+// assertSubjectsInNamespace asserts every ServiceAccount subject references the
+// expected namespace, the agreement that lets RBAC bindings resolve the
+// ServiceAccount that actually lives in the install namespace.
+func assertSubjectsInNamespace(t *testing.T, subjects []rbacv1.Subject, namespace string) {
+	t.Helper()
+	require.NotEmpty(t, subjects, "binding must have subjects")
+	for _, subject := range subjects {
+		if subject.Kind != "ServiceAccount" {
+			continue
+		}
+		assert.Equal(t, namespace, subject.Namespace, "ServiceAccount subject %q must reference the install namespace", subject.Name)
+	}
 }

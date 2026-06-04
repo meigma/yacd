@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/meigma/yacd/charts"
 	"github.com/meigma/yacd/cli/internal/cluster"
 	"github.com/meigma/yacd/cli/internal/cluster/k3d"
 	"github.com/meigma/yacd/cli/internal/clusterstate"
@@ -62,7 +63,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	}
 	if options.OperatorInstallerFactory == nil {
 		options.OperatorInstallerFactory = func(kubeconfig, kubeContext string) (operator.Installer, error) {
-			return ssa.New(kubeconfig, kubeContext, ssa.Manifests)
+			return ssa.New(kubeconfig, kubeContext, charts.OperatorChart)
 		}
 	}
 	if options.ClusterStateFactory == nil {
@@ -135,6 +136,11 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newDevnetCommand(ctx))
 	// init only prints an embedded template — no cluster contact, so no reconcile.
 	root.AddCommand(newInitCommand(ctx))
+	// install targets an arbitrary cluster by explicit-or-ambient kubeconfig; it
+	// deliberately accepts --kubeconfig/--context and never consults the managed
+	// devnet record, so it is neither wrapped in withManagedReconcile nor gated
+	// by rejectExplicitTarget.
+	root.AddCommand(newInstallCommand(ctx))
 
 	return root
 }

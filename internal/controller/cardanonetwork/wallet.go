@@ -47,6 +47,83 @@ func (r *CardanoNetworkReconciler) applyPrimaryWalletSecret(
 	ctx context.Context,
 	desired *corev1.Secret,
 ) (controllerutil.OperationResult, *corev1.Secret, error) {
+	return r.applyWalletSecret(ctx, desired)
+}
+
+// applyPrimaryFaucetWalletSecret reconciles the well-known faucet wallet
+// Secret. It shares the developer wallet's generate-once-then-preserve contract
+// (the address is funded at genesis, so regenerating the key would strand the
+// allocation), so it delegates to the same apply core.
+func (r *CardanoNetworkReconciler) applyPrimaryFaucetWalletSecret(
+	ctx context.Context,
+	desired *corev1.Secret,
+) (controllerutil.OperationResult, *corev1.Secret, error) {
+	return r.applyWalletSecret(ctx, desired)
+}
+
+// faucetWalletApplyResult carries the outcome of the pre-build faucet wallet
+// ensure step from Reconcile into the build (the address) and the apply-result
+// accounting (the operation and live object).
+type faucetWalletApplyResult struct {
+	// enabled mirrors the gate so the apply phase knows whether to delete a
+	// stale Secret instead of keeping one.
+	enabled bool
+	// address is the bech32 faucet wallet address, threaded into the builder so
+	// the genesis-funding init container can carry it as an env literal.
+	address string
+	// operation is the create/unchanged result of the ensure step.
+	operation controllerutil.OperationResult
+	// object is the live faucet wallet Secret, or nil when not gated on.
+	object *corev1.Secret
+}
+
+// ensurePrimaryFaucetWalletSecret guarantees the well-known faucet wallet Secret
+// exists before the Deployment is built, generating its key material on first
+// reconcile and live-reading it thereafter. The faucet wallet's address must be
+// known at build time because the genesis-funding init container injects it as
+// an env literal: editing the genesis after the node already booted from the
+// unfunded one would rewrite the chain under a running node. When the faucet
+// wallet is not gated on (non-local or faucet disabled) it returns a disabled
+// result and leaves any stale Secret for the apply phase to delete.
+func (r *CardanoNetworkReconciler) ensurePrimaryFaucetWalletSecret(
+	ctx context.Context,
+	network *yacdv1alpha1.CardanoNetwork,
+) (faucetWalletApplyResult, error) {
+	if !faucetWalletEnabled(network) {
+		return faucetWalletApplyResult{}, nil
+	}
+
+	desired, err := (primaryWorkloadBuilder{scheme: r.Scheme}).faucetWalletSecret(network, faucetWalletSettings{secretName: primaryFaucetWalletSecretName(network)})
+	if err != nil {
+		return faucetWalletApplyResult{}, err
+	}
+
+	operation, secret, err := r.applyPrimaryFaucetWalletSecret(ctx, desired)
+	if err != nil {
+		return faucetWalletApplyResult{}, err
+	}
+	address := string(secret.Data[walletAddressKey])
+	if address == "" {
+		return faucetWalletApplyResult{}, fmt.Errorf("faucet wallet Secret %s has no address", primaryFaucetWalletSecretName(network))
+	}
+
+	return faucetWalletApplyResult{
+		enabled:   true,
+		address:   address,
+		operation: operation,
+		object:    secret,
+	}, nil
+}
+
+// applyWalletSecret is the shared apply core for the developer and faucet
+// wallets: live-read the Secret (Secrets are uncached), create it with freshly
+// generated key material when absent, and preserve existing key material
+// verbatim otherwise. Both wallets are funded against their derived address, so
+// neither may ever regenerate the key.
+func (r *CardanoNetworkReconciler) applyWalletSecret(
+	ctx context.Context,
+	desired *corev1.Secret,
+) (controllerutil.OperationResult, *corev1.Secret, error) {
 	desired = desired.DeepCopy()
 	if err := r.defaultObject(desired); err != nil {
 		return controllerutil.OperationResultNone, nil, err

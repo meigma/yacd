@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 )
 
@@ -35,16 +36,10 @@ type SourceReader interface {
 	ReadFundingSource(ctx context.Context, name string) (sources.FundingSource, error)
 }
 
-// TransactionSubmitter submits one exact top-up transaction.
-type TransactionSubmitter interface {
-	// SubmitTopUp submits one transaction for the requested source and amount.
-	SubmitTopUp(ctx context.Context, request ChainRequest) (ChainResult, error)
-}
-
 // Service coordinates faucet top-up requests.
 type Service struct {
 	sourceReader SourceReader
-	submitter    TransactionSubmitter
+	submitter    tx.Submitter
 	config       Config
 	locks        *sourceLocks
 	pending      *pendingInputs
@@ -87,26 +82,6 @@ type Result struct {
 	Lovelace int64 `json:"lovelace"`
 }
 
-// ChainRequest is the transaction-level request passed to the chain submitter.
-type ChainRequest struct {
-	// Source is the private faucet source used to sign the transaction.
-	Source sources.FundingSource
-	// DestinationAddress is the Cardano testnet recipient address.
-	DestinationAddress string
-	// Lovelace is the exact amount to submit.
-	Lovelace int64
-	// ExcludeInputKeys are source UTxO input keys already pending from earlier submissions.
-	ExcludeInputKeys []string
-}
-
-// ChainResult is the transaction-level result returned by the chain submitter.
-type ChainResult struct {
-	// TxID is the submitted transaction id as lowercase hex.
-	TxID string
-	// SpentInputKeys are source UTxO input keys consumed by the submitted transaction.
-	SpentInputKeys []string
-}
-
 // Error is a structured top-up error.
 type Error struct {
 	// Code is a stable machine-readable error code.
@@ -117,8 +92,9 @@ type Error struct {
 	Cause error
 }
 
-// NewService constructs a top-up service from source and transaction dependencies.
-func NewService(sourceReader SourceReader, submitter TransactionSubmitter, config Config) Service {
+// NewService constructs a top-up service from source and transaction
+// dependencies.
+func NewService(sourceReader SourceReader, submitter tx.Submitter, config Config) Service {
 	return Service{
 		sourceReader: sourceReader,
 		submitter:    submitter,
@@ -164,19 +140,17 @@ func (s Service) Submit(ctx context.Context, request Request) (Result, error) {
 	defer unlock()
 
 	excludedInputKeys := s.pending.snapshot(source.Name)
-	chainResult, err := s.submitter.SubmitTopUp(ctx, ChainRequest{
-		Source:             source,
+	chainResult, err := s.submitter.Submit(ctx, tx.Request{
+		SourceName:         source.Name,
+		SourceAddress:      source.Address,
+		VerificationKeyHex: source.VerificationKeyHex,
+		SigningKeyHex:      source.SigningKeyHex,
 		DestinationAddress: request.DestinationAddress,
 		Lovelace:           request.Lovelace,
 		ExcludeInputKeys:   excludedInputKeys,
 	})
 	if err != nil {
-		var topupErr *Error
-		if errors.As(err, &topupErr) {
-			return Result{}, topupErr
-		}
-
-		return Result{}, WrapError(CodeChainUnavailable, "submit top-up transaction", err)
+		return Result{}, mapChainError(err)
 	}
 	if strings.TrimSpace(chainResult.TxID) == "" {
 		return Result{}, Errorf(CodeChainUnavailable, "submit top-up transaction returned an empty transaction id")
@@ -223,6 +197,21 @@ func mapSourceError(sourceName string, err error) error {
 		return WrapError(CodeInvalidRequest, "invalid source name", err)
 	default:
 		return WrapError(CodeSourceUnavailable, fmt.Sprintf("faucet source %q is unavailable", sourceName), err)
+	}
+}
+
+// mapChainError translates a transaction-engine error into a top-up error,
+// preserving an already-structured top-up error from the source-read path.
+func mapChainError(err error) error {
+	var topupErr *Error
+	if errors.As(err, &topupErr) {
+		return topupErr
+	}
+	switch {
+	case tx.IsCode(err, tx.CodeInvalidRequest):
+		return WrapError(CodeInvalidRequest, "submit top-up transaction", err)
+	default:
+		return WrapError(CodeChainUnavailable, "submit top-up transaction", err)
 	}
 }
 

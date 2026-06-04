@@ -1,0 +1,36 @@
+# fund-genesis adds an initialFunds allocation for a bech32 address to a local
+# shelley-genesis.json, keying the entry by the address's raw decoded bytes. A
+# second run for the same address is idempotent and leaves the genesis
+# unchanged. Decode, headroom, and round-trip behavior are covered by the
+# genesisfund package unit tests.
+
+env YACD_ENV_DIR=$WORK/env
+env YACD_ADDRESS=addr_test1vrhgd9mzh6t4jdq2sxp3mnhlcuju2wz5pn8kf2268hzj48ggh3qnm
+env YACD_LOVELACE=2500000
+
+exec yacd-cardano-tools fund-genesis
+stdout 'funded addr_test1vrhgd9mzh6t4jdq2sxp3mnhlcuju2wz5pn8kf2268hzj48ggh3qnm \(key 60ee869762be9759340a81831dceffc725c538540ccf64a95a3dc52a9d\) with 2500000 lovelace'
+! stderr .
+
+# The decoded key and amount are written into initialFunds.
+grep '"60ee869762be9759340a81831dceffc725c538540ccf64a95a3dc52a9d": 2500000' $WORK/env/shelley-genesis.json
+# The pre-existing allocation is preserved.
+grep '60dd1f87ea2b6f5857c928fd7ce53ed5176c3c100b2779ca04d4e478f5' $WORK/env/shelley-genesis.json
+
+# A second run for the same address is a no-op.
+exec yacd-cardano-tools fund-genesis
+stdout 'already funded'
+! stderr .
+
+-- env/shelley-genesis.json --
+{
+  "maxLovelaceSupply": 100000020000000,
+  "networkMagic": 42,
+  "initialFunds": {
+    "60dd1f87ea2b6f5857c928fd7ce53ed5176c3c100b2779ca04d4e478f5": 15000003000000
+  },
+  "protocolParams": {
+    "minFeeA": 44,
+    "minFeeB": 155381
+  }
+}

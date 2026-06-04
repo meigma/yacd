@@ -2,27 +2,42 @@ package operator
 
 import "context"
 
-// Values carries optional install overrides. It is reserved for a later phase:
-// the ssa adapter applies a build-time-rendered manifest with image references
-// already pinned, so it does not consume Values today. The field is kept on
-// InstallSpec to match the design contract and the lifecycle caller that will
-// supply image overrides once configurable installs are supported.
-type Values map[string]string
+// DefaultNamespace is the namespace the operator is installed into when the
+// caller leaves InstallSpec.Namespace empty. It is the single source of truth
+// for that default: the SSA adapter and the install command both defer to it,
+// and it is no longer a hard pin — any valid DNS-1123 namespace renders
+// correctly because the chart's RBAC subjects follow the Helm release namespace.
+const DefaultNamespace = "yacd-system"
 
 // InstallSpec describes a requested operator install.
 type InstallSpec struct {
-	// Namespace is the namespace the operator is installed into. This phase
-	// pins it to the chart's render namespace; the adapter rejects any other
-	// value because the chart's RBAC subjects are baked to that namespace.
+	// Namespace is the namespace the operator is installed into. It is a real
+	// render input: it sets the Helm release namespace, so the rendered RBAC
+	// subjects, ServiceAccount, Role/RoleBinding, Service, and Deployment all
+	// follow it. Empty defaults to "yacd-system"; any other value must be a
+	// valid DNS-1123 label.
 	Namespace string
 
-	// Version is the operator version the caller intends to install. It is
-	// optional: when empty the adapter uses the version stamped into its
-	// embedded manifests, which is the single source of truth.
-	Version string
-
-	// Values carries optional install overrides; reserved (see Values).
+	// Values carries typed install overrides merged onto the chart defaults
+	// before rendering. The zero value renders the chart at its own defaults;
+	// callers that want the pinned, digest-tagged baseline pass Default().
 	Values Values
+}
+
+// Decision is the outcome of a dry-run install plan: the action the next
+// EnsureOperator would take, plus the versions that drove it. It is what the
+// install command prints under --dry-run without mutating the cluster.
+type Decision struct {
+	// Action is the install action Decide selected from the observed and
+	// embedded versions.
+	Action Action
+
+	// InstalledVersion is the in-cluster operator version, or empty when the
+	// operator is not installed.
+	InstalledVersion string
+
+	// TargetVersion is the embedded operator version this CLI would apply.
+	TargetVersion string
 }
 
 // State is the observed operator install state in a cluster.
@@ -54,7 +69,15 @@ type Installer interface {
 	// reflects the cluster after the apply.
 	EnsureOperator(ctx context.Context, spec InstallSpec) (State, error)
 
-	// OperatorState reports the current install state without mutating the
-	// cluster.
-	OperatorState(ctx context.Context) (State, error)
+	// Plan reports the action the next EnsureOperator would take for spec,
+	// without mutating the cluster: it renders the embedded chart for the
+	// target version, reads the install state in the resolved namespace, and
+	// runs the same Decide policy. A would-refuse plan returns the typed Decide
+	// error alongside the Decision, so callers can surface actionable guidance.
+	Plan(ctx context.Context, spec InstallSpec) (Decision, error)
+
+	// OperatorState reports the current install state of the operator in the
+	// given namespace without mutating the cluster. An empty namespace defaults
+	// to DefaultNamespace.
+	OperatorState(ctx context.Context, namespace string) (State, error)
 }

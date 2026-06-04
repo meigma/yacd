@@ -155,6 +155,38 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 			current.Status.Wallet.KeySecretName == primaryWalletSecretName(network)
 	}, 10*time.Second, 100*time.Millisecond)
 
+	// The well-known faucet wallet Secret is generated before the Deployment so
+	// its genesis-funded address can be injected into the genesis-funding init
+	// container. It is owned by the CardanoNetwork and carries a derived address.
+	faucetWalletSecretKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetWalletSecretName(network)}
+	require.Eventually(t, func() bool {
+		secret := &corev1.Secret{}
+		if apiClient.Get(ctx, faucetWalletSecretKey, secret) != nil {
+			return false
+		}
+		owner := metav1.GetControllerOf(secret)
+		return owner != nil && owner.Name == network.Name &&
+			secret.Labels[walletNameLabel] == faucetWalletName &&
+			strings.HasPrefix(string(secret.Data[walletAddressKey]), "addr_test1") &&
+			len(secret.Data[walletSigningKeyKey]) > 0
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// The Deployment carries the genesis-funding init container with the faucet
+	// wallet address env, ordered before the served-artifact stage init so the
+	// staged copy and the node both boot from the funded genesis. (Envtest does
+	// not run the init; the actual on-chain funding is proven on the dev stack.)
+	require.Eventually(t, func() bool {
+		deployment := &appsv1.Deployment{}
+		if apiClient.Get(ctx, deploymentKey, deployment) != nil {
+			return false
+		}
+		faucetWalletSecret := &corev1.Secret{}
+		if apiClient.Get(ctx, faucetWalletSecretKey, faucetWalletSecret) != nil {
+			return false
+		}
+		return deploymentFundsFaucetWalletAtGenesis(deployment, string(faucetWalletSecret.Data[walletAddressKey]))
+	}, 10*time.Second, 100*time.Millisecond)
+
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, apiClient.Get(ctx, deploymentKey, deployment))
 	originalUID := deployment.UID
@@ -359,6 +391,12 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		err := apiClient.Get(ctx, faucetAuthSecretKey, &corev1.Secret{})
 		return apierrors.IsNotFound(err)
 	}, 10*time.Second, 100*time.Millisecond)
+	// Disabling the faucet must also delete the owned genesis-funded faucet
+	// wallet Secret so no funding key material is left behind.
+	require.Eventually(t, func() bool {
+		err := apiClient.Get(ctx, faucetWalletSecretKey, &corev1.Secret{})
+		return apierrors.IsNotFound(err)
+	}, 10*time.Second, 100*time.Millisecond)
 	require.Eventually(t, func() bool {
 		got := &appsv1.Deployment{}
 		if err := apiClient.Get(ctx, deploymentKey, got); err != nil {
@@ -504,6 +542,36 @@ func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.
 
 func findCondition(network *yacdv1alpha1.CardanoNetwork, ct conditionType) *metav1.Condition {
 	return apimeta.FindStatusCondition(network.Status.Conditions, string(ct))
+}
+
+// deploymentFundsFaucetWalletAtGenesis reports whether the Deployment carries
+// the genesis-funding init container with the given faucet wallet address in its
+// fund-genesis arguments, ordered before the served-artifact stage init.
+func deploymentFundsFaucetWalletAtGenesis(deployment *appsv1.Deployment, address string) bool {
+	if address == "" {
+		return false
+	}
+	inits := deployment.Spec.Template.Spec.InitContainers
+	genesisIdx, stageIdx := -1, -1
+	for i, c := range inits {
+		switch c.Name {
+		case faucetWalletGenesisInitContainerName:
+			genesisIdx = i
+			hasAddress := false
+			for _, arg := range c.Args {
+				if arg == address {
+					hasAddress = true
+				}
+			}
+			if !hasAddress {
+				return false
+			}
+		case servedArtifactsInitContainerName:
+			stageIdx = i
+		}
+	}
+
+	return genesisIdx >= 0 && stageIdx >= 0 && genesisIdx < stageIdx
 }
 
 func statusHasProgressingEndpoints(

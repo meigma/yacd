@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/meigma/yacd/services/faucet/internal/sources"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,7 @@ func TestServiceSubmitUsesDefaultSource(t *testing.T) {
 			"utxo1": testFundingSource("utxo1"),
 		},
 	}
-	submitter := &fakeSubmitter{result: ChainResult{TxID: "ABC123", SpentInputKeys: []string{testSpentInputKey}}}
+	submitter := &fakeSubmitter{result: tx.Result{TxID: "ABC123", SpentInputKeys: []string{testSpentInputKey}}}
 	service := NewService(reader, submitter, testConfig())
 
 	result, err := service.Submit(context.Background(), Request{
@@ -43,7 +44,7 @@ func TestServiceSubmitUsesDefaultSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "utxo1", reader.names[0])
 	require.Len(t, submitter.requests, 1)
-	assert.Equal(t, "utxo1", submitter.requests[0].Source.Name)
+	assert.Equal(t, "utxo1", submitter.requests[0].SourceName)
 	assert.Equal(t, testDestinationAddress, submitter.requests[0].DestinationAddress)
 	assert.Equal(t, int64(1_000_000), submitter.requests[0].Lovelace)
 	assert.Equal(t, "abc123", result.TxID)
@@ -62,7 +63,7 @@ func TestServiceSubmitUsesSelectedSource(t *testing.T) {
 			"utxo2": testFundingSource("utxo2"),
 		},
 	}
-	submitter := &fakeSubmitter{result: ChainResult{TxID: "def456", SpentInputKeys: []string{testSpentInputKey}}}
+	submitter := &fakeSubmitter{result: tx.Result{TxID: "def456", SpentInputKeys: []string{testSpentInputKey}}}
 	service := NewService(reader, submitter, testConfig())
 
 	_, err := service.Submit(context.Background(), Request{
@@ -73,7 +74,7 @@ func TestServiceSubmitUsesSelectedSource(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "utxo2", reader.names[0])
-	assert.Equal(t, "utxo2", submitter.requests[0].Source.Name)
+	assert.Equal(t, "utxo2", submitter.requests[0].SourceName)
 }
 
 func TestServiceSubmitRejectsInvalidRequests(t *testing.T) {
@@ -278,7 +279,7 @@ func TestServiceSubmitPassesPendingInputExclusions(t *testing.T) {
 		},
 	}
 	submitter := &fakeSubmitter{
-		results: []ChainResult{
+		results: []tx.Result{
 			{TxID: "first", SpentInputKeys: []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:0"}},
 			{TxID: "second", SpentInputKeys: []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"}},
 		},
@@ -319,7 +320,7 @@ func TestServiceSubmitDoesNotRecordPendingInputsOnFailure(t *testing.T) {
 			Errorf(CodeChainUnavailable, "chain failed"),
 			nil,
 		},
-		results: []ChainResult{
+		results: []tx.Result{
 			{},
 			{TxID: "second", SpentInputKeys: []string{"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb:1"}},
 		},
@@ -350,7 +351,7 @@ func TestResultJSONDoesNotExposeKeyMaterial(t *testing.T) {
 			"utxo1": testFundingSource("utxo1"),
 		},
 	}
-	service := NewService(reader, &fakeSubmitter{result: ChainResult{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}}, testConfig())
+	service := NewService(reader, &fakeSubmitter{result: tx.Result{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}}, testConfig())
 
 	result, err := service.Submit(context.Background(), Request{
 		DestinationAddress: testDestinationAddress,
@@ -411,24 +412,24 @@ func (f *fakeSourceReader) ReadFundingSource(_ context.Context, name string) (so
 
 type fakeSubmitter struct {
 	mu       sync.Mutex
-	result   ChainResult
-	results  []ChainResult
+	result   tx.Result
+	results  []tx.Result
 	err      error
 	errs     []error
-	requests []ChainRequest
+	requests []tx.Request
 }
 
-func (f *fakeSubmitter) SubmitTopUp(_ context.Context, request ChainRequest) (ChainResult, error) {
+func (f *fakeSubmitter) Submit(_ context.Context, request tx.Request) (tx.Result, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	index := len(f.requests)
 	f.requests = append(f.requests, request)
 	if index < len(f.errs) && f.errs[index] != nil {
-		return ChainResult{}, f.errs[index]
+		return tx.Result{}, f.errs[index]
 	}
 	if f.err != nil {
-		return ChainResult{}, f.err
+		return tx.Result{}, f.err
 	}
 
 	result := f.result
@@ -456,7 +457,7 @@ func newBlockingSubmitter() *blockingSubmitter {
 	}
 }
 
-func (b *blockingSubmitter) SubmitTopUp(_ context.Context, _ ChainRequest) (ChainResult, error) {
+func (b *blockingSubmitter) Submit(_ context.Context, _ tx.Request) (tx.Result, error) {
 	if !b.active.CompareAndSwap(0, 1) {
 		b.overlaps.Add(1)
 	}
@@ -464,7 +465,7 @@ func (b *blockingSubmitter) SubmitTopUp(_ context.Context, _ ChainRequest) (Chai
 	<-b.releases
 	b.active.Store(0)
 
-	return ChainResult{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}, nil
+	return tx.Result{TxID: "abc123", SpentInputKeys: []string{testSpentInputKey}}, nil
 }
 
 func (b *blockingSubmitter) release() {

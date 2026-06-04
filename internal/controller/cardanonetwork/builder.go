@@ -27,15 +27,18 @@ type primaryWorkloadResources struct {
 	ArtifactsService      *corev1.Service
 	FaucetAuthSecret      *corev1.Secret
 	WalletSecret          *corev1.Secret
+	FaucetWalletSecret    *corev1.Secret
 	Wallet                walletSettings
+	FaucetWallet          faucetWalletSettings
 	DBSyncAttached        bool
 }
 
 type chainAPISettings struct {
-	Ogmios ogmiosSettings
-	Kupo   kupoSettings
-	Faucet faucetSettings
-	Wallet walletSettings
+	Ogmios       ogmiosSettings
+	Kupo         kupoSettings
+	Faucet       faucetSettings
+	Wallet       walletSettings
+	FaucetWallet faucetWalletSettings
 }
 
 // walletSettings is the resolved developer-wallet configuration. The wallet is
@@ -47,6 +50,22 @@ type walletSettings struct {
 	// Requires local mode plus the faucet and kupo enabled.
 	enabled bool
 	// fundingLovelace is the amount the controller funds the wallet with.
+	fundingLovelace int64
+	// secretName is the owned Secret that holds the wallet key envelopes.
+	secretName string
+}
+
+// faucetWalletSettings is the resolved configuration for the well-known faucet
+// wallet. The faucet wallet is a local-only, genesis-funded payment key the
+// controller generates and writes directly (it is not a pod sidecar), so it
+// carries no image or port — only whether to bootstrap one, the genesis
+// funding amount, and the owned Secret name. It is enabled implicitly whenever
+// the faucet is enabled on a local network; there is no separate spec opt-in.
+type faucetWalletSettings struct {
+	// enabled is whether the controller bootstraps the faucet wallet. Requires
+	// local mode with the faucet enabled.
+	enabled bool
+	// fundingLovelace is the genesis allocation granted to the faucet wallet.
 	fundingLovelace int64
 	// secretName is the owned Secret that holds the wallet key envelopes.
 	secretName string
@@ -93,6 +112,14 @@ type primaryWorkloadBuilder struct {
 	// secondary sidecar compatibility failures.
 	acceptedIdentity acceptedNetworkIdentity
 
+	// faucetWalletAddress is the bech32 address of the well-known faucet
+	// wallet. The Reconciler ensures the faucet wallet Secret exists before
+	// the build and threads its address in here so the genesis-funding init
+	// container can carry the address as an env literal: the node must boot
+	// from an already-funded genesis on the first reconcile. Empty when the
+	// faucet wallet is not gated on (non-local or faucet disabled).
+	faucetWalletAddress string
+
 	dbSyncAttachment *ctrldbsync.PrimarySidecarAttachment
 }
 
@@ -131,7 +158,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, err
 	}
 
-	deployment, err := b.deployment(network, networkPlan, createEnvInitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.Faucet)
+	deployment, err := b.deployment(network, networkPlan, createEnvInitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.Faucet, chainAPI.FaucetWallet)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +203,13 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 			return nil, err
 		}
 	}
+	var faucetWalletSecret *corev1.Secret
+	if chainAPI.FaucetWallet.enabled {
+		faucetWalletSecret, err = b.faucetWalletSecret(network, chainAPI.FaucetWallet)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// The artifacts Service fronts the always-on serve sidecar, which is wired
 	// for LOCAL and CURATED PUBLIC networks only (the same gate the Deployment
 	// uses to add the serve container); custom-public has neither.
@@ -198,7 +232,9 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		ArtifactsService:      artifactsService,
 		FaucetAuthSecret:      faucetAuthSecret,
 		WalletSecret:          walletSecret,
+		FaucetWalletSecret:    faucetWalletSecret,
 		Wallet:                chainAPI.Wallet,
+		FaucetWallet:          chainAPI.FaucetWallet,
 		DBSyncAttached:        b.dbSyncAttachment != nil,
 	}, nil
 }
@@ -275,7 +311,35 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 		return chainAPISettings{}, err
 	}
 
-	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, Faucet: faucet, Wallet: wallet}, nil
+	faucetWallet := resolveFaucetWalletSettings(network, plan, faucet)
+
+	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, Faucet: faucet, Wallet: wallet, FaucetWallet: faucetWallet}, nil
+}
+
+// faucetWalletEnabled reports whether the well-known faucet wallet should be
+// bootstrapped. It is a spec-only predicate (local mode plus the faucet
+// enabled) shared by the Reconciler's pre-build ensure step and the builder so
+// both agree on the gate without re-resolving the full faucet settings.
+func faucetWalletEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
+	return network != nil &&
+		network.Spec.Mode == yacdv1alpha1.CardanoNetworkModeLocal &&
+		faucetExplicitlyEnabled(network)
+}
+
+// resolveFaucetWalletSettings resolves the faucet wallet configuration. The
+// faucet wallet is enabled implicitly whenever the faucet is enabled on a local
+// network: it is the genesis-funded source the local faucet (and the CLI) spend
+// from. Returns the disabled zero value otherwise.
+func resolveFaucetWalletSettings(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, faucet faucetSettings) faucetWalletSettings {
+	if !plan.isLocal() || !faucet.enabled {
+		return faucetWalletSettings{}
+	}
+
+	return faucetWalletSettings{
+		enabled:         true,
+		fundingLovelace: defaultFaucetWalletFundingLovelace,
+		secretName:      primaryFaucetWalletSecretName(network),
+	}
 }
 
 // resolveWalletSettings resolves the developer-wallet configuration and runs

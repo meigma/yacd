@@ -114,6 +114,119 @@ func TestApplyPrimaryWalletSecretCreatesOnceAndPreservesKeys(t *testing.T) {
 	assert.Equal(t, created.Data[walletSigningKeyKey], again.Data[walletSigningKeyKey])
 }
 
+func TestResolveFaucetWalletSettings(t *testing.T) {
+	localPlan := primaryNetworkPlan{Mode: yacdv1alpha1.CardanoNetworkModeLocal}
+	publicPlan := primaryNetworkPlan{Mode: yacdv1alpha1.CardanoNetworkModePublic}
+	enabledFaucet := faucetSettings{enabled: true}
+
+	t.Run("disabled when faucet is off", func(t *testing.T) {
+		network := localCardanoNetwork("fw")
+		settings := resolveFaucetWalletSettings(network, localPlan, faucetSettings{enabled: false})
+		assert.False(t, settings.enabled)
+	})
+
+	t.Run("disabled on non-local networks", func(t *testing.T) {
+		network := localCardanoNetwork("fw")
+		settings := resolveFaucetWalletSettings(network, publicPlan, enabledFaucet)
+		assert.False(t, settings.enabled)
+	})
+
+	t.Run("enabled with the faucet on a local network", func(t *testing.T) {
+		network := localCardanoNetwork("fw")
+		settings := resolveFaucetWalletSettings(network, localPlan, enabledFaucet)
+		assert.True(t, settings.enabled)
+		assert.Equal(t, defaultFaucetWalletFundingLovelace, settings.fundingLovelace)
+		assert.Equal(t, primaryFaucetWalletSecretName(network), settings.secretName)
+	})
+}
+
+func TestFaucetWalletEnabledPredicate(t *testing.T) {
+	t.Run("local with faucet", func(t *testing.T) {
+		network := localCardanoNetwork("fw")
+		enableFaucet(network)
+		assert.True(t, faucetWalletEnabled(network))
+	})
+
+	t.Run("local without faucet", func(t *testing.T) {
+		assert.False(t, faucetWalletEnabled(localCardanoNetwork("fw")))
+	})
+
+	t.Run("public with faucet flag", func(t *testing.T) {
+		network := publicPreviewCardanoNetwork("fw")
+		enableFaucet(network)
+		assert.False(t, faucetWalletEnabled(network))
+	})
+}
+
+func TestApplyPrimaryFaucetWalletSecretCreatesOnceAndPreservesKeys(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("faucet-wallet-create")
+	enableFaucet(network)
+
+	reconciler := newTestReconciler(t, network)
+	desired, err := (primaryWorkloadBuilder{scheme: reconciler.Scheme}).faucetWalletSecret(network, faucetWalletSettings{secretName: primaryFaucetWalletSecretName(network)})
+	require.NoError(t, err)
+
+	op, created, err := reconciler.applyPrimaryFaucetWalletSecret(ctx, desired)
+	require.NoError(t, err)
+	assert.Equal(t, "created", string(op))
+
+	// The marker labels identify the well-known, genesis-funded faucet wallet.
+	assert.Equal(t, faucetWalletName, created.Labels[walletNameLabel])
+	assert.Equal(t, walletSourceGenesisFunded, created.Labels[walletSourceLabel])
+
+	address := string(created.Data[walletAddressKey])
+	require.NotEmpty(t, address)
+	assert.NotEmpty(t, created.Data[walletSigningKeyKey])
+	assert.NotEmpty(t, created.Data[walletVerificationKeyKey])
+
+	// The generated key material is valid: the verification envelope derives the
+	// published address.
+	derived := addressFromVerificationEnvelope(t, created.Data[walletVerificationKeyKey])
+	assert.Equal(t, address, derived)
+
+	// A second apply must preserve the existing key material verbatim — never
+	// regenerate the genesis-funded faucet wallet, or the funded address would be
+	// stranded.
+	op, again, err := reconciler.applyPrimaryFaucetWalletSecret(ctx, desired.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, "unchanged", string(op))
+	assert.Equal(t, address, string(again.Data[walletAddressKey]))
+	assert.Equal(t, created.Data[walletSigningKeyKey], again.Data[walletSigningKeyKey])
+}
+
+func TestEnsurePrimaryFaucetWalletSecret(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("disabled returns no address", func(t *testing.T) {
+		network := localCardanoNetwork("fw-off")
+		reconciler := newTestReconciler(t, network)
+
+		result, err := reconciler.ensurePrimaryFaucetWalletSecret(ctx, network)
+		require.NoError(t, err)
+		assert.False(t, result.enabled)
+		assert.Empty(t, result.address)
+		assert.Nil(t, result.object)
+	})
+
+	t.Run("creates the Secret once and returns a stable address", func(t *testing.T) {
+		network := localCardanoNetwork("fw-on")
+		enableFaucet(network)
+		reconciler := newTestReconciler(t, network)
+
+		first, err := reconciler.ensurePrimaryFaucetWalletSecret(ctx, network)
+		require.NoError(t, err)
+		assert.True(t, first.enabled)
+		require.True(t, strings.HasPrefix(first.address, "addr_test1"))
+		assert.Equal(t, "created", string(first.operation))
+
+		second, err := reconciler.ensurePrimaryFaucetWalletSecret(ctx, network)
+		require.NoError(t, err)
+		assert.Equal(t, first.address, second.address, "the faucet wallet address must be stable across reconciles")
+		assert.Equal(t, "unchanged", string(second.operation))
+	})
+}
+
 func TestPrimaryWalletReadyConditionFundingLifecycle(t *testing.T) {
 	ctx := context.Background()
 	conditionTrue := func(c conditionReason) metav1.Condition {
