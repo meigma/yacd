@@ -64,3 +64,38 @@ Phased: P1 API+operator, P2 devnet plumbing, P3 CLI resolver (order matters).
 
 Next: user reviews the design doc. No implementation worktree created yet; dev
 stack not started.
+
+## 2026-06-04 07:30 — P1 plan approved & banked (gated on 059)
+Design LGTM'd. Effort set to ultracode. Drafted the P1 (API + operator) plan in
+plan mode: explored via 3 Explore agents + 2 Plan agents (one adversarial),
+verified the risky bits myself.
+
+Plan approved and saved durably to `.journal/060/PHASE1_PLAN.md` (the
+`~/.claude/plans/` copy is transient). P1 scope: add `service.{type,nodePort}` +
+`externalURL` to `spec.chainAPI.{ogmios,kupo}`, render NodePort Services, mirror
+externalURL → `status.endpoints.*.externalURL`.
+
+Key findings/decisions baked into the plan:
+- **Landmine found:** `ctrlkit/resources.MutateService` does
+  `current.Spec.Ports = desired.Spec.Ports` wholesale → wipes a k8s-assigned
+  NodePort every reconcile (thrash), despite its doc comment claiming it
+  preserves NodePort. Only 2 callers (cardanonetwork + db-sync); db-sync is
+  ClusterIP (resources.go:380,447) so a guarded fix is a no-op for it. Existing
+  `...CorrectsPrimary/Ogmios/KupoService...` tests (controller_test.go:1023/1083/1143)
+  tamper ClusterIP→NodePort and expect restoration — a `desired.Type==NodePort`
+  guard keeps them green.
+- User-confirmed (AskUserQuestion): externalURL scheme validation **lenient**
+  (absolute+host, ws/wss/http/https); NodePort fix in **shared MutateService**
+  (guarded); validation **Go→Degraded UnsupportedSpec** + simple CRD markers
+  (Enum on type, Maximum on nodePort — NOT Minimum=30000, which would reject
+  0=auto). externalURL is a **sibling** of `service`, mirrored as a peer of `url`.
+- No network-identity fingerprint includes these fields (safe); values.schema.json
+  unrelated; envtest can't reproduce the thrash (no NodePort allocator) so the
+  ctrlkit unit test is the real guard.
+
+**HOLDING implementation** per the user's "finish 059 first" directive: P1 is
+logically independent of the faucet removal but edits the SAME files
+(settings.go/resources.go/status.go/builder.go/cardanonetwork_types.go), so
+building on pre-059 master would cause rebase conflicts. Awaiting user's call:
+start now (eat rebase) vs. wait for 059. No worktree created; dev stack not
+started.
