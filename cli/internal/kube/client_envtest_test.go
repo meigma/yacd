@@ -361,6 +361,22 @@ func (s *staticClient) GetSecretValue(context.Context, string, string, string) (
 	return "", nil
 }
 
+func (s *staticClient) GetSecret(context.Context, string, string) (*corev1.Secret, error) {
+	return nil, nil
+}
+
+func (s *staticClient) ListSecrets(context.Context, string, map[string]string) ([]corev1.Secret, error) {
+	return nil, nil
+}
+
+func (s *staticClient) CreateSecret(context.Context, *corev1.Secret) error {
+	return nil
+}
+
+func (s *staticClient) DeleteSecret(context.Context, string, string) error {
+	return nil
+}
+
 func (s *staticClient) DeleteCardanoNetwork(context.Context, string, string) error {
 	return nil
 }
@@ -414,6 +430,22 @@ func (g *goneAfterClient) GetCardanoNetwork(_ context.Context, namespace string,
 
 func (g *goneAfterClient) GetSecretValue(context.Context, string, string, string) (string, error) {
 	return "", nil
+}
+
+func (g *goneAfterClient) GetSecret(context.Context, string, string) (*corev1.Secret, error) {
+	return nil, nil
+}
+
+func (g *goneAfterClient) ListSecrets(context.Context, string, map[string]string) ([]corev1.Secret, error) {
+	return nil, nil
+}
+
+func (g *goneAfterClient) CreateSecret(context.Context, *corev1.Secret) error {
+	return nil
+}
+
+func (g *goneAfterClient) DeleteSecret(context.Context, string, string) error {
+	return nil
 }
 
 func (g *goneAfterClient) DeleteCardanoNetwork(context.Context, string, string) error {

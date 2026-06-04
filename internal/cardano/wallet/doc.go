@@ -8,7 +8,11 @@
 //
 // Address derivation is the single source of truth shared with the faucet's
 // source-key handling: both go through DeriveTestnetAddress so the operator and
-// the faucet can never disagree about an address. The package has no Kubernetes
-// dependencies and no network or filesystem I/O; New reads crypto/rand for key
-// material and FromSeed is fully deterministic for golden tests.
+// the faucet can never disagree about an address. DecodePaymentKeyEnvelope is
+// the inverse of the envelope encoding, recovering the raw signing or
+// verification key hex from a persisted envelope.
+//
+// The package has no Kubernetes dependencies and no network or filesystem I/O;
+// New reads crypto/rand for key material and FromSeed is fully deterministic for
+// golden tests. It is manager-safe (cbor/json/ed25519/apollo-address only).
 package wallet

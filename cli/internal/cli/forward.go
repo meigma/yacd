@@ -10,6 +10,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// faucetAuthTokenKey is the Secret data key under which the in-cluster faucet
+// publishes its auth Bearer token. run and connect read it to set
+// YACD_FAUCET_TOKEN for host tooling; the wallet funding path does not use the
+// faucet HTTP service and so never reads it.
+const faucetAuthTokenKey = "token"
+
 // connectedSession is a live host-access session shared by run and connect: the
 // chain-API port-forwards, the YACD_* environment a host process consumes (env,
 // which carries the faucet token), and the token-free document connect writes
@@ -116,8 +122,7 @@ func forwardSpecs(network *yacdv1alpha1.CardanoNetwork) []kube.PortForwardSpec {
 
 // requireFreshStatus fails fast when a network's published status cannot be
 // trusted: a stale observedGeneration or a True Degraded condition. It is the
-// shared preamble for the readiness gates (requireReady here and
-// requireFaucetReady in topup.go) so the staleness/Degraded handling lives in
+// shared preamble for requireReady so the staleness/Degraded handling lives in
 // one place.
 func requireFreshStatus(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) error {
 	if network.Status.ObservedGeneration != network.Generation {
