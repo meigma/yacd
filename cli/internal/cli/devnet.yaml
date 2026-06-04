@@ -9,17 +9,15 @@ spec:
       storage:
         size: 2Gi
     chainAPI:
+      # Enabling the faucet on a local network makes the controller generate a
+      # genesis-funded `faucet` wallet, which is the network's funded wallet and
+      # the default source for `yacd wallet topup`.
       faucet:
         enabled: true
         port: 8080
         defaultSource: utxo1
         minTopUpLovelace: 1000000
-        # Raised so the operator can fund the developer wallet (100,000 ADA)
-        # through the faucet within the per-request maximum.
         maxTopUpLovelace: 100000000000
-      wallet:
-        enabled: true
-        fundingLovelace: 100000000000
     local:
       networkMagic: 42
       era: conway

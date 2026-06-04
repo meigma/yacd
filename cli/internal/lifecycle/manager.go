@@ -10,6 +10,7 @@ import (
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/meigma/yacd/cli/internal/render"
+	"github.com/meigma/yacd/cli/internal/wallet"
 )
 
 // operatorPollInterval is how often Up polls operator readiness after install.
@@ -123,7 +124,15 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 	}
 	m.Report.Done("Network %q ready", o.NetworkName)
 
-	return Result{Target: target, Cluster: info, Operator: state, Network: ready}, nil
+	// Surface the genesis-funded faucet wallet as the network's funded wallet.
+	// Resolution is best-effort: an operator that predates the faucet wallet (or
+	// a non-local network) simply has none, which must not fail bring-up.
+	walletAddress := ""
+	if faucetWallet, walletErr := wallet.NewStore(client, o.Namespace, o.NetworkName).Faucet(ctx); walletErr == nil {
+		walletAddress = faucetWallet.Address
+	}
+
+	return Result{Target: target, Cluster: info, Operator: state, Network: ready, WalletAddress: walletAddress}, nil
 }
 
 // ensureOperatorReady installs or upgrades the operator and then waits for its

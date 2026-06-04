@@ -39,13 +39,13 @@ const (
 
 	// walletNameLabel marks an owned wallet Secret with its well-known name so
 	// consumers (the CLI, dashboards) can select a specific wallet without
-	// parsing the Secret name. The developer wallet and the faucet wallet share
-	// the same Secret shape; this label distinguishes them.
+	// parsing the Secret name. The genesis-funded faucet wallet and CLI-managed
+	// wallets share the same Secret shape; this label distinguishes them.
 	walletNameLabel = "yacd.meigma.io/wallet-name"
 
 	// walletSourceLabel records how a wallet Secret is funded. The faucet wallet
-	// is allocated directly at genesis, unlike the developer wallet which is
-	// topped up at runtime through the faucet service.
+	// is allocated directly at genesis; CLI-managed wallets are funded by a
+	// host-built transaction from another wallet.
 	walletSourceLabel = "yacd.meigma.io/wallet-source"
 
 	// faucetWalletName is the well-known wallet name for the genesis-funded
@@ -432,27 +432,6 @@ func (b primaryWorkloadBuilder) faucetAuthSecret(network *yacdv1alpha1.CardanoNe
 
 	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
 		return nil, fmt.Errorf("set faucet auth Secret owner reference: %w", err)
-	}
-
-	return secret, nil
-}
-
-// walletSecret builds the opaque Secret that carries the bootstrapped developer
-// wallet's payment key envelopes and address. Like the faucet auth Secret, the
-// data map is populated by the apply phase (the builder stays pure and cannot
-// generate key material).
-func (b primaryWorkloadBuilder) walletSecret(network *yacdv1alpha1.CardanoNetwork, settings walletSettings) (*corev1.Secret, error) {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      settings.secretName,
-			Namespace: network.Namespace,
-			Labels:    primaryWorkloadLabels(network),
-		},
-		Type: corev1.SecretTypeOpaque,
-	}
-
-	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
-		return nil, fmt.Errorf("set wallet Secret owner reference: %w", err)
 	}
 
 	return secret, nil

@@ -49,16 +49,9 @@ func primaryFaucetAuthSecretName(network *yacdv1alpha1.CardanoNetwork) string {
 	return ctrlnames.DNSLabelWithSuffix(network.Name, "faucet-auth")
 }
 
-// primaryWalletSecretName returns the DNS-label name of the developer wallet
-// Secret that carries the bootstrapped payment key envelopes and address.
-func primaryWalletSecretName(network *yacdv1alpha1.CardanoNetwork) string {
-	return ctrlnames.DNSLabelWithSuffix(network.Name, "wallet")
-}
-
 // primaryFaucetWalletSecretName returns the DNS-label name of the well-known
-// faucet wallet Secret. Unlike the developer wallet, the faucet wallet is
-// funded directly at genesis (not through the faucet service) and serves as the
-// local funding source the CLI later spends from.
+// faucet wallet Secret. The faucet wallet is funded directly at genesis and
+// serves as the local funding source the CLI later spends from.
 func primaryFaucetWalletSecretName(network *yacdv1alpha1.CardanoNetwork) string {
 	return ctrlnames.DNSLabelWithSuffix(network.Name, "wallet-faucet")
 }

@@ -58,12 +58,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		Now:                  func() time.Time { return envtestNow },
 		syncProberOverride:   syncedNodeSyncProber(),
 		timingProberOverride: syncedNodeTimingProber(),
-		// Injected so the wallet funding path never makes real HTTP calls. The
-		// confirmer reports funded so that once this test drives the faucet/kupo
-		// containers ready, WalletReady (which gates aggregate Ready) can become
-		// true without a live faucet transaction.
-		walletConfirmerOverride: walletConfirmerFunc(func(context.Context, string, string, int64) (bool, error) { return true, nil }),
-		walletFunderOverride:    walletFunderFunc(func(context.Context, string, string, string, int64) (string, error) { return "envtest-tx", nil }),
 	}).SetupWithManager(mgr))
 
 	errCh := make(chan error, 1)
@@ -88,7 +82,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	network := localCardanoNetwork("manager-owned")
 	network.Namespace = namespace.Name
 	enableFaucet(network)
-	enableWallet(network, defaultFaucetMaxLovelace)
 	require.NoError(t, apiClient.Create(ctx, network))
 
 	deploymentKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWorkloadName(network)}
@@ -131,28 +124,6 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 		secret := &corev1.Secret{}
 		return apiClient.Get(ctx, faucetAuthSecretKey, secret) == nil &&
 			validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey]))
-	}, 10*time.Second, 100*time.Millisecond)
-
-	// The developer wallet Secret is created with a derived address, and the
-	// address is published into status.wallet so the CLI can surface it. (Funding
-	// stays pending because envtest has no kubelet to make the faucet Pod ready.)
-	walletSecretKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryWalletSecretName(network)}
-	require.Eventually(t, func() bool {
-		secret := &corev1.Secret{}
-		if apiClient.Get(ctx, walletSecretKey, secret) != nil {
-			return false
-		}
-		return strings.HasPrefix(string(secret.Data[walletAddressKey]), "addr_test1") &&
-			len(secret.Data[walletSigningKeyKey]) > 0
-	}, 10*time.Second, 100*time.Millisecond)
-	require.Eventually(t, func() bool {
-		current := &yacdv1alpha1.CardanoNetwork{}
-		if apiClient.Get(ctx, client.ObjectKeyFromObject(network), current) != nil {
-			return false
-		}
-		return current.Status.Wallet != nil &&
-			strings.HasPrefix(current.Status.Wallet.Address, "addr_test1") &&
-			current.Status.Wallet.KeySecretName == primaryWalletSecretName(network)
 	}, 10*time.Second, 100*time.Millisecond)
 
 	// The well-known faucet wallet Secret is generated before the Deployment so
