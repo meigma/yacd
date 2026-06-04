@@ -304,3 +304,27 @@ clean immediately before (force-)pushing a PR.
 **Status: #97 OPEN, ready, NOT merged — awaiting human review.** Dev stack still up.
 **Next:** after #97 merges → P3 (CLI wallet store + verbs + direct submission via
 internal/cardano/tx). Re-confirm the 5 open decisions before P3.
+
+## 2026-06-03 19:12 — P2 MERGED (#97); P3 started (design running)
+User approved #97; squash-merged (`911f663`). **P2 (genesis-funded faucet wallet) is
+fully DONE+merged.** Brought the dev stack DOWN (`root:dev-down` from the #97 worktree,
+Kind cluster deleted), removed the #97 worktree/branch, ff'd master, created P3 worktree
+`feat/cli-wallet-verbs`.
+
+**P3 decisions (user-confirmed):** wallet selector = **second positional**
+(`yacd wallet topup NET WALLET L`), accepting name | pubkey | bech32 address; the
+standalone **`yacd topup` is REMOVED and folded into `yacd wallet topup`** (faucet wallet
+= default `--from` source). Locked the rest at documented defaults: `add` generates-only
+unless `--topup`; ceiling ~50 wallets/network; label `yacd.meigma.io/wallet=<name>`;
+`spec.chainAPI.wallet` (dev wallet) removal stays in **P4**.
+
+**P3 scope:** new `yacd wallet {list,add,topup,export,remove}` subtree; wallet store over
+labeled K8s Secrets (data payment.skey/vkey/address, ownerRef→network); CLI-side tx
+submission via `internal/cardano/tx` (forward Ogmios+Kupo, read source wallet Secret,
+**decode the key ENVELOPE → raw hex** for tx.Request, submit, confirm via the existing
+kugo path); delete the faucet-HTTP `topup` transport + token trust gate. The CLI gains
+Apollo's tx-builder (ogmigo+kugo already present); the MANAGER must stay tx-free.
+
+Launched P3 **design** workflow `wf_91bc901b-be8` (3 agents: CLI/kube surface; tx-funding
+path + envelope decode; store/verbs/selector) → file-by-file plan. **Next:** review the
+design, then implement (workflow) + live-validate (dev-up from P3 worktree), PR + pause.
