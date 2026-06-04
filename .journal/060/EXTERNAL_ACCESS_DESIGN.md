@@ -3,6 +3,11 @@
 Status: draft for review (session 060, 2026-06-03)
 Author: agent + jmgilman
 
+**Dependency:** this design assumes **session 059's faucet removal is live**
+(`.journal/059/WALLET_REARCH_PLAN.md`) — the CLI builds and submits funding txns
+itself as an Ogmios JSON-RPC client (`submitTransaction` = `LocalTxSubmission`)
+plus Kupo for UTxO lookup. 059 lands first; this work starts after.
+
 ## 1. Problem
 
 The yacd CLI can only reach a network's Ogmios/Kupo over an **ephemeral
@@ -72,8 +77,9 @@ Grounding facts from the code, so the design is concrete:
 - The operator does **not** create Ingress objects. It only advertises a URL
   someone else asserts. (Bringing-your-own ingress controller, host/path routing,
   and Ogmios-websocket ingress quirks are out of scope.)
-- **Faucet** external access is out of scope here — see §8. Scope is Ogmios and
-  Kupo.
+- **Faucet** is gone (session 059). With the faucet removed, `topup`/funding is a
+  direct Ogmios + Kupo consumer, so it inherits this mechanism with no
+  faucet-specific path. Scope is Ogmios and Kupo.
 - `yacd connect` stays a forwarding tool for remote clusters; it is not
   reworked.
 
@@ -227,26 +233,22 @@ repo's slice-per-PR convention.
   localhost `externalURL`. Live-verify on k3d that `localhost:1337/1442` answer
   before any CLI change.
 - **P3 — CLI resolution.** Shared resolver (flag → env → probed externalURL →
-  forward) in the forward path; wire into `run` and `topup` (`--await` Kupo).
-  Unit tests for precedence + probe/fallback; live smoke on a P2 devnet
-  confirming no port-forward is established when `externalURL` answers.
+  forward) in the forward path; wire into `run` and the post-059 `topup`/funding
+  path (Ogmios `submitTransaction` + Kupo UTxO lookup). Unit tests for precedence
+  + probe/fallback; live smoke on a P2 devnet confirming no port-forward is
+  established when `externalURL` answers.
 
 Ordering note: P1 before P2 (devnet's spec needs the new fields) before P3 (the
 resolver needs status to carry `externalURL`). P1 is safe to merge alone.
 
 ## 8. Open threads / risks
 
-- **Faucet + `topup`.** `topup` currently posts to the *faucet* service (and uses
-  Kupo only for `--await`). This design does not give the faucet an
-  `externalURL`, partly because the faucet auth token has a dedicated non-loopback
-  trust gate (`topup_trust.go`) that an advertised external URL would have to
-  interact with, and partly because **session 059's plan removes the faucet
-  entirely** in favor of the CLI building/submitting funding txns directly over
-  Ogmios/Kupo (`.journal/059/WALLET_REARCH_PLAN.md`, paused for review). If that
-  lands, `topup` becomes a direct Ogmios/Kupo consumer and inherits this
-  mechanism for free. Until then, the faucet leg of `topup` still forwards.
-  Decision needed: leave faucet forwarding as-is (recommended), or also advertise
-  a faucet externalURL with trust-gate handling.
+- **Faucet — resolved by the 059 dependency.** With the faucet removed,
+  `topup`/funding builds + submits txns directly over Ogmios (LocalTxSubmission)
+  and reads UTxOs from Kupo, so it inherits the Ogmios/Kupo `externalURL`
+  resolution with no faucet-specific branch and no `topup_trust.go`
+  non-loopback-token gate to reconcile. (If 059 slips, the faucet leg of `topup`
+  would keep forwarding until it lands — but the plan is 059-first.)
 - **Identity-stripping tension.** The Environment doc is identity-stripped so one
   spec deploys under many names. A single `externalURL` (especially a real
   ingress host) collides if the same spec is deployed under multiple names on one
