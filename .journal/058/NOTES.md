@@ -133,3 +133,29 @@ chart **in place**. Validated empirically (prototype: 10 templates + 2 CRDs,
 - **Next:** user review of PR #96. Then PR3 (optional): uninstall (`Remove` port +
   CRD-deletion policy) + runtime version selection (OCI chart fetch). The release-
   please root PR #87 will now carry PR2's `feat` (CLI release).
+
+## 2026-06-03 17:05 — PR2 follow-up: Helm value overrides on `yacd install` (model A)
+User asked why install took no value-customization flags. It didn't (deferred in
+the proposal); the plumbing existed (`operator.Values.Extra`). Added via workflow
+`wf_697dc647-a4e`. On `feat/yacd-install` (PR #96), commit `42cc75c`:
+- `--values/-f`, `--set`, `--set-string` (Helm `strvals`) → assembled by
+  `buildUserOverrides` (new `cli/internal/cli/install_values.go`) into one map →
+  `operator.Default().Extra`. Precedence: `-f` (in order) < `--set` < `--set-string`
+  (fixed; intentionally NOT Helm's arg-order interleave — documented).
+- Schema validation added in `ssa/render.go` (`CoalesceValues` + `ValidateAgainstSchema`,
+  with `ToRenderValuesWithSchemaValidation(...skip=true)` to avoid double-validate);
+  runs for EnsureOperator AND Plan, so `--dry-run` validates too.
+- **Model A (user-chosen):** image stays digest-pinned; user values deep-merge over
+  `Default()`. Review HIGH catch: the deep-merge means `--set image.tag` is inert
+  (digest-over-tag) but `--set image.digest/repository` DO repoint the image — the
+  help text was corrected to say this precisely (NOT enforced in code, per model A).
+  **Surfaced to the user as a known nuance** — option to hard-strip `image.*` later
+  if they want true non-overridability.
+- `strvals` adds no new module (helm v3.21.0 already a dep); deny-list still clean.
+- Verified: build/vet clean, forced `-count=1` cli+ssa+operator PASS (ssa 37s),
+  root:check + root:test PASS. **LIVE on k3d:** `--set replicaCount=2 --wait` →
+  2/2 ready, image still digest-pinned; `--set manager.logLevel=bogus --dry-run` →
+  fail-fast schema error (exit 1); `-f file --dry-run` → plan ok. 9 new tests
+  (7 command + 2 render/schema). Review = 1 high (help-text accuracy, fixed) + meds
+  (double-validate, precedence coverage — fixed) + nits; 3 deferred with reasons.
+- PR #96 body updated; CI re-running on `42cc75c`. Still OPEN / not merged.
