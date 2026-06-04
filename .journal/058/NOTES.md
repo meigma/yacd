@@ -159,3 +159,29 @@ the proposal); the plumbing existed (`operator.Values.Extra`). Added via workflo
   (7 command + 2 render/schema). Review = 1 high (help-text accuracy, fixed) + meds
   (double-validate, precedence coverage — fixed) + nits; 3 deferred with reasons.
 - PR #96 body updated; CI re-running on `42cc75c`. Still OPEN / not merged.
+
+## 2026-06-03 18:40 — Functional test (k3d) + PR #96 MERGED
+- **Manual functional pass** of `yacd install` on two fresh isolated k3d clusters
+  (NOT the Tilt dev stack — Tilt Helm-installs the operator and would contend; bare
+  cluster is the faithful target for an install-onto-arbitrary-cluster command).
+  32 checks, ALL behaviors correct: dry-run (empty→install / installed→re-apply),
+  install --wait + verify (Available, version label, digest-pinned image, 2 CRDs),
+  idempotent re-install, `--set replicaCount=2`→2 replicas (image still pinned),
+  `-f` file + `-f`<`--set` precedence (log-level), `--set-string` type-reject +
+  `--set …logLevel=bogus` enum-reject (schema fail-fast, exit 1), `--wait=false`,
+  explicit `--kubeconfig/--context` honored, upgrade (seed v0.0.1→upgrade), refuse
+  major-mismatch (v9.9.9) + newer-same-major (v0.9.9→"upgrade the CLI") both exit 1
+  with NO mutation, `-n yacd-test` install (objects+RBAC subjects in ns, nothing in
+  yacd-system). Clusters torn down. Only finding: a cosmetic doubled refuse-advice
+  line (Decide error already states the advice, refuseGuidance restates it) —
+  offered to tighten; user said LGTM/merge, so left as-is.
+- **PR #96 MERGED** to master (`5383f76`, squash, `feat(cli)` → release-please root
+  PR #87 now carries the CLI feature). All 4 checks green incl e2e. Worktree +
+  branches removed via `wt remove -D`.
+- **`yacd install` is DONE.** Operator-install epic status: PR1 (#94, render-based
+  install + in-place embed) ✅; PR2 (#96, `yacd install` + value overrides) ✅.
+  Remaining = **PR3 (optional)**: `yacd uninstall` (`Remove` port + explicit
+  CRD-deletion policy) + runtime version selection (OCI chart fetch). Proposal
+  `.journal/058/OPERATOR_INSTALL_PROPOSAL.md` §7/§8 has the open shaping decisions.
+- Dev stack never started this session (all work was CLI-package-only); nothing to
+  tear down.
