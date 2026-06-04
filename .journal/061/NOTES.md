@@ -54,3 +54,51 @@ Plan: read `.journal/059/WALLET_REARCH_PLAN.md` (done) + the session-059 SUMMARY
 deletion-surface check before the breaking PR — workflow `wf_bb7e8066-c23`'s
 `verify:deletion-surface` is the enumerated checklist). Awaiting the user's
 go-ahead before substantive work.
+
+## 2026-06-04 12:16 — P4 design + P4a implemented (awaiting human review)
+
+Plan approved (`/Users/josh/.claude/plans/please-propose-a-plan-optimized-dusk.md`).
+Design workflow `wf_6286065c-09e` (survey + 2 designs + adversarial critique) drove
+3 locked decisions with the user:
+1. **Funded-wallet UX = option B: "the faucet wallet IS the funded wallet."** No
+   auto-created default wallet; devnet/info display the genesis-funded `faucet`
+   wallet. P4 adds NO new funding code (the P3 `wallet topup --from faucet`
+   primitive already exists). Revises the plan's "create+fund a default wallet"
+   wording.
+2. **Split P4 into PR-4a (cutover) + PR-4b (deletion).**
+3. **P4 validated on the dev stack; the faucet-free operator release + embedded
+   re-pin that makes `yacd devnet` work end-to-end is P5.** devnet/info wallet
+   display MUST degrade gracefully when the faucet wallet Secret is absent (older
+   embedded v0.1.1 operator) — now covered by tests.
+
+Implementation worktree: `.wt/refactor-faucet-removal-p4a` (branch
+`refactor/faucet-removal-p4a`, off master 0b3a629). dev stack up (own kind cluster).
+
+**PR-4a DONE — commit `6cdb250` (unsigned; see auth note), 28 files +186/−1099.**
+- Removed the controller dev wallet entirely: deleted `wallet_funding.go` + the
+  dev-wallet half of `wallet.go`; removed `walletSettings`/`resolveWalletSettings`,
+  the dev-wallet apply/status/condition wiring across builder/controller/status/
+  conditions/delete/names/resources; API dropped `WalletSpec`/`WalletStatus`/
+  `spec.chainAPI.wallet`/`WalletReady` (regenerated CRD+deepcopy).
+- KEPT the genesis faucet wallet + shared Secret apply core + the whole faucet
+  SERVICE (faucet service deletion is PR-4b).
+- CLI: `lifecycle.Up` + `devnet` + `info` display the genesis faucet wallet via
+  `cli/internal/wallet` `Store.Faucet` (graceful when absent); dropped
+  `chainAPI.wallet` from devnet.yaml/init.yaml/examples/local + rewrote prose.
+- Chainsaw: asserts the `<net>-wallet-faucet` Secret instead of the dev wallet;
+  faucet HTTP service smoke preserved.
+- Gates GREEN: `root:check`, `root:test` (envtest+unit), `root:test-e2e` (real
+  Kind/Chainsaw, 186s PASS), `go build`, manager dep-boundary (`./cmd` clean of
+  ogmigo/kugo/Apollo-tx-builder). Adversarial review `wf_26b14b10-333` (16 agents)
+  found NO defects; added 2 graceful-absence coverage tests it suggested.
+
+**Auth note (BOTH agent caches expired mid-session; worked during session-new):**
+gpg signing fails (committed `--no-gpg-sign`; GitHub squash-merge signs server-side)
+and the GitHub SSH key is not loaded (push blocked). To restore:
+`ssh-add --apple-use-keychain ~/.ssh/id_ed25519_macbook` and unlock gpg. Branch is
+NOT pushed yet.
+
+Next: PAUSE for human review of PR-4a (per user instruction: pause before each
+merge). After approval + auth restore: push branch, open PR, pause again before
+merge. Then PR-4b (faucet service deletion + the builder.go re-gate to local-only
++ Chainsaw/RBAC/dbsync-test), then P5 (release).
