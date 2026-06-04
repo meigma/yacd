@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.0](https://github.com/meigma/yacd/compare/v0.1.1...v0.2.0) (2026-06-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cardanonetwork:** removes spec.chainAPI.faucet, status.faucet, the faucet endpoint, and the FaucetReady condition from the CardanoNetwork CRD. Pre-1.0; devnets are ephemeral.
+* **cardanonetwork:** removes spec.chainAPI.wallet, status.wallet, and the WalletReady condition from the CardanoNetwork CRD. Pre-1.0; devnets are ephemeral.
+
+### refactor
+
+* **cardanonetwork:** delete the in-cluster faucet service ([#108](https://github.com/meigma/yacd/issues/108)) ([1652ac6](https://github.com/meigma/yacd/commit/1652ac6529d8b078d73349a24f8f57f3db817839))
+* **cardanonetwork:** remove controller dev wallet; surface genesis faucet wallet ([#107](https://github.com/meigma/yacd/issues/107)) ([dfa9dd4](https://github.com/meigma/yacd/commit/dfa9dd43a68a29856815581e56fdf1fcc7030eb7))
+
+
+### Features
+
+* **cardanonetwork:** add genesis-funded faucet wallet ([#97](https://github.com/meigma/yacd/issues/97)) ([911f663](https://github.com/meigma/yacd/commit/911f6634a504dc0ebfe629a0fdbdf7808621dbf1))
+* **cli:** add `yacd install` command ([#96](https://github.com/meigma/yacd/issues/96)) ([5383f76](https://github.com/meigma/yacd/commit/5383f76fe7ade6b529ef5bcf8e19ea9075b20346))
+* **cli:** add `yacd wallet` verbs with direct tx submission ([#106](https://github.com/meigma/yacd/issues/106)) ([0b3a629](https://github.com/meigma/yacd/commit/0b3a6295154b6d5f7744e919b0db24b83ea310be))
+* **cli:** add cluster provisioning core (Phase 3) ([#89](https://github.com/meigma/yacd/issues/89)) ([1c12560](https://github.com/meigma/yacd/commit/1c125603287a4b9861f255dec6f1ce979ed815ba))
+* **cli:** add devnet all-in-one local lifecycle (Phase 6) ([#90](https://github.com/meigma/yacd/issues/90)) ([db7887b](https://github.com/meigma/yacd/commit/db7887bd38b865c9af0847bcd665ba94afe6852c))
+* **cli:** add operator install via server-side apply (Phase 5) ([#86](https://github.com/meigma/yacd/issues/86)) ([941c0c0](https://github.com/meigma/yacd/commit/941c0c0c00542e398d74a5889604343301894070))
+* **cli:** add toolbin pinned k3d binary resolver (Phase 2) ([#88](https://github.com/meigma/yacd/issues/88)) ([bc2f739](https://github.com/meigma/yacd/commit/bc2f739ffd21d98d6b059aae927e77d050d14a75))
+* **cli:** all-namespaces list, self-forwarding topup, and an init command ([#93](https://github.com/meigma/yacd/issues/93)) ([b611645](https://github.com/meigma/yacd/commit/b6116452ab1ecdd534d1db07a2c6e6d3fa79304f))
+
+
+### Bug Fixes
+
+* **cli:** keep devnet health checks on the recorded kubeconfig ([#92](https://github.com/meigma/yacd/issues/92)) ([79761f2](https://github.com/meigma/yacd/commit/79761f23de03b2346c24776c2119d3820b9aceab))
+
 ## [0.1.1](https://github.com/meigma/yacd/compare/v0.1.0...v0.1.1) (2026-06-02)
 
 
