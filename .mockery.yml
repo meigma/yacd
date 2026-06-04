@@ -12,8 +12,10 @@ packages:
       ForwardSession:
   github.com/meigma/yacd/cli/internal/cli:
     interfaces:
-      HTTPDoer:
       UTxOConfirmer:
+  github.com/meigma/yacd/internal/cardano/tx:
+    interfaces:
+      Submitter:
   github.com/meigma/yacd/cli/internal/operator:
     interfaces:
       Installer:

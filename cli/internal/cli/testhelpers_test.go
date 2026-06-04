@@ -93,12 +93,6 @@ func newKubeMock(t *testing.T) *mocks.Client {
 	return mocks.NewClient(t)
 }
 
-// newHTTPMock returns a mocks.HTTPDoer that auto-asserts at test cleanup.
-func newHTTPMock(t *testing.T) *mocks.HTTPDoer {
-	t.Helper()
-	return mocks.NewHTTPDoer(t)
-}
-
 // readyNetwork builds a CardanoNetwork in a Ready / FaucetReady state with
 // the published Ogmios/Kupo/Faucet endpoints and faucet auth Secret name.
 // Tests that need a different shape mutate the returned object.

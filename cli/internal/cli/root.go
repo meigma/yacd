@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/meigma/yacd/charts"
@@ -18,13 +17,14 @@ import (
 	"github.com/meigma/yacd/cli/internal/operator/ssa"
 	"github.com/meigma/yacd/cli/internal/toolbin"
 	"github.com/meigma/yacd/cli/internal/toolbin/ghrelease"
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 // NewRootCommand creates the YACD developer CLI command tree, defaulting
 // any nil Options fields and wiring the persistent flags, viper binding,
-// logger construction, and the up/down/list/info/topup subcommands.
+// logger construction, and the up/down/list/info/wallet subcommands.
 func NewRootCommand(options Options) *cobra.Command {
 	if options.In == nil {
 		options.In = strings.NewReader("")
@@ -43,12 +43,14 @@ func NewRootCommand(options Options) *cobra.Command {
 			return kube.NewClient(config)
 		}
 	}
-	if options.HTTPClient == nil {
-		options.HTTPClient = http.DefaultClient
-	}
 	if options.UTxOConfirmerFactory == nil {
 		options.UTxOConfirmerFactory = func(kupoURL string) UTxOConfirmer {
 			return newKupoConfirmer(kupoURL)
+		}
+	}
+	if options.TxSubmitterFactory == nil {
+		options.TxSubmitterFactory = func(ogmiosURL string, kupoURL string) tx.Submitter {
+			return tx.Apollo{OgmiosURL: ogmiosURL, KupoURL: kupoURL}
 		}
 	}
 	if options.ClusterProvisionerFactory == nil {
@@ -83,8 +85,8 @@ func NewRootCommand(options Options) *cobra.Command {
 		err:                  options.Err,
 		viper:                options.Viper,
 		kubeClientFactory:    options.KubeClientFactory,
-		httpClient:           options.HTTPClient,
 		utxoConfirmerFactory: options.UTxOConfirmerFactory,
+		txSubmitterFactory:   options.TxSubmitterFactory,
 		clusterProvisioner:   options.ClusterProvisionerFactory,
 		operatorInstaller:    options.OperatorInstallerFactory,
 		clusterState:         options.ClusterStateFactory,
@@ -129,7 +131,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(ctx.withManagedReconcile(newDownCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newListCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newInfoCommand(ctx)))
-	root.AddCommand(ctx.withManagedReconcile(newTopUpCommand(ctx)))
+	root.AddCommand(ctx.withManagedReconcile(newWalletCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newRunCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newExecCommand(ctx)))
 	root.AddCommand(ctx.withManagedReconcile(newConnectCommand(ctx)))

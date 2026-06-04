@@ -61,6 +61,24 @@ type Client interface {
 	// missing key are surfaced as a typed error.
 	GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error)
 
+	// GetSecret fetches a whole Secret by name. A NotFound result is translated
+	// to ErrNotFound (wrapped with namespace/name) so callers can branch on
+	// IsNotFound; other errors are wrapped with context.
+	GetSecret(ctx context.Context, namespace string, name string) (*corev1.Secret, error)
+
+	// ListSecrets lists Secrets in the namespace whose labels match the given
+	// selector. An empty selector lists every Secret in the namespace.
+	ListSecrets(ctx context.Context, namespace string, selector map[string]string) ([]corev1.Secret, error)
+
+	// CreateSecret creates the Secret. It surfaces an AlreadyExists collision as
+	// a typed error so callers can report a duplicate wallet rather than a raw
+	// API error.
+	CreateSecret(ctx context.Context, secret *corev1.Secret) error
+
+	// DeleteSecret deletes the named Secret. It is idempotent: a NotFound result
+	// returns nil so callers can treat "already gone" as success.
+	DeleteSecret(ctx context.Context, namespace string, name string) error
+
 	// DeleteCardanoNetwork deletes the named CardanoNetwork. It is idempotent:
 	// a NotFound result returns nil so callers can treat "already gone" as
 	// success.
@@ -265,4 +283,75 @@ func (a *Adapter) GetSecretValue(ctx context.Context, namespace string, name str
 	}
 
 	return string(value), nil
+}
+
+// GetSecret fetches the named Secret. A NotFound result is translated to the
+// port's ErrNotFound (named with namespace/name) so callers can branch on
+// IsNotFound; other errors are wrapped with namespace/name context.
+func (a *Adapter) GetSecret(ctx context.Context, namespace string, name string) (*corev1.Secret, error) {
+	secret := &corev1.Secret{}
+	objectKey := client.ObjectKey{
+		Namespace: namespace,
+		Name:      name,
+	}
+	if err := a.client.Get(ctx, objectKey, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("secret %s/%s %w", namespace, name, ErrNotFound)
+		}
+		return nil, fmt.Errorf("get secret %s/%s: %w", namespace, name, err)
+	}
+
+	return secret, nil
+}
+
+// ListSecrets lists Secrets in the namespace filtered by the label selector. An
+// empty or nil selector lists every Secret in the namespace.
+func (a *Adapter) ListSecrets(ctx context.Context, namespace string, selector map[string]string) ([]corev1.Secret, error) {
+	list := &corev1.SecretList{}
+	opts := []client.ListOption{client.InNamespace(namespace)}
+	if len(selector) > 0 {
+		opts = append(opts, client.MatchingLabels(selector))
+	}
+	if err := a.client.List(ctx, list, opts...); err != nil {
+		return nil, fmt.Errorf("list secrets in %s: %w", namespace, err)
+	}
+
+	return list.Items, nil
+}
+
+// CreateSecret creates the Secret. An AlreadyExists collision is surfaced as a
+// typed error so callers can report a duplicate; other errors are wrapped with
+// namespace/name context.
+func (a *Adapter) CreateSecret(ctx context.Context, secret *corev1.Secret) error {
+	if secret == nil {
+		return fmt.Errorf("secret is required")
+	}
+	if err := a.client.Create(ctx, secret); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("secret %s/%s already exists", secret.Namespace, secret.Name)
+		}
+		return fmt.Errorf("create secret %s/%s: %w", secret.Namespace, secret.Name, err)
+	}
+
+	return nil
+}
+
+// DeleteSecret deletes the named Secret. A NotFound result is treated as
+// success so removal is idempotent; other errors are wrapped with namespace/name
+// context.
+func (a *Adapter) DeleteSecret(ctx context.Context, namespace string, name string) error {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+	if err := a.client.Delete(ctx, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("delete secret %s/%s: %w", namespace, name, err)
+	}
+
+	return nil
 }
