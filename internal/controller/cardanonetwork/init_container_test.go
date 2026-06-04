@@ -200,6 +200,47 @@ func TestLocalnetCreateEnvInitContainerRejectsIncompletePlan(t *testing.T) {
 	}
 }
 
+// TestFaucetWalletGenesisFundingInitContainer verifies the genesis-funding init
+// container invokes the cardano-tools fund-genesis verb with the faucet wallet
+// address and funding amount, mounts the state volume, and uses the cardano-tools
+// image and the hardened security context shared by the other tools init
+// containers.
+func TestFaucetWalletGenesisFundingInitContainer(t *testing.T) {
+	plan := testLocalnetPlan(t)
+	settings := faucetWalletSettings{enabled: true, fundingLovelace: defaultFaucetWalletFundingLovelace}
+
+	b := newTestPrimaryWorkloadBuilder(t)
+	container, err := b.faucetWalletGenesisFundingInitContainer(plan, settings, testFaucetWalletAddress)
+	require.NoError(t, err)
+
+	assert.Equal(t, faucetWalletGenesisInitContainerName, container.Name)
+	assert.Equal(t, b.cardanoToolsImage(plan.Spec.Tool.Version), container.Image)
+	assert.Equal(t, corev1.PullIfNotPresent, container.ImagePullPolicy)
+	assert.Equal(t, []string{cardanoToolsCommand}, container.Command)
+	assert.Empty(t, container.Env)
+
+	assert.Equal(t, []string{
+		"fund-genesis",
+		"--env-dir", plan.Layout.EnvDir,
+		"--address", testFaucetWalletAddress,
+		"--lovelace", "1000000000000",
+	}, container.Args)
+
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: localnetStateVolumeName, MountPath: "/state"},
+	}, container.VolumeMounts)
+	assertRestrictedContainerSecurityContext(t, container.SecurityContext)
+}
+
+// TestFaucetWalletGenesisFundingInitContainerRequiresAddress verifies the
+// builder fails fast when the Reconciler did not thread an address in.
+func TestFaucetWalletGenesisFundingInitContainerRequiresAddress(t *testing.T) {
+	plan := testLocalnetPlan(t)
+	_, err := newTestPrimaryWorkloadBuilder(t).faucetWalletGenesisFundingInitContainer(plan, faucetWalletSettings{enabled: true}, "  ")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "faucet wallet address is required")
+}
+
 func testLocalnetPlan(t *testing.T) localnet.Plan {
 	t.Helper()
 

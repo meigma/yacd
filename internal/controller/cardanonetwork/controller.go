@@ -115,12 +115,24 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, err
 	}
 
+	// The genesis-funding init container needs the faucet wallet address as an
+	// env literal at Deployment-build time so the node boots from an already-
+	// funded genesis on the first reconcile. Generate (or live-read) the faucet
+	// wallet Secret before Build and thread its address into the builder. This
+	// is the opposite order from the developer wallet, whose Secret is applied
+	// after the Deployment because it does not affect the Deployment.
+	faucetWalletApply, err := r.ensurePrimaryFaucetWalletSecret(ctx, network)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	resources, err := (primaryWorkloadBuilder{
 		scheme:                     r.Scheme,
 		defaultFaucetImage:         r.DefaultFaucetImage,
 		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
 		defaultCardanoToolsImage:   r.DefaultCardanoToolsImage,
 		acceptedIdentity:           acceptedIdentity,
+		faucetWalletAddress:        faucetWalletApply.address,
 		dbSyncAttachment:           dbSyncAttachment.Attachment,
 	}).Build(network)
 	if err != nil {
@@ -170,7 +182,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources, acceptedIdentity)
+	applyResults, err := r.applyPrimaryWorkloadResources(ctx, network, resources, acceptedIdentity, faucetWalletApply)
 	if err != nil {
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
@@ -221,6 +233,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"artifactsServiceOperation", applyResults.ArtifactsService,
 		"faucetAuthSecret", faucetAuthSecretKey,
 		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
+		"faucetWalletSecretOperation", applyResults.FaucetWalletSecret,
 		"networkFingerprint", resources.NetworkPlan.Fingerprint)
 
 	if result, requeue := primaryWorkloadRequeueResult(ready, resources.FaucetAuthSecret != nil, resources.OgmiosService != nil); requeue {
@@ -263,17 +276,19 @@ func primaryWorkloadRequeueResult(
 // run produced cluster mutations (and therefore whether to log at info or
 // debug).
 type primaryWorkloadApplyResults struct {
-	PersistentVolumeClaim  controllerutil.OperationResult
-	Deployment             controllerutil.OperationResult
-	Service                controllerutil.OperationResult
-	OgmiosService          controllerutil.OperationResult
-	KupoService            controllerutil.OperationResult
-	FaucetService          controllerutil.OperationResult
-	ArtifactsService       controllerutil.OperationResult
-	FaucetAuthSecret       controllerutil.OperationResult
-	FaucetAuthSecretObject *corev1.Secret
-	WalletSecret           controllerutil.OperationResult
-	WalletSecretObject     *corev1.Secret
+	PersistentVolumeClaim    controllerutil.OperationResult
+	Deployment               controllerutil.OperationResult
+	Service                  controllerutil.OperationResult
+	OgmiosService            controllerutil.OperationResult
+	KupoService              controllerutil.OperationResult
+	FaucetService            controllerutil.OperationResult
+	ArtifactsService         controllerutil.OperationResult
+	FaucetAuthSecret         controllerutil.OperationResult
+	FaucetAuthSecretObject   *corev1.Secret
+	WalletSecret             controllerutil.OperationResult
+	WalletSecretObject       *corev1.Secret
+	FaucetWalletSecret       controllerutil.OperationResult
+	FaucetWalletSecretObject *corev1.Secret
 }
 
 // unchanged reports whether every owned child was already in the desired
@@ -288,7 +303,8 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 		r.FaucetService == controllerutil.OperationResultNone &&
 		r.ArtifactsService == controllerutil.OperationResultNone &&
 		r.FaucetAuthSecret == controllerutil.OperationResultNone &&
-		r.WalletSecret == controllerutil.OperationResultNone
+		r.WalletSecret == controllerutil.OperationResultNone &&
+		r.FaucetWalletSecret == controllerutil.OperationResultNone
 }
 
 // applyPrimaryWorkloadResources applies the primary workload bundle in
@@ -300,9 +316,22 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	network *yacdv1alpha1.CardanoNetwork,
 	resources *primaryWorkloadResources,
 	acceptedIdentity acceptedNetworkIdentity,
+	faucetWalletApply faucetWalletApplyResult,
 ) (primaryWorkloadApplyResults, error) {
 	var results primaryWorkloadApplyResults
 	var err error
+
+	// The faucet wallet Secret is generated before the Deployment build (its
+	// address feeds the genesis-funding init container), so carry that result
+	// through here. When it is not gated on, delete any stale owned Secret.
+	results.FaucetWalletSecret = faucetWalletApply.operation
+	results.FaucetWalletSecretObject = faucetWalletApply.object
+	if !faucetWalletApply.enabled {
+		results.FaucetWalletSecret, err = r.deletePrimaryFaucetWalletSecret(ctx, network)
+		if err != nil {
+			return results, err
+		}
+	}
 
 	results.PersistentVolumeClaim, err = r.applyPrimaryPersistentVolumeClaim(ctx, resources.PersistentVolumeClaim, acceptedIdentity)
 	if err != nil {

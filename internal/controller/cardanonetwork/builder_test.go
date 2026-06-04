@@ -588,7 +588,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	require.NotNil(t, deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 	assert.False(t, *deployment.Spec.Template.Spec.AutomountServiceAccountToken)
 
-	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 3)
+	require.Len(t, deployment.Spec.Template.Spec.InitContainers, 4)
 	initContainer := deployment.Spec.Template.Spec.InitContainers[0]
 	assert.Equal(t, localnetCreateEnvInitContainerName, initContainer.Name)
 	assert.Equal(t, corev1.TerminationMessagePathDefault, initContainer.TerminationMessagePath)
@@ -599,9 +599,19 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	assert.Equal(t, "/state/env", initEnv[localnetEnvDirEnvName])
 	assert.Equal(t, "/state/env/configuration.yaml", initEnv[localnetConfigFileEnvName])
 
+	// The genesis-funding init container is ordered after create-env (it edits
+	// the genesis create-env wrote) and before the stage init below (so the
+	// staged copy and the node both see the funded genesis).
+	genesisFundingInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
+	assert.Equal(t, faucetWalletGenesisInitContainerName, genesisFundingInitContainer.Name)
+	assert.Equal(t, toolsimage.Reference("", "11.0.1"), genesisFundingInitContainer.Image)
+	assert.Equal(t, []string{cardanoToolsCommand}, genesisFundingInitContainer.Command)
+	assert.Contains(t, genesisFundingInitContainer.Args, "fund-genesis")
+	assert.Contains(t, genesisFundingInitContainer.Args, testFaucetWalletAddress)
+
 	// The stage init container is ordered after create-env so it can flatten
 	// the generated env dir onto the served-artifact PVC subdirectory.
-	stageInitContainer := deployment.Spec.Template.Spec.InitContainers[1]
+	stageInitContainer := deployment.Spec.Template.Spec.InitContainers[2]
 	assert.Equal(t, servedArtifactsInitContainerName, stageInitContainer.Name)
 	assert.Equal(t, toolsimage.Reference("", "11.0.1"), stageInitContainer.Image)
 	assert.Equal(t, []string{cardanoToolsCommand}, stageInitContainer.Command)
@@ -621,7 +631,7 @@ func TestPrimaryWorkloadBuilderBuildsPrimaryWorkload(t *testing.T) {
 	}, stageInitContainer.VolumeMounts)
 	assertRestrictedContainerSecurityContext(t, stageInitContainer.SecurityContext)
 
-	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[2]
+	addressInitContainer := deployment.Spec.Template.Spec.InitContainers[3]
 	assert.Equal(t, faucetSourceAddressInitContainerName, addressInitContainer.Name)
 	assert.Equal(t, "ghcr.io/meigma/yacd/cardano-testnet:11.0.1-yacd.5", addressInitContainer.Image)
 	assert.Equal(t, []string{faucetSourceAddressCommand}, addressInitContainer.Command)
@@ -1379,6 +1389,13 @@ func TestPrimaryWorkloadBuilderDisablesFaucet(t *testing.T) {
 	require.Len(t, resources.Deployment.Spec.Template.Spec.Volumes, 4)
 }
 
+// testFaucetWalletAddress is a deterministic, valid bech32 testnet address used
+// to stand in for the faucet wallet address the Reconciler threads into the
+// builder before Build. It matches the cardano-cli golden in the wallet
+// package, so the genesis-funding init container can be built without a live
+// Secret.
+const testFaucetWalletAddress = "addr_test1vqxk54m7j3q6mrkevcunryrwf4p7e68c93cjk8gzxkhlkpsffv7s0"
+
 func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {
 	t.Helper()
 
@@ -1388,7 +1405,7 @@ func newTestPrimaryWorkloadBuilder(t *testing.T) primaryWorkloadBuilder {
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, rbacv1.AddToScheme(scheme))
 
-	return primaryWorkloadBuilder{scheme: scheme}
+	return primaryWorkloadBuilder{scheme: scheme, faucetWalletAddress: testFaucetWalletAddress}
 }
 
 func assertPodSecurityContext(t *testing.T, securityContext *corev1.PodSecurityContext) {
