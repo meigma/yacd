@@ -257,3 +257,17 @@ release-please cardano-tools PR (publishes yacd.6) → (3) I rework + re-validat
 (4) merge #97. Dev stack still up (Kind) for P2b.
 
 **Next:** await #98 review/merge + the yacd.6 release, then do P2b (#97 rework).
+
+## 2026-06-03 — P2a MERGED; release PR #99 green (paused before merge)
+User approved #98; I squash-merged it (`e6f3c64`) with the `Release-As:
+cardano-tools@11.0.1-yacd.6` footer (verified present in the merge commit) → master ff'd,
+#98 worktree/branch removed. release-please opened **PR #99 `chore(master): release
+cardano-tools 11.0.1-yacd.6`** (bumps `.release-please-manifest.json` + cardano-tools
+CHANGELOG). **All 15 checks PASS** (ci, e2e, cardano-tools-image, Kusari, + Binary/
+Container/cardano-testnet/cardano-tools/Helm dry-runs). Per the user, **PAUSED before
+merging #99** — merging it publishes the yacd.6 image. (Note: `gh pr checks --watch`
+died once on a transient api.github.com connection error; re-queried — all green.)
+
+**Next:** on the user's go-ahead, merge #99 → yacd.6 publishes → P2b: re-pin the digest
+in `internal/cardano/toolsimage`, swap #97's init container to `yacd-cardano-tools
+fund-genesis`, re-live-validate, mark #97 ready, merge.
