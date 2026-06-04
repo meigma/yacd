@@ -185,3 +185,18 @@ the proposal); the plumbing existed (`operator.Values.Extra`). Added via workflo
   `.journal/058/OPERATOR_INSTALL_PROPOSAL.md` §7/§8 has the open shaping decisions.
 - Dev stack never started this session (all work was CLI-package-only); nothing to
   tear down.
+
+## 2026-06-03 18:55 — Close
+Session closed. Goal MET: `yacd install` shipped across two squash-merged PRs.
+- **#94** (`ded61fa`, `refactor`) — render the embedded chart in-memory; chart embedded
+  in place via `charts/embed.go` (no copy / no drift guard).
+- **#96** (`5383f76`, `feat`) — the `yacd install` command + `-f`/`--set`/`--set-string`
+  value overrides; port grown (`OperatorState(ns)`, `Plan`, `WaitForReady`).
+Both merged to `master`; local `master` fast-forwarded to `5383f76`; both impl worktrees
+removed (`wt remove -D`). All CI green incl e2e. SUMMARY.md written; INDEX row → complete;
+TECH_NOTES updated (new in-place-embed + `yacd install` bullets, superseding the
+session-054 build-time-render note). No dev stack to tear down.
+Hand-off: optional **PR3** (uninstall + OCI version fetch) is the only remaining item —
+shaping in `OPERATOR_INSTALL_PROPOSAL.md` §7/§8. Minor open: cosmetic doubled refuse-advice
+wording (left per user); model-A image-override leak (hard-strip `image.*` if true
+non-overridability ever wanted).

@@ -779,3 +779,37 @@
   `yacd list -A`; and any `topup`-under-`yacd run` / `--lovelace` examples need the new
   standalone `yacd topup NAME LOVELACE` form. Master-tracked docs (README, docs/host-access.md)
   were already updated in PR #93.
+- **Operator install is now an in-memory Helm render of an IN-PLACE-embedded chart
+  (session 058, PRs #94 + #96 — SUPERSEDES the session-054 build-time-render bullet
+  above).** The `operator/ssa` adapter renders `charts/yacd` at install time via the lean
+  Helm subset (`pkg/{chart,chart/loader,chartutil,engine}` + `CRDObjects()`; clientless,
+  no OCI/registry — ~52 net-new pure-Go pkgs vs ~270 if `pkg/action` were used), then feeds
+  the rendered objects to the unchanged SSA apply pipeline (CRD-first → wait-Established →
+  kind-ordered → `yacd-cli` field owner → label-prune, CRDs never pruned). The chart is
+  embedded **in place** by `charts/embed.go` (package `charts`, `//go:embed all:yacd` →
+  `charts.OperatorChart fs.FS`; an *ancestor* dir, so no `..` and no copy). **There is no
+  more pre-rendered `operator.yaml`, no `render-operator-chart.sh`/`sync-operator-chart.sh`,
+  and no chart-copy drift guard** — `controller-gen` writes `charts/yacd/crds` and the embed
+  reads it directly. On an operator release bump, update the two image digests in
+  `operator.Default()` (`cli/internal/operator/values.go`) + re-embed (automatic via the
+  source chart). `install.go` builds `InstallSpec{Namespace, Values: Default()}`; render
+  validates the merged values against `charts/yacd/values.schema.json`.
+- **`yacd install` (session 058, PR #96)** installs/upgrades the operator onto an ARBITRARY
+  cluster. Targeting = explicit `--kubeconfig`/`--context` (or `YACD_*`) else AMBIENT
+  current-context — it does NOT consult the managed-devnet record, is NOT wrapped in
+  `withManagedReconcile`, and does NOT call `rejectExplicitTarget` (the opposite of devnet).
+  Flags: `-n` (install namespace, default `yacd-system`, now a REAL render input →
+  RBAC subjects + namespaced objects agree for any ns), `--wait`/`--timeout` (bounds the
+  WHOLE op even with `--wait=false`), `--dry-run`, and `-f`/`--set`/`--set-string` Helm value
+  overrides (helm `pkg/strvals`) merged into `operator.Values.Extra` (precedence `-f`<`--set`
+  <`--set-string`; schema-validated, fail-fast under `--dry-run` too). **Model A:** the image
+  stays digest-pinned (upgrade the CLI to change versions); deep-merge makes `--set image.tag`
+  inert but `--set image.digest/repository` DO repoint it (documented in `--help`, not
+  code-enforced). The `operator.Installer` port grew: `OperatorState(ctx, namespace)`,
+  `Plan(ctx,spec)→Decision` (renders+reads+`Decide`, NO apply, backs `--dry-run`), and a
+  shared `operator.WaitForReady(ctx,inst,ns,poll)` (extracted from lifecycle; devnet rewired,
+  identical behavior). `operator.DefaultNamespace` is the single source. `Decide`
+  (install/upgrade/noop/refuse, typed errors, major-mismatch BEFORE the newer/older compare)
+  is unchanged. **PR3 (NOT done):** `yacd uninstall` (`Installer.Remove` + explicit
+  CRD-deletion policy) + runtime version selection (OCI chart fetch from
+  `ghcr.io/meigma/yacd/chart`). See `.journal/058/OPERATOR_INSTALL_PROPOSAL.md` §7/§8.
