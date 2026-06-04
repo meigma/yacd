@@ -153,3 +153,37 @@ docs documented**, and 057's SUMMARY flagged the docs follow-up as a blocker for
 
 Doc-serve note: `uv run --with mkdocs-material==9.7.6 mkdocs serve` on :8000 was
 kept running across the review rounds for live iteration (still up).
+
+## 2026-06-03 — Document session 058's `yacd install`
+Reviewed session 058 (PRs #94 + #96): a CLI-native `yacd install` that renders
+the embedded chart in-memory (lean Helm subset, no OCI/Docker) and SSA-applies
+it. Checked the other post-#93 master commits (#95 faucet-tx refactor, #97
+genesis-funded *faucet* payment wallet, #98 cardano-tools fund-genesis verb,
+#99 cardano-tools yacd.6 release) — all internal, no user-facing doc impact (#97
+touches controller internals only, no API/README/behavior change).
+
+User chose **co-equal tabbed** positioning (`yacd install` vs `helm install`),
+not install-first.
+
+Synced + edited: merged origin/master into docs/mkdocs-site (clean; moon.yml
+auto-merged, kept docs tasks) → merge 10bc947. Rewrote operator/installation.md
+with pymdownx tabs across Install/Upgrading/image-verification/Uninstall (shared
+Prerequisites/Verify). Added a `## install` section + Commands-table row to
+reference/cli.md (namespace default yacd-system, --wait/--timeout 5m/--dry-run/
+-f/--set/--set-string, operational-values-only, image digest-pinned so --set
+image.tag is inert, the `Plan:` dry-run line). Light cross-links:
+configuration.md (yacd install uses the same values + digest-pin note),
+networks.md (the verbs need an installed operator; `yacd install` for non-devnet
+clusters), index.md routing.
+
+Grounding/verification: `yacd install --help`; chart labels (app.kubernetes.io/
+name=yacd) for the uninstall label-selector; **live smoke on a FRESH k3d cluster
+with no operator** — `install --dry-run` ("install, installed none -> v0.1.1") →
+real `install -n yacd-system` (namespace auto-created, manager v0.1.1 Ready,
+both CRDs registered) → re-apply `--dry-run` ("re-apply, v0.1.1 -> v0.1.1") →
+`yacd up demo` reconciled to Ready → clean teardown. Fixed the cli.md Plan
+example to the real `v0.1.1` string. mkdocs build --strict clean. Commit
+bf7fd98→b6bb381 pushed to PR #91 (branch now also carries #94+#96 via the merge).
+
+Note for next docs sync: `yacd uninstall` does NOT exist yet (058 PR3 deferred);
+docs say so and give the manual removal path. Revisit when PR3 lands.
