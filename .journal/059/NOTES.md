@@ -368,3 +368,39 @@ merged, awaiting review.** Dev stack LEFT UP (P4 needs it).
 **Next:** after #106 merges → **P4** (cut over devnet/dev-wallet funding to the CLI, then
 DELETE the in-cluster faucet service + `spec.chainAPI.{faucet,wallet}` + conditions +
 Chainsaw/examples/release). The big breaking PR.
+
+## 2026-06-03 21:36 — P3 full MANUAL functional test (live) + 4 UX fixes (pushed to #106)
+User asked for a full manual functional test of the new `yacd wallet` commands to be
+100% sure before shipping. Drove it directly on the Kind dev stack (live, stateful) over
+the whole surface: add (auto/wordlist name, --name, generate-only, --topup --await,
+--json, duplicate→reject, reserved-faucet→reject); list (empty/populated, faucet excluded,
+--json); topup (by name | pubkey | bech32 address; --from another wallet — **exact balance
+math** alice 1B→799999340 after 200M+fee to carol; --await + fire-and-forget; --from
+unknown + unknown-dest errors); export (0600, --out, overwrite refusal + --force; **real
+cardano-cli derives the same addr from the exported vkey + skey↔vkey round-trips**);
+remove (delete, reserved-faucet reject); gating (network-not-found, **faucet-less network →
+"not funding-ready"**). All happy paths + selectors + cross-wallet + end-to-end key
+usability PASS.
+
+**Found + fixed 4 UX issues (commit `c765310` on #106), each re-validated live:**
+1. **🔴 --json broken on funding:** Apollo's `OgmiosChainContext.GenesisParams` does a
+   hardcoded `fmt.Printf` to STDOUT on a non-fatal genesis-config fetch hiccup (websocket
+   close-1006), corrupting `wallet topup/add --json`. Fix: `redirectStdoutToStderr()` around
+   the submit in `wallet_fund.go` (the CLI prints results via the captured
+   commandContext.out, so its stdout stays clean; Apollo's noise → stderr). Re-tested:
+   `--json` is now valid JSON, warning on stderr.
+2. **🟡 invalid wallet name:** `--name 'Bad_Name!'` passed a raw value as a K8s label →
+   confusing raw label-validation error. Fix: `store.Create` validates `IsDNS1123Label` up
+   front → "invalid wallet name … must be a lowercase DNS-1123 label".
+3. **🟢 export missing wallet** leaked the Secret name → now `wallet "X" not found`.
+4. **🟢 remove missing wallet** said "Removed" (idempotent but misleading) → now
+   `wallet "X" not found` (existence check before delete).
+Added tests (store invalid-name, remove not-found, updated remove mock). gofmt/build/vet
+clean, root:check ✅, root:test ✅. Test networks deleted.
+
+**Note for P3 follow-up / P4:** the Apollo genesis-config websocket-1006 hiccup is now
+silenced off stdout but still a flaky transient (the ogmigo/Gorilla-WS dep). Funding always
+succeeds (Apollo falls back to defaults). Lower priority now that --json is clean.
+
+#106 = 2 commits (feature `27dc75e` + fixes `c765310`), **OPEN, NOT merged, awaiting review.**
+Dev stack still up.
