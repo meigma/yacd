@@ -20,7 +20,6 @@ const (
 
 	localnetCreateEnvInitContainerName   = "cardano-testnet-create-env"
 	mithrilBootstrapInitContainerName    = "mithril-bootstrap"
-	faucetSourceAddressInitContainerName = "faucet-source-addresses"
 	faucetWalletGenesisInitContainerName = "faucet-wallet-genesis-funding"
 	servedArtifactsInitContainerName     = "served-artifacts"
 	localnetStateVolumeName              = "localnet-state"
@@ -28,9 +27,6 @@ const (
 	localnetCreateEnvCommand             = "/opt/yacd/bin/yacd-cardano-testnet-init"
 	cardanoToolsCommand                  = "/opt/yacd/bin/yacd-cardano-tools"
 	mithrilBootstrapCommand              = "/bin/sh"
-	faucetSourceAddressCommand           = "/bin/sh"
-	faucetVerificationKeyFileName        = "utxo.vkey"
-	faucetAddressFileName                = "utxo.addr"
 
 	localnetToolsRunAsID int64 = 10001
 
@@ -101,50 +97,6 @@ func (b primaryWorkloadBuilder) cardanoTestnetInitContainer(network *yacdv1alpha
 		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}, nil
-}
-
-func (b primaryWorkloadBuilder) faucetSourceAddressInitContainer(plan localnet.Plan) corev1.Container {
-	toolVersion := strings.TrimSpace(plan.Spec.Tool.Version)
-	script := fmt.Sprintf(`for dir in %s/utxo[1-9]*; do
-  [ -d "$dir" ] || continue
-  [ -f "$dir/%s" ] || continue
-  cardano-cli address build --testnet-magic %d --payment-verification-key-file "$dir/%s" --out-file "$dir/%s"
-done`,
-		faucetUTXOKeysDir,
-		faucetVerificationKeyFileName,
-		plan.Spec.NetworkMagic,
-		faucetVerificationKeyFileName,
-		faucetAddressFileName,
-	)
-
-	return corev1.Container{
-		Name:            faucetSourceAddressInitContainerName,
-		Image:           b.cardanoTestnetImage(toolVersion),
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Command:         []string{faucetSourceAddressCommand},
-		Args:            []string{"-eu", "-c", script},
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      localnetStateVolumeName,
-				MountPath: plan.Layout.StateDir,
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: new(false),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-			},
-			ReadOnlyRootFilesystem: new(true),
-			RunAsGroup:             new(localnetToolsRunAsID),
-			RunAsNonRoot:           new(true),
-			RunAsUser:              new(localnetToolsRunAsID),
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
-		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
-		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-	}
 }
 
 // faucetWalletGenesisFundingInitContainer builds the init container that adds a
@@ -377,8 +329,8 @@ func isCuratedPublicProfile(plan primaryNetworkPlan) bool {
 }
 
 // cardanoTestnetImage returns the cardano-testnet container image reference
-// used for the create-env init container, the faucet source-address init
-// container, and the default cardano-node container. The
+// used for the create-env init container and the default cardano-node
+// container. The
 // Reconciler-injected defaultCardanoTestnetImage takes precedence so the
 // local dev stack can substitute a freshly built tools image when the
 // published cardano-testnet tag is behind the publisher code that depends

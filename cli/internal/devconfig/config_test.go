@@ -141,17 +141,6 @@ func TestLoadRejectsOmittedConcreteCRDDefaults(t *testing.T) {
 `,
 			wantErr: "spec.network.chainAPI.kupo.image",
 		},
-		{
-			name: "faucet port",
-			config: validConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.port",
-		},
 	}
 
 	for _, tc := range tests {
@@ -285,18 +274,6 @@ func TestLoadRejectsUnsupportedRuntimeConfigs(t *testing.T) {
 			wantErr: "spec.network.chainAPI.kupo.enabled=true is not supported for public networks",
 		},
 		{
-			name: "public faucet explicitly enabled",
-			config: validPublicPreviewConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.enabled=true is not supported for public networks",
-		},
-		{
 			name: "kupo without ogmios",
 			config: validConfig + `    chainAPI:
       ogmios:
@@ -309,22 +286,6 @@ func TestLoadRejectsUnsupportedRuntimeConfigs(t *testing.T) {
         port: 1442
 `,
 			wantErr: "spec.network.chainAPI.kupo.enabled=true requires spec.network.chainAPI.ogmios.enabled=true",
-		},
-		{
-			name: "faucet without kupo",
-			config: validConfig + `    chainAPI:
-      kupo:
-        enabled: false
-        image: cardanosolutions/kupo:v2.11.0
-        port: 1442
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.enabled=true requires spec.network.chainAPI.kupo.enabled=true",
 		},
 		{
 			name: "unsupported kupo image",
@@ -350,43 +311,6 @@ func TestLoadRejectsUnsupportedRuntimeConfigs(t *testing.T) {
 			name:    "incompatible ogmios node version",
 			config:  strings.Replace(validConfig, `version: "11.0.1"`, `version: "10.1.4"`, 1),
 			wantErr: "is not supported with spec.network.node.version",
-		},
-		{
-			name: "invalid faucet source",
-			config: validConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: wallet1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.defaultSource",
-		},
-		{
-			name: "invalid faucet range",
-			config: validConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 2000000
-        maxTopUpLovelace: 1000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.minTopUpLovelace",
-		},
-		{
-			name: "blank faucet image override",
-			config: validConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        image: " "
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`,
-			wantErr: "spec.network.chainAPI.faucet.image",
 		},
 		{
 			name:    "node port conflicts with default ogmios",
@@ -416,23 +340,6 @@ func TestLoadRejectsUnsupportedRuntimeConfigs(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.wantErr)
 		})
 	}
-}
-
-func TestLoadAllowsFaucetWithoutImageOverride(t *testing.T) {
-	t.Parallel()
-
-	environment, err := Load(strings.NewReader(validConfig + `    chainAPI:
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 10000000000
-`))
-	require.NoError(t, err)
-	require.NotNil(t, environment.Spec.Network.ChainAPI)
-	require.NotNil(t, environment.Spec.Network.ChainAPI.Faucet)
-	assert.Nil(t, environment.Spec.Network.ChainAPI.Faucet.Image)
 }
 
 func TestValidateRequiresEnvelope(t *testing.T) {

@@ -86,7 +86,7 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	requireNestedString(
 		t,
 		policy.Object,
-		"Verify release attestations for YACD manager and faucet images.",
+		"Verify release attestations for YACD manager images.",
 		"metadata",
 		"annotations",
 		"policies.kyverno.io/description",
@@ -104,8 +104,6 @@ func TestKyvernoImageVerificationPolicyRendersGitHubAttestationPolicy(t *testing
 	wantRefs := []string{
 		"ghcr.io/meigma/yacd:*",
 		"ghcr.io/meigma/yacd@*",
-		"ghcr.io/meigma/yacd/faucet:*",
-		"ghcr.io/meigma/yacd/faucet@*",
 	}
 	if !reflect.DeepEqual(gotRefs, wantRefs) {
 		t.Fatalf("unexpected imageReferences: got %v, want %v", gotRefs, wantRefs)

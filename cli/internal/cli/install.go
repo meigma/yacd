@@ -85,9 +85,9 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			// Model A: the pinned typed Image/FaucetImage stay, and the user
-			// overrides ride in Extra, which ToHelmValues deep-merges on top. The
-			// embedded digest shadows a --set image.tag (the chart renders
+			// Model A: the pinned typed Image stays, and the user overrides ride
+			// in Extra, which ToHelmValues deep-merges on top. The embedded
+			// digest shadows a --set image.tag (the chart renders
 			// repository@digest), so the default install stays digest-pinned for
 			// operational knobs; image.digest/image.repository overrides do still win
 			// through the merge and are an unsupported configuration, not blocked here.

@@ -34,7 +34,6 @@ func runMock(t *testing.T, done <-chan struct{}) *mocks.Client {
 	session := mocks.NewForwardSession(t)
 	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	session.EXPECT().Done().Return(done)
 	session.EXPECT().Close().Return(nil)
 
@@ -42,7 +41,6 @@ func runMock(t *testing.T, done <-chan struct{}) *mocks.Client {
 	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(session, nil)
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	return client
 }
@@ -101,7 +99,6 @@ func TestRunReportsDroppedForward(t *testing.T) {
 	session := mocks.NewForwardSession(t)
 	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	session.EXPECT().Done().Return(dropped)
 	session.EXPECT().Err().Return(assert.AnError)
 	session.EXPECT().Close().Return(nil)
@@ -110,7 +107,6 @@ func TestRunReportsDroppedForward(t *testing.T) {
 	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(session, nil)
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	// A long sleep would hang without the drop-driven cancellation.
 	_, err := runRoot(t, client, "run", "devnet", "--", "sleep", "30")

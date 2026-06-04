@@ -18,10 +18,6 @@ const (
 	// ConditionDegraded indicates the controller stopped reconciling and is
 	// surfacing a terminal-for-now failure.
 	ConditionDegraded ConditionType = "Degraded"
-
-	// ConditionFaucetReady indicates the faucet sidecar is reachable and the
-	// auth Secret is published.
-	ConditionFaucetReady ConditionType = "FaucetReady"
 )
 
 // FreshCondition returns the named status condition only when it observes the

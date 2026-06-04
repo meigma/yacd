@@ -42,7 +42,6 @@ func registerControllers(mgr manager.Manager, options managerOptions) error {
 		Client:                     mgr.GetClient(),
 		Reader:                     mgr.GetAPIReader(),
 		Scheme:                     mgr.GetScheme(),
-		DefaultFaucetImage:         options.DefaultFaucetImage,
 		DefaultCardanoTestnetImage: options.DefaultCardanoTestnetImage,
 		DefaultCardanoToolsImage:   options.DefaultCardanoToolsImage,
 	}).SetupWithManager(mgr)

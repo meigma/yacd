@@ -16,11 +16,6 @@ const (
 	// accepted network fingerprint on owned resources.
 	networkFingerprintAnno = ctrlannotations.NetworkFingerprint
 
-	// faucetAuthTokenHashAnno carries the hash of the live faucet auth token
-	// on the Deployment pod template. Token creation or rotation must roll the
-	// primary Pod so the mounted token and advertised Secret cannot diverge.
-	faucetAuthTokenHashAnno = "yacd.meigma.io/faucet-auth-token-hash"
-
 	dbSyncSidecarRevisionAnno = ctrlannotations.DBSyncSidecarRevision
 )
 
@@ -35,7 +30,6 @@ var cardanoNetworkOwnedAnnotations = []string{
 	localnetFingerprintAnno,
 	networkFingerprintAnno,
 	ctrlannotations.RequestedStorageClass,
-	faucetAuthTokenHashAnno,
 	dbSyncSidecarRevisionAnno,
 }
 

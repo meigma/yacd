@@ -21,14 +21,12 @@ func TestConnectNetworkForwardsAndBuildsEnv(t *testing.T) {
 	session := mocks.NewForwardSession(t)
 	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	session.EXPECT().Close().Return(nil)
 
 	client := newKubeMock(t)
 	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(session, nil)
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	connected, err := connectNetwork(ctx, client, "devnet", "devnet")
 	require.NoError(t, err)
@@ -38,44 +36,7 @@ func TestConnectNetworkForwardsAndBuildsEnv(t *testing.T) {
 		"YACD_NETWORK_MAGIC=42",
 		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
 		"YACD_KUPO_URL=http://127.0.0.1:40002",
-		"YACD_FAUCET_URL=http://127.0.0.1:40003",
-		"YACD_FAUCET_TOKEN=faucet-token",
 	}, connected.env)
-	require.NoError(t, connected.Close())
-}
-
-func TestConnectNetworkOmitsTokenWhenFaucetNotReady(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	network := readyNetwork("devnet")
-	// The faucet endpoint stays published, but FaucetReady is not True, so the
-	// token must be omitted rather than read — and no Secret read is attempted.
-	for i := range network.Status.Conditions {
-		if network.Status.Conditions[i].Type == "FaucetReady" {
-			network.Status.Conditions[i].Status = metav1.ConditionFalse
-		}
-	}
-
-	session := mocks.NewForwardSession(t)
-	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
-	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true)
-	session.EXPECT().Close().Return(nil)
-
-	client := newKubeMock(t)
-	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
-	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
-	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(session, nil)
-	// Deliberately no GetSecretValue expectation: reading the token here would
-	// be an unexpected call and fail the mock's cleanup assertion.
-
-	connected, err := connectNetwork(ctx, client, "devnet", "devnet")
-	require.NoError(t, err)
-	assert.Contains(t, connected.env, "YACD_FAUCET_URL=http://127.0.0.1:40003")
-	for _, entry := range connected.env {
-		assert.NotContains(t, entry, "YACD_FAUCET_TOKEN")
-	}
 	require.NoError(t, connected.Close())
 }
 
@@ -128,7 +89,7 @@ func TestForwardSpecsExcludesNodeToNode(t *testing.T) {
 		names = append(names, spec.Name)
 		assert.NotEqual(t, int32(3001), spec.Remote, "node-to-node must not be forwarded")
 	}
-	assert.ElementsMatch(t, []string{"ogmios", "kupo", "faucet"}, names)
+	assert.ElementsMatch(t, []string{"ogmios", "kupo"}, names)
 }
 
 func TestRequireReady(t *testing.T) {

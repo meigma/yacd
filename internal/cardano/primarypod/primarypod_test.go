@@ -63,14 +63,12 @@ func TestPortOwners(t *testing.T) {
 			network: chainAPINetwork(&yacdv1alpha1.ChainAPISpec{
 				Ogmios: &yacdv1alpha1.OgmiosSpec{Enabled: true, Port: 1338},
 				Kupo:   &yacdv1alpha1.KupoSpec{Enabled: true, Port: 1443},
-				Faucet: &yacdv1alpha1.FaucetSpec{Enabled: true, Port: 8081},
 			}),
 			want: map[int32]string{
 				DefaultNodePort:  PortNameNodeToNode,
 				DefaultServePort: PortNameServe,
 				1338:             PortNameOgmios,
 				1443:             PortNameKupo,
-				8081:             PortNameFaucet,
 			},
 		},
 	}

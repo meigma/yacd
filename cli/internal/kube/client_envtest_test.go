@@ -67,7 +67,7 @@ func TestRuntimeClientGetsSecretValue(t *testing.T) {
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "devnet-faucet-auth",
+			Name:      "devnet-example-secret",
 			Namespace: namespace,
 		},
 		Data: map[string][]byte{
@@ -76,7 +76,7 @@ func TestRuntimeClientGetsSecretValue(t *testing.T) {
 	}
 	require.NoError(t, apiClient.Create(ctx, secret))
 
-	got, err := kubeClient.GetSecretValue(ctx, namespace, "devnet-faucet-auth", "token")
+	got, err := kubeClient.GetSecretValue(ctx, namespace, "devnet-example-secret", "token")
 	require.NoError(t, err)
 	assert.Equal(t, "super-secret-token-which-is-long-enough", got)
 }

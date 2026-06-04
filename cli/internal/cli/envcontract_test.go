@@ -61,14 +61,14 @@ func TestHostEnvBuildsLoopbackContract(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
-	local := map[int32]int{1337: 40001, 1442: 40002, 8080: 40003}
+	local := map[int32]int{1337: 40001, 1442: 40002}
 	lookup := func(remote int32) (int, bool) {
 		port, ok := local[remote]
 
 		return port, ok
 	}
 
-	env, err := hostEnv(network, lookup, "faucet-token")
+	env, err := hostEnv(network, lookup)
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"YACD_NETWORK=devnet",
@@ -76,16 +76,14 @@ func TestHostEnvBuildsLoopbackContract(t *testing.T) {
 		"YACD_NETWORK_MAGIC=42",
 		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
 		"YACD_KUPO_URL=http://127.0.0.1:40002",
-		"YACD_FAUCET_URL=http://127.0.0.1:40003",
-		"YACD_FAUCET_TOKEN=faucet-token",
 	}, env)
 }
 
-func TestHostEnvSkipsUnforwardedEndpointsAndEmptyToken(t *testing.T) {
+func TestHostEnvSkipsUnforwardedEndpoints(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
-	// Only Ogmios was forwarded; Kupo/faucet have no local port.
+	// Only Ogmios was forwarded; Kupo has no local port.
 	lookup := func(remote int32) (int, bool) {
 		if remote == 1337 {
 			return 40001, true
@@ -94,7 +92,7 @@ func TestHostEnvSkipsUnforwardedEndpointsAndEmptyToken(t *testing.T) {
 		return 0, false
 	}
 
-	env, err := hostEnv(network, lookup, "")
+	env, err := hostEnv(network, lookup)
 	require.NoError(t, err)
 	assert.Equal(t, []string{
 		"YACD_NETWORK=devnet",
@@ -102,14 +100,13 @@ func TestHostEnvSkipsUnforwardedEndpointsAndEmptyToken(t *testing.T) {
 		"YACD_NETWORK_MAGIC=42",
 		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
 	}, env)
-	assert.NotContains(t, env, "YACD_FAUCET_TOKEN=")
 }
 
 func TestNewEndpointsDocumentIsTokenFree(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
-	local := map[int32]int{1337: 40001, 1442: 40002, 8080: 40003}
+	local := map[int32]int{1337: 40001, 1442: 40002}
 	lookup := func(remote int32) (int, bool) {
 		port, ok := local[remote]
 
@@ -124,7 +121,6 @@ func TestNewEndpointsDocumentIsTokenFree(t *testing.T) {
 	assert.Equal(t, int64(42), *doc.NetworkMagic)
 	assert.Equal(t, "ws://127.0.0.1:40001", doc.OgmiosURL)
 	assert.Equal(t, "http://127.0.0.1:40002", doc.KupoURL)
-	assert.Equal(t, "http://127.0.0.1:40003", doc.FaucetURL)
 
 	// The marshaled document carries no token field of any casing.
 	data, err := json.MarshalIndent(doc, "", "  ")
@@ -132,7 +128,7 @@ func TestNewEndpointsDocumentIsTokenFree(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(string(data)), "token")
 }
 
-func TestPodEnvUsesClusterURLsAndOmitsToken(t *testing.T) {
+func TestPodEnvUsesClusterURLs(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
@@ -144,10 +140,6 @@ func TestPodEnvUsesClusterURLsAndOmitsToken(t *testing.T) {
 		"YACD_NETWORK_MAGIC=42",
 		"YACD_OGMIOS_URL=ws://devnet-ogmios.devnet.svc.cluster.local:1337",
 		"YACD_KUPO_URL=http://devnet-kupo.devnet.svc.cluster.local:1442",
-		"YACD_FAUCET_URL=http://devnet-faucet.devnet.svc.cluster.local:8080",
 		"CARDANO_NODE_SOCKET_PATH=/ipc/node.socket",
 	}, env)
-	for _, entry := range env {
-		assert.NotContains(t, entry, "YACD_FAUCET_TOKEN", "the in-pod contract must never carry the faucet token")
-	}
 }

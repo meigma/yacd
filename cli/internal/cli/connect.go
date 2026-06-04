@@ -43,9 +43,8 @@ func newConnectCommand(commandContext *commandContext) *cobra.Command {
 the loopback URLs to .yacd/<network>/endpoints.json (or
 .yacd/<namespace>/<network>/endpoints.json when --namespace is set), and hold
 them open until interrupted (Ctrl-C). Run it in one terminal and your tools in
-another. Dropped forwards are re-established automatically. The endpoints file
-never contains the faucet token, and its ports are only live while connect is
-running.`,
+another. Dropped forwards are re-established automatically. The endpoints file's
+ports are only live while connect is running.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
@@ -192,9 +191,6 @@ func printConnectStatus(out io.Writer, doc endpointsDocument, path string) error
 	}
 	if doc.KupoURL != "" {
 		writer.printf("  %s=%s\n", envKupoURL, doc.KupoURL)
-	}
-	if doc.FaucetURL != "" {
-		writer.printf("  %s=%s\n", envFaucetURL, doc.FaucetURL)
 	}
 	writer.printf("Wrote %s — Ctrl-C to disconnect.\n", path)
 

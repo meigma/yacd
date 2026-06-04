@@ -512,16 +512,14 @@ func TestInstallOverridesPreserveImagePins(t *testing.T) {
 
 	// Model A invariant: user overrides ride in Extra and never clobber the
 	// typed Default() pins. With a --set override present, the spec still carries
-	// the digest-pinned manager and faucet images byte-for-byte from Default().
+	// the digest-pinned manager image byte-for-byte from Default().
 	spec := captureSpec(installer)
 
 	require.NoError(t, run("install", "--set", "replicaCount=2"))
 
 	wantDefault := operator.Default()
 	assert.Equal(t, wantDefault.Image, spec.Values.Image)
-	assert.Equal(t, wantDefault.FaucetImage, spec.Values.FaucetImage)
 	assert.NotEmpty(t, spec.Values.Image.Digest)
-	assert.NotEmpty(t, spec.Values.FaucetImage.Digest)
 	// The override is isolated to Extra.
 	assert.Equal(t, map[string]any{"replicaCount": int64(2)}, spec.Values.Extra)
 }
