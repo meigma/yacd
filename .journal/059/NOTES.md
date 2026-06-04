@@ -227,3 +227,33 @@ Branch `feat/faucet-wallet-secret` (worktree `.wt/feat-faucet-wallet-secret`), c
 
 **Next:** after PR #97 merges → P3 (CLI wallet store + verbs + direct submission via
 internal/cardano/tx), rebased on new master. Re-confirm the 5 open decisions before P3.
+
+## 2026-06-03 17:43 — P2 SPLIT into P2a/P2b (Go verb replaces the shell script)
+User reviewed #97 and asked: put the genesis edit in a proper Go binary, not a fragile
+sed/grep shell script blasted into init args. Agreed — it's more robust + unit-testable.
+Consequence: the verb must be PUBLISHED before the controller can pin it (CI e2e pulls
+the published image), so P2 splits:
+- **P2a (PR #98, OPEN):** new `cardano-tools fund-genesis --env-dir --address --lovelace`
+  verb. Decodes bech32 → initialFunds hex key via Apollo `DecodeAddress` (3 golden
+  vectors locked, incl. the live `60dd1f87…` one); parses genesis via json.Number→
+  `big.Int` (lovelace > 2^53 — no float64 loss, tested at 2^53+1); validates
+  sum(initialFunds)+lovelace ≤ maxLovelaceSupply; idempotent; atomic write preserving
+  all other fields. Workflow `wf_3c0062be-ad2` (6 agents): correctness lens 0 findings;
+  5 must-fix applied (stale doc.go, 2^53 test, empty-addr, writeAtomic error paths,
+  decodeInteger); I fixed a `copyloopvar` lint nit. Scoped to containers/cardano-tools/
+  only. Verified: root:check ✅, fresh cardano-tools tests ✅, **and run against a REAL
+  create-env genesis** (decode→correct key, 6→7 initialFunds, maxLovelaceSupply + other
+  fields preserved, idempotent re-run). **#98 must squash-merge with footer
+  `Release-As: cardano-tools@11.0.1-yacd.6`** so release-please cuts the image.
+- **P2b (PR #97, now DRAFT):** after #98 + the yacd.6 release land, rework #97 — re-pin
+  the cardano-tools digest in `internal/cardano/toolsimage`, swap the genesis-funding
+  init container from `/bin/sh`+script to `yacd-cardano-tools fund-genesis` on the
+  cardano-tools image, re-live-validate on the dev stack. #97's controller/Secret/
+  ordering code is unchanged; only the init-container builder swaps. Marked #97 draft +
+  commented so the shell version isn't merged.
+
+Merge order for the human: (1) squash #98 with the Release-As footer → (2) merge the
+release-please cardano-tools PR (publishes yacd.6) → (3) I rework + re-validate #97 →
+(4) merge #97. Dev stack still up (Kind) for P2b.
+
+**Next:** await #98 review/merge + the yacd.6 release, then do P2b (#97 rework).
