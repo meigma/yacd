@@ -42,6 +42,9 @@ func newWalletExportCommand(commandContext *commandContext) *cobra.Command {
 
 			material, err := readWalletMaterial(cmd.Context(), walletCtx.kubeClient, walletCtx.namespace, walletstore.SecretName(walletCtx.name, name))
 			if err != nil {
+				if kube.IsNotFound(err) {
+					return fmt.Errorf("wallet %q not found", name)
+				}
 				return err
 			}
 

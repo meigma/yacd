@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -99,6 +100,12 @@ func (commandContext *commandContext) fundWallet(
 	}
 
 	submitter := commandContext.txSubmitterFactory(endpoints.OgmiosURL, endpoints.KupoURL)
+	// Apollo's OgmiosChainContext logs a non-fatal genesis-config fetch warning
+	// with a hardcoded fmt.Printf to stdout during chain-context init. Point the
+	// process stdout at stderr across submission/confirmation so that third-party
+	// noise never corrupts the CLI's stdout (notably --json); the verbs print
+	// results through commandContext.out, which keeps the original stdout.
+	defer redirectStdoutToStderr()()
 	submitResult, err := submitter.Submit(ctx, tx.Request{
 		SourceName:         source.Name,
 		SourceAddress:      source.Address,
@@ -162,4 +169,17 @@ func sourceKeyMaterial(ctx context.Context, kubeClient kube.Client, namespace st
 	}
 
 	return verificationKeyHex, signingKeyHex, nil
+}
+
+// redirectStdoutToStderr points the process stdout at stderr and returns a
+// restore func. Some third-party chain libraries print diagnostics with
+// fmt.Printf (process stdout) that would otherwise corrupt the CLI's stdout —
+// notably --json output. The CLI itself writes through commandContext.out/err,
+// which retain the original streams, so its own output is unaffected. It is
+// safe because the CLI runs a single command synchronously.
+func redirectStdoutToStderr() func() {
+	original := os.Stdout
+	os.Stdout = os.Stderr
+
+	return func() { os.Stdout = original }
 }

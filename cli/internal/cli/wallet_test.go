@@ -614,8 +614,11 @@ func TestWalletRemoveRejectsFaucet(t *testing.T) {
 func TestWalletRemoveDeletesSecret(t *testing.T) {
 	t.Parallel()
 
+	alice := newWalletFixture(t, "alice", walletstore.SourceManagedByCLI, 0x05)
+
 	client := newKubeMock(t)
 	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
+	client.EXPECT().GetSecret(mock.Anything, "devnet", alice.secret.Name).Return(&alice.secret, nil)
 	client.EXPECT().DeleteSecret(mock.Anything, "devnet", walletstore.SecretName("devnet", "alice")).Return(nil)
 
 	var stdout bytes.Buffer
@@ -628,6 +631,28 @@ func TestWalletRemoveDeletesSecret(t *testing.T) {
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	assert.Contains(t, stdout.String(), "Removed wallet")
+}
+
+func TestWalletRemoveReportsMissingWallet(t *testing.T) {
+	t.Parallel()
+
+	client := newKubeMock(t)
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(readyNetwork("devnet"), nil)
+	client.EXPECT().
+		GetSecret(mock.Anything, "devnet", walletstore.SecretName("devnet", "ghost")).
+		Return(nil, kube.ErrNotFound)
+
+	root := NewRootCommand(Options{
+		Out:               &bytes.Buffer{},
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+	})
+	root.SetArgs([]string{"wallet", "remove", "devnet", "ghost"})
+
+	err := root.ExecuteContext(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `wallet "ghost" not found`)
+	client.AssertNotCalled(t, "DeleteSecret", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestWalletExportWritesKeyFilesWithRestrictivePerms(t *testing.T) {

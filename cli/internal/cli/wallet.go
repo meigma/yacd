@@ -269,6 +269,20 @@ func newWalletRemoveCommand(commandContext *commandContext) *cobra.Command {
 			}
 
 			name := strings.ToLower(strings.TrimSpace(args[1]))
+			if name == "" {
+				return fmt.Errorf("WALLET is required")
+			}
+			if name == walletstore.FaucetWalletName {
+				return walletstore.ErrFaucetReserved
+			}
+			// Report a missing wallet clearly rather than a misleading "Removed"
+			// (the underlying delete is idempotent on a not-found Secret).
+			if _, err := walletCtx.kubeClient.GetSecret(cmd.Context(), walletCtx.namespace, walletstore.SecretName(walletCtx.name, name)); err != nil {
+				if kube.IsNotFound(err) {
+					return fmt.Errorf("wallet %q not found", name)
+				}
+				return err
+			}
 			if err := walletCtx.store.Delete(cmd.Context(), name); err != nil {
 				return err
 			}

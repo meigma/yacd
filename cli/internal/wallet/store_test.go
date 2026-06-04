@@ -291,6 +291,15 @@ func TestStoreCreate(t *testing.T) {
 
 		require.ErrorIs(t, err, ErrFaucetReserved)
 	})
+
+	t.Run("rejects an invalid name", func(t *testing.T) {
+		tc := newStoreContext(t)
+
+		_, err := tc.store.Create(context.Background(), "Bad_Name!", material, owner)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid wallet name")
+	})
 }
 
 func TestStoreDelete(t *testing.T) {

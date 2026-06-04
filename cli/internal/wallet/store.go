@@ -14,6 +14,7 @@ import (
 	ctrlnames "github.com/meigma/yacd/internal/ctrlkit/names"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 const (
@@ -208,6 +209,9 @@ func (s *Store) Create(ctx context.Context, name string, material domainwallet.M
 	}
 	if name == "" {
 		return ManagedWallet{}, fmt.Errorf("wallet name is required")
+	}
+	if errs := validation.IsDNS1123Label(name); len(errs) > 0 {
+		return ManagedWallet{}, fmt.Errorf("invalid wallet name %q: must be a lowercase DNS-1123 label (letters, digits, and '-')", name)
 	}
 	if owner == nil {
 		return ManagedWallet{}, fmt.Errorf("owning CardanoNetwork is required")
