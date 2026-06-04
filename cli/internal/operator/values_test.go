@@ -12,7 +12,7 @@ import (
 )
 
 // TestDefaultPinsReleaseDigests proves the offline default install stays
-// digest-pinned to the published release on both the manager and faucet images.
+// digest-pinned to the published manager release.
 func TestDefaultPinsReleaseDigests(t *testing.T) {
 	values := Default()
 
@@ -20,22 +20,12 @@ func TestDefaultPinsReleaseDigests(t *testing.T) {
 	assert.Equal(t, defaultManagerDigest, values.Image.Digest)
 	assert.Empty(t, values.Image.Tag, "digest pin leaves tag empty")
 
-	assert.Equal(t, defaultFaucetRepository, values.FaucetImage.Repository)
-	assert.Equal(t, defaultFaucetDigest, values.FaucetImage.Digest)
-	assert.Empty(t, values.FaucetImage.Tag, "digest pin leaves tag empty")
-
 	helmValues := values.ToHelmValues()
 	image, ok := helmValues["image"].(map[string]any)
 	require.True(t, ok, "image sub-tree must be present")
 	assert.Equal(t, defaultManagerDigest, image["digest"])
 	_, hasTag := image["tag"]
 	assert.False(t, hasTag, "empty tag is omitted so the chart default applies")
-
-	faucet, ok := helmValues["faucet"].(map[string]any)
-	require.True(t, ok)
-	faucetImage, ok := faucet["image"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, defaultFaucetDigest, faucetImage["digest"])
 }
 
 // TestToHelmValuesMergesExtraOverTypedFields proves Extra is deep-merged last so
@@ -44,11 +34,7 @@ func TestDefaultPinsReleaseDigests(t *testing.T) {
 func TestToHelmValuesMergesExtraOverTypedFields(t *testing.T) {
 	replicas := 3
 	values := Values{
-		Image: Image{Repository: "example.com/mgr", Digest: "sha256:aaa"},
-		FaucetImage: Image{
-			Repository: "example.com/faucet",
-			Digest:     "sha256:bbb",
-		},
+		Image:     Image{Repository: "example.com/mgr", Digest: "sha256:aaa"},
 		Replicas:  &replicas,
 		LogFormat: "json",
 		LogLevel:  "info",
@@ -77,12 +63,6 @@ func TestToHelmValuesMergesExtraOverTypedFields(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "json", manager["logFormat"])
 	assert.Equal(t, "info", manager["logLevel"])
-
-	faucet, ok := got["faucet"].(map[string]any)
-	require.True(t, ok)
-	faucetImage, ok := faucet["image"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "sha256:bbb", faucetImage["digest"], "untouched typed fields survive the merge")
 }
 
 // TestZeroValuesFallThroughToChartDefaults proves an unset typed field is

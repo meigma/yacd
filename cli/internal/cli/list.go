@@ -97,9 +97,6 @@ type listEndpoints struct {
 
 	// Kupo is the Kupo HTTP endpoint URL.
 	Kupo string `json:"kupo,omitempty"`
-
-	// Faucet is the faucet HTTP endpoint URL.
-	Faucet string `json:"faucet,omitempty"`
 }
 
 // summary returns a compact comma-separated list of the published endpoint
@@ -114,9 +111,6 @@ func (e listEndpoints) summary() string {
 	}
 	if e.Kupo != "" {
 		present = append(present, "kupo")
-	}
-	if e.Faucet != "" {
-		present = append(present, "faucet")
 	}
 	if len(present) == 0 {
 		return "-"
@@ -141,7 +135,6 @@ func newListItem(network *yacdv1alpha1.CardanoNetwork) listItem {
 			NodeToNode: endpointURL(network.Status.Endpoints.NodeToNode),
 			Ogmios:     endpointURL(network.Status.Endpoints.Ogmios),
 			Kupo:       endpointURL(network.Status.Endpoints.Kupo),
-			Faucet:     endpointURL(network.Status.Endpoints.Faucet),
 		}
 	}
 

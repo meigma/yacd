@@ -1,7 +1,6 @@
 EXPECTED_CONTEXT = 'kind-yacd-dev'
 NAMESPACE = 'yacd-system'
 IMAGE = 'ghcr.io/meigma/yacd'
-FAUCET_IMAGE = 'ghcr.io/meigma/yacd/faucet'
 CARDANO_TESTNET_IMAGE = 'ghcr.io/meigma/yacd/cardano-testnet'
 CARDANO_TOOLS_IMAGE = 'ghcr.io/meigma/yacd/cardano-tools'
 CHART = 'charts/yacd'
@@ -25,12 +24,6 @@ custom_build(
     IMAGE,
     './.dev/ko-build.sh',
     deps=['cmd', 'api', 'internal', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build.sh'],
-)
-
-local_resource(
-    name='faucet-image',
-    cmd='EXPECTED_REF=%s:tilt ./.dev/ko-build-faucet.sh && kind load docker-image --name yacd-dev %s:tilt' % (FAUCET_IMAGE, FAUCET_IMAGE),
-    deps=['services/faucet', 'go.mod', 'go.sum', '.ko.yaml', '.dev/ko-build-faucet.sh'],
 )
 
 # Build the cardano-testnet tools image from local source so the operator
@@ -62,8 +55,6 @@ k8s_yaml(helm(
         'image.repository=%s' % IMAGE,
         'image.tag=tilt',
         'image.pullPolicy=IfNotPresent',
-        'faucet.image.repository=%s' % FAUCET_IMAGE,
-        'faucet.image.tag=tilt',
         'cardanoTestnet.image.repository=%s' % CARDANO_TESTNET_IMAGE,
         'cardanoTestnet.image.tag=tilt',
         'cardanoTools.image.repository=%s' % CARDANO_TOOLS_IMAGE,
@@ -76,5 +67,5 @@ k8s_yaml(helm(
 k8s_resource(
     workload='yacd-controller-manager',
     new_name='controller',
-    resource_deps=['faucet-image', 'cardano-testnet-image', 'cardano-tools-image'],
+    resource_deps=['cardano-testnet-image', 'cardano-tools-image'],
 )

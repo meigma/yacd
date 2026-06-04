@@ -662,29 +662,6 @@ func TestCardanoDBSyncReconcilerReconcileRejectsPublicMainnetPrimarySidecar(t *t
 	assertMissingObject(t, ctx, reconciler, client.ObjectKey{Namespace: dbSync.Namespace, Name: dbSyncFollowerPVCName(dbSync)}, &corev1.PersistentVolumeClaim{})
 }
 
-func TestCardanoDBSyncReconcilerReconcileRejectsPrimarySidecarPortConflict(t *testing.T) {
-	ctx := context.Background()
-	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "ready-network"))
-	network := readyCardanoNetwork("ready-network")
-	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
-		Faucet: &yacdv1alpha1.FaucetSpec{
-			Enabled: true,
-			Port:    8080,
-		},
-	}
-	reconciler := newTestReconciler(t, dbSync, externalDatabaseSecretFor(dbSync), network)
-
-	result, err := reconciler.Reconcile(ctx, reconcileRequestFor(dbSync))
-
-	require.NoError(t, err)
-	assert.Empty(t, result)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertCondition(t, ctx, reconciler, dbSync, conditionTypeSidecarMaterialReady, metav1.ConditionFalse, conditionReasonUnsupportedSpec)
-	assertPlacementStatus(t, requireDBSync(t, ctx, reconciler, dbSync), yacdv1alpha1.CardanoDBSyncPlacementModePrimarySidecar, false)
-	assertDegradedMessage(t, ctx, reconciler, dbSync, "db-sync metrics port 8080 conflicts with faucet port in the primary Pod")
-}
-
 func TestCardanoDBSyncReconcilerReconcileAllowsPrimarySidecarIncumbentWithNewerPeer(t *testing.T) {
 	ctx := context.Background()
 	dbSync := primarySidecarCardanoDBSync(localCardanoDBSync("dbsync", "shared-network"))

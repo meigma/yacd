@@ -56,13 +56,9 @@ func TestRenderDefaultObjectSet(t *testing.T) {
 }
 
 // TestRenderDigestPinnedImages asserts the default render is digest-pinned: the
-// manager container image carries the manager digest and the
-// --default-faucet-image arg carries the faucet digest.
+// manager container image carries the manager digest.
 func TestRenderDigestPinnedImages(t *testing.T) {
-	const (
-		wantManagerImage = "ghcr.io/meigma/yacd@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
-		wantFaucetArg    = "--default-faucet-image=ghcr.io/meigma/yacd/faucet@sha256:826f8d52f0a4b0f607e2293cf72a8217de27700b5e5f1b35e1af86ef18fd3f66"
-	)
+	const wantManagerImage = "ghcr.io/meigma/yacd@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
 
 	deployment := findObject(t, renderDefault(t, installNamespace), "Deployment", "yacd-controller-manager")
 
@@ -74,11 +70,6 @@ func TestRenderDigestPinnedImages(t *testing.T) {
 	manager, ok := containers[0].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, wantManagerImage, manager["image"], "manager image is digest-pinned")
-
-	args, found, err := unstructured.NestedStringSlice(manager, "args")
-	require.NoError(t, err)
-	require.True(t, found, "manager must carry args")
-	assert.Contains(t, args, wantFaucetArg, "faucet digest is threaded into --default-faucet-image")
 }
 
 // TestRenderPresenceOfCoreObjects double-checks the metrics Service and the

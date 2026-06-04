@@ -27,7 +27,6 @@ const (
 	conditionTypeNodeProgressing       conditionType = "NodeProgressing"
 	conditionTypeOgmiosReady           conditionType = "OgmiosReady"
 	conditionTypeKupoReady             conditionType = "KupoReady"
-	conditionTypeFaucetReady           conditionType = "FaucetReady"
 	conditionTypeArtifactsReady        conditionType = "ArtifactsReady"
 )
 
@@ -67,8 +66,6 @@ const (
 	conditionReasonOgmiosDisabled        conditionReason = "OgmiosDisabled"
 	conditionReasonKupoReady             conditionReason = "KupoReady"
 	conditionReasonKupoDisabled          conditionReason = "KupoDisabled"
-	conditionReasonFaucetReady           conditionReason = "FaucetReady"
-	conditionReasonFaucetDisabled        conditionReason = "FaucetDisabled"
 	conditionReasonArtifactsReady        conditionReason = "ArtifactsReady"
 	conditionReasonArtifactsPending      conditionReason = "ArtifactsPending"
 	conditionReasonDBSyncAttachmentReady conditionReason = "DBSyncAttachmentReady"
@@ -91,8 +88,6 @@ const (
 	conditionMessageOgmiosDisabled               = "Ogmios chain API is disabled"
 	conditionMessageKupoReady                    = "Kupo sidecar is available through its Service"
 	conditionMessageKupoDisabled                 = "Kupo chain index API is disabled"
-	conditionMessageFaucetReady                  = "Faucet sidecar is available through its Service"
-	conditionMessageFaucetDisabled               = "Faucet API is disabled"
 	conditionMessageArtifactsReady               = "Network artifacts are served and available through the artifacts Service"
 )
 
@@ -106,17 +101,14 @@ type primaryDeploymentConditionFunc func(metav1.ConditionStatus, conditionReason
 // single Ready condition. Optional sidecar conditions only contribute when
 // the corresponding sidecar is enabled, so disabling a sidecar does not
 // hold Ready back.
-func readyCondition(dbSyncAttachmentReady metav1.Condition, nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, artifactsReady metav1.Condition, dbSyncAttached bool, kupoEnabled bool, faucetEnabled bool) metav1.Condition {
-	dependencies := make([]metav1.Condition, 0, 6)
+func readyCondition(dbSyncAttachmentReady metav1.Condition, nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, artifactsReady metav1.Condition, dbSyncAttached bool, kupoEnabled bool) metav1.Condition {
+	dependencies := make([]metav1.Condition, 0, 5)
 	if dbSyncAttached {
 		dependencies = append(dependencies, dbSyncAttachmentReady)
 	}
 	dependencies = append(dependencies, nodeReady, ogmiosReady)
 	if kupoEnabled {
 		dependencies = append(dependencies, kupoReady)
-	}
-	if faucetEnabled {
-		dependencies = append(dependencies, faucetReady)
 	}
 	dependencies = append(dependencies, artifactsReady)
 
@@ -157,11 +149,6 @@ func ogmiosReadyCondition(status metav1.ConditionStatus, reason conditionReason,
 // kupoReadyCondition constructs a KupoReady condition.
 func kupoReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
 	return ctrlstatus.Condition(string(conditionTypeKupoReady), status, string(reason), message)
-}
-
-// faucetReadyCondition constructs a FaucetReady condition.
-func faucetReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
-	return ctrlstatus.Condition(string(conditionTypeFaucetReady), status, string(reason), message)
 }
 
 // artifactsReadyCondition constructs an ArtifactsReady condition.

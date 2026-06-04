@@ -25,8 +25,6 @@ const (
 	envNetworkMagic   = "YACD_NETWORK_MAGIC"
 	envOgmiosURL      = "YACD_OGMIOS_URL"
 	envKupoURL        = "YACD_KUPO_URL"
-	envFaucetURL      = "YACD_FAUCET_URL"
-	envFaucetToken    = "YACD_FAUCET_TOKEN"
 	envNodeSocketPath = "CARDANO_NODE_SOCKET_PATH"
 )
 
@@ -39,8 +37,8 @@ type chainEndpoint struct {
 	endpoint *yacdv1alpha1.ServiceEndpointStatus
 }
 
-// chainEndpoints returns the published Ogmios/Kupo/faucet endpoints paired with
-// their env keys and short names. node-to-node is excluded: it is a TCP peer
+// chainEndpoints returns the published Ogmios/Kupo endpoints paired with their
+// env keys and short names. node-to-node is excluded: it is a TCP peer
 // protocol, not something host or in-pod test tooling speaks.
 func chainEndpoints(network *yacdv1alpha1.CardanoNetwork) []chainEndpoint {
 	if network.Status.Endpoints == nil {
@@ -51,7 +49,6 @@ func chainEndpoints(network *yacdv1alpha1.CardanoNetwork) []chainEndpoint {
 	return []chainEndpoint{
 		{key: envOgmiosURL, name: "ogmios", endpoint: endpoints.Ogmios},
 		{key: envKupoURL, name: "kupo", endpoint: endpoints.Kupo},
-		{key: envFaucetURL, name: "faucet", endpoint: endpoints.Faucet},
 	}
 }
 
@@ -90,9 +87,8 @@ func hostBindings(network *yacdv1alpha1.CardanoNetwork, localPort func(remote in
 }
 
 // hostEnv assembles the YACD_* environment for a host process (run/connect):
-// the identity variables, a loopback URL per forwarded chain endpoint, and the
-// faucet token when non-empty.
-func hostEnv(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool), faucetToken string) ([]string, error) {
+// the identity variables and a loopback URL per forwarded chain endpoint.
+func hostEnv(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool)) ([]string, error) {
 	bindings, err := hostBindings(network, localPort)
 	if err != nil {
 		return nil, err
@@ -102,25 +98,19 @@ func hostEnv(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) 
 	for _, binding := range bindings {
 		env = append(env, binding.key+"="+binding.url)
 	}
-	if strings.TrimSpace(faucetToken) != "" {
-		env = append(env, envFaucetToken+"="+faucetToken)
-	}
 
 	return env, nil
 }
 
-// endpointsDocument is the token-free connection info connect writes to
+// endpointsDocument is the connection info connect writes to
 // .yacd/<network>/endpoints.json and prints. Field names are stable across
-// releases. It deliberately never carries the faucet token: the file is a
-// checked-out, tool-readable artifact, and the loopback faucet URL is already
-// trust-gate-exempt for yacd topup, which reads the token from the cluster.
+// releases.
 type endpointsDocument struct {
 	Network      string `json:"network"`
 	Namespace    string `json:"namespace"`
 	NetworkMagic *int64 `json:"networkMagic,omitempty"`
 	OgmiosURL    string `json:"ogmiosUrl,omitempty"`
 	KupoURL      string `json:"kupoUrl,omitempty"`
-	FaucetURL    string `json:"faucetUrl,omitempty"`
 }
 
 // newEndpointsDocument builds the token-free connect document from the forwarded
@@ -141,8 +131,6 @@ func newEndpointsDocument(network *yacdv1alpha1.CardanoNetwork, localPort func(r
 			doc.OgmiosURL = binding.url
 		case "kupo":
 			doc.KupoURL = binding.url
-		case "faucet":
-			doc.FaucetURL = binding.url
 		}
 	}
 
@@ -151,9 +139,7 @@ func newEndpointsDocument(network *yacdv1alpha1.CardanoNetwork, localPort func(r
 
 // podEnv assembles the YACD_* environment for an in-pod process (exec): the
 // published ClusterIP URLs verbatim, the network magic, and the node socket
-// path. It intentionally omits YACD_FAUCET_TOKEN — a Bearer token injected into
-// the exec argv would land in apiserver audit logs and /proc, and in-pod
-// tooling does not need it.
+// path.
 func podEnv(network *yacdv1alpha1.CardanoNetwork, socketPath string) []string {
 	env := identityEnv(network)
 	for _, chain := range chainEndpoints(network) {

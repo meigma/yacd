@@ -47,13 +47,9 @@ func TestExecRunsInPodWithArgvOnlyEnv(t *testing.T) {
 		"YACD_NETWORK_MAGIC=42",
 		"YACD_OGMIOS_URL=ws://devnet-ogmios.devnet.svc.cluster.local:1337",
 		"YACD_KUPO_URL=http://devnet-kupo.devnet.svc.cluster.local:1442",
-		"YACD_FAUCET_URL=http://devnet-faucet.devnet.svc.cluster.local:8080",
 		"CARDANO_NODE_SOCKET_PATH=/ipc/node.socket",
 		"cardano-cli", "query", "tip",
 	}, captured.Command)
-	for _, arg := range captured.Command {
-		assert.NotContains(t, arg, "YACD_FAUCET_TOKEN", "the in-pod argv must never carry the faucet token")
-	}
 }
 
 func TestExecPropagatesRemoteExitCode(t *testing.T) {

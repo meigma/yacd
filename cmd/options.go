@@ -65,18 +65,12 @@ type managerOptions struct {
 	// logger. Allowed values are "debug", "info", "warn", and "error".
 	LogLevel string `name:"log-level" enum:"debug,info,warn,error" default:"info" help:"Minimum log level."`
 
-	// DefaultFaucetImage is the faucet image used when a CardanoNetwork does
-	// not provide spec.chainAPI.faucet.image.
-	//nolint:lll // Kong option tags are intentionally kept on a single struct field line.
-	DefaultFaucetImage string `name:"default-faucet-image" default:"ghcr.io/meigma/yacd/faucet:dev" help:"Default faucet image for CardanoNetwork faucet sidecars."`
-
 	// DefaultCardanoTestnetImage overrides the cardano-testnet container image
-	// used for the create-env init container, the faucet source-address init
-	// container, and (when spec.node.image is unset) the primary cardano-node
-	// container. Empty leaves the built-in
+	// used for the create-env init container and (when spec.node.image is unset)
+	// the primary cardano-node container. Empty leaves the built-in
 	// "<repo>:<toolVersion>-<revision>" formula in place.
 	//nolint:lll // Kong option tags are intentionally kept on a single struct field line.
-	DefaultCardanoTestnetImage string `name:"default-cardano-testnet-image" default:"" help:"Override the cardano-testnet image used for init/source-address containers and the default cardano-node container; empty uses the built-in versioned reference."`
+	DefaultCardanoTestnetImage string `name:"default-cardano-testnet-image" default:"" help:"Override the cardano-testnet image used for the create-env init container and the default cardano-node container; empty uses the built-in versioned reference."`
 
 	// DefaultCardanoToolsImage overrides the cardano-tools container image used
 	// for artifact staging (fetch/generate/serve) in both controllers. Empty

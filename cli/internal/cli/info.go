@@ -74,7 +74,6 @@ type infoOutput struct {
 	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
 	Network            networkOutput     `json:"network"`
 	Endpoints          endpointsOutput   `json:"endpoints"`
-	Faucet             *faucetOutput     `json:"faucet,omitempty"`
 	Wallet             *walletOutput     `json:"wallet,omitempty"`
 	Conditions         []conditionOutput `json:"conditions"`
 }
@@ -102,7 +101,6 @@ type endpointsOutput struct {
 	NodeToNode *endpointOutput `json:"nodeToNode,omitempty"`
 	Ogmios     *endpointOutput `json:"ogmios,omitempty"`
 	Kupo       *endpointOutput `json:"kupo,omitempty"`
-	Faucet     *endpointOutput `json:"faucet,omitempty"`
 }
 
 // endpointOutput projects a single ServiceEndpointStatus.
@@ -110,11 +108,6 @@ type endpointOutput struct {
 	ServiceName string `json:"serviceName,omitempty"`
 	Port        int32  `json:"port,omitempty"`
 	URL         string `json:"url,omitempty"`
-}
-
-// faucetOutput projects the optional faucet status sub-resource.
-type faucetOutput struct {
-	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
 // conditionOutput projects a single metav1.Condition with the timestamp
@@ -154,12 +147,6 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 		info.Endpoints.NodeToNode = endpointInfo(network.Status.Endpoints.NodeToNode)
 		info.Endpoints.Ogmios = endpointInfo(network.Status.Endpoints.Ogmios)
 		info.Endpoints.Kupo = endpointInfo(network.Status.Endpoints.Kupo)
-		info.Endpoints.Faucet = endpointInfo(network.Status.Endpoints.Faucet)
-	}
-	if network.Status.Faucet != nil {
-		info.Faucet = &faucetOutput{
-			AuthSecretName: network.Status.Faucet.AuthSecretName,
-		}
 	}
 
 	info.Conditions = make([]conditionOutput, 0, len(network.Status.Conditions))

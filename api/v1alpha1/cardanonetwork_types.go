@@ -84,8 +84,7 @@ type CardanoNetworkSpec struct {
 
 	// chainAPI configures network-facing APIs exposed next to the primary node.
 	// Ogmios and Kupo are enabled by default as the first chain API and chain
-	// index endpoints. The faucet is opt-in because it exposes a spending
-	// endpoint.
+	// index endpoints.
 	// +optional
 	ChainAPI *ChainAPISpec `json:"chainAPI,omitempty"`
 }
@@ -303,10 +302,6 @@ type ChainAPISpec struct {
 	// kupo configures the Kupo sidecar and Service.
 	// +optional
 	Kupo *KupoSpec `json:"kupo,omitempty"`
-
-	// faucet configures the faucet sidecar and Service.
-	// +optional
-	Faucet *FaucetSpec `json:"faucet,omitempty"`
 }
 
 // OgmiosSpec configures the default Ogmios chain API.
@@ -357,50 +352,6 @@ type KupoSpec struct {
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
-// FaucetSpec configures the local development faucet API.
-type FaucetSpec struct {
-	// enabled controls whether the faucet sidecar is deployed.
-	// +kubebuilder:default=false
-	// +required
-	Enabled bool `json:"enabled"`
-
-	// image optionally overrides the faucet image reference. When omitted, the
-	// controller uses its configured default faucet image. Overrides must use the
-	// same repository as the controller's configured default faucet image; tag or
-	// digest may vary.
-	// +optional
-	Image *string `json:"image,omitempty"`
-
-	// port is the faucet service port.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:default=8080
-	// +required
-	Port int32 `json:"port"`
-
-	// defaultSource is the generated cardano-testnet UTxO source used when a
-	// request does not select one explicitly.
-	// +kubebuilder:default="utxo1"
-	// +required
-	DefaultSource string `json:"defaultSource"`
-
-	// minTopUpLovelace is the minimum exact top-up amount.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=1000000
-	// +required
-	MinTopUpLovelace int64 `json:"minTopUpLovelace"`
-
-	// maxTopUpLovelace is the maximum exact top-up amount.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:default=10000000000
-	// +required
-	MaxTopUpLovelace int64 `json:"maxTopUpLovelace"`
-
-	// resources configures the faucet container resources.
-	// +optional
-	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
-}
-
 // CardanoNetworkStatus defines the observed state of CardanoNetwork.
 type CardanoNetworkStatus struct {
 	// observedGeneration is the most recent generation observed by the
@@ -417,10 +368,6 @@ type CardanoNetworkStatus struct {
 	// supporting controllers.
 	// +optional
 	Endpoints *CardanoNetworkEndpointsStatus `json:"endpoints,omitempty"`
-
-	// faucet publishes faucet-specific runtime details.
-	// +optional
-	Faucet *FaucetStatus `json:"faucet,omitempty"`
 
 	// sync reports the primary node's chain synchronization status as inferred
 	// from in-cluster sources.
@@ -439,7 +386,6 @@ type CardanoNetworkStatus struct {
 	// - "ArtifactsReady": the network artifact bundle is staged and served over HTTP
 	// - "OgmiosReady": Ogmios is enabled and connected to the primary node
 	// - "KupoReady": Kupo is enabled and synchronized enough to serve its API
-	// - "FaucetReady": the faucet is enabled and available through its Service
 	// - "Progressing": the resource is being created or updated
 	// - "Degraded": the resource failed to reach or maintain its desired state
 	//
@@ -562,22 +508,10 @@ type CardanoNetworkEndpointsStatus struct {
 	// +optional
 	Kupo *ServiceEndpointStatus `json:"kupo,omitempty"`
 
-	// faucet is the local development faucet HTTP endpoint.
-	// +optional
-	Faucet *ServiceEndpointStatus `json:"faucet,omitempty"`
-
 	// artifacts is the cardano-tools serve HTTP endpoint that exposes the
 	// staged network artifact files and manifest.json.
 	// +optional
 	Artifacts *ServiceEndpointStatus `json:"artifacts,omitempty"`
-}
-
-// FaucetStatus reports faucet-specific runtime details.
-type FaucetStatus struct {
-	// authSecretName is the same-namespace Secret containing the bearer token
-	// used by mutating faucet requests.
-	// +optional
-	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
 // ServiceEndpointStatus reports a cluster-local Service endpoint.

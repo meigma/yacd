@@ -8,16 +8,9 @@ spec:
       port: 3001
       storage:
         size: 2Gi
-    chainAPI:
-      # Enabling the faucet on a local network makes the controller generate a
-      # genesis-funded `faucet` wallet, which is the network's funded wallet and
-      # the default source for `yacd wallet topup`.
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        maxTopUpLovelace: 100000000000
+    # Ogmios and Kupo are enabled by default. A local network is automatically
+    # given a genesis-funded `faucet` wallet — the network's funded wallet and
+    # the default source for `yacd wallet topup`.
     local:
       networkMagic: 42
       era: conway

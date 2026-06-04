@@ -50,8 +50,6 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 		`"type": "Ready"`,
 		`"url": "ws://devnet-ogmios.env-ns.svc.cluster.local:1337"`,
 		`"url": "http://devnet-kupo.env-ns.svc.cluster.local:1442"`,
-		`"url": "http://devnet-faucet.env-ns.svc.cluster.local:8080"`,
-		`"authSecretName": "devnet-faucet-auth"`,
 	} {
 		assert.Contains(t, stdout.String(), want)
 	}

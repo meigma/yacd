@@ -806,16 +806,15 @@ func exportSecretWithout(t *testing.T, missingKey string) corev1.Secret {
 
 // walletForwardMock wires a mock kube.Client with a ForwardSession for the
 // funding self-forward: a ready network's primary Pod, a forward mapping the
-// published Ogmios/Kupo/faucet container ports to fixed loopback ports, and a
-// Close on teardown. The funding path reads loopback URLs but never supervises
-// the session, so only LocalPort and Close are exercised.
+// published Ogmios/Kupo container ports to fixed loopback ports, and a Close on
+// teardown. The funding path reads loopback URLs but never supervises the
+// session, so only LocalPort and Close are exercised.
 func walletForwardMock(t *testing.T) *mocks.Client {
 	t.Helper()
 
 	session := mocks.NewForwardSession(t)
 	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true).Maybe()
 	session.EXPECT().Close().Return(nil)
 
 	client := newKubeMock(t)

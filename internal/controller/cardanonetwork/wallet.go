@@ -72,8 +72,8 @@ type faucetWalletApplyResult struct {
 // known at build time because the genesis-funding init container injects it as
 // an env literal: editing the genesis after the node already booted from the
 // unfunded one would rewrite the chain under a running node. When the faucet
-// wallet is not gated on (non-local or faucet disabled) it returns a disabled
-// result and leaves any stale Secret for the apply phase to delete.
+// wallet is not gated on (non-local networks) it returns a disabled result and
+// leaves any stale Secret for the apply phase to delete.
 func (r *CardanoNetworkReconciler) ensurePrimaryFaucetWalletSecret(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -104,11 +104,11 @@ func (r *CardanoNetworkReconciler) ensurePrimaryFaucetWalletSecret(
 	}, nil
 }
 
-// applyWalletSecret is the shared apply core for the developer and faucet
-// wallets: live-read the Secret (Secrets are uncached), create it with freshly
-// generated key material when absent, and preserve existing key material
-// verbatim otherwise. Both wallets are funded against their derived address, so
-// neither may ever regenerate the key.
+// applyWalletSecret is the apply core for the faucet wallet Secret: live-read
+// the Secret (Secrets are uncached), create it with freshly generated key
+// material when absent, and preserve existing key material verbatim otherwise.
+// The wallet is funded against its derived address, so the key may never be
+// regenerated.
 func (r *CardanoNetworkReconciler) applyWalletSecret(
 	ctx context.Context,
 	desired *corev1.Secret,
@@ -152,10 +152,10 @@ func (r *CardanoNetworkReconciler) createWalletSecretWithKeys(
 	return controllerutil.OperationResultCreated, desired, nil
 }
 
-// reconcileWalletSecret handles the live-Secret-exists branch. Unlike the
-// faucet auth Secret, the wallet's key material is never regenerated: the wallet
-// holds the funds at its derived address, so an existing wallet's Data is
-// preserved verbatim and only metadata is reconciled.
+// reconcileWalletSecret handles the live-Secret-exists branch. The wallet's key
+// material is never regenerated: the wallet holds the funds at its derived
+// address, so an existing wallet's Data is preserved verbatim and only metadata
+// is reconciled.
 func (r *CardanoNetworkReconciler) reconcileWalletSecret(
 	ctx context.Context,
 	current *corev1.Secret,

@@ -23,9 +23,7 @@ type primaryWorkloadResources struct {
 	Service               *corev1.Service
 	OgmiosService         *corev1.Service
 	KupoService           *corev1.Service
-	FaucetService         *corev1.Service
 	ArtifactsService      *corev1.Service
-	FaucetAuthSecret      *corev1.Secret
 	FaucetWalletSecret    *corev1.Secret
 	FaucetWallet          faucetWalletSettings
 	DBSyncAttached        bool
@@ -34,7 +32,6 @@ type primaryWorkloadResources struct {
 type chainAPISettings struct {
 	Ogmios       ogmiosSettings
 	Kupo         kupoSettings
-	Faucet       faucetSettings
 	FaucetWallet faucetWalletSettings
 }
 
@@ -42,11 +39,11 @@ type chainAPISettings struct {
 // wallet. The faucet wallet is a local-only, genesis-funded payment key the
 // controller generates and writes directly (it is not a pod sidecar), so it
 // carries no image or port — only whether to bootstrap one, the genesis
-// funding amount, and the owned Secret name. It is enabled implicitly whenever
-// the faucet is enabled on a local network; there is no separate spec opt-in.
+// funding amount, and the owned Secret name. It is enabled implicitly on every
+// local network; there is no spec opt-in.
 type faucetWalletSettings struct {
 	// enabled is whether the controller bootstraps the faucet wallet. Requires
-	// local mode with the faucet enabled.
+	// local mode.
 	enabled bool
 	// fundingLovelace is the genesis allocation granted to the faucet wallet.
 	fundingLovelace int64
@@ -63,19 +60,12 @@ type primaryWorkloadBuilder struct {
 	// scheme is required to set controller references on owned children.
 	scheme *runtime.Scheme
 
-	// defaultFaucetImage is the Reconciler-injected faucet image used when
-	// the CardanoNetwork spec does not override it. The local dev stack's
-	// ko-built image flows in through here; see defaults.go for the final
-	// fallback constant.
-	defaultFaucetImage string
-
 	// defaultCardanoTestnetImage is the Reconciler-injected override for
 	// the cardano-testnet container image. When non-empty it replaces the
 	// computed "<repo>:<toolVersion>-<revision>" reference used by the
-	// create-env init container, the faucet source-address init
-	// container, and the default cardano-node container. The local dev
-	// stack's docker-built image flows in through here so manual testing
-	// picks up post-release publisher changes that the published
+	// create-env init container and the default cardano-node container. The
+	// local dev stack's docker-built image flows in through here so manual
+	// testing picks up post-release publisher changes that the published
 	// cardano-testnet tag does not yet contain.
 	defaultCardanoTestnetImage string
 
@@ -113,7 +103,7 @@ type primaryWorkloadBuilder struct {
 //  1. validate the spec into a runtime plan the planner can accept
 //  2. compute the network plan (fingerprint, paths, invocation args)
 //  3. build the localnet cardano-testnet create-env init container fragment
-//  4. resolve effective sidecar settings (ogmios/kupo/faucet) and run the
+//  4. resolve effective sidecar settings (ogmios/kupo) and run the
 //     cross-component validations
 //  5. assemble the Deployment, PVC, and Services
 //
@@ -141,7 +131,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		return nil, err
 	}
 
-	deployment, err := b.deployment(network, networkPlan, createEnvInitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.Faucet, chainAPI.FaucetWallet)
+	deployment, err := b.deployment(network, networkPlan, createEnvInitContainer, chainAPI.Ogmios, chainAPI.Kupo, chainAPI.FaucetWallet)
 	if err != nil {
 		return nil, err
 	}
@@ -163,18 +153,6 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 	var kupoService *corev1.Service
 	if chainAPI.Kupo.enabled {
 		kupoService, err = b.kupoService(network, chainAPI.Kupo)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var faucetService *corev1.Service
-	var faucetAuthSecret *corev1.Secret
-	if chainAPI.Faucet.enabled {
-		faucetService, err = b.faucetService(network, chainAPI.Faucet)
-		if err != nil {
-			return nil, err
-		}
-		faucetAuthSecret, err = b.faucetAuthSecret(network, chainAPI.Faucet)
 		if err != nil {
 			return nil, err
 		}
@@ -204,9 +182,7 @@ func (b primaryWorkloadBuilder) Build(network *yacdv1alpha1.CardanoNetwork) (*pr
 		Service:               service,
 		OgmiosService:         ogmiosService,
 		KupoService:           kupoService,
-		FaucetService:         faucetService,
 		ArtifactsService:      artifactsService,
-		FaucetAuthSecret:      faucetAuthSecret,
 		FaucetWalletSecret:    faucetWalletSecret,
 		FaucetWallet:          chainAPI.FaucetWallet,
 		DBSyncAttached:        b.dbSyncAttachment != nil,
@@ -239,9 +215,6 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 		if kupoExplicitlyEnabled(network) {
 			return chainAPISettings{}, unsupportedSpec("kupo is not supported for public networks")
 		}
-		if faucetExplicitlyEnabled(network) {
-			return chainAPISettings{}, unsupportedSpec("faucet is not supported for public networks")
-		}
 	}
 	kupo, kupoMentioned, err := resolveKupoSettings(network)
 	if err != nil {
@@ -256,10 +229,6 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	}
 	if kupo.enabled && !ogmios.enabled {
 		return chainAPISettings{}, unsupportedSpec("kupo requires ogmios to be enabled")
-	}
-	faucet, err := b.resolveFaucetSettings(network, ogmios, kupo)
-	if err != nil {
-		return chainAPISettings{}, err
 	}
 	// Skip the ogmios/cardano-node compatibility check when the CR is going
 	// to be rejected as UnsupportedNetworkChange anyway; surface that specific
@@ -276,31 +245,30 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	// The serve sidecar runs (and owns its fixed port) only for LOCAL and
 	// CURATED PUBLIC networks; custom-public has no serve port to reserve.
 	serveEnabled := plan.isLocal() || isCuratedPublicProfile(plan)
-	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, faucet, serveEnabled); err != nil {
+	if err := validatePrimaryWorkloadPorts(network.Spec.Node.Port, ogmios, kupo, serveEnabled); err != nil {
 		return chainAPISettings{}, err
 	}
 
-	faucetWallet := resolveFaucetWalletSettings(network, plan, faucet)
+	faucetWallet := resolveFaucetWalletSettings(network, plan)
 
-	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, Faucet: faucet, FaucetWallet: faucetWallet}, nil
+	return chainAPISettings{Ogmios: ogmios, Kupo: kupo, FaucetWallet: faucetWallet}, nil
 }
 
 // faucetWalletEnabled reports whether the well-known faucet wallet should be
-// bootstrapped. It is a spec-only predicate (local mode plus the faucet
-// enabled) shared by the Reconciler's pre-build ensure step and the builder so
-// both agree on the gate without re-resolving the full faucet settings.
+// bootstrapped. It is a spec-only predicate (local mode) shared by the
+// Reconciler's pre-build ensure step and the builder so both agree on the gate.
+// Every local network gets a genesis-funded faucet wallet; it is the local
+// funding source the CLI spends from.
 func faucetWalletEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
 	return network != nil &&
-		network.Spec.Mode == yacdv1alpha1.CardanoNetworkModeLocal &&
-		faucetExplicitlyEnabled(network)
+		network.Spec.Mode == yacdv1alpha1.CardanoNetworkModeLocal
 }
 
-// resolveFaucetWalletSettings resolves the faucet wallet configuration. The
-// faucet wallet is enabled implicitly whenever the faucet is enabled on a local
-// network: it is the genesis-funded source the local faucet (and the CLI) spend
-// from. Returns the disabled zero value otherwise.
-func resolveFaucetWalletSettings(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, faucet faucetSettings) faucetWalletSettings {
-	if !plan.isLocal() || !faucet.enabled {
+// resolveFaucetWalletSettings resolves the faucet wallet configuration. Every
+// local network gets a genesis-funded faucet wallet (the funding source the CLI
+// spends from); non-local networks get the disabled zero value.
+func resolveFaucetWalletSettings(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan) faucetWalletSettings {
+	if !plan.isLocal() {
 		return faucetWalletSettings{}
 	}
 
@@ -465,10 +433,4 @@ func kupoExplicitlyEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
 	return network.Spec.ChainAPI != nil &&
 		network.Spec.ChainAPI.Kupo != nil &&
 		network.Spec.ChainAPI.Kupo.Enabled
-}
-
-func faucetExplicitlyEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
-	return network.Spec.ChainAPI != nil &&
-		network.Spec.ChainAPI.Faucet != nil &&
-		network.Spec.ChainAPI.Faucet.Enabled
 }

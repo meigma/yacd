@@ -214,9 +214,8 @@ func TestDevnetRejectsNonPositiveTimeout(t *testing.T) {
 }
 
 // TestDefaultDevnetEnvIsValid guards the embedded default environment against
-// drift from examples/local/yacd.yaml: it must parse, be a local network, and
-// enable the faucet (which drives the genesis-funded wallet the devnet UX
-// promises).
+// drift from examples/local/yacd.yaml: it must parse and be a local network
+// (which automatically gets the genesis-funded wallet the devnet UX promises).
 func TestDefaultDevnetEnvIsValid(t *testing.T) {
 	env, err := devconfig.Load(bytes.NewReader(defaultDevnetEnvYAML))
 	require.NoError(t, err)
@@ -224,7 +223,4 @@ func TestDefaultDevnetEnvIsValid(t *testing.T) {
 	assert.Equal(t, yacdv1alpha1.CardanoNetworkModeLocal, env.Spec.Network.Mode)
 	require.NotNil(t, env.Spec.Network.Local)
 	assert.Equal(t, int64(42), env.Spec.Network.Local.NetworkMagic)
-	require.NotNil(t, env.Spec.Network.ChainAPI)
-	require.NotNil(t, env.Spec.Network.ChainAPI.Faucet)
-	assert.True(t, env.Spec.Network.ChainAPI.Faucet.Enabled)
 }

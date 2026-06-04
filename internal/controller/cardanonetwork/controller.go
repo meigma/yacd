@@ -28,7 +28,6 @@ const (
 
 	primaryWorkloadReadinessRequeueAfter = 15 * time.Second
 	resourceConflictRequeueAfter         = time.Minute
-	faucetSecretRepairRequeueAfter       = 10 * time.Minute
 	disabledChildResourceLogValue        = "disabled"
 )
 
@@ -45,14 +44,9 @@ type CardanoNetworkReconciler struct {
 	// owned child resources.
 	Scheme *runtime.Scheme
 
-	// DefaultFaucetImage is the image used for faucet sidecars when the
-	// CardanoNetwork spec does not provide an override.
-	DefaultFaucetImage string
-
 	// DefaultCardanoTestnetImage overrides the cardano-testnet container
-	// image used for the create-env init container, the faucet
-	// source-address init container, and (when spec.node.image is unset)
-	// the primary cardano-node container. Empty leaves the built-in
+	// image used for the create-env init container and (when spec.node.image
+	// is unset) the primary cardano-node container. Empty leaves the built-in
 	// "<repo>:<toolVersion>-<revision>" formula in place.
 	DefaultCardanoTestnetImage string
 
@@ -79,7 +73,7 @@ type CardanoNetworkReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;create;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list
 
 // Reconcile applies the CardanoNetwork primary workload and publishes runtime status.
@@ -120,7 +114,6 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	resources, err := (primaryWorkloadBuilder{
 		scheme:                     r.Scheme,
-		defaultFaucetImage:         r.DefaultFaucetImage,
 		defaultCardanoTestnetImage: r.DefaultCardanoTestnetImage,
 		defaultCardanoToolsImage:   r.DefaultCardanoToolsImage,
 		acceptedIdentity:           acceptedIdentity,
@@ -134,9 +127,6 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 
 		log.Info("CardanoNetwork primary workload is not supported yet", "error", err)
-		if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
-			return ctrl.Result{}, revokeErr
-		}
 		dbSyncAttachmentCondition := dbSyncAttachment.statusCondition()
 		if dbSyncAttachment.Attachment != nil {
 			dbSyncAttachmentCondition = dbSyncAttachmentReadyCondition(
@@ -145,7 +135,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				conditionMessagePrimaryWorkloadUnsupported,
 			)
 		}
-		if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
+		if statusErr := r.patchStatusConditionsClearingRuntime(ctx, network,
 			primaryNetworkPlan{},
 			acceptedNetworkIdentity{},
 			degradedCondition(metav1.ConditionTrue, conditionReasonUnsupportedSpec, err.Error()),
@@ -157,7 +147,6 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			nodeProgressingCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			ogmiosReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			kupoReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
-			faucetReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 			artifactsReadyCondition(metav1.ConditionFalse, conditionReasonUnsupportedSpec, conditionMessagePrimaryWorkloadUnsupported),
 		); statusErr != nil {
 			return ctrl.Result{}, statusErr
@@ -178,7 +167,7 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return r.handlePrimaryWorkloadApplyError(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.DBSyncAttached, dbSyncAttachment.statusCondition(), err)
 	}
 
-	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.FaucetService, resources.ArtifactsService, resources.FaucetAuthSecret, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
+	ready, err := r.patchPrimaryWorkloadAppliedStatus(ctx, network, resources.NetworkPlan, acceptedIdentity, resources.Service, resources.OgmiosService, resources.KupoService, resources.ArtifactsService, resources.DBSyncAttached, dbSyncAttachment.statusCondition())
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -195,17 +184,9 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if resources.KupoService != nil {
 		kupoServiceKey = client.ObjectKeyFromObject(resources.KupoService).String()
 	}
-	faucetServiceKey := disabledChildResourceLogValue
-	if resources.FaucetService != nil {
-		faucetServiceKey = client.ObjectKeyFromObject(resources.FaucetService).String()
-	}
 	artifactsServiceKey := disabledChildResourceLogValue
 	if resources.ArtifactsService != nil {
 		artifactsServiceKey = client.ObjectKeyFromObject(resources.ArtifactsService).String()
-	}
-	faucetAuthSecretKey := disabledChildResourceLogValue
-	if resources.FaucetAuthSecret != nil {
-		faucetAuthSecretKey = client.ObjectKeyFromObject(resources.FaucetAuthSecret).String()
 	}
 	resultLog.Info("Applied CardanoNetwork primary workload",
 		"persistentVolumeClaim", client.ObjectKeyFromObject(resources.PersistentVolumeClaim),
@@ -218,16 +199,12 @@ func (r *CardanoNetworkReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		"ogmiosServiceOperation", applyResults.OgmiosService,
 		"kupoService", kupoServiceKey,
 		"kupoServiceOperation", applyResults.KupoService,
-		"faucetService", faucetServiceKey,
-		"faucetServiceOperation", applyResults.FaucetService,
 		"artifactsService", artifactsServiceKey,
 		"artifactsServiceOperation", applyResults.ArtifactsService,
-		"faucetAuthSecret", faucetAuthSecretKey,
-		"faucetAuthSecretOperation", applyResults.FaucetAuthSecret,
 		"faucetWalletSecretOperation", applyResults.FaucetWalletSecret,
 		"networkFingerprint", resources.NetworkPlan.Fingerprint)
 
-	if result, requeue := primaryWorkloadRequeueResult(ready, resources.FaucetAuthSecret != nil, resources.OgmiosService != nil); requeue {
+	if result, requeue := primaryWorkloadRequeueResult(ready, resources.OgmiosService != nil); requeue {
 		return result, nil
 	}
 
@@ -243,7 +220,6 @@ func (r *CardanoNetworkReconciler) now() time.Time {
 
 func primaryWorkloadRequeueResult(
 	ready metav1.Condition,
-	hasFaucetAuthSecret bool,
 	ogmiosEnabled bool,
 ) (ctrl.Result, bool) {
 	if ready.Status != metav1.ConditionTrue &&
@@ -253,9 +229,6 @@ func primaryWorkloadRequeueResult(
 	}
 	if ogmiosEnabled {
 		return ctrl.Result{RequeueAfter: nodeSyncProbeRequeueAfter}, true
-	}
-	if hasFaucetAuthSecret {
-		return ctrl.Result{RequeueAfter: faucetSecretRepairRequeueAfter}, true
 	}
 
 	return ctrl.Result{}, false
@@ -271,10 +244,7 @@ type primaryWorkloadApplyResults struct {
 	Service                  controllerutil.OperationResult
 	OgmiosService            controllerutil.OperationResult
 	KupoService              controllerutil.OperationResult
-	FaucetService            controllerutil.OperationResult
 	ArtifactsService         controllerutil.OperationResult
-	FaucetAuthSecret         controllerutil.OperationResult
-	FaucetAuthSecretObject   *corev1.Secret
 	FaucetWalletSecret       controllerutil.OperationResult
 	FaucetWalletSecretObject *corev1.Secret
 }
@@ -288,16 +258,14 @@ func (r primaryWorkloadApplyResults) unchanged() bool {
 		r.Service == controllerutil.OperationResultNone &&
 		r.OgmiosService == controllerutil.OperationResultNone &&
 		r.KupoService == controllerutil.OperationResultNone &&
-		r.FaucetService == controllerutil.OperationResultNone &&
 		r.ArtifactsService == controllerutil.OperationResultNone &&
-		r.FaucetAuthSecret == controllerutil.OperationResultNone &&
 		r.FaucetWalletSecret == controllerutil.OperationResultNone
 }
 
 // applyPrimaryWorkloadResources applies the primary workload bundle in
-// dependency order: the PVC and faucet auth Secret are created before the
-// Deployment so its volumes can mount; the Deployment itself rolls last;
-// finally the optional Services are reconciled or deleted to match the spec.
+// dependency order: the PVC is created before the Deployment so its volumes can
+// mount; the Deployment itself rolls last; finally the optional Services are
+// reconciled or deleted to match the spec.
 func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -325,16 +293,6 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		return results, err
 	}
 
-	if resources.FaucetAuthSecret != nil {
-		results.FaucetAuthSecret, results.FaucetAuthSecretObject, err = r.applyPrimaryFaucetAuthSecret(ctx, resources.FaucetAuthSecret)
-		if err != nil {
-			return results, err
-		}
-	}
-
-	if results.FaucetAuthSecretObject != nil {
-		setDeploymentFaucetAuthTokenHash(resources.Deployment, results.FaucetAuthSecretObject)
-	}
 	results.Deployment, err = r.applyPrimaryDeployment(ctx, resources.Deployment)
 	if err != nil {
 		return results, err
@@ -355,21 +313,9 @@ func (r *CardanoNetworkReconciler) applyPrimaryWorkloadResources(
 		return results, err
 	}
 
-	results.FaucetService, err = r.applyOrDeletePrimaryChainAPIService(ctx, network, resources.FaucetService, r.deletePrimaryFaucetService)
-	if err != nil {
-		return results, err
-	}
-
 	results.ArtifactsService, err = r.applyOrDeletePrimaryChainAPIService(ctx, network, resources.ArtifactsService, r.deletePrimaryArtifactsService)
 	if err != nil {
 		return results, err
-	}
-
-	if resources.FaucetAuthSecret == nil {
-		results.FaucetAuthSecret, err = r.deletePrimaryFaucetAuthSecret(ctx, network)
-		if err != nil {
-			return results, err
-		}
 	}
 
 	return results, err
@@ -393,8 +339,8 @@ func (r *CardanoNetworkReconciler) applyOrDeletePrimaryChainAPIService(
 }
 
 // handlePrimaryWorkloadApplyError funnels typed status condition errors
-// from any apply step into a Degraded status patch and faucet revocation.
-// Untyped errors are returned unchanged so the controller-runtime loop
+// from any apply step into a Degraded status patch. Untyped errors are
+// returned unchanged so the controller-runtime loop
 // reschedules with its default backoff.
 func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	ctx context.Context,
@@ -410,9 +356,6 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		return ctrl.Result{}, err
 	}
 
-	if revokeErr := r.revokePrimaryFaucetExposure(ctx, network); revokeErr != nil {
-		return ctrl.Result{}, revokeErr
-	}
 	// conditionErr.Reason is untyped (it crosses the ctrlstatus boundary as a
 	// plain string); cast to conditionReason once and reuse for the condition
 	// builders below.
@@ -427,7 +370,7 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 	} else if dbSyncAttachmentCondition.Type != "" {
 		dbSyncAttachment = dbSyncAttachmentCondition
 	}
-	if statusErr := r.patchStatusConditionsClearingFaucet(ctx, network,
+	if statusErr := r.patchStatusConditionsClearingRuntime(ctx, network,
 		networkPlan,
 		acceptedIdentity,
 		degradedCondition(metav1.ConditionTrue, reason, conditionErr.Message),
@@ -439,7 +382,6 @@ func (r *CardanoNetworkReconciler) handlePrimaryWorkloadApplyError(
 		nodeProgressingCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		ogmiosReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		kupoReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
-		faucetReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 		artifactsReadyCondition(metav1.ConditionFalse, reason, conditionErr.Message),
 	); statusErr != nil {
 		return ctrl.Result{}, statusErr
@@ -459,7 +401,6 @@ func (r *CardanoNetworkReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&yacdv1alpha1.CardanoNetwork{}, ctrlbuilder.WithPredicates(cardanoNetworkEventPredicate())).
 		Watches(&yacdv1alpha1.CardanoDBSync{}, r.dbSyncPlacementEventHandler()).
-		Owns(&corev1.Secret{}, ctrlbuilder.WithPredicates(faucetAuthSecretEventPredicate())).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Service{}).

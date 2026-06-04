@@ -2,8 +2,8 @@
 set -euo pipefail
 
 echo "== go format =="
-go_roots=(charts cli cmd containers/cardano-testnet containers/cardano-tools services test)
-for optional_dir in api internal; do
+go_roots=(charts cli cmd containers/cardano-testnet containers/cardano-tools test)
+for optional_dir in api internal services; do
   if [ -d "$optional_dir" ]; then
     go_roots+=("$optional_dir")
   fi

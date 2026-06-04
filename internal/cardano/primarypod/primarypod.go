@@ -29,12 +29,7 @@ const (
 	// DefaultKupoPort is the Kupo sidecar port default.
 	DefaultKupoPort int32 = 1442
 
-	// DefaultFaucetPort is the faucet sidecar port default.
-	DefaultFaucetPort int32 = 8080
-
-	// DefaultServePort is the cardano-tools serve sidecar port default. It is
-	// deliberately not 8080 (the faucet default) so the always-on serve
-	// container can coexist with the faucet on the primary Pod.
+	// DefaultServePort is the cardano-tools serve sidecar port default.
 	//
 	// 8090 IS registered in PortOwners now that the serve sidecar is exposed
 	// on an owned Service: PortOwners feeds the CardanoDBSync sidecar placement
@@ -74,9 +69,6 @@ const (
 
 	// PortNameKupo is the Kupo container port name.
 	PortNameKupo = "kupo"
-
-	// PortNameFaucet is the faucet container port name.
-	PortNameFaucet = "faucet"
 
 	// PortNameServe is the cardano-tools serve container port name.
 	PortNameServe = "serve"
@@ -123,9 +115,6 @@ func PortOwners(network *yacdv1alpha1.CardanoNetwork) map[int32]string {
 	if kupoEnabled(network) {
 		ports[kupoPort(network)] = PortNameKupo
 	}
-	if faucetEnabled(network) {
-		ports[faucetPort(network)] = PortNameFaucet
-	}
 
 	return ports
 }
@@ -150,14 +139,6 @@ func kupoEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
 	return network.Spec.ChainAPI.Kupo.Enabled
 }
 
-// faucetEnabled returns the effective faucet sidecar enablement for the
-// primary Pod.
-func faucetEnabled(network *yacdv1alpha1.CardanoNetwork) bool {
-	return network.Spec.ChainAPI != nil &&
-		network.Spec.ChainAPI.Faucet != nil &&
-		network.Spec.ChainAPI.Faucet.Enabled
-}
-
 // ogmiosPort returns the effective Ogmios container port for the primary Pod.
 func ogmiosPort(network *yacdv1alpha1.CardanoNetwork) int32 {
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Ogmios == nil || !network.Spec.ChainAPI.Ogmios.Enabled {
@@ -180,16 +161,4 @@ func kupoPort(network *yacdv1alpha1.CardanoNetwork) int32 {
 	}
 
 	return network.Spec.ChainAPI.Kupo.Port
-}
-
-// faucetPort returns the effective faucet container port for the primary Pod.
-func faucetPort(network *yacdv1alpha1.CardanoNetwork) int32 {
-	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Faucet == nil || !network.Spec.ChainAPI.Faucet.Enabled {
-		return DefaultFaucetPort
-	}
-	if network.Spec.ChainAPI.Faucet.Port == 0 {
-		return DefaultFaucetPort
-	}
-
-	return network.Spec.ChainAPI.Faucet.Port
 }

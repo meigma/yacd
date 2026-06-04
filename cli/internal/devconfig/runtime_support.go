@@ -17,8 +17,6 @@ const (
 	defaultKupoImage       = "cardanosolutions/kupo:v2.11.0"
 	defaultKupoPort  int32 = 1442
 
-	defaultFaucetPort int32 = 8080
-
 	minimumMainnetNodeStorageSize = "300Gi"
 )
 
@@ -36,7 +34,6 @@ var supportedOgmiosNodeVersions = map[string][]string{
 type chainAPISettings struct {
 	ogmios componentSettings
 	kupo   componentSettings
-	faucet componentSettings
 }
 
 type componentSettings struct {
@@ -113,9 +110,6 @@ func validatePublicRuntimeSupport(network yacdv1alpha1.CardanoNetworkSpec) error
 	if publicKupoExplicitlyEnabled(network) {
 		return fmt.Errorf("spec.network.chainAPI.kupo.enabled=true is not supported for public networks")
 	}
-	if publicFaucetExplicitlyEnabled(network) {
-		return fmt.Errorf("spec.network.chainAPI.faucet.enabled=true is not supported for public networks")
-	}
 
 	return nil
 }
@@ -144,12 +138,8 @@ func resolveChainAPIRuntimeSupport(network yacdv1alpha1.CardanoNetworkSpec) (cha
 	if err := validateKupoRuntimeImage(kupo); err != nil {
 		return chainAPISettings{}, err
 	}
-	faucet, err := resolveFaucetRuntimeSupport(network, ogmios, kupo)
-	if err != nil {
-		return chainAPISettings{}, err
-	}
 
-	return chainAPISettings{ogmios: ogmios, kupo: kupo, faucet: faucet}, nil
+	return chainAPISettings{ogmios: ogmios, kupo: kupo}, nil
 }
 
 func resolveOgmiosRuntimeSupport(network yacdv1alpha1.CardanoNetworkSpec) (componentSettings, error) {
@@ -206,48 +196,6 @@ func resolveKupoRuntimeSupport(network yacdv1alpha1.CardanoNetworkSpec) (compone
 	return settings, true, nil
 }
 
-func resolveFaucetRuntimeSupport(network yacdv1alpha1.CardanoNetworkSpec, ogmios componentSettings, kupo componentSettings) (componentSettings, error) {
-	settings := componentSettings{
-		enabled: false,
-		port:    defaultFaucetPort,
-	}
-	if network.ChainAPI == nil || network.ChainAPI.Faucet == nil {
-		return settings, nil
-	}
-	spec := network.ChainAPI.Faucet
-	if !spec.Enabled {
-		return settings, nil
-	}
-	if !ogmios.enabled {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.enabled=true requires spec.network.chainAPI.ogmios.enabled=true")
-	}
-	if !kupo.enabled {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.enabled=true requires spec.network.chainAPI.kupo.enabled=true")
-	}
-	if spec.Image != nil && strings.TrimSpace(*spec.Image) == "" {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.image must not be blank")
-	}
-	if spec.Port < 1 || spec.Port > 65535 {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.port must be between 1 and 65535")
-	}
-	if err := validateFaucetSourceName(spec.DefaultSource); err != nil {
-		return componentSettings{}, err
-	}
-	if spec.MinTopUpLovelace < 1 {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.minTopUpLovelace must be greater than 0")
-	}
-	if spec.MaxTopUpLovelace < 1 {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.maxTopUpLovelace must be greater than 0")
-	}
-	if spec.MinTopUpLovelace > spec.MaxTopUpLovelace {
-		return componentSettings{}, fmt.Errorf("spec.network.chainAPI.faucet.minTopUpLovelace must not exceed maxTopUpLovelace")
-	}
-	settings.enabled = true
-	settings.port = spec.Port
-
-	return settings, nil
-}
-
 func validateOgmiosRuntimeCompatibility(nodeVersion string, settings componentSettings) error {
 	if !settings.enabled {
 		return nil
@@ -287,7 +235,6 @@ func validateRuntimePortConflicts(nodePort int32, settings chainAPISettings) err
 	}{
 		{name: "ogmios", settings: settings.ogmios},
 		{name: "kupo", settings: settings.kupo},
-		{name: "faucet", settings: settings.faucet},
 	} {
 		if !component.settings.enabled {
 			continue
@@ -301,30 +248,8 @@ func validateRuntimePortConflicts(nodePort int32, settings chainAPISettings) err
 	return nil
 }
 
-func validateFaucetSourceName(sourceName string) error {
-	sourceName = strings.TrimSpace(sourceName)
-	if !strings.HasPrefix(sourceName, "utxo") || len(sourceName) < len("utxo1") {
-		return fmt.Errorf("spec.network.chainAPI.faucet.defaultSource must use the utxoN source name format")
-	}
-	digits := sourceName[len("utxo"):]
-	if digits[0] == '0' {
-		return fmt.Errorf("spec.network.chainAPI.faucet.defaultSource must use the utxoN source name format")
-	}
-	for _, char := range digits {
-		if char < '0' || char > '9' {
-			return fmt.Errorf("spec.network.chainAPI.faucet.defaultSource must use the utxoN source name format")
-		}
-	}
-
-	return nil
-}
-
 func publicKupoExplicitlyEnabled(network yacdv1alpha1.CardanoNetworkSpec) bool {
 	return network.ChainAPI != nil && network.ChainAPI.Kupo != nil && network.ChainAPI.Kupo.Enabled
-}
-
-func publicFaucetExplicitlyEnabled(network yacdv1alpha1.CardanoNetworkSpec) bool {
-	return network.ChainAPI != nil && network.ChainAPI.Faucet != nil && network.ChainAPI.Faucet.Enabled
 }
 
 func ogmiosCompatibilityKey(image string) (string, error) {

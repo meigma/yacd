@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-// Resource-construction internals shared by the Deployment and the faucet
-// auth Secret.
+// Resource-construction internals shared by the Deployment and the owned
+// Secrets.
 const (
 	// nodeIPCVolumeName is the EmptyDir volume cardano-node and ogmios share
 	// for IPC socket communication.
@@ -27,15 +27,6 @@ const (
 	// kupoTmpVolumeName is the EmptyDir scratch volume kupo writes /tmp into
 	// so kupo can run with a read-only root filesystem.
 	kupoTmpVolumeName = "kupo-tmp"
-
-	// faucetAuthVolumeName is the Secret-backed volume that mounts the
-	// faucet's auth token into its container.
-	faucetAuthVolumeName = "faucet-auth"
-
-	// faucetAuthTokenKey is the data key inside the faucet auth Secret that
-	// carries the token. The Secret data map is shaped {faucetAuthTokenKey:
-	// []byte(token)}.
-	faucetAuthTokenKey = "token"
 
 	// walletNameLabel marks an owned wallet Secret with its well-known name so
 	// consumers (the CLI, dashboards) can select a specific wallet without
@@ -58,11 +49,11 @@ const (
 )
 
 // deployment builds the primary workload Deployment. It composes the
-// cardano-node container with the enabled optional sidecars (ogmios, kupo,
-// faucet) and wires the init container that prepares the localnet environment.
+// cardano-node container with the enabled optional sidecars (ogmios, kupo) and
+// wires the init container that prepares the localnet environment.
 // The RecreateDeploymentStrategyType prevents two cardano-node instances
 // from running at once (they cannot share the underlying state PVC).
-func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings, faucetWallet faucetWalletSettings) (*appsv1.Deployment, error) {
+func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork, plan primaryNetworkPlan, initContainer *corev1.Container, ogmios ogmiosSettings, kupo kupoSettings, faucetWallet faucetWalletSettings) (*appsv1.Deployment, error) {
 	selectorLabels := primaryWorkloadSelectorLabels(network)
 	labels := primaryWorkloadLabels(network)
 	deploymentName := primaryWorkloadName(network)
@@ -72,9 +63,6 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	}
 	if kupo.enabled {
 		containers = append(containers, b.kupoContainer(kupo, ogmios))
-	}
-	if faucet.enabled {
-		containers = append(containers, b.faucetContainer(faucet, ogmios, kupo))
 	}
 	if b.dbSyncAttachment != nil {
 		containers = append(containers, b.dbSyncAttachment.Container)
@@ -117,9 +105,6 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 	if b.dbSyncAttachment != nil {
 		initContainers = append(initContainers, b.dbSyncAttachment.InitContainer)
 	}
-	if faucet.enabled {
-		initContainers = append(initContainers, b.faucetSourceAddressInitContainer(*plan.Localnet))
-	}
 	volumes := []corev1.Volume{
 		{
 			Name: localnetStateVolumeName,
@@ -155,27 +140,6 @@ func (b primaryWorkloadBuilder) deployment(network *yacdv1alpha1.CardanoNetwork,
 				},
 			},
 		)
-	}
-	if faucet.enabled {
-		// The faucet auth token Secret is always present at apply time
-		// because the apply orchestrator creates it before the Deployment
-		// rolls; Optional=false fails the Pod fast if the token disappears.
-		optional := false
-		volumes = append(volumes, corev1.Volume{
-			Name: faucetAuthVolumeName,
-			VolumeSource: corev1.VolumeSource{
-				Secret: &corev1.SecretVolumeSource{
-					SecretName: faucet.authSecretName,
-					Items: []corev1.KeyToPath{
-						{
-							Key:  faucet.authSecretKey,
-							Path: faucet.authSecretKey,
-						},
-					},
-					Optional: &optional,
-				},
-			},
-		})
 	}
 	if b.dbSyncAttachment != nil {
 		volumes = append(volumes, b.dbSyncAttachment.Volumes...)
@@ -356,35 +320,6 @@ func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork
 	return service, nil
 }
 
-// faucetService builds the optional faucet ClusterIP Service.
-func (b primaryWorkloadBuilder) faucetService(network *yacdv1alpha1.CardanoNetwork, settings faucetSettings) (*corev1.Service, error) {
-	service := &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      primaryFaucetServiceName(network),
-			Namespace: network.Namespace,
-			Labels:    primaryWorkloadLabels(network),
-		},
-		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
-			Selector: primaryWorkloadSelectorLabels(network),
-			Ports: []corev1.ServicePort{
-				{
-					Name:       faucetPortName,
-					Protocol:   corev1.ProtocolTCP,
-					Port:       settings.port,
-					TargetPort: intstr.FromString(faucetPortName),
-				},
-			},
-		},
-	}
-
-	if err := controllerutil.SetControllerReference(network, service, b.scheme); err != nil {
-		return nil, fmt.Errorf("set faucet Service owner reference: %w", err)
-	}
-
-	return service, nil
-}
-
 // artifactsService builds the artifacts ClusterIP Service that exposes the
 // always-on cardano-tools serve sidecar. It mirrors the chain API Services:
 // the selector targets the primary node Pod labels and the single port maps to
@@ -415,26 +350,6 @@ func (b primaryWorkloadBuilder) artifactsService(network *yacdv1alpha1.CardanoNe
 	}
 
 	return service, nil
-}
-
-// faucetAuthSecret builds the opaque Secret that carries the faucet's auth
-// token. The data map is populated by the apply phase (the builder cannot
-// generate random material since it must stay pure).
-func (b primaryWorkloadBuilder) faucetAuthSecret(network *yacdv1alpha1.CardanoNetwork, settings faucetSettings) (*corev1.Secret, error) {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      settings.authSecretName,
-			Namespace: network.Namespace,
-			Labels:    primaryWorkloadLabels(network),
-		},
-		Type: corev1.SecretTypeOpaque,
-	}
-
-	if err := controllerutil.SetControllerReference(network, secret, b.scheme); err != nil {
-		return nil, fmt.Errorf("set faucet auth Secret owner reference: %w", err)
-	}
-
-	return secret, nil
 }
 
 // faucetWalletSecret builds the opaque Secret that carries the well-known
