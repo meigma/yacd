@@ -271,3 +271,36 @@ died once on a transient api.github.com connection error; re-queried — all gre
 **Next:** on the user's go-ahead, merge #99 → yacd.6 publishes → P2b: re-pin the digest
 in `internal/cardano/toolsimage`, swap #97's init container to `yacd-cardano-tools
 fund-genesis`, re-live-validate, mark #97 ready, merge.
+
+## 2026-06-03 18:45 — P2b DONE: #97 reworked to the verb, live-reproven (ready for review)
+User approved merging #99. Squash-merged #99 → release-please tagged
+`cardano-tools/v11.0.1-yacd.6`, the "Release cardano-tools Image" workflow published
+it. **Published digest: `sha256:02fcb64d0d3e5d63dfa13484068eacbdc7ae34694fdb51cfa733763fbc433188`**
+(got via `docker buildx imagetools inspect`).
+
+P2b edits (in #97, `feat/faucet-wallet-secret`): bumped `internal/cardano/toolsimage`
+Revision yacd.5→yacd.6 + the new Digest; rewrote `faucetWalletGenesisFundingInitContainer`
+to run the cardano-tools image + `fund-genesis --env-dir --address --lovelace` (dropped
+the /bin/sh script + the env-var/shell consts); updated 3 tests (init_container_test,
+controller_envtest_test helper, builder_test) from env/script asserts → verb-arg asserts.
+Build/vet/gofmt clean, root:check ✅, root:test ✅ (cardanonetwork envtest fresh).
+
+**LIVE re-proven on the Kind dev stack**: applied a local faucet network → Ready=True,
+Degraded=False; the init container ran the VERB (image `cardano-tools:tilt` = locally-
+built same source; log "funded addr_test1vra77… (key 60fbef43…) with 1000000000000
+lovelace"); `cardano-cli query utxo` → faucet addr holds **1,000,000 ADA on-chain**.
+Published yacd.6 image confirmed to ship the verb. Test network deleted. #97 amended +
+marked READY (was draft).
+
+⚠️ **STALE-BASE HAZARD HIT TWICE** (see [[shared-master-rebase-before-push]]): while I
+did P2b, the other agent merged **#94→#95... and #96 (`yacd install`)** to the SHARED
+origin/master. After my first amend+force-push, `git diff origin/master` showed #96 as
+"reverted" (my branch based on the older `9477801`; master had advanced to `5383f76`).
+Caught it, `git fetch` + `git rebase origin/master` (disjoint, clean) + force-push →
+#97 now 14 files only (cardanonetwork + toolsimage). LESSON: with a concurrent agent
+merging to shared master, ALWAYS re-fetch + rebase + verify `git diff origin/master` is
+clean immediately before (force-)pushing a PR.
+
+**Status: #97 OPEN, ready, NOT merged — awaiting human review.** Dev stack still up.
+**Next:** after #97 merges → P3 (CLI wallet store + verbs + direct submission via
+internal/cardano/tx). Re-confirm the 5 open decisions before P3.
