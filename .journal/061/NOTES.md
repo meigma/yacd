@@ -102,3 +102,70 @@ Next: PAUSE for human review of PR-4a (per user instruction: pause before each
 merge). After approval + auth restore: push branch, open PR, pause again before
 merge. Then PR-4b (faucet service deletion + the builder.go re-gate to local-only
 + Chainsaw/RBAC/dbsync-test), then P5 (release).
+
+## 2026-06-04 ~14:50 — PR-4b DONE (deletion + re-gate), gates green
+
+PR-4a merged (squash `dfa9dd4`, PR #107). PR-4b built in worktree
+`.wt/refactor-faucet-removal-p4b` (branch `refactor/faucet-removal-p4b`, off
+master `dfa9dd4`). **Commit `167ea9b`** (unsigned; squash-merge re-signs),
+**88 files +268/−7653** (bulk is the `services/faucet/` tree).
+
+What 4b did:
+- Deleted the in-cluster faucet **SERVICE** end to end: `services/faucet/`,
+  faucet image (release.yml jobs, Tiltfile, ko-build-faucet.sh, chart
+  faucet.image + kyverno + `--default-faucet-image`), and the CLI embedded-chart
+  faucet image plumbing.
+- Deleted controller faucet-service wiring: `faucet_auth.go`,
+  `faucet_auth_watch.go`, faucetContainer, source-address init, faucet
+  Service/auth Secret, FaucetReady, revokePrimaryFaucetExposure, faucet
+  readiness/status/conditions/defaults, the faucet port-conflict branch, and the
+  primarypod faucet port.
+- **The re-gate (highest-risk edit):** `faucetWalletEnabled` /
+  `resolveFaucetWalletSettings` now gate the genesis faucet **WALLET** on
+  `Spec.Mode == Local` ALONE (dropped the old `faucet.enabled` dependency).
+- API removed `FaucetSpec`/`FaucetStatus`/`ChainAPISpec.Faucet`/status.Faucet/
+  endpoints.Faucet/FaucetReady (regenerated CRD+deepcopy+mocks).
+- CLI dropped the faucet trust-gate residue (faucetTokenForHost, YACD_FAUCET_*,
+  endpoints FaucetURL, info/list faucet, ConditionFaucetReady, devconfig faucet
+  validation).
+- Rewrote the Chainsaw smoke (dropped the faucet HTTP curl test; asserts the
+  `<net>-wallet-faucet` Secret + a non-empty address; teardown disables kupo
+  only); fixed the orphaned dbsync port-conflict test (8080 freed).
+
+Gates GREEN: `go build ./...`, `go vet`, `root:check` (gofmt/lint/generated-
+artifacts/helm/chainsaw-lint), `root:test` (envtest+unit incl. a NEW
+`TestCardanoNetworkReconcilerReconcileGatesFaucetWalletOnLocalMode` direct-
+reconcile test proving the re-gate: local→wallet Secret present, public→absent),
+`root:test-e2e` (real Kind/Chainsaw, 1 passed — wallet-faucet Secret + funded
+address, no faucet service, reaches Ready). Manager dep boundary `./cmd` clean
+(only Apollo address/key subpkgs; no ogmigo/kugo/apollo-tx-builder). Faucet
+token sweep: only the faucet WALLET, Cardano `*-keys` genesis artifacts, and
+P5-deferred doc prose remain.
+
+Adversarial review `wf_8a25ce64-ea7` (11 agents, 6 dimensions): 3 confirmed, 2
+dismissed. Disposition:
+- **Missing wallet-Secret Owns() watch (dismissed):** master's
+  `Owns(&Secret, faucetAuthSecretEventPredicate)` only ever matched
+  `-faucet-auth`; the wallet Secret (`-wallet-faucet`) was deliberately excluded
+  then too. Not a 4b regression; recreating the create-once genesis wallet on
+  external delete would mint an UNFUNDED address — watching is wrong by design.
+- **RBAC list/watch on secrets now unused (actioned, per-controller only):**
+  tightened cardanonetwork's marker to `get;create;patch;delete` (its only Secret
+  watch — the auth-Secret Owns — is gone). The shared manager ClusterRole is the
+  controller-gen UNION and CANNOT shrink: `cardanodbsync` legitimately needs
+  list/watch (`Owns(&Secret)` + a Secret `Watches` handler). Chart unchanged;
+  `TestManagerRBACMatchesControllerGen` green.
+- **Chainsaw missing positive survival assert (actioned):** added an explicit
+  `kubectl get secret <net>-wallet-faucet` check after the kupo-disable patch so
+  a regression that deletes the wallet on a chain-API toggle is caught.
+
+Dev-stack live `yacd wallet topup --from faucet` NOT run: the running dev stack
+(`.run/yacd-dev`, pid 25886) is bound to the **4a** worktree (pre-4b code, still
+has faucet-image); re-pointing it needs a disruptive `dev-down` (deletes the
+Kind cluster) + `dev-up` rebuild. Chainsaw e2e already proves the 4b-specific
+risk (re-gate) in a real cluster, and the topup tx path is unchanged P3 code, so
+this is a user decision — surfaced at the review pause.
+
+Next: push branch + open PR-4b, PAUSE for human review before merge (standing
+instruction). Then P5 (faucet-free operator release → re-pin CLI embedded
+manager digest → CLI release → docs PR #91).
