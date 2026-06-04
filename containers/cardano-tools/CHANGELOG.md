@@ -1,5 +1,12 @@
 # Changelog
 
+## [11.0.1-yacd.6](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.5...cardano-tools/v11.0.1-yacd.6) (2026-06-04)
+
+
+### Features
+
+* **cardano-tools:** add fund-genesis verb ([#98](https://github.com/meigma/yacd/issues/98)) ([e6f3c64](https://github.com/meigma/yacd/commit/e6f3c64cceff78fe8ac0ca33d3321a9d69b13bf9))
+
 ## [11.0.1-yacd.5](https://github.com/meigma/yacd/compare/cardano-tools/v11.0.1-yacd.4...cardano-tools/v11.0.1-yacd.5) (2026-06-01)
 
 
