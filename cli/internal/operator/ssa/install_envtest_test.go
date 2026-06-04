@@ -134,6 +134,54 @@ func TestEnsureOperatorRefusesNewerInstalledVersion(t *testing.T) {
 	assert.Equal(t, "v0.9.9", state.Version, "observed state is returned alongside the refusal")
 }
 
+func TestPlanOnEmptyClusterReportsInstallAndMutatesNothing(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	// Plan's load-bearing contract: it renders + reads + Decides without mutating
+	// the cluster. On a fresh cluster it must report ActionInstall at the embedded
+	// target version with no installed version and no error.
+	decision, err := inst.Plan(ctx, operator.InstallSpec{})
+	require.NoError(t, err)
+	assert.Equal(t, operator.ActionInstall, decision.Action)
+	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+	assert.Empty(t, decision.InstalledVersion, "nothing is installed yet")
+
+	// And it applied nothing: no manager Deployment and no CRD exist afterward.
+	err = c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, &appsv1.Deployment{})
+	assert.True(t, apierrors.IsNotFound(err), "Plan must not create the manager Deployment")
+
+	err = c.Get(ctx, crclient.ObjectKey{Name: "cardanonetworks.yacd.meigma.io"}, &apiextensionsv1.CustomResourceDefinition{})
+	assert.True(t, apierrors.IsNotFound(err), "Plan must not apply CRDs")
+}
+
+func TestPlanRefusesNewerInstalledVersionWithoutMutating(t *testing.T) {
+	ctx := context.Background()
+	inst, c := newInstaller(t)
+
+	// Seed a newer same-major operator so the policy refuses, then assert Plan
+	// surfaces the typed refusal and the observed version while changing nothing.
+	_, err := inst.EnsureOperator(ctx, operator.InstallSpec{})
+	require.NoError(t, err)
+
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, deployment))
+	deployment.Labels[versionLabel] = "v0.9.9"
+	require.NoError(t, c.Update(ctx, deployment))
+
+	decision, err := inst.Plan(ctx, operator.InstallSpec{})
+	require.ErrorIs(t, err, operator.ErrNewerOperator)
+	assert.Equal(t, operator.ActionRefuse, decision.Action)
+	assert.Equal(t, "v0.9.9", decision.InstalledVersion)
+	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+
+	// Plan did not touch the seeded Deployment: its version label still reads the
+	// newer value, proving Plan never re-applied the embedded manifest set.
+	after := &appsv1.Deployment{}
+	require.NoError(t, c.Get(ctx, crclient.ObjectKey{Namespace: installNamespace, Name: "yacd-controller-manager"}, after))
+	assert.Equal(t, "v0.9.9", after.Labels[versionLabel], "Plan must not overwrite the installed version")
+}
+
 func TestEnsureOperatorInstallsIntoRequestedNamespace(t *testing.T) {
 	ctx := context.Background()
 	inst, c := newInstaller(t)

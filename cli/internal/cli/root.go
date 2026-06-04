@@ -136,6 +136,11 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newDevnetCommand(ctx))
 	// init only prints an embedded template — no cluster contact, so no reconcile.
 	root.AddCommand(newInitCommand(ctx))
+	// install targets an arbitrary cluster by explicit-or-ambient kubeconfig; it
+	// deliberately accepts --kubeconfig/--context and never consults the managed
+	// devnet record, so it is neither wrapped in withManagedReconcile nor gated
+	// by rejectExplicitTarget.
+	root.AddCommand(newInstallCommand(ctx))
 
 	return root
 }

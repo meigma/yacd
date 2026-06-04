@@ -105,8 +105,8 @@ func (_c *Installer_EnsureOperator_Call) RunAndReturn(run func(ctx context.Conte
 }
 
 // OperatorState provides a mock function for the type Installer
-func (_mock *Installer) OperatorState(ctx context.Context) (operator.State, error) {
-	ret := _mock.Called(ctx)
+func (_mock *Installer) OperatorState(ctx context.Context, namespace string) (operator.State, error) {
+	ret := _mock.Called(ctx, namespace)
 
 	if len(ret) == 0 {
 		panic("no return value specified for OperatorState")
@@ -114,16 +114,16 @@ func (_mock *Installer) OperatorState(ctx context.Context) (operator.State, erro
 
 	var r0 operator.State
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context) (operator.State, error)); ok {
-		return returnFunc(ctx)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) (operator.State, error)); ok {
+		return returnFunc(ctx, namespace)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context) operator.State); ok {
-		r0 = returnFunc(ctx)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string) operator.State); ok {
+		r0 = returnFunc(ctx, namespace)
 	} else {
 		r0 = ret.Get(0).(operator.State)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context) error); ok {
-		r1 = returnFunc(ctx)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string) error); ok {
+		r1 = returnFunc(ctx, namespace)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -137,18 +137,24 @@ type Installer_OperatorState_Call struct {
 
 // OperatorState is a helper method to define mock.On call
 //   - ctx context.Context
-func (_e *Installer_Expecter) OperatorState(ctx interface{}) *Installer_OperatorState_Call {
-	return &Installer_OperatorState_Call{Call: _e.mock.On("OperatorState", ctx)}
+//   - namespace string
+func (_e *Installer_Expecter) OperatorState(ctx interface{}, namespace interface{}) *Installer_OperatorState_Call {
+	return &Installer_OperatorState_Call{Call: _e.mock.On("OperatorState", ctx, namespace)}
 }
 
-func (_c *Installer_OperatorState_Call) Run(run func(ctx context.Context)) *Installer_OperatorState_Call {
+func (_c *Installer_OperatorState_Call) Run(run func(ctx context.Context, namespace string)) *Installer_OperatorState_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -159,7 +165,73 @@ func (_c *Installer_OperatorState_Call) Return(state operator.State, err error) 
 	return _c
 }
 
-func (_c *Installer_OperatorState_Call) RunAndReturn(run func(ctx context.Context) (operator.State, error)) *Installer_OperatorState_Call {
+func (_c *Installer_OperatorState_Call) RunAndReturn(run func(ctx context.Context, namespace string) (operator.State, error)) *Installer_OperatorState_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// Plan provides a mock function for the type Installer
+func (_mock *Installer) Plan(ctx context.Context, spec operator.InstallSpec) (operator.Decision, error) {
+	ret := _mock.Called(ctx, spec)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Plan")
+	}
+
+	var r0 operator.Decision
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, operator.InstallSpec) (operator.Decision, error)); ok {
+		return returnFunc(ctx, spec)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, operator.InstallSpec) operator.Decision); ok {
+		r0 = returnFunc(ctx, spec)
+	} else {
+		r0 = ret.Get(0).(operator.Decision)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, operator.InstallSpec) error); ok {
+		r1 = returnFunc(ctx, spec)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Installer_Plan_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Plan'
+type Installer_Plan_Call struct {
+	*mock.Call
+}
+
+// Plan is a helper method to define mock.On call
+//   - ctx context.Context
+//   - spec operator.InstallSpec
+func (_e *Installer_Expecter) Plan(ctx interface{}, spec interface{}) *Installer_Plan_Call {
+	return &Installer_Plan_Call{Call: _e.mock.On("Plan", ctx, spec)}
+}
+
+func (_c *Installer_Plan_Call) Run(run func(ctx context.Context, spec operator.InstallSpec)) *Installer_Plan_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 operator.InstallSpec
+		if args[1] != nil {
+			arg1 = args[1].(operator.InstallSpec)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *Installer_Plan_Call) Return(decision operator.Decision, err error) *Installer_Plan_Call {
+	_c.Call.Return(decision, err)
+	return _c
+}
+
+func (_c *Installer_Plan_Call) RunAndReturn(run func(ctx context.Context, spec operator.InstallSpec) (operator.Decision, error)) *Installer_Plan_Call {
 	_c.Call.Return(run)
 	return _c
 }

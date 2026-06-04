@@ -10,7 +10,6 @@ import (
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/meigma/yacd/cli/internal/render"
-	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // operatorPollInterval is how often Up polls operator readiness after install.
@@ -89,7 +88,7 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("build operator installer: %w", err)
 	}
-	state, err := m.ensureOperatorReady(ctx, installer, o.Timeout)
+	state, err := m.ensureOperatorReady(ctx, installer)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,12 +127,14 @@ func (m *Manager) Up(ctx context.Context, o UpOptions) (Result, error) {
 }
 
 // ensureOperatorReady installs or upgrades the operator and then waits for its
-// manager Deployment to report Available, bounded by timeout. The SSA install
-// applies the chart but does not wait for the workload, so a first-run install
-// returns not-ready while the image pulls. Waiting here keeps the reported state
-// and the "operator ready" progress honest, and makes `devnet --bare` return a
-// usable operator rather than one that is still starting.
-func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.Installer, timeout time.Duration) (operator.State, error) {
+// manager Deployment to report Available, bounded by the caller's context
+// (Up bounds it by the timeout). The SSA install applies the chart but does not
+// wait for the workload, so a first-run install returns not-ready while the
+// image pulls. Waiting here keeps the reported state and the "operator ready"
+// progress honest, and makes `devnet --bare` return a usable operator rather
+// than one that is still starting. devnet always installs into the default
+// namespace, so the readiness poll watches operator.DefaultNamespace.
+func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.Installer) (operator.State, error) {
 	state, err := installer.EnsureOperator(ctx, operator.InstallSpec{Values: operator.Default()})
 	if err != nil {
 		return operator.State{}, fmt.Errorf("install operator: %w", err)
@@ -143,14 +144,7 @@ func (m *Manager) ensureOperatorReady(ctx context.Context, installer operator.In
 	}
 
 	m.Report.Substep("Waiting for the operator to become ready")
-	err = wait.PollUntilContextTimeout(ctx, operatorPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
-		current, err := installer.OperatorState(ctx)
-		if err != nil {
-			return false, err
-		}
-		state = current
-		return state.Ready, nil
-	})
+	state, err = operator.WaitForReady(ctx, installer, operator.DefaultNamespace, operatorPollInterval)
 	if err != nil {
 		return state, fmt.Errorf("operator did not become ready: %w", err)
 	}
@@ -274,7 +268,7 @@ func (m *Manager) Status(ctx context.Context) (Report, error) {
 	if err != nil {
 		return Report{}, fmt.Errorf("build operator installer: %w", err)
 	}
-	operatorState, err := installer.OperatorState(ctx)
+	operatorState, err := installer.OperatorState(ctx, operator.DefaultNamespace)
 	if err != nil {
 		return Report{}, fmt.Errorf("operator state: %w", err)
 	}
