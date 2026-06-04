@@ -193,6 +193,24 @@ fails the probe) keeps working exactly as today.
 - **`k3d cluster edit --port-add` on a running cluster.** Avoided: it is marked
   experimental (it rebuilds the serverlb in place). Pinning ports at *create*
   time sidesteps it entirely.
+- **Exposing the node's own TCP socket.** The node has two interfaces:
+  **node-to-node** (TCP 3001, already a Service / `status.endpoints.nodeToNode`)
+  and **node-to-client** (the Unix socket `/ipc/node.socket`,
+  `containers.go:25,87`). Rejected for this design:
+  - n2n is the Ouroboros peer/relay protocol; host dev tools (`cardano-cli`,
+    tx submission) don't speak it. Forwarding it only helps peer another full
+    node against the devnet.
+  - n2c is what `cardano-cli` wants, but it is a **Unix socket** — `kubectl`
+    port-forward and k3d `--port` are TCP-only and cannot carry it. Bridging it
+    over TCP needs a socat sidecar *and* a second socat on the host (cardano-cli
+    expects a socket path, not host:port). That two-hop awkwardness is why
+    `yacd exec` runs `cardano-cli` in-pod.
+  - **Ogmios is already the host-facing face of node-to-client** (chain-sync,
+    LocalTxSubmission, state-query over WebSocket), so the Ogmios/Kupo
+    `externalURL` path already covers host-side tx submission + query without raw
+    socket exposure. Host-native `cardano-cli` (vs `yacd exec`) is the only thing
+    a TCP n2c bridge would unlock; treat that as a separate feature if ever
+    wanted.
 
 ## 7. Phased plan
 
