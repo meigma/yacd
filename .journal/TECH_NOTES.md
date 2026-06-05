@@ -499,6 +499,29 @@
   bounded ephemeral storage, and publishes
   `http://<service>.<namespace>.svc.cluster.local:<port>` through
   `status.endpoints.kupo`.
+- External-access (session 060, PR #112): `spec.chainAPI.{ogmios,kupo}` gained an
+  optional `service.{type,nodePort}` block (`type` ClusterIP default | NodePort;
+  `nodePort` pins or 0=auto, CRD `Maximum=32767`, Go-enforced 30000 floor +
+  NodePort-only coupling) and an `externalURL` string (operator-asserted reachable
+  URL, lenient ws/wss/http/https + host). `externalURL` is mirrored ADDITIVELY into
+  `status.endpoints.{ogmios,kupo}.externalURL` (a new field on the shared
+  `ServiceEndpointStatus`, so it also appears unpopulated on db-sync
+  metrics/postgres endpoints). The operator only ADVERTISES the URL; making it
+  routable is the provisioner's job. Validation is Go→`UnsupportedSpec`/Degraded
+  (`validateChainAPIServiceExposure`/`validateExternalURL` in
+  `internal/controller/cardanonetwork/validate.go`). This is P1 of a 3-phase design
+  (`.journal/060/EXTERNAL_ACCESS_DESIGN.md`); P2 (devnet k3d `--port` + pinned
+  NodePort + localhost externalURL) and P3 (CLI resolver: flag > YACD_* env >
+  probed status.externalURL > port-forward fallback) remain.
+- `ctrlkit/resources.MutateService` now PRESERVES a Kubernetes-assigned NodePort
+  (session 060): it matches desired ports to current by name and keeps the live
+  NodePort when the desired Service is NodePort and the desired port leaves
+  NodePort 0 (auto). A pinned desired NodePort wins; a non-NodePort (ClusterIP)
+  Service takes desired verbatim, still stripping any tampered node ports.
+  Previously it did `current.Spec.Ports = desired.Spec.Ports` wholesale, which
+  thrashed auto-assigned NodePorts every reconcile. Keep the `desired.Type ==
+  NodePort` guard — it is what keeps the cardanonetwork ClusterIP
+  service-correction tests green and makes the change a no-op for db-sync.
 - The faucet is opt-in through `spec.chainAPI.faucet`, requires Ogmios and Kupo
   when enabled, and publishes `status.endpoints.faucet` plus
   `status.faucet.authSecretName`. The controller creates an owned

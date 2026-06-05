@@ -158,3 +158,15 @@ status.externalURL > port-forward fallback).
 operator) is landed.** Dev stack was never started (waived for P1) — nothing to
 tear down. Remaining: P2 (devnet) and P3 (CLI resolver); both will need the dev
 stack / a k3d run for live verification.
+
+## 2026-06-04 22:01 — Close
+Closing session 060. P1 shipped and merged: **PR #112** (`dfa20b8`, external-access
+API + operator) and **PR #111** (`b61089b`, master-red ssa tripwire fix). master
+fast-forwarded to `dfa20b8`; both feat/fix worktrees removed; no dev stack to tear
+down (waived for P1). Wrote `SUMMARY.md` (with P2/P3 next steps spelled out per
+the user's request), set INDEX row 060 → complete, and added durable TECH_NOTES
+entries for the new `service.{type,nodePort}`/`externalURL` API surface and the
+`MutateService` NodePort-preservation behavior. Handoff: P2 (devnet k3d `--port` +
+pinned NodePort + localhost externalURL — needs a live k3d run) and P3 (CLI
+shared resolver) remain; design + plan banked in `.journal/060/`. Note a parallel
+session 061 (faucet removal P4–P5) may move master — re-fetch before resuming.
