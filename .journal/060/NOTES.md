@@ -137,3 +137,17 @@ but blocks its CI. User chose a separate fix PR: opened **PR #111**
 (`fix/operator-version-tripwire`, test-only, v0.1.1→v0.2.0, full `root:test`
 green). Next: once #111 merges, rebase `feat/chainapi-external-access` on green
 master and open the P1 PR. P1 not yet pushed.
+
+## 2026-06-04 19:40 — #111 merged, P1 rebased + PR opened
+Per user: merged **#111** (squash `b61089b`), removed the fix worktree, deleted
+its remote branch. Rebased `feat/chainapi-external-access` onto origin/master
+(`b61089b`) cleanly (no conflicts — #111 only touched ssa test files). Post-rebase
+`moon run root:test` is FULLY green (ssa + cardanonetwork + ctrlkit/resources all
+ok, no FAIL). Pushed and opened **P1 PR #112**
+(`feat(cardanonetwork): add NodePort/externalURL service exposure`). Awaiting CI +
+review/merge. Worktree `.wt/feat-chainapi-external-access` kept until #112 merges.
+
+State: P1 = PR #112 open. Design + plan banked (`EXTERNAL_ACCESS_DESIGN.md`,
+`PHASE1_PLAN.md`). Remaining phases: P2 (devnet k3d --port + pinned NodePort +
+localhost externalURL) and P3 (CLI shared resolver: flag > YACD_* env > probed
+status.externalURL > port-forward fallback).
