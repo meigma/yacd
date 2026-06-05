@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/meigma/yacd/compare/v0.2.0...v0.2.1) (2026-06-05)
+
+
+### Features
+
+* **cardanonetwork:** add NodePort/externalURL service exposure ([#112](https://github.com/meigma/yacd/issues/112)) ([dfa20b8](https://github.com/meigma/yacd/commit/dfa20b85c22957a171ff718bdf0b1ffd709f852e))
+* **cli:** route devnet ogmios/kupo over pinned host ports ([#114](https://github.com/meigma/yacd/issues/114)) ([ca0a049](https://github.com/meigma/yacd/commit/ca0a0495c0a4745a7c7930d85d98a2f02229cbb8))
+
 ## [0.2.0](https://github.com/meigma/yacd/compare/v0.1.1...v0.2.0) (2026-06-04)
 
 
