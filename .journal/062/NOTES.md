@@ -159,3 +159,34 @@ P1-containing operator) and the **root-cause** tripwire fix.
   re-syncs; (3) when a `test:`/non-releasable commit lands after a release PR is
   open, rebase the release-please branch onto master before merge or its CI is
   stale-red.
+
+## 2026-06-05 16:10 — v0.2.1 PUBLISHED + P2 proven end-to-end (loop closed)
+
+Release pipeline all green (no red master this time — the dynamic tripwire fix
+worked):
+- **Release workflow: success** — `ghcr.io/meigma/yacd:v0.2.1` + chart + CLI
+  binaries published to GHCR; v0.2.1 GitHub release left as a **draft** for a
+  human to Publish (GHCR artifacts are already live).
+- **master CI: success** (commit `d5c0b92`). Tripwire papercut avoided.
+
+**End-to-end P2 proof against the RELEASED v0.2.1 operator** (rebuilt CLI from
+master, embedded chart appVersion now v0.2.1 → installs `:v0.2.1`):
+- Banner shows **`Ogmios: ws://localhost:1337` / `Kupo: http://localhost:1442`**
+  with `Operator: v0.2.1` (vs. the in-cluster URL the v0.2.0 operator produced).
+- Operator-rendered services are **NodePort 30137/30442** (P1 renders them).
+- `status.endpoints.{ogmios,kupo}.externalURL` **mirrored** to the localhost URLs
+  (additive to the in-cluster `url`).
+- `curl http://localhost:1337/health` → **HTTP 200 + live chain data**;
+  `localhost:1442/health` → **HTTP 200** — routed through the operator's own
+  NodePort services (no hand-made svc). Devnet torn down; ports freed.
+
+**Session deliverables:** P2 (#114), tripwire root-cause (#115), release v0.2.1
+(#113) — all merged. Merged worktrees cleaned up. No Kind/Tilt dev stack was ever
+started (P2 is k3d/CLI work), so nothing to dev-down.
+
+**Still open / next:** P3 (CLI resolver) not started — now unblocked (a P1+P2
+operator is released, so status carries externalURL at runtime). At session-close,
+add TECH_NOTES bullets: (1) external-access P2 shipped in v0.2.1 (devnet host
+mappings + NodePort devnet spec + externalURL banner); (2) the operator-by-
+appVersion release-ordering rule; (3) dynamic appVersion tripwires (#115) + the
+rebase-the-release-PR-on-late-test-commits gotcha.
