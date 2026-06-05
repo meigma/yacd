@@ -8,6 +8,7 @@ import (
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"helm.sh/helm/v3/pkg/chart/loader"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -55,30 +56,15 @@ func TestRenderDefaultObjectSet(t *testing.T) {
 	assert.Equal(t, want, got, "rendered object set must be exactly the expected 12")
 }
 
-// TestRenderDigestPinnedImages asserts the default render is digest-pinned: the
-// manager container image carries the manager digest and the
-// --default-faucet-image arg carries the faucet digest.
-func TestRenderDigestPinnedImages(t *testing.T) {
-	const (
-		wantManagerImage = "ghcr.io/meigma/yacd@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
-		wantFaucetArg    = "--default-faucet-image=ghcr.io/meigma/yacd/faucet@sha256:826f8d52f0a4b0f607e2293cf72a8217de27700b5e5f1b35e1af86ef18fd3f66"
-	)
+// TestRenderDefaultImageUsesAppVersionTag asserts the default render pins the
+// manager image to the chart's appVersion (repository:appVersion). The expected
+// tag is read from the embedded chart so the test stays correct across release
+// bumps rather than hardcoding a version.
+func TestRenderDefaultImageUsesAppVersionTag(t *testing.T) {
+	wantManagerImage := "ghcr.io/meigma/yacd:" + embeddedChartAppVersion(t)
 
-	deployment := findObject(t, renderDefault(t, installNamespace), "Deployment", "yacd-controller-manager")
-
-	containers, found, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
-	require.NoError(t, err)
-	require.True(t, found, "deployment must declare containers")
-	require.Len(t, containers, 1)
-
-	manager, ok := containers[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, wantManagerImage, manager["image"], "manager image is digest-pinned")
-
-	args, found, err := unstructured.NestedStringSlice(manager, "args")
-	require.NoError(t, err)
-	require.True(t, found, "manager must carry args")
-	assert.Contains(t, args, wantFaucetArg, "faucet digest is threaded into --default-faucet-image")
+	got := managerImage(t, renderDefault(t, installNamespace))
+	assert.Equal(t, wantManagerImage, got, "manager image defaults to repository:appVersion")
 }
 
 // TestRenderPresenceOfCoreObjects double-checks the metrics Service and the
@@ -118,28 +104,62 @@ func TestRenderOverrideReachesDeployment(t *testing.T) {
 	assert.EqualValues(t, 2, replicas, "override replicaCount must reach the rendered Deployment")
 }
 
-// TestRenderImageTagOverrideKeepsDigestPin proves the headline Model-A invariant
-// end to end through the renderer: with a user --set image.tag override present
-// (folded through Extra exactly as the install path does), the manager container
-// image is STILL the embedded digest, because the chart renders repository@digest
-// and Default()'s digest survives the deep-merge. This guards against a future
-// ToHelmValues merge change silently letting a tag override repoint the image.
-func TestRenderImageTagOverrideKeepsDigestPin(t *testing.T) {
-	const wantManagerImage = "ghcr.io/meigma/yacd@sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
+// TestRenderImageDigestOverridePinsDigest proves an explicit image.digest
+// override still produces a digest-pinned render: the chart's yacd.image helper
+// prefers digest over tag, so a deliberate digest pin remains available even
+// though the default now tracks the chart appVersion.
+func TestRenderImageDigestOverridePinsDigest(t *testing.T) {
+	const digest = "sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
+	const wantManagerImage = "ghcr.io/meigma/yacd@" + digest
+
+	objs, err := renderWithExtra(t, map[string]any{"image": map[string]any{"digest": digest}})
+	require.NoError(t, err)
+
+	assert.Equal(t, wantManagerImage, managerImage(t, objs),
+		"an explicit image.digest override pins the manager image to repository@digest")
+}
+
+// TestRenderImageTagOverrideRepointsImage proves a --set image.tag override now
+// repoints the manager image to repository:tag. With the default install no
+// longer digest-pinned, a tag override is honored rather than shadowed; it is an
+// unsupported configuration, not blocked here.
+func TestRenderImageTagOverrideRepointsImage(t *testing.T) {
+	const wantManagerImage = "ghcr.io/meigma/yacd:v9.9.9"
 
 	objs, err := renderWithExtra(t, map[string]any{"image": map[string]any{"tag": "v9.9.9"}})
 	require.NoError(t, err)
 
+	assert.Equal(t, wantManagerImage, managerImage(t, objs),
+		"a --set image.tag override repoints the manager image")
+}
+
+// embeddedChartAppVersion loads the embedded operator chart and returns its
+// declared appVersion, so image-pin assertions track the chart rather than a
+// hardcoded release.
+func embeddedChartAppVersion(t *testing.T) string {
+	t.Helper()
+	files, err := bufferedFiles(charts.OperatorChart)
+	require.NoError(t, err)
+	ch, err := loader.LoadFiles(files)
+	require.NoError(t, err)
+	require.NotEmpty(t, ch.Metadata.AppVersion, "chart must declare an appVersion")
+	return ch.Metadata.AppVersion
+}
+
+// managerImage returns the single manager container image string from a rendered
+// object set, failing the test if the Deployment or container is missing.
+func managerImage(t *testing.T, objs []*unstructured.Unstructured) string {
+	t.Helper()
 	deployment := findObject(t, objs, "Deployment", "yacd-controller-manager")
 	containers, found, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
 	require.NoError(t, err)
 	require.True(t, found, "deployment must declare containers")
 	require.Len(t, containers, 1)
-
 	manager, ok := containers[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, wantManagerImage, manager["image"],
-		"a --set image.tag override must be shadowed by the surviving digest pin")
+	image, ok := manager["image"].(string)
+	require.True(t, ok, "manager container must declare an image string")
+	return image
 }
 
 // TestRenderSchemaInvalidOverrideFails proves a schema-violating override fails

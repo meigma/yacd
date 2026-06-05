@@ -101,15 +101,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 
-{{- define "yacd.faucetImage" -}}
-{{- if .Values.faucet.image.digest -}}
-{{- printf "%s@%s" .Values.faucet.image.repository .Values.faucet.image.digest -}}
-{{- else -}}
-{{- $tag := default .Chart.AppVersion .Values.faucet.image.tag -}}
-{{- printf "%s:%s" .Values.faucet.image.repository $tag -}}
-{{- end -}}
-{{- end -}}
-
 {{/*
 yacd.cardanoTestnetImage renders the optional cardano-testnet image
 override passed to the manager via --default-cardano-testnet-image. The

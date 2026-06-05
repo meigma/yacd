@@ -11,9 +11,9 @@ import (
 )
 
 // connectedSession is a live host-access session shared by run and connect: the
-// chain-API port-forwards, the YACD_* environment a host process consumes (env,
-// which carries the faucet token), and the token-free document connect writes
-// and prints (endpoints). The caller owns its lifetime and must Close it.
+// chain-API port-forwards, the YACD_* environment a host process consumes (env),
+// and the document connect writes and prints (endpoints). The caller owns its
+// lifetime and must Close it.
 type connectedSession struct {
 	session   kube.ForwardSession
 	env       []string
@@ -33,9 +33,8 @@ func (c *connectedSession) Err() error { return c.session.Err() }
 // connectNetwork establishes the shared host-access session for a ready
 // network: it gates on readiness so callers get a clear "not ready" message
 // instead of opaque forward errors, resolves the primary Pod, forwards the
-// published chain-API endpoints, reads the faucet token when a faucet is
-// published, and builds the loopback YACD_* environment. The returned session
-// is live; the caller closes it.
+// published chain-API endpoints, and builds the loopback YACD_* environment.
+// The returned session is live; the caller closes it.
 func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace string, name string) (*connectedSession, error) {
 	network, err := kubeClient.GetCardanoNetwork(ctx, namespace, name)
 	if err != nil {
@@ -50,13 +49,7 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 		return nil, err
 	}
 
-	faucetToken, err := faucetTokenForHost(ctx, kubeClient, network, namespace, name)
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-
-	env, err := hostEnv(network, session.LocalPort, faucetToken)
+	env, err := hostEnv(network, session.LocalPort)
 	if err != nil {
 		_ = session.Close()
 		return nil, err
@@ -116,8 +109,7 @@ func forwardSpecs(network *yacdv1alpha1.CardanoNetwork) []kube.PortForwardSpec {
 
 // requireFreshStatus fails fast when a network's published status cannot be
 // trusted: a stale observedGeneration or a True Degraded condition. It is the
-// shared preamble for the readiness gates (requireReady here and
-// requireFaucetReady in topup.go) so the staleness/Degraded handling lives in
+// shared preamble for requireReady so the staleness/Degraded handling lives in
 // one place.
 func requireFreshStatus(network *yacdv1alpha1.CardanoNetwork, namespace string, name string) error {
 	if network.Status.ObservedGeneration != network.Generation {
@@ -149,29 +141,4 @@ func requireReady(network *yacdv1alpha1.CardanoNetwork, namespace string, name s
 	}
 
 	return nil
-}
-
-// faucetTokenForHost reads the faucet auth token so YACD_FAUCET_TOKEN can be set
-// for host tooling, but only once the faucet is actually usable: it returns an
-// empty token (and no error) when the network has no faucet or its FaucetReady
-// condition is not fresh-and-True, so run/connect degrade gracefully on a
-// not-yet-ready faucet instead of hard-failing. A faucet that reports ready but
-// publishes no usable auth Secret is a real error.
-func faucetTokenForHost(ctx context.Context, kubeClient kube.Client, network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (string, error) {
-	if network.Status.Endpoints == nil || network.Status.Endpoints.Faucet == nil {
-		return "", nil
-	}
-	if ready := kube.FreshCondition(network, kube.ConditionFaucetReady); ready == nil || ready.Status != metav1.ConditionTrue {
-		return "", nil
-	}
-	if network.Status.Faucet == nil || strings.TrimSpace(network.Status.Faucet.AuthSecretName) == "" {
-		return "", fmt.Errorf("cardanonetwork %s/%s publishes a faucet endpoint but no auth Secret", namespace, name)
-	}
-
-	token, err := kubeClient.GetSecretValue(ctx, namespace, network.Status.Faucet.AuthSecretName, faucetAuthTokenKey)
-	if err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(token), nil
 }

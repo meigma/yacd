@@ -34,7 +34,7 @@ func (i *infoWriter) println(s string) {
 
 // printInfo renders an infoOutput to out in the human-readable text format
 // used when --json is not set. The sections (header, network, conditions,
-// endpoints, faucet) are written in a fixed order to keep output stable
+// endpoints, wallet) are written in a fixed order to keep output stable
 // across releases.
 func printInfo(out io.Writer, info infoOutput) error {
 	w := &infoWriter{w: out}
@@ -42,7 +42,6 @@ func printInfo(out io.Writer, info infoOutput) error {
 	printNetworkInfo(w, info.Network)
 	printConditionsInfo(w, info.Conditions)
 	printEndpointsInfo(w, info.Endpoints)
-	printFaucetInfo(w, info.Faucet)
 	printWalletInfo(w, info.Wallet)
 	return w.err
 }
@@ -109,22 +108,10 @@ func printEndpointsInfo(w *infoWriter, endpoints endpointsOutput) {
 	printEndpointInfo(w, "node-to-node", endpoints.NodeToNode)
 	printEndpointInfo(w, "ogmios", endpoints.Ogmios)
 	printEndpointInfo(w, "kupo", endpoints.Kupo)
-	printEndpointInfo(w, "faucet", endpoints.Faucet)
 }
 
-// printFaucetInfo writes the Faucet section when the controller has
-// published the auth Secret name. It is suppressed entirely otherwise to
-// keep non-faucet networks' output compact.
-func printFaucetInfo(w *infoWriter, faucet *faucetOutput) {
-	if faucet == nil || faucet.AuthSecretName == "" {
-		return
-	}
-	w.println("\nFaucet:")
-	w.printf("  Auth Secret: %s\n", faucet.AuthSecretName)
-}
-
-// printWalletInfo writes the Wallet section when the controller has
-// bootstrapped a developer wallet. It is suppressed entirely otherwise to keep
+// printWalletInfo writes the Wallet section when the network has a
+// genesis-funded faucet wallet. It is suppressed entirely otherwise to keep
 // non-wallet networks' output compact.
 func printWalletInfo(w *infoWriter, wallet *walletOutput) {
 	if wallet == nil || wallet.Address == "" {
@@ -135,7 +122,6 @@ func printWalletInfo(w *infoWriter, wallet *walletOutput) {
 	if wallet.KeySecretName != "" {
 		w.printf("  Key Secret: %s\n", wallet.KeySecretName)
 	}
-	w.printf("  Funded: %t\n", wallet.Funded)
 }
 
 // printEndpointInfo writes a single endpoint entry. A nil endpoint renders

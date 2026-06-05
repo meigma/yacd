@@ -1,24 +1,12 @@
 package operator
 
-// Default image references that pin the operator install to the published
-// release. They reproduce the digest pinning the render script used to inject
-// via --set-string image.digest / faucet.image.digest, moved into Go so the
-// default install stays digest-pinned and tamper-evident, offline. When cutting
-// a new operator release, bump these alongside charts/yacd/Chart.yaml appVersion
-// and re-sync the embedded chart copy.
-const (
-	// defaultManagerRepository is the published operator manager image.
-	defaultManagerRepository = "ghcr.io/meigma/yacd"
-
-	// defaultManagerDigest pins the manager image to the v0.1.1 release digest.
-	defaultManagerDigest = "sha256:5d53ca824dacad39c482dc93edfd2db4a65d5803f43dce5b18b1a7482b0f8e21"
-
-	// defaultFaucetRepository is the published faucet image.
-	defaultFaucetRepository = "ghcr.io/meigma/yacd/faucet"
-
-	// defaultFaucetDigest pins the faucet image to the v0.1.1 release digest.
-	defaultFaucetDigest = "sha256:826f8d52f0a4b0f607e2293cf72a8217de27700b5e5f1b35e1af86ef18fd3f66"
-)
+// defaultManagerRepository is the published operator manager image. The default
+// install sets only the repository and leaves the tag and digest unset, so the
+// chart renders repository:appVersion (its own Chart.yaml appVersion). Operator
+// and CLI release together under one version, so that appVersion tag always
+// resolves to the matching, already-published manager image. The supported way
+// to change the operator version is to upgrade the CLI.
+const defaultManagerRepository = "ghcr.io/meigma/yacd"
 
 // Image identifies a container image by repository plus an optional tag or
 // digest. When Digest is set it wins over Tag (matching the chart's
@@ -60,10 +48,6 @@ type Values struct {
 	// Image is the operator manager image (chart key "image").
 	Image Image
 
-	// FaucetImage is the faucet image the manager hands to faucet workloads
-	// via --default-faucet-image (chart key "faucet.image").
-	FaucetImage Image
-
 	// Replicas overrides the manager Deployment replica count (chart key
 	// "replicaCount"). nil leaves the chart default.
 	Replicas *int
@@ -94,9 +78,6 @@ func (v Values) ToHelmValues() map[string]any {
 
 	if img := v.Image.toHelmValues(); len(img) > 0 {
 		out["image"] = img
-	}
-	if fimg := v.FaucetImage.toHelmValues(); len(fimg) > 0 {
-		out["faucet"] = map[string]any{"image": fimg}
 	}
 	if v.Replicas != nil {
 		out["replicaCount"] = *v.Replicas
@@ -136,22 +117,16 @@ func mergeValues(dst, src map[string]any) {
 	}
 }
 
-// Default returns the pinned, offline baseline that reproduces today's install:
-// digest-pinned manager and faucet images, leader election on, secure metrics,
-// and json/info logging. It mirrors the chart's own defaults (which already set
-// secure metrics, leader election on, and json/info logging) and only adds the
-// two release digests, so the rendered Deployment is byte-equivalent to a
-// `helm template … --set-string image.digest=… --set-string
-// faucet.image.digest=…` render at the chart's default values.
+// Default returns the baseline install: the manager image pinned to the chart's
+// appVersion (repository:appVersion, the operator release this CLI ships with),
+// leader election on, secure metrics, and json/info logging. It sets only the
+// image repository; leaving the tag and digest empty lets the chart default the
+// tag to its appVersion, so the rendered Deployment matches a plain
+// `helm template` at the chart's default values.
 func Default() Values {
 	return Values{
 		Image: Image{
 			Repository: defaultManagerRepository,
-			Digest:     defaultManagerDigest,
-		},
-		FaucetImage: Image{
-			Repository: defaultFaucetRepository,
-			Digest:     defaultFaucetDigest,
 		},
 	}
 }

@@ -1,6 +1,6 @@
 // Package cli builds the YACD developer CLI command tree.
 //
-// NewRootCommand wires the cobra command tree (up, down, list, info, topup,
+// NewRootCommand wires the cobra command tree (up, down, list, info, wallet,
 // run, exec, connect) and the per-process dependencies into a commandContext
 // that each subcommand reads at RunE time. Subcommands are side-effecting orchestrators:
 // they load the developer environment through devconfig, synthesise manifests
@@ -22,9 +22,9 @@
 // .yacd/<network>/endpoints.json and re-establishing them if they drop.
 //
 // The package exports an Options struct for construction-time injection
-// (test seams for the kube client and HTTP transport),
-// a BuildInfo struct for the linker-injected version metadata, a
-// RuntimeConfig struct for the persistent-flag payload, and the HTTPDoer
-// interface so mockery can generate the faucet-transport mock. Everything
-// else is unexported.
+// (test seams for the kube client, the chain-index confirmer, and the
+// funding-transaction submitter), a BuildInfo struct for the linker-injected
+// version metadata, a RuntimeConfig struct for the persistent-flag payload, and
+// the UTxOConfirmer and tx.Submitter ports so mockery can generate their mocks.
+// Everything else is unexported.
 package cli

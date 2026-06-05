@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // devnetMocks bundles the lifecycle port mocks injected into the root command.
@@ -66,9 +67,13 @@ var devnetInfo = cluster.Info{
 }
 
 func fundedNetwork() *yacdv1alpha1.CardanoNetwork {
-	network := readyNetwork(devnetNetworkName)
-	network.Status.Wallet = &yacdv1alpha1.WalletStatus{Address: "addr_test1funded", Funded: true}
-	return network
+	return readyNetwork(devnetNetworkName)
+}
+
+// faucetWalletSecret stubs the genesis-funded faucet wallet Secret the devnet
+// flow reads to surface the network's funded wallet address.
+func faucetWalletSecret(address string) *corev1.Secret {
+	return &corev1.Secret{Data: map[string][]byte{"address": []byte(address)}}
 }
 
 func TestDevnetUp(t *testing.T) {
@@ -84,6 +89,7 @@ func TestDevnetUp(t *testing.T) {
 	m.client.EXPECT().EnsureNamespace(mock.Anything, devnetNetworkName).Return(nil)
 	m.client.EXPECT().ApplyCardanoNetwork(mock.Anything, mock.Anything).Return(nil)
 	m.client.EXPECT().GetCardanoNetwork(mock.Anything, devnetNetworkName, devnetNetworkName).Return(fundedNetwork(), nil)
+	m.client.EXPECT().GetSecret(mock.Anything, devnetNetworkName, "devnet-wallet-faucet").Return(faucetWalletSecret("addr_test1funded"), nil)
 
 	require.NoError(t, run("devnet"))
 
@@ -208,8 +214,8 @@ func TestDevnetRejectsNonPositiveTimeout(t *testing.T) {
 }
 
 // TestDefaultDevnetEnvIsValid guards the embedded default environment against
-// drift from examples/local/yacd.yaml: it must parse, be a local network, and
-// carry the funded-wallet defaults the devnet UX promises.
+// drift from examples/local/yacd.yaml: it must parse and be a local network
+// (which automatically gets the genesis-funded wallet the devnet UX promises).
 func TestDefaultDevnetEnvIsValid(t *testing.T) {
 	env, err := devconfig.Load(bytes.NewReader(defaultDevnetEnvYAML))
 	require.NoError(t, err)
@@ -217,8 +223,4 @@ func TestDefaultDevnetEnvIsValid(t *testing.T) {
 	assert.Equal(t, yacdv1alpha1.CardanoNetworkModeLocal, env.Spec.Network.Mode)
 	require.NotNil(t, env.Spec.Network.Local)
 	assert.Equal(t, int64(42), env.Spec.Network.Local.NetworkMagic)
-	require.NotNil(t, env.Spec.Network.ChainAPI)
-	require.NotNil(t, env.Spec.Network.ChainAPI.Wallet)
-	assert.True(t, env.Spec.Network.ChainAPI.Wallet.Enabled)
-	assert.Equal(t, int64(100000000000), env.Spec.Network.ChainAPI.Wallet.FundingLovelace)
 }

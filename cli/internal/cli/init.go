@@ -16,8 +16,8 @@ func newInitCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Print a commented yacd.yaml environment template",
 		Long: `Print a fully-commented developer environment template to stdout.
 
-The active configuration is a ready-to-run local devnet (faucet + funded
-wallet); commented blocks document the rest of the API. Redirect it to a file
+The active configuration is a ready-to-run local devnet with a genesis-funded
+wallet; commented blocks document the rest of the API. Redirect it to a file
 and apply it:
 
   yacd init > yacd.yaml

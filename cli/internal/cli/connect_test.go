@@ -29,7 +29,6 @@ func TestWriteEndpointsFile(t *testing.T) {
 		NetworkMagic: &magic,
 		OgmiosURL:    "ws://127.0.0.1:40001",
 		KupoURL:      "http://127.0.0.1:40002",
-		FaucetURL:    "http://127.0.0.1:40003",
 	}
 
 	path, err := writeEndpointsFile("devnet", "devnet", doc)
@@ -91,7 +90,6 @@ func TestPrintConnectStatus(t *testing.T) {
 	assert.Contains(t, text, "Forwarding devnet (namespace devnet)")
 	assert.Contains(t, text, "YACD_OGMIOS_URL=ws://127.0.0.1:40001")
 	assert.Contains(t, text, "YACD_KUPO_URL=http://127.0.0.1:40002")
-	assert.NotContains(t, text, "YACD_FAUCET_URL", "an unpublished faucet URL must be omitted")
 	assert.Contains(t, text, ".yacd/devnet/endpoints.json")
 }
 
@@ -115,7 +113,6 @@ func TestRunConnectWritesFileAndExitsOnCancel(t *testing.T) {
 	session := mocks.NewForwardSession(t)
 	session.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	session.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	session.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	session.EXPECT().Done().Return(make(chan struct{})) // never drops on its own
 	session.EXPECT().Close().Return(nil)
 
@@ -123,7 +120,6 @@ func TestRunConnectWritesFileAndExitsOnCancel(t *testing.T) {
 	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(session, nil)
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	commandContext := &commandContext{out: io.Discard, err: io.Discard}
@@ -175,7 +171,6 @@ func TestRunConnectReEstablishesAfterDrop(t *testing.T) {
 	first := mocks.NewForwardSession(t)
 	first.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	first.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	first.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	first.EXPECT().Done().Return(dropFirst)
 	first.EXPECT().Err().Return(errors.New("connection lost"))
 	first.EXPECT().Close().Return(nil)
@@ -183,7 +178,6 @@ func TestRunConnectReEstablishesAfterDrop(t *testing.T) {
 	second := mocks.NewForwardSession(t)
 	second.EXPECT().LocalPort(int32(1337)).Return(50001, true)
 	second.EXPECT().LocalPort(int32(1442)).Return(50002, true)
-	second.EXPECT().LocalPort(int32(8080)).Return(50003, true)
 	second.EXPECT().Done().Return(make(chan struct{})) // stays up until cancel
 	second.EXPECT().Close().Return(nil)
 
@@ -192,7 +186,6 @@ func TestRunConnectReEstablishesAfterDrop(t *testing.T) {
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil)
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(first, nil).Once()
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(second, nil).Once()
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr bytes.Buffer
@@ -242,7 +235,6 @@ func TestRunConnectBacksOffThenRecovers(t *testing.T) {
 	first := mocks.NewForwardSession(t)
 	first.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	first.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	first.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	first.EXPECT().Done().Return(dropFirst)
 	first.EXPECT().Err().Return(errors.New("connection lost"))
 	first.EXPECT().Close().Return(nil)
@@ -250,7 +242,6 @@ func TestRunConnectBacksOffThenRecovers(t *testing.T) {
 	recovered := mocks.NewForwardSession(t)
 	recovered.EXPECT().LocalPort(int32(1337)).Return(50001, true)
 	recovered.EXPECT().LocalPort(int32(1442)).Return(50002, true)
-	recovered.EXPECT().LocalPort(int32(8080)).Return(50003, true)
 	recovered.EXPECT().Done().Return(make(chan struct{}))
 	recovered.EXPECT().Close().Return(nil)
 
@@ -262,7 +253,6 @@ func TestRunConnectBacksOffThenRecovers(t *testing.T) {
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(first, nil).Once()
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(nil, errors.New("dial tcp: connection refused")).Once()
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(recovered, nil).Once()
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var stderr bytes.Buffer
@@ -312,7 +302,6 @@ func TestRunConnectReturnsWhenNetworkDeletedDuringReconnect(t *testing.T) {
 	first := mocks.NewForwardSession(t)
 	first.EXPECT().LocalPort(int32(1337)).Return(40001, true)
 	first.EXPECT().LocalPort(int32(1442)).Return(40002, true)
-	first.EXPECT().LocalPort(int32(8080)).Return(40003, true)
 	first.EXPECT().Done().Return(dropFirst)
 	first.EXPECT().Err().Return(errors.New("connection lost"))
 	first.EXPECT().Close().Return(nil)
@@ -323,7 +312,6 @@ func TestRunConnectReturnsWhenNetworkDeletedDuringReconnect(t *testing.T) {
 		Return(nil, fmt.Errorf("cardanonetwork devnet/devnet %w", kube.ErrNotFound)).Once()
 	client.EXPECT().PrimaryPodName(mock.Anything, "devnet", "devnet").Return("devnet-node-abcde", nil).Once()
 	client.EXPECT().Forward(mock.Anything, "devnet", "devnet-node-abcde", mock.Anything).Return(first, nil).Once()
-	client.EXPECT().GetSecretValue(mock.Anything, "devnet", "devnet-faucet-auth", faucetAuthTokenKey).Return("faucet-token", nil).Once()
 
 	commandContext := &commandContext{out: io.Discard, err: io.Discard}
 

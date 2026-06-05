@@ -4,13 +4,13 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"net/http"
 	"strings"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
 	"github.com/meigma/yacd/cli/internal/clusterstate"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/operator"
+	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/spf13/viper"
 )
 
@@ -45,14 +45,6 @@ func (b BuildInfo) withDefaults() BuildInfo {
 	return b
 }
 
-// HTTPDoer is the HTTP transport port. http.Client satisfies it; tests
-// substitute a mock so the topup transport can be exercised without a live
-// network. It is exported so mockery can generate the mock.
-type HTTPDoer interface {
-	// Do issues an HTTP request and returns the response or an error.
-	Do(*http.Request) (*http.Response, error)
-}
-
 // KubeClientFactory constructs a kube.Client from the resolved kube.Config.
 // The default factory (set in NewRootCommand) wraps kube.NewClient so the
 // concrete adapter satisfies the port. Tests provide a factory that returns
@@ -72,6 +64,15 @@ type UTxOConfirmer interface {
 // default factory (set in NewRootCommand) wraps the Kupo client; tests inject a
 // factory that returns a mock.
 type UTxOConfirmerFactory func(kupoURL string) UTxOConfirmer
+
+// TxSubmitterFactory constructs the funding-transaction submitter for a pair of
+// forwarded Ogmios and Kupo URLs. The default factory (set in NewRootCommand)
+// builds a tx.Apollo bound to those loopback URLs; tests inject a factory that
+// returns a mock so the wallet funding verbs are exercised without a live chain.
+//
+// It is a factory rather than a single submitter because the URLs are only known
+// at run time, after the wallet command forwards Ogmios and Kupo.
+type TxSubmitterFactory func(ogmiosURL string, kupoURL string) tx.Submitter
 
 // ClusterProvisionerFactory constructs the managed-cluster provisioner. The
 // default factory (set in NewRootCommand) resolves the pinned k3d binary and
@@ -93,7 +94,7 @@ type ClusterStateFactory func() (clusterstate.Store, error)
 
 // Options customises root command construction. All fields are optional;
 // nil fields are filled with the production defaults (stdin/stdout/stderr,
-// a fresh Viper, the real kube.NewClient, http.DefaultClient).
+// a fresh Viper, the real kube.NewClient).
 type Options struct {
 	// In, Out, Err are the command's standard streams.
 	In  io.Reader
@@ -111,13 +112,14 @@ type Options struct {
 	// Tests inject a factory that returns a mock.
 	KubeClientFactory KubeClientFactory
 
-	// HTTPClient is the transport used by the topup faucet POST. Tests
-	// inject a mock to capture the request and shape the response.
-	HTTPClient HTTPDoer
-
 	// UTxOConfirmerFactory constructs the chain-index confirmer used by
-	// topup --await. Tests inject a factory that returns a mock.
+	// wallet funding --await. Tests inject a factory that returns a mock.
 	UTxOConfirmerFactory UTxOConfirmerFactory
+
+	// TxSubmitterFactory constructs the funding-transaction submitter used by
+	// `wallet add --topup` and `wallet topup`. Tests inject a factory that
+	// returns a mock so funding never touches a live chain.
+	TxSubmitterFactory TxSubmitterFactory
 
 	// ClusterProvisionerFactory constructs the managed-cluster provisioner
 	// used by `devnet`. Tests inject a factory that returns a mock.
@@ -142,8 +144,8 @@ type commandContext struct {
 	err                  io.Writer
 	viper                *viper.Viper
 	kubeClientFactory    KubeClientFactory
-	httpClient           HTTPDoer
 	utxoConfirmerFactory UTxOConfirmerFactory
+	txSubmitterFactory   TxSubmitterFactory
 	clusterProvisioner   ClusterProvisionerFactory
 	operatorInstaller    OperatorInstallerFactory
 	clusterState         ClusterStateFactory

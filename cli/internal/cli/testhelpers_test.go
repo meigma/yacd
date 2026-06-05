@@ -93,15 +93,9 @@ func newKubeMock(t *testing.T) *mocks.Client {
 	return mocks.NewClient(t)
 }
 
-// newHTTPMock returns a mocks.HTTPDoer that auto-asserts at test cleanup.
-func newHTTPMock(t *testing.T) *mocks.HTTPDoer {
-	t.Helper()
-	return mocks.NewHTTPDoer(t)
-}
-
-// readyNetwork builds a CardanoNetwork in a Ready / FaucetReady state with
-// the published Ogmios/Kupo/Faucet endpoints and faucet auth Secret name.
-// Tests that need a different shape mutate the returned object.
+// readyNetwork builds a CardanoNetwork in a Ready state with the published
+// Ogmios/Kupo endpoints. Tests that need a different shape mutate the returned
+// object.
 func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 	networkMagic := int64(42)
 	era := yacdv1alpha1.CardanoEraConway
@@ -131,28 +125,12 @@ func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 					Port:        1442,
 					URL:         "http://" + name + "-kupo." + namespace + ".svc.cluster.local:1442",
 				},
-				Faucet: &yacdv1alpha1.ServiceEndpointStatus{
-					ServiceName: name + "-faucet",
-					Port:        8080,
-					URL:         "http://" + name + "-faucet." + namespace + ".svc.cluster.local:8080",
-				},
-			},
-			Faucet: &yacdv1alpha1.FaucetStatus{
-				AuthSecretName: name + "-faucet-auth",
 			},
 			Conditions: []metav1.Condition{
 				{
 					Type:               "Ready",
 					Status:             metav1.ConditionTrue,
 					Reason:             "Ready",
-					Message:            "ready",
-					ObservedGeneration: 1,
-					LastTransitionTime: metav1.Now(),
-				},
-				{
-					Type:               "FaucetReady",
-					Status:             metav1.ConditionTrue,
-					Reason:             "FaucetReady",
 					Message:            "ready",
 					ObservedGeneration: 1,
 					LastTransitionTime: metav1.Now(),

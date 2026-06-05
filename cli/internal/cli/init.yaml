@@ -4,9 +4,10 @@
 #   yacd up NAME -f yacd.yaml      # NAME is also the namespace by default
 # (or let `yacd devnet` manage a local cluster + a default network for you).
 #
-# The active config below is a ready-to-run LOCAL devnet with a faucet and a
-# pre-funded wallet. Commented blocks show the rest of the API — uncomment a
-# WHOLE block at a time (every field shown in a block is required together).
+# The active config below is a ready-to-run LOCAL devnet. Every local network
+# automatically gets a genesis-funded `faucet` wallet you spend from with `yacd
+# wallet topup`. Commented blocks show the rest of the API — uncomment a WHOLE
+# block at a time (every field shown in a block is required together).
 # More: https://github.com/meigma/yacd and docs/host-access.md.
 
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
@@ -28,33 +29,18 @@ spec:
       #   requests: {cpu: "1", memory: 2Gi}
       #   limits: {cpu: "2", memory: 4Gi}
 
-    # Network-facing chain APIs deployed next to the node.
-    chainAPI:
-      # Ogmios (WebSocket bridge) and Kupo (chain indexer) are ENABLED by default.
-      # Uncomment to pin image/port (keep all three fields together). Kupo needs Ogmios.
-      # ogmios:
-      #   enabled: true
-      #   image: cardanosolutions/ogmios:v6.14.0
-      #   port: 1337
-      # kupo:
-      #   enabled: true
-      #   image: cardanosolutions/kupo:v2.11.0
-      #   port: 1442
-
-      # Faucet: funds addresses on the local network (local mode only; needs Ogmios + Kupo).
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1            # generated UTxO source used when a request omits one.
-        minTopUpLovelace: 1000000       # 1 ADA = 1_000_000 lovelace.
-        maxTopUpLovelace: 100000000000  # must be >= wallet.fundingLovelace below.
-        # image: ghcr.io/my/faucet:tag  # override the faucet image (else controller default).
-
-      # Pre-funded developer wallet (local mode only; needs faucet + Kupo).
-      # The controller generates a key once and funds it through the faucet.
-      wallet:
-        enabled: true
-        fundingLovelace: 100000000000   # 100,000 ADA.
+    # Network-facing chain APIs deployed next to the node. Ogmios (WebSocket
+    # bridge) and Kupo (chain indexer) are ENABLED by default; uncomment to pin
+    # image/port (keep all three fields together). Kupo needs Ogmios.
+    # chainAPI:
+    #   ogmios:
+    #     enabled: true
+    #     image: cardanosolutions/ogmios:v6.14.0
+    #     port: 1337
+    #   kupo:
+    #     enabled: true
+    #     image: cardanosolutions/kupo:v2.11.0
+    #     port: 1442
 
     # ---- LOCAL mode (required when mode: local; remove when mode: public) ----
     local:
@@ -71,8 +57,8 @@ spec:
 
     # ---- PUBLIC mode (alternative to LOCAL) ----------------------------------
     # To join a public network: set `mode: public`, delete the `local:` block
-    # above, and uncomment this. Public mode rejects explicit kupo/faucet
-    # `enabled: true` and the wallet. Mainnet also needs `bootstrap.mithril` and
+    # above, and uncomment this. Public mode rejects explicit kupo
+    # `enabled: true`. Mainnet also needs `bootstrap.mithril` and
     # `node.storage.size` >= 300Gi.
     # public:
     #   profile: preview         # one of: preview | preprod | mainnet.

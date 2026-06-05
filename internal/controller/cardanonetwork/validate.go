@@ -25,7 +25,7 @@ func validateKupoImage(settings kupoSettings) error {
 // node, the optional chain API sidecars, and the always-on cardano-tools
 // serve sidecar. Each must claim a distinct port. serveEnabled reserves the
 // fixed serve port only for the networks that run the serve sidecar.
-func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings, faucet faucetSettings, serveEnabled bool) error {
+func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo kupoSettings, serveEnabled bool) error {
 	seen := map[int32]string{
 		nodePort: cardanoNodePortName,
 	}
@@ -49,32 +49,6 @@ func validatePrimaryWorkloadPorts(nodePort int32, ogmios ogmiosSettings, kupo ku
 			return unsupportedSpec("kupo port %d conflicts with %s port", kupo.port, owner)
 		}
 		seen[kupo.port] = kupoPortName
-	}
-	if faucet.enabled {
-		if owner, ok := seen[faucet.port]; ok {
-			return unsupportedSpec("faucet port %d conflicts with %s port", faucet.port, owner)
-		}
-	}
-
-	return nil
-}
-
-// validateFaucetSourceName rejects faucet defaultSource values that do not
-// match the utxoN format (where N is a positive integer with no leading
-// zero). cardano-testnet generates the matching key directory using this
-// naming, so any drift would produce a non-functional faucet.
-func validateFaucetSourceName(sourceName string) error {
-	if !strings.HasPrefix(sourceName, "utxo") || len(sourceName) < len("utxo1") {
-		return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
-	}
-	digits := sourceName[len("utxo"):]
-	if digits[0] == '0' {
-		return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
-	}
-	for _, char := range digits {
-		if char < '0' || char > '9' {
-			return unsupportedSpec("faucet defaultSource must use the utxoN source name format")
-		}
 	}
 
 	return nil
@@ -149,28 +123,6 @@ func ogmiosCompatibilityKey(image string) (string, error) {
 	}
 
 	return "v" + parts[0] + "." + parts[1], nil
-}
-
-// imageRepository extracts the repository portion of an OCI image reference,
-// stripping any tag and digest suffix.
-func imageRepository(image string) string {
-	image = strings.TrimSpace(image)
-	if image == "" {
-		return ""
-	}
-	if repo, _, ok := strings.Cut(image, "@"); ok {
-		return repo
-	}
-	// Distinguish "host:port/repo" (last colon before last slash, no tag)
-	// from "repo:tag" (last colon after last slash). Only the latter has a
-	// tag to strip.
-	lastSlash := strings.LastIndex(image, "/")
-	lastColon := strings.LastIndex(image, ":")
-	if lastColon > lastSlash {
-		return image[:lastColon]
-	}
-
-	return image
 }
 
 // containerImageTag extracts the tag from an OCI image reference. It returns

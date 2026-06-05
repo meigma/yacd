@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -12,20 +11,17 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// topUpAwaitPollInterval is how often --await queries the chain index while
-// waiting for the funding transaction to be included. Compressed localnet slots
-// make confirmation fast, so a one-second cadence is responsive without
-// hammering Kupo.
-const topUpAwaitPollInterval = 1 * time.Second
+// awaitPollInterval is how often --await queries the chain index while waiting
+// for the funding transaction to be included. Compressed localnet slots make
+// confirmation fast, so a one-second cadence is responsive without hammering
+// Kupo.
+const awaitPollInterval = 1 * time.Second
 
-const (
-	kupoHTTPURLScheme  = "http"
-	kupoHTTPSURLScheme = "https"
-)
-
-// kupoConfirmer is the production UTxOConfirmer: it queries Kupo for the
-// unspent outputs at an address through the vendored kugo client, rather than
-// hand-rolling the HTTP/JSON contract.
+// kupoConfirmer is the production UTxOConfirmer implementation (the port is
+// defined in options.go). It queries Kupo for the unspent outputs at an address
+// through the vendored kugo client, rather than hand-rolling the HTTP/JSON
+// contract. The kugo client's default logger is silenced so its per-poll debug
+// output does not pollute the CLI's own confirmation status.
 type kupoConfirmer struct {
 	client *kugo.Client
 }
@@ -35,21 +31,6 @@ type kupoConfirmer struct {
 // pollute the CLI's output; the CLI surfaces its own confirmation status.
 func newKupoConfirmer(kupoURL string) *kupoConfirmer {
 	return &kupoConfirmer{client: kugo.New(kugo.WithEndpoint(kupoURL), kugo.WithLogger(ogmigo.NopLogger))}
-}
-
-func validateKupoURL(kupoURL string) error {
-	parsed, err := url.Parse(strings.TrimSpace(kupoURL))
-	if err != nil {
-		return fmt.Errorf("--kupo-url must be an absolute http or https URL with a host: %w", err)
-	}
-	if !parsed.IsAbs() || parsed.Host == "" {
-		return fmt.Errorf("--kupo-url must be an absolute http or https URL with a host")
-	}
-	if parsed.Scheme != kupoHTTPURLScheme && parsed.Scheme != kupoHTTPSURLScheme {
-		return fmt.Errorf("--kupo-url must use http or https")
-	}
-
-	return nil
 }
 
 // TransactionIDs returns the transaction IDs of the unspent outputs currently
@@ -72,14 +53,14 @@ func (c *kupoConfirmer) TransactionIDs(ctx context.Context, address string) ([]s
 // txID appears at address, or the timeout elapses. Transient query errors do
 // not abort the wait — they are remembered and surfaced only if the deadline is
 // reached — so a brief Kupo hiccup does not fail an otherwise-confirmable
-// top-up.
+// transfer.
 func awaitConfirmation(ctx context.Context, confirmer UTxOConfirmer, address string, txID string, timeout time.Duration) error {
 	if timeout <= 0 {
 		return fmt.Errorf("--await-timeout must be greater than 0")
 	}
 
 	var lastErr error
-	err := wait.PollUntilContextTimeout(ctx, topUpAwaitPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
+	err := wait.PollUntilContextTimeout(ctx, awaitPollInterval, timeout, true, func(ctx context.Context) (bool, error) {
 		ids, queryErr := confirmer.TransactionIDs(ctx, address)
 		if queryErr != nil {
 			lastErr = queryErr
@@ -96,10 +77,10 @@ func awaitConfirmation(ctx context.Context, confirmer UTxOConfirmer, address str
 	})
 	if err != nil {
 		if lastErr != nil {
-			return fmt.Errorf("top-up %s to %s not confirmed within %s (last query error: %w)", txID, address, timeout, lastErr)
+			return fmt.Errorf("transfer %s to %s not confirmed within %s (last query error: %w)", txID, address, timeout, lastErr)
 		}
 
-		return fmt.Errorf("top-up %s to %s not confirmed within %s", txID, address, timeout)
+		return fmt.Errorf("transfer %s to %s not confirmed within %s", txID, address, timeout)
 	}
 
 	return nil

@@ -81,17 +81,13 @@ type sidecarReadinessConfig struct {
 	missingServiceMessage    string
 	unavailableMessage       string
 	containerNotReadyMessage string
-	// preReadinessCheck runs after the Service get and before the container
-	// readiness probe. Non-nil only for the faucet, which must also verify
-	// its uncached auth Secret carries a usable token.
-	preReadinessCheck func(ctx context.Context, network *yacdv1alpha1.CardanoNetwork) (notReady *metav1.Condition, err error)
 }
 
-// primarySidecarReadyCondition is the shared body used by the three optional
-// sidecars (ogmios, kupo, faucet). Each one customizes the variation through
+// primarySidecarReadyCondition is the shared body used by the optional sidecars
+// (ogmios, kupo). Each one customizes the variation through
 // sidecarReadinessConfig; the orchestration (disabled short circuit, Service
-// get, optional pre-readiness check, container readiness probe, blocked
-// mapping, success condition) lives here once.
+// get, container readiness probe, blocked mapping, success condition) lives
+// here once.
 func (r *CardanoNetworkReconciler) primarySidecarReadyCondition(
 	ctx context.Context,
 	network *yacdv1alpha1.CardanoNetwork,
@@ -108,16 +104,6 @@ func (r *CardanoNetworkReconciler) primarySidecarReadyCondition(
 			return cfg.condition(metav1.ConditionFalse, conditionReasonPrimaryWorkloadMissing, cfg.missingServiceMessage), nil
 		}
 		return metav1.Condition{}, err
-	}
-
-	if cfg.preReadinessCheck != nil {
-		notReady, err := cfg.preReadinessCheck(ctx, network)
-		if err != nil {
-			return metav1.Condition{}, err
-		}
-		if notReady != nil {
-			return *notReady, nil
-		}
 	}
 
 	readiness, err := r.primaryDeploymentContainerReadiness(ctx, network, cfg.containerName)
@@ -170,29 +156,6 @@ func (r *CardanoNetworkReconciler) primaryKupoReadyCondition(
 		missingServiceMessage:    "Kupo Service is missing",
 		unavailableMessage:       "Kupo sidecar is not available",
 		containerNotReadyMessage: "Kupo sidecar is not ready",
-	})
-}
-
-// primaryFaucetReadyCondition computes the FaucetReady condition. The
-// faucet's preReadinessCheck verifies the uncached auth Secret carries a
-// usable token before reporting ready.
-func (r *CardanoNetworkReconciler) primaryFaucetReadyCondition(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-	enabled bool,
-) (metav1.Condition, error) {
-	return r.primarySidecarReadyCondition(ctx, network, enabled, sidecarReadinessConfig{
-		serviceName:              primaryFaucetServiceName,
-		containerName:            faucetContainerName,
-		condition:                faucetReadyCondition,
-		disabledReason:           conditionReasonFaucetDisabled,
-		disabledMessage:          conditionMessageFaucetDisabled,
-		readyReason:              conditionReasonFaucetReady,
-		readyMessage:             conditionMessageFaucetReady,
-		missingServiceMessage:    "Faucet Service is missing",
-		unavailableMessage:       "Faucet sidecar is not available",
-		containerNotReadyMessage: "Faucet sidecar is not ready",
-		preReadinessCheck:        r.faucetAuthSecretReady,
 	})
 }
 
@@ -286,40 +249,6 @@ func (r *CardanoNetworkReconciler) primaryDBSyncAttachmentReadyCondition(
 	), nil
 }
 
-// faucetAuthSecretReady is the faucet's preReadinessCheck. It reads the
-// uncached auth Secret and returns a non-ready FaucetReady condition when
-// the Secret is missing or carries an invalid token; returns (nil, nil) when
-// the Secret is healthy and the caller should proceed to the container
-// readiness probe.
-func (r *CardanoNetworkReconciler) faucetAuthSecretReady(
-	ctx context.Context,
-	network *yacdv1alpha1.CardanoNetwork,
-) (*metav1.Condition, error) {
-	// Secrets are not cached; liveReader bypasses the manager cache.
-	secret := &corev1.Secret{}
-	if err := r.liveReader().Get(ctx, client.ObjectKey{Namespace: network.Namespace, Name: primaryFaucetAuthSecretName(network)}, secret); err != nil {
-		if apierrors.IsNotFound(err) {
-			blocked := faucetReadyCondition(
-				metav1.ConditionFalse,
-				conditionReasonPrimaryWorkloadMissing,
-				"Faucet auth Secret is missing",
-			)
-			return &blocked, nil
-		}
-		return nil, err
-	}
-	if !validFaucetAuthToken(string(secret.Data[faucetAuthTokenKey])) {
-		blocked := faucetReadyCondition(
-			metav1.ConditionFalse,
-			conditionReasonDeploymentProgressing,
-			"Faucet auth Secret token is not ready",
-		)
-		return &blocked, nil
-	}
-
-	return nil, nil
-}
-
 // primaryDeploymentContainerReadiness returns the readiness state for a
 // named container on the primary Deployment. It reads the live Deployment
 // through the controller cache and Pod list through liveReader to avoid
@@ -397,7 +326,7 @@ func primaryDeploymentContainerBlockedCondition(
 // liveReader is the uncached reader for status checks that must observe the
 // freshest cluster state. When the Reconciler was constructed with a Reader
 // (typical for envtest) we use it; otherwise we fall back to the cached
-// Client. Status readers and faucet-auth reads must always go through this
+// Client. Status readers and uncached Secret reads must always go through this
 // path so stale cache reads cannot stamp out a misleading status.
 func (r *CardanoNetworkReconciler) liveReader() client.Reader {
 	if r.Reader != nil {

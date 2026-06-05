@@ -1,7 +1,6 @@
 package cardanonetwork
 
 import (
-	"fmt"
 	"path"
 	"strconv"
 	"strings"
@@ -12,10 +11,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-// Container-construction internals shared by the four primary workload
-// containers. Names appear in Deployment containers, Service port targets,
-// readiness queries (status.go), and the faucet-revocation patch (apply.go);
-// hence the package-private const block instead of inlined string literals.
+// Container-construction internals shared by the primary workload containers.
+// Names appear in Deployment containers, Service port targets, and readiness
+// queries (status.go); hence the package-private const block instead of inlined
+// string literals.
 const (
 	// cardano-node container.
 	cardanoNodeContainerName = primarypod.CardanoNodeContainerName
@@ -40,19 +39,6 @@ const (
 	kupoOgmiosHostAddress = "127.0.0.1"
 	kupoWorkDir           = "/kupo"
 	kupoTmpDir            = "/tmp"
-
-	// faucet sidecar.
-	faucetContainerName     = "faucet"
-	faucetPortName          = primarypod.PortNameFaucet
-	faucetHostAddress       = "0.0.0.0"
-	faucetChainHostAddress  = "127.0.0.1"
-	faucetAuthTokenMountDir = "/var/run/yacd-faucet"
-	faucetAuthTokenPath     = "/var/run/yacd-faucet/token"
-	faucetUTXOKeysDir       = "/state/env/utxo-keys"
-	faucetOgmiosURLScheme   = "ws"
-	faucetKupoURLScheme     = "http"
-	faucetHealthPath        = "/healthz"
-	faucetReadinessPath     = "/readyz"
 
 	// serve sidecar.
 	serveContainerName = "serve"
@@ -279,76 +265,9 @@ func (b primaryWorkloadBuilder) kupoContainer(settings kupoSettings, ogmios ogmi
 	return container
 }
 
-// faucetContainer builds the optional faucet sidecar. It calls into ogmios
-// and kupo through the Pod's loopback interface, reads its auth token from
-// a Secret-backed projection, and reads UTXO source keys (read-only) from a
-// subpath of the localnet state mount populated by the
-// faucetSourceAddressInitContainer.
-func (b primaryWorkloadBuilder) faucetContainer(settings faucetSettings, ogmios ogmiosSettings, kupo kupoSettings) corev1.Container {
-	container := corev1.Container{
-		Name:            faucetContainerName,
-		Image:           settings.image,
-		ImagePullPolicy: corev1.PullIfNotPresent,
-		Args: []string{
-			"--listen-address", fmt.Sprintf("%s:%d", faucetHostAddress, settings.port),
-			"--utxo-keys-dir", faucetUTXOKeysDir,
-			"--default-source", settings.defaultSource,
-			"--ogmios-url", fmt.Sprintf("%s://%s:%d", faucetOgmiosURLScheme, faucetChainHostAddress, ogmios.port),
-			"--kupo-url", fmt.Sprintf("%s://%s:%d", faucetKupoURLScheme, faucetChainHostAddress, kupo.port),
-			"--auth-token-file", settings.authTokenFilePath,
-			"--allow-remote-listen",
-			"--min-topup-lovelace", strconv.FormatInt(settings.minTopUpLovelace, 10),
-			"--max-topup-lovelace", strconv.FormatInt(settings.maxTopUpLovelace, 10),
-		},
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          faucetPortName,
-				ContainerPort: settings.port,
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
-		StartupProbe:   faucetHTTPProbe(faucetHealthPath, settings.port, 5, 2, 60),
-		LivenessProbe:  faucetHTTPProbe(faucetHealthPath, settings.port, 10, 5, 12),
-		ReadinessProbe: faucetHTTPProbe(faucetReadinessPath, settings.port, 5, 2, 3),
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      localnetStateVolumeName,
-				MountPath: faucetUTXOKeysDir,
-				SubPath:   "env/utxo-keys",
-				ReadOnly:  true,
-			},
-			{
-				Name:      faucetAuthVolumeName,
-				MountPath: faucetAuthTokenMountDir,
-				ReadOnly:  true,
-			},
-		},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: new(false),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-			},
-			ReadOnlyRootFilesystem: new(true),
-			RunAsGroup:             new(localnetToolsRunAsID),
-			RunAsNonRoot:           new(true),
-			RunAsUser:              new(localnetToolsRunAsID),
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
-		},
-		TerminationMessagePath:   corev1.TerminationMessagePathDefault,
-		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
-	}
-	if settings.resources != nil {
-		container.Resources = *settings.resources.DeepCopy()
-	}
-
-	return container
-}
-
 // serveContainer builds the always-on cardano-tools serve sidecar. It exposes
 // the flat served-artifact directory (servedArtifactsDir) read-only over HTTP
-// on serve port 8090 (8080 collides with the faucet). The directory is
+// on serve port 8090. The directory is
 // populated on the node-state PVC by the served-artifact init container, so
 // serve mounts that PVC read-only at localnetStateDir. Unlike the producer it
 // is a regular always-on container (not a RestartPolicy:Always init container),
@@ -420,23 +339,6 @@ func serveManifestProbe(port int32, periodSeconds int32, timeoutSeconds int32, f
 		ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{
 				Path: serveManifestPath,
-				Port: intstr.FromInt(int(port)),
-			},
-		},
-		PeriodSeconds:    periodSeconds,
-		TimeoutSeconds:   timeoutSeconds,
-		FailureThreshold: failureThreshold,
-	}
-}
-
-// faucetHTTPProbe builds an HTTP GET probe against the faucet's health or
-// readiness endpoint. periodSeconds, timeoutSeconds, and failureThreshold are
-// tuned per probe phase (startup vs. liveness vs. readiness).
-func faucetHTTPProbe(probePath string, port int32, periodSeconds int32, timeoutSeconds int32, failureThreshold int32) *corev1.Probe {
-	return &corev1.Probe{
-		ProbeHandler: corev1.ProbeHandler{
-			HTTPGet: &corev1.HTTPGetAction{
-				Path: probePath,
 				Port: intstr.FromInt(int(port)),
 			},
 		},

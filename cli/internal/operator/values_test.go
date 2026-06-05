@@ -11,31 +11,24 @@ import (
 	"helm.sh/helm/v3/pkg/chartutil"
 )
 
-// TestDefaultPinsReleaseDigests proves the offline default install stays
-// digest-pinned to the published release on both the manager and faucet images.
-func TestDefaultPinsReleaseDigests(t *testing.T) {
+// TestDefaultUsesAppVersionTag proves the default install sets only the image
+// repository, leaving tag and digest empty so the chart renders
+// repository:appVersion (the operator release this CLI ships with).
+func TestDefaultUsesAppVersionTag(t *testing.T) {
 	values := Default()
 
 	assert.Equal(t, defaultManagerRepository, values.Image.Repository)
-	assert.Equal(t, defaultManagerDigest, values.Image.Digest)
-	assert.Empty(t, values.Image.Tag, "digest pin leaves tag empty")
-
-	assert.Equal(t, defaultFaucetRepository, values.FaucetImage.Repository)
-	assert.Equal(t, defaultFaucetDigest, values.FaucetImage.Digest)
-	assert.Empty(t, values.FaucetImage.Tag, "digest pin leaves tag empty")
+	assert.Empty(t, values.Image.Digest, "default leaves the digest empty so the chart uses its appVersion tag")
+	assert.Empty(t, values.Image.Tag, "default leaves the tag empty so the chart defaults it to appVersion")
 
 	helmValues := values.ToHelmValues()
 	image, ok := helmValues["image"].(map[string]any)
 	require.True(t, ok, "image sub-tree must be present")
-	assert.Equal(t, defaultManagerDigest, image["digest"])
+	assert.Equal(t, defaultManagerRepository, image["repository"])
+	_, hasDigest := image["digest"]
+	assert.False(t, hasDigest, "empty digest is omitted so the chart's appVersion tag applies")
 	_, hasTag := image["tag"]
 	assert.False(t, hasTag, "empty tag is omitted so the chart default applies")
-
-	faucet, ok := helmValues["faucet"].(map[string]any)
-	require.True(t, ok)
-	faucetImage, ok := faucet["image"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, defaultFaucetDigest, faucetImage["digest"])
 }
 
 // TestToHelmValuesMergesExtraOverTypedFields proves Extra is deep-merged last so
@@ -44,11 +37,7 @@ func TestDefaultPinsReleaseDigests(t *testing.T) {
 func TestToHelmValuesMergesExtraOverTypedFields(t *testing.T) {
 	replicas := 3
 	values := Values{
-		Image: Image{Repository: "example.com/mgr", Digest: "sha256:aaa"},
-		FaucetImage: Image{
-			Repository: "example.com/faucet",
-			Digest:     "sha256:bbb",
-		},
+		Image:     Image{Repository: "example.com/mgr", Digest: "sha256:aaa"},
 		Replicas:  &replicas,
 		LogFormat: "json",
 		LogLevel:  "info",
@@ -77,12 +66,6 @@ func TestToHelmValuesMergesExtraOverTypedFields(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "json", manager["logFormat"])
 	assert.Equal(t, "info", manager["logLevel"])
-
-	faucet, ok := got["faucet"].(map[string]any)
-	require.True(t, ok)
-	faucetImage, ok := faucet["image"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "sha256:bbb", faucetImage["digest"], "untouched typed fields survive the merge")
 }
 
 // TestZeroValuesFallThroughToChartDefaults proves an unset typed field is

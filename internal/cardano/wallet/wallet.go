@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	apolloAddress "github.com/Salvionied/apollo/serialization/Address"
 	apolloKey "github.com/Salvionied/apollo/serialization/Key"
@@ -113,6 +114,43 @@ func DeriveTestnetAddress(verificationKey []byte) (string, error) {
 	}
 
 	return address.String(), nil
+}
+
+// DecodePaymentKeyEnvelope extracts the raw 32-byte key from a cardano-cli text
+// envelope and returns it as lowercase hex. It parses the envelope JSON, hex-
+// decodes its cborHex field, CBOR-unmarshals the wrapped byte string, and
+// requires exactly 32 bytes.
+//
+// It is the inverse of the envelope encoding keyEnvelope performs, and works for
+// both payment.skey (yielding the signing/seed hex) and payment.vkey (yielding
+// the verification/public-key hex) because both share the CBOR byte-string
+// shape. The package stays manager-safe: this decodes with cbor/hex/json only
+// and performs no transaction or network work.
+func DecodePaymentKeyEnvelope(envelopeJSON []byte) (string, error) {
+	var envelope textEnvelope
+	if err := json.Unmarshal(envelopeJSON, &envelope); err != nil {
+		return "", fmt.Errorf("parse key envelope: %w", err)
+	}
+
+	cborHex := strings.TrimSpace(envelope.CBORHex)
+	if cborHex == "" {
+		return "", fmt.Errorf("key envelope is missing cborHex")
+	}
+
+	cborBytes, err := hex.DecodeString(cborHex)
+	if err != nil {
+		return "", fmt.Errorf("decode key envelope cborHex: %w", err)
+	}
+
+	var raw []byte
+	if err := cbor.Unmarshal(cborBytes, &raw); err != nil {
+		return "", fmt.Errorf("parse key envelope cborHex: %w", err)
+	}
+	if len(raw) != seedLength {
+		return "", fmt.Errorf("key envelope must decode to %d bytes, got %d", seedLength, len(raw))
+	}
+
+	return hex.EncodeToString(raw), nil
 }
 
 // textEnvelope is the cardano-cli key-file format: a JSON object with a type,

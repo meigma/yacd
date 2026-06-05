@@ -15,7 +15,8 @@ import (
 // TestInitTemplateLoadsAndValidates guards the embedded init template against
 // drift from the real schema: its active (uncommented) portion must parse and
 // validate through the same devconfig.Load `yacd up` uses, and must be the
-// batteries-included local network `init` promises (faucet + funded wallet).
+// batteries-included local network `init` promises (a local network
+// automatically gets the genesis-funded wallet).
 func TestInitTemplateLoadsAndValidates(t *testing.T) {
 	t.Parallel()
 
@@ -24,11 +25,6 @@ func TestInitTemplateLoadsAndValidates(t *testing.T) {
 
 	assert.Equal(t, yacdv1alpha1.CardanoNetworkModeLocal, env.Spec.Network.Mode)
 	require.NotNil(t, env.Spec.Network.Local)
-	require.NotNil(t, env.Spec.Network.ChainAPI)
-	require.NotNil(t, env.Spec.Network.ChainAPI.Faucet)
-	assert.True(t, env.Spec.Network.ChainAPI.Faucet.Enabled)
-	require.NotNil(t, env.Spec.Network.ChainAPI.Wallet)
-	assert.True(t, env.Spec.Network.ChainAPI.Wallet.Enabled)
 }
 
 // TestInitCommandPrintsTemplate proves `yacd init` writes the embedded template

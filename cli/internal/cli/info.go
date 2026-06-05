@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
+	walletstore "github.com/meigma/yacd/cli/internal/wallet"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +39,12 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 			}
 
 			info := newInfo(network)
+			// Surface the genesis-funded faucet wallet as the network's funded
+			// wallet. Resolution is best-effort: a network without a faucet wallet
+			// (non-local, or an operator that predates it) simply shows none.
+			if faucetWallet, walletErr := walletstore.NewStore(kubeClient, namespace, name).Faucet(cmd.Context()); walletErr == nil {
+				info.Wallet = &walletOutput{Address: faucetWallet.Address, KeySecretName: faucetWallet.SecretName}
+			}
 			if commandContext.viper.GetBool("json") {
 				encoded, err := json.MarshalIndent(info, "", "  ")
 				if err != nil {
@@ -67,16 +74,16 @@ type infoOutput struct {
 	ObservedGeneration int64             `json:"observedGeneration,omitempty"`
 	Network            networkOutput     `json:"network"`
 	Endpoints          endpointsOutput   `json:"endpoints"`
-	Faucet             *faucetOutput     `json:"faucet,omitempty"`
 	Wallet             *walletOutput     `json:"wallet,omitempty"`
 	Conditions         []conditionOutput `json:"conditions"`
 }
 
-// walletOutput projects the optional developer-wallet status sub-resource.
+// walletOutput projects the genesis-funded faucet wallet surfaced as the
+// network's funded wallet. It is resolved from the owned wallet Secret rather
+// than from CardanoNetwork status.
 type walletOutput struct {
 	Address       string `json:"address,omitempty"`
 	KeySecretName string `json:"keySecretName,omitempty"`
-	Funded        bool   `json:"funded,omitempty"`
 }
 
 // networkOutput projects the CardanoNetwork.Status.Network sub-status.
@@ -94,7 +101,6 @@ type endpointsOutput struct {
 	NodeToNode *endpointOutput `json:"nodeToNode,omitempty"`
 	Ogmios     *endpointOutput `json:"ogmios,omitempty"`
 	Kupo       *endpointOutput `json:"kupo,omitempty"`
-	Faucet     *endpointOutput `json:"faucet,omitempty"`
 }
 
 // endpointOutput projects a single ServiceEndpointStatus.
@@ -102,11 +108,6 @@ type endpointOutput struct {
 	ServiceName string `json:"serviceName,omitempty"`
 	Port        int32  `json:"port,omitempty"`
 	URL         string `json:"url,omitempty"`
-}
-
-// faucetOutput projects the optional faucet status sub-resource.
-type faucetOutput struct {
-	AuthSecretName string `json:"authSecretName,omitempty"`
 }
 
 // conditionOutput projects a single metav1.Condition with the timestamp
@@ -146,19 +147,6 @@ func newInfo(network *yacdv1alpha1.CardanoNetwork) infoOutput {
 		info.Endpoints.NodeToNode = endpointInfo(network.Status.Endpoints.NodeToNode)
 		info.Endpoints.Ogmios = endpointInfo(network.Status.Endpoints.Ogmios)
 		info.Endpoints.Kupo = endpointInfo(network.Status.Endpoints.Kupo)
-		info.Endpoints.Faucet = endpointInfo(network.Status.Endpoints.Faucet)
-	}
-	if network.Status.Faucet != nil {
-		info.Faucet = &faucetOutput{
-			AuthSecretName: network.Status.Faucet.AuthSecretName,
-		}
-	}
-	if network.Status.Wallet != nil {
-		info.Wallet = &walletOutput{
-			Address:       network.Status.Wallet.Address,
-			KeySecretName: network.Status.Wallet.KeySecretName,
-			Funded:        network.Status.Wallet.Funded,
-		}
 	}
 
 	info.Conditions = make([]conditionOutput, 0, len(network.Status.Conditions))

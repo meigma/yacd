@@ -10,6 +10,7 @@ import (
 	"github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/kube"
 	mock "github.com/stretchr/testify/mock"
+	"k8s.io/api/core/v1"
 )
 
 // NewClient creates a new instance of Client. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
@@ -92,6 +93,63 @@ func (_c *Client_ApplyCardanoNetwork_Call) Return(err error) *Client_ApplyCardan
 }
 
 func (_c *Client_ApplyCardanoNetwork_Call) RunAndReturn(run func(ctx context.Context, network *v1alpha1.CardanoNetwork) error) *Client_ApplyCardanoNetwork_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// CreateSecret provides a mock function for the type Client
+func (_mock *Client) CreateSecret(ctx context.Context, secret *v1.Secret) error {
+	ret := _mock.Called(ctx, secret)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateSecret")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, *v1.Secret) error); ok {
+		r0 = returnFunc(ctx, secret)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// Client_CreateSecret_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateSecret'
+type Client_CreateSecret_Call struct {
+	*mock.Call
+}
+
+// CreateSecret is a helper method to define mock.On call
+//   - ctx context.Context
+//   - secret *v1.Secret
+func (_e *Client_Expecter) CreateSecret(ctx interface{}, secret interface{}) *Client_CreateSecret_Call {
+	return &Client_CreateSecret_Call{Call: _e.mock.On("CreateSecret", ctx, secret)}
+}
+
+func (_c *Client_CreateSecret_Call) Run(run func(ctx context.Context, secret *v1.Secret)) *Client_CreateSecret_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *v1.Secret
+		if args[1] != nil {
+			arg1 = args[1].(*v1.Secret)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_CreateSecret_Call) Return(err error) *Client_CreateSecret_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *Client_CreateSecret_Call) RunAndReturn(run func(ctx context.Context, secret *v1.Secret) error) *Client_CreateSecret_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -199,6 +257,69 @@ func (_c *Client_DeleteCardanoNetwork_Call) Return(err error) *Client_DeleteCard
 }
 
 func (_c *Client_DeleteCardanoNetwork_Call) RunAndReturn(run func(ctx context.Context, namespace string, name string) error) *Client_DeleteCardanoNetwork_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// DeleteSecret provides a mock function for the type Client
+func (_mock *Client) DeleteSecret(ctx context.Context, namespace string, name string) error {
+	ret := _mock.Called(ctx, namespace, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteSecret")
+	}
+
+	var r0 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) error); ok {
+		r0 = returnFunc(ctx, namespace, name)
+	} else {
+		r0 = ret.Error(0)
+	}
+	return r0
+}
+
+// Client_DeleteSecret_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteSecret'
+type Client_DeleteSecret_Call struct {
+	*mock.Call
+}
+
+// DeleteSecret is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+func (_e *Client_Expecter) DeleteSecret(ctx interface{}, namespace interface{}, name interface{}) *Client_DeleteSecret_Call {
+	return &Client_DeleteSecret_Call{Call: _e.mock.On("DeleteSecret", ctx, namespace, name)}
+}
+
+func (_c *Client_DeleteSecret_Call) Run(run func(ctx context.Context, namespace string, name string)) *Client_DeleteSecret_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_DeleteSecret_Call) Return(err error) *Client_DeleteSecret_Call {
+	_c.Call.Return(err)
+	return _c
+}
+
+func (_c *Client_DeleteSecret_Call) RunAndReturn(run func(ctx context.Context, namespace string, name string) error) *Client_DeleteSecret_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -471,6 +592,80 @@ func (_c *Client_GetCardanoNetwork_Call) RunAndReturn(run func(ctx context.Conte
 	return _c
 }
 
+// GetSecret provides a mock function for the type Client
+func (_mock *Client) GetSecret(ctx context.Context, namespace string, name string) (*v1.Secret, error) {
+	ret := _mock.Called(ctx, namespace, name)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSecret")
+	}
+
+	var r0 *v1.Secret
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) (*v1.Secret, error)); ok {
+		return returnFunc(ctx, namespace, name)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, string) *v1.Secret); ok {
+		r0 = returnFunc(ctx, namespace, name)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*v1.Secret)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, string) error); ok {
+		r1 = returnFunc(ctx, namespace, name)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_GetSecret_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetSecret'
+type Client_GetSecret_Call struct {
+	*mock.Call
+}
+
+// GetSecret is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - name string
+func (_e *Client_Expecter) GetSecret(ctx interface{}, namespace interface{}, name interface{}) *Client_GetSecret_Call {
+	return &Client_GetSecret_Call{Call: _e.mock.On("GetSecret", ctx, namespace, name)}
+}
+
+func (_c *Client_GetSecret_Call) Run(run func(ctx context.Context, namespace string, name string)) *Client_GetSecret_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 string
+		if args[2] != nil {
+			arg2 = args[2].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_GetSecret_Call) Return(secret *v1.Secret, err error) *Client_GetSecret_Call {
+	_c.Call.Return(secret, err)
+	return _c
+}
+
+func (_c *Client_GetSecret_Call) RunAndReturn(run func(ctx context.Context, namespace string, name string) (*v1.Secret, error)) *Client_GetSecret_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetSecretValue provides a mock function for the type Client
 func (_mock *Client) GetSecretValue(ctx context.Context, namespace string, name string, key string) (string, error) {
 	ret := _mock.Called(ctx, namespace, name, key)
@@ -613,6 +808,80 @@ func (_c *Client_ListCardanoNetworks_Call) Return(cardanoNetworks []v1alpha1.Car
 }
 
 func (_c *Client_ListCardanoNetworks_Call) RunAndReturn(run func(ctx context.Context, namespace string) ([]v1alpha1.CardanoNetwork, error)) *Client_ListCardanoNetworks_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// ListSecrets provides a mock function for the type Client
+func (_mock *Client) ListSecrets(ctx context.Context, namespace string, selector map[string]string) ([]v1.Secret, error) {
+	ret := _mock.Called(ctx, namespace, selector)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ListSecrets")
+	}
+
+	var r0 []v1.Secret
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, map[string]string) ([]v1.Secret, error)); ok {
+		return returnFunc(ctx, namespace, selector)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, map[string]string) []v1.Secret); ok {
+		r0 = returnFunc(ctx, namespace, selector)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]v1.Secret)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, string, map[string]string) error); ok {
+		r1 = returnFunc(ctx, namespace, selector)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// Client_ListSecrets_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListSecrets'
+type Client_ListSecrets_Call struct {
+	*mock.Call
+}
+
+// ListSecrets is a helper method to define mock.On call
+//   - ctx context.Context
+//   - namespace string
+//   - selector map[string]string
+func (_e *Client_Expecter) ListSecrets(ctx interface{}, namespace interface{}, selector interface{}) *Client_ListSecrets_Call {
+	return &Client_ListSecrets_Call{Call: _e.mock.On("ListSecrets", ctx, namespace, selector)}
+}
+
+func (_c *Client_ListSecrets_Call) Run(run func(ctx context.Context, namespace string, selector map[string]string)) *Client_ListSecrets_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 string
+		if args[1] != nil {
+			arg1 = args[1].(string)
+		}
+		var arg2 map[string]string
+		if args[2] != nil {
+			arg2 = args[2].(map[string]string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *Client_ListSecrets_Call) Return(secrets []v1.Secret, err error) *Client_ListSecrets_Call {
+	_c.Call.Return(secrets, err)
+	return _c
+}
+
+func (_c *Client_ListSecrets_Call) RunAndReturn(run func(ctx context.Context, namespace string, selector map[string]string) ([]v1.Secret, error)) *Client_ListSecrets_Call {
 	_c.Call.Return(run)
 	return _c
 }

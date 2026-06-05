@@ -34,9 +34,9 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 			"equal version to heal drift, and refuses a newer or major-mismatched\n" +
 			"in-cluster version with actionable guidance. Use --dry-run to preview the\n" +
 			"action without changing the cluster.\n\n" +
-			"The default operator image is digest-pinned to the version this CLI\n" +
-			"embeds; the supported way to change the operator version is to upgrade the\n" +
-			"CLI. The -f/--set/--set-string flags customize OPERATIONAL chart values\n" +
+			"The default operator image is pinned to the version this CLI embeds (the\n" +
+			"chart's appVersion); the supported way to change the operator version is to\n" +
+			"upgrade the CLI. The -f/--set/--set-string flags customize OPERATIONAL chart values\n" +
 			"(replicas, resources, scheduling, logging, metrics, and so on). -f reads\n" +
 			"YAML values files (repeatable, later files win); --set and --set-string\n" +
 			"take inline key=value overrides in Helm syntax (--set-string forces string\n" +
@@ -45,9 +45,8 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 			"--set-string by argument order the way Helm does). These override values are\n" +
 			"validated against the chart's schema, so a bad value fails fast (under\n" +
 			"--dry-run too). Because user values deep-merge over the defaults, a --set\n" +
-			"image.tag is ineffective (the chart renders repository@digest and the pinned\n" +
-			"digest wins), but a --set image.digest or image.repository WILL repoint the\n" +
-			"operator image and is not a supported configuration.",
+			"image.tag, image.repository, or image.digest WILL repoint the operator\n" +
+			"image and is not a supported configuration.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
@@ -85,12 +84,11 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			// Model A: the pinned typed Image/FaucetImage stay, and the user
-			// overrides ride in Extra, which ToHelmValues deep-merges on top. The
-			// embedded digest shadows a --set image.tag (the chart renders
-			// repository@digest), so the default install stays digest-pinned for
-			// operational knobs; image.digest/image.repository overrides do still win
-			// through the merge and are an unsupported configuration, not blocked here.
+			// The typed default pins the manager image to the chart's appVersion
+			// (repository:appVersion), and the user overrides ride in Extra, which
+			// ToHelmValues deep-merges on top. image.tag/image.repository/image.digest
+			// overrides do repoint the operator image through the merge and are an
+			// unsupported configuration, not blocked here.
 			vals := operator.Default()
 			vals.Extra = userOverrides
 

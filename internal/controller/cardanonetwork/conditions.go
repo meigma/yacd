@@ -27,8 +27,6 @@ const (
 	conditionTypeNodeProgressing       conditionType = "NodeProgressing"
 	conditionTypeOgmiosReady           conditionType = "OgmiosReady"
 	conditionTypeKupoReady             conditionType = "KupoReady"
-	conditionTypeFaucetReady           conditionType = "FaucetReady"
-	conditionTypeWalletReady           conditionType = "WalletReady"
 	conditionTypeArtifactsReady        conditionType = "ArtifactsReady"
 )
 
@@ -68,13 +66,6 @@ const (
 	conditionReasonOgmiosDisabled        conditionReason = "OgmiosDisabled"
 	conditionReasonKupoReady             conditionReason = "KupoReady"
 	conditionReasonKupoDisabled          conditionReason = "KupoDisabled"
-	conditionReasonFaucetReady           conditionReason = "FaucetReady"
-	conditionReasonFaucetDisabled        conditionReason = "FaucetDisabled"
-	conditionReasonWalletReady           conditionReason = "WalletReady"
-	conditionReasonWalletDisabled        conditionReason = "WalletDisabled"
-	conditionReasonWalletKeyMissing      conditionReason = "WalletKeyMissing"
-	conditionReasonWalletFundingPending  conditionReason = "WalletFundingPending"
-	conditionReasonWalletFundingFailed   conditionReason = "WalletFundingFailed"
 	conditionReasonArtifactsReady        conditionReason = "ArtifactsReady"
 	conditionReasonArtifactsPending      conditionReason = "ArtifactsPending"
 	conditionReasonDBSyncAttachmentReady conditionReason = "DBSyncAttachmentReady"
@@ -97,10 +88,6 @@ const (
 	conditionMessageOgmiosDisabled               = "Ogmios chain API is disabled"
 	conditionMessageKupoReady                    = "Kupo sidecar is available through its Service"
 	conditionMessageKupoDisabled                 = "Kupo chain index API is disabled"
-	conditionMessageFaucetReady                  = "Faucet sidecar is available through its Service"
-	conditionMessageFaucetDisabled               = "Faucet API is disabled"
-	conditionMessageWalletReady                  = "Developer wallet is bootstrapped and funded on-chain"
-	conditionMessageWalletDisabled               = "Developer wallet is disabled"
 	conditionMessageArtifactsReady               = "Network artifacts are served and available through the artifacts Service"
 )
 
@@ -114,8 +101,8 @@ type primaryDeploymentConditionFunc func(metav1.ConditionStatus, conditionReason
 // single Ready condition. Optional sidecar conditions only contribute when
 // the corresponding sidecar is enabled, so disabling a sidecar does not
 // hold Ready back.
-func readyCondition(dbSyncAttachmentReady metav1.Condition, nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, faucetReady metav1.Condition, walletReady metav1.Condition, artifactsReady metav1.Condition, dbSyncAttached bool, kupoEnabled bool, faucetEnabled bool, walletEnabled bool) metav1.Condition {
-	dependencies := make([]metav1.Condition, 0, 7)
+func readyCondition(dbSyncAttachmentReady metav1.Condition, nodeReady metav1.Condition, ogmiosReady metav1.Condition, kupoReady metav1.Condition, artifactsReady metav1.Condition, dbSyncAttached bool, kupoEnabled bool) metav1.Condition {
+	dependencies := make([]metav1.Condition, 0, 5)
 	if dbSyncAttached {
 		dependencies = append(dependencies, dbSyncAttachmentReady)
 	}
@@ -123,20 +110,9 @@ func readyCondition(dbSyncAttachmentReady metav1.Condition, nodeReady metav1.Con
 	if kupoEnabled {
 		dependencies = append(dependencies, kupoReady)
 	}
-	if faucetEnabled {
-		dependencies = append(dependencies, faucetReady)
-	}
-	if walletEnabled {
-		dependencies = append(dependencies, walletReady)
-	}
 	dependencies = append(dependencies, artifactsReady)
 
 	return ctrlstatus.AggregateReady(string(conditionTypeReady), string(conditionReasonReady), conditionMessageReady, dependencies...)
-}
-
-// walletReadyCondition constructs a WalletReady condition.
-func walletReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
-	return ctrlstatus.Condition(string(conditionTypeWalletReady), status, string(reason), message)
 }
 
 // dbSyncAttachmentReadyCondition constructs a DBSyncAttachmentReady condition.
@@ -175,11 +151,6 @@ func kupoReadyCondition(status metav1.ConditionStatus, reason conditionReason, m
 	return ctrlstatus.Condition(string(conditionTypeKupoReady), status, string(reason), message)
 }
 
-// faucetReadyCondition constructs a FaucetReady condition.
-func faucetReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
-	return ctrlstatus.Condition(string(conditionTypeFaucetReady), status, string(reason), message)
-}
-
 // artifactsReadyCondition constructs an ArtifactsReady condition.
 func artifactsReadyCondition(status metav1.ConditionStatus, reason conditionReason, message string) metav1.Condition {
 	return ctrlstatus.Condition(string(conditionTypeArtifactsReady), status, string(reason), message)
@@ -206,6 +177,5 @@ func progressingForReadyCondition(ready metav1.Condition) metav1.Condition {
 		string(conditionReasonPrimaryWorkloadMissing),
 		string(conditionReasonArtifactsPending),
 		string(conditionReasonDBSyncAttachmentPending),
-		string(conditionReasonWalletFundingPending),
 	)
 }

@@ -29,8 +29,7 @@ const (
 	defaultMainnetNodeMemoryRequest = "24Gi"
 
 	// localnetStateDir is the durable state mount root inside the primary
-	// workload Pod. cardano-testnet, cardano-node, ogmios, and the faucet share
-	// this prefix.
+	// workload Pod. cardano-testnet, cardano-node, and ogmios share this prefix.
 	localnetStateDir = "/state"
 
 	// localnetEnvDir is the cardano-testnet create-env output directory and the
@@ -83,39 +82,12 @@ const (
 	// kupoServiceURLType is the scheme published on the kupo endpoint status.
 	kupoServiceURLType = "http"
 
-	// defaultFaucetImage is the faucet sidecar image used when neither the
-	// CardanoNetwork spec nor the Reconciler-injected default specifies one.
-	// The Reconciler-injected DefaultFaucetImage is the legitimate primary
-	// injection point for the local dev stack's ko-built image; this constant
-	// is the last-resort fallback.
-	defaultFaucetImage = "ghcr.io/meigma/yacd/faucet:dev"
-
-	// defaultFaucetPort is the faucet HTTP port used when the CardanoNetwork
-	// spec does not specify one.
-	defaultFaucetPort = primarypod.DefaultFaucetPort
-
-	// defaultFaucetSource is the default UTXO source name for faucet top-ups.
-	defaultFaucetSource = "utxo1"
-
-	// defaultFaucetMinLovelace is the minimum top-up amount in lovelace when
-	// the CardanoNetwork spec does not specify one.
-	defaultFaucetMinLovelace = 1_000_000
-
-	// defaultFaucetMaxLovelace is the maximum top-up amount in lovelace when
-	// the CardanoNetwork spec does not specify one.
-	defaultFaucetMaxLovelace = 10_000_000_000
-
 	// defaultFaucetWalletFundingLovelace is the genesis allocation granted to
 	// the well-known faucet wallet on local networks. 1,000,000 ADA sits well
 	// under the local genesis supply headroom (~10M ADA) yet is plenty for a
 	// devnet funding source that the CLI spends from. The allocation is added
-	// as a new initialFunds entry, so it never touches the faucet service's own
-	// utxo source.
+	// as a new initialFunds entry alongside the generated utxo sources.
 	defaultFaucetWalletFundingLovelace int64 = 1_000_000_000_000
-
-	// faucetServiceURLType is the scheme published on the faucet endpoint
-	// status.
-	faucetServiceURLType = "http"
 
 	// defaultServePort is the cardano-tools serve container port used for the
 	// artifacts Service.

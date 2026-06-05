@@ -105,6 +105,77 @@ func TestDeriveTestnetAddressRejectsWrongLength(t *testing.T) {
 	assert.Contains(t, err.Error(), "verification key must be")
 }
 
+func TestDecodePaymentKeyEnvelopeRoundTripsMaterial(t *testing.T) {
+	// The signing and verification envelopes built from the golden seed must
+	// decode back to the seed and the derived public key respectively, proving
+	// DecodePaymentKeyEnvelope is the exact inverse of the envelope encoding for
+	// both key kinds.
+	material, err := FromSeed(mustHex(t, goldenSeedHex))
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		envelope []byte
+		wantHex  string
+	}{
+		{
+			name:     "signing key decodes to the raw seed",
+			envelope: material.SigningKeyEnvelope,
+			wantHex:  goldenSeedHex,
+		},
+		{
+			name:     "verification key decodes to the derived public key",
+			envelope: material.VerificationKeyEnvelope,
+			wantHex:  goldenPubHex,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DecodePaymentKeyEnvelope(tt.envelope)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHex, got)
+		})
+	}
+}
+
+func TestDecodePaymentKeyEnvelopeRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		envelope []byte
+		wantMsg  string
+	}{
+		{
+			name:     "not JSON",
+			envelope: []byte("not json"),
+			wantMsg:  "parse key envelope",
+		},
+		{
+			name:     "missing cborHex",
+			envelope: []byte(`{"type":"PaymentSigningKeyShelley_ed25519","description":"","cborHex":""}`),
+			wantMsg:  "missing cborHex",
+		},
+		{
+			name:     "cborHex is not hex",
+			envelope: []byte(`{"cborHex":"zz"}`),
+			wantMsg:  "decode key envelope cborHex",
+		},
+		{
+			name:     "cborHex wraps the wrong length",
+			envelope: []byte(`{"cborHex":"4101"}`),
+			wantMsg:  "must decode to 32 bytes",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodePaymentKeyEnvelope(tt.envelope)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantMsg)
+		})
+	}
+}
+
 func decodeEnvelopeKey(t *testing.T, cborHex string) []byte {
 	t.Helper()
 	raw, err := hex.DecodeString(cborHex)
