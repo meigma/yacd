@@ -1196,6 +1196,65 @@ func TestCardanoNetworkReconcilerReconcileRejectsLocalnetInputChangeAfterPVCDele
 	assertCondition(t, ctx, reconciler, network, conditionTypeDegraded, metav1.ConditionTrue, conditionReasonUnsupportedLocalnetChange)
 }
 
+func TestCardanoNetworkReconcilerReconcileRendersOgmiosNodePortService(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("ogmios-nodeport")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: true,
+			Image:   defaultOgmiosImage,
+			Port:    defaultOgmiosPort,
+			Service: &yacdv1alpha1.ServiceExposureSpec{
+				Type:     yacdv1alpha1.ChainAPIServiceTypeNodePort,
+				NodePort: 30500,
+			},
+		},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service := requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	assert.Equal(t, corev1.ServiceTypeNodePort, service.Spec.Type)
+	require.Len(t, service.Spec.Ports, 1)
+	assert.Equal(t, int32(30500), service.Spec.Ports[0].NodePort)
+}
+
+func TestCardanoNetworkReconcilerReconcilePreservesAutoAssignedOgmiosNodePort(t *testing.T) {
+	ctx := context.Background()
+	network := localCardanoNetwork("ogmios-nodeport-auto")
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: true,
+			Image:   defaultOgmiosImage,
+			Port:    defaultOgmiosPort,
+			Service: &yacdv1alpha1.ServiceExposureSpec{
+				Type: yacdv1alpha1.ChainAPIServiceTypeNodePort,
+			},
+		},
+	}
+	reconciler := newTestReconciler(t, network)
+
+	_, err := reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	// The fake client has no NodePort allocator, so simulate the
+	// Kubernetes-assigned node port, then prove a subsequent reconcile preserves
+	// it rather than wiping it to 0 (the thrash this feature must avoid).
+	service := requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	require.Len(t, service.Spec.Ports, 1)
+	service.Spec.Ports[0].NodePort = 31900
+	require.NoError(t, reconciler.Update(ctx, service))
+
+	_, err = reconciler.Reconcile(ctx, reconcileRequestFor(network))
+	require.NoError(t, err)
+
+	service = requirePrimaryOgmiosService(t, ctx, reconciler, network)
+	require.Len(t, service.Spec.Ports, 1)
+	assert.Equal(t, int32(31900), service.Spec.Ports[0].NodePort)
+}
+
 func TestCardanoNetworkReconcilerReconcileDegradesWhenPrimaryPVCIsDeleting(t *testing.T) {
 	ctx := context.Background()
 	network := localCardanoNetwork("primary-pvc-deleting")

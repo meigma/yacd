@@ -306,6 +306,129 @@ func TestCardanoNetworkControllerManagerCreatesAndRecreatesPrimaryWorkload(t *te
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
+func TestCardanoNetworkControllerManagerMirrorsExternalAccess(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "charts", "yacd", "crds")},
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool {
+			return testEnv.Stop() == nil
+		}, time.Minute, time.Second)
+	})
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, yacdv1alpha1.AddToScheme(scheme))
+
+	skipNameValidation := true
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
+		Scheme:                 scheme,
+		Controller:             config.Controller{SkipNameValidation: &skipNameValidation},
+		Metrics:                metricsserver.Options{BindAddress: "0"},
+		HealthProbeBindAddress: "0",
+	})
+	require.NoError(t, err)
+	envtestNow := time.Date(2026, 5, 28, 18, 0, 0, 0, time.UTC)
+	require.NoError(t, (&CardanoNetworkReconciler{
+		Client:               mgr.GetClient(),
+		Reader:               mgr.GetAPIReader(),
+		Scheme:               mgr.GetScheme(),
+		Now:                  func() time.Time { return envtestNow },
+		syncProberOverride:   syncedNodeSyncProber(),
+		timingProberOverride: syncedNodeTimingProber(),
+	}).SetupWithManager(mgr))
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mgr.Start(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		require.NoError(t, <-errCh)
+	})
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+	require.NoError(t, err)
+
+	namespace := &corev1.Namespace{}
+	namespace.Name = "cardanonetwork-external-access-envtest"
+	require.NoError(t, apiClient.Create(ctx, namespace))
+
+	// The CRD nodePort Maximum marker rejects an out-of-range value at
+	// admission, proving the marker reached the served CRD.
+	badNodePort := localCardanoNetwork("bad-nodeport")
+	badNodePort.Namespace = namespace.Name
+	badNodePort.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled: true,
+			Image:   defaultOgmiosImage,
+			Port:    defaultOgmiosPort,
+			Service: &yacdv1alpha1.ServiceExposureSpec{
+				Type:     yacdv1alpha1.ChainAPIServiceTypeNodePort,
+				NodePort: 40000,
+			},
+		},
+	}
+	require.Error(t, apiClient.Create(ctx, badNodePort))
+
+	network := localCardanoNetwork("external-access")
+	network.Namespace = namespace.Name
+	network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+		Ogmios: &yacdv1alpha1.OgmiosSpec{
+			Enabled:     true,
+			Image:       defaultOgmiosImage,
+			Port:        defaultOgmiosPort,
+			ExternalURL: "wss://ogmios.example.com",
+			Service: &yacdv1alpha1.ServiceExposureSpec{
+				Type:     yacdv1alpha1.ChainAPIServiceTypeNodePort,
+				NodePort: 30137,
+			},
+		},
+		Kupo: &yacdv1alpha1.KupoSpec{
+			Enabled:     true,
+			Image:       defaultKupoImage,
+			Port:        defaultKupoPort,
+			ExternalURL: "https://kupo.example.com",
+		},
+	}
+	require.NoError(t, apiClient.Create(ctx, network))
+
+	// The ogmios Service is rendered NodePort with the pinned node port.
+	ogmiosServiceKey := client.ObjectKey{Namespace: network.Namespace, Name: primaryOgmiosServiceName(network)}
+	require.Eventually(t, func() bool {
+		service := &corev1.Service{}
+		if apiClient.Get(ctx, ogmiosServiceKey, service) != nil {
+			return false
+		}
+		return service.Spec.Type == corev1.ServiceTypeNodePort &&
+			len(service.Spec.Ports) == 1 &&
+			service.Spec.Ports[0].NodePort == 30137
+	}, 10*time.Second, 100*time.Millisecond)
+
+	// Both externalURLs are mirrored additively into status; the in-cluster url
+	// fields keep their cluster-local scheme.
+	require.Eventually(t, func() bool {
+		current := &yacdv1alpha1.CardanoNetwork{}
+		if apiClient.Get(ctx, client.ObjectKeyFromObject(network), current) != nil {
+			return false
+		}
+		endpoints := current.Status.Endpoints
+		return endpoints != nil &&
+			endpoints.Ogmios != nil && endpoints.Ogmios.ExternalURL == "wss://ogmios.example.com" &&
+			strings.HasPrefix(endpoints.Ogmios.URL, "ws://") &&
+			endpoints.Kupo != nil && endpoints.Kupo.ExternalURL == "https://kupo.example.com" &&
+			strings.HasPrefix(endpoints.Kupo.URL, "http://")
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
 func TestCardanoNetworkControllerManagerDegradesOnPrimaryPVCDeletion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

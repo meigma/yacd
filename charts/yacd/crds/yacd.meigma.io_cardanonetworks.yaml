@@ -53,6 +53,14 @@ spec:
                         description: enabled controls whether the Kupo sidecar is
                           deployed.
                         type: boolean
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted, externally reachable URL for the
+                          Kupo endpoint, mirrored into status.endpoints.kupo.externalURL. It must be
+                          an absolute ws/wss/http/https URL with a host. The operator only advertises
+                          this value; making it routable (ingress, NodePort, port-forward) is the
+                          provisioner's responsibility.
+                        type: string
                       image:
                         default: cardanosolutions/kupo:v2.11.0
                         description: image is the Kupo image reference.
@@ -123,6 +131,27 @@ spec:
                               More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
                         type: object
+                      service:
+                        description: service configures how the Kupo Service is exposed.
+                        properties:
+                          nodePort:
+                            description: |-
+                              nodePort pins the node port when type is NodePort. When 0 or omitted,
+                              Kubernetes auto-assigns a port and the controller preserves the
+                              assignment across reconciles. When set, it must be in the 30000-32767
+                              range and is only valid with type NodePort.
+                            format: int32
+                            maximum: 32767
+                            minimum: 0
+                            type: integer
+                          type:
+                            default: ClusterIP
+                            description: type selects the Kubernetes Service type.
+                            enum:
+                            - ClusterIP
+                            - NodePort
+                            type: string
+                        type: object
                     required:
                     - enabled
                     - image
@@ -136,6 +165,14 @@ spec:
                         description: enabled controls whether the Ogmios sidecar is
                           deployed.
                         type: boolean
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted, externally reachable URL for the
+                          Ogmios endpoint, mirrored into status.endpoints.ogmios.externalURL. It
+                          must be an absolute ws/wss/http/https URL with a host. The operator only
+                          advertises this value; making it routable (ingress, NodePort, port-forward)
+                          is the provisioner's responsibility.
+                        type: string
                       image:
                         default: cardanosolutions/ogmios:v6.14.0
                         description: image is the Ogmios image reference.
@@ -205,6 +242,28 @@ spec:
                               otherwise to an implementation-defined value. Requests cannot exceed Limits.
                               More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                             type: object
+                        type: object
+                      service:
+                        description: service configures how the Ogmios Service is
+                          exposed.
+                        properties:
+                          nodePort:
+                            description: |-
+                              nodePort pins the node port when type is NodePort. When 0 or omitted,
+                              Kubernetes auto-assigns a port and the controller preserves the
+                              assignment across reconciles. When set, it must be in the 30000-32767
+                              range and is only valid with type NodePort.
+                            format: int32
+                            maximum: 32767
+                            minimum: 0
+                            type: integer
+                          type:
+                            default: ClusterIP
+                            description: type selects the Kubernetes Service type.
+                            enum:
+                            - ClusterIP
+                            - NodePort
+                            type: string
                         type: object
                     required:
                     - enabled
@@ -616,6 +675,11 @@ spec:
                       artifacts is the cardano-tools serve HTTP endpoint that exposes the
                       staged network artifact files and manifest.json.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
@@ -631,6 +695,11 @@ spec:
                   kupo:
                     description: kupo is the Kupo chain index HTTP endpoint.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
@@ -646,6 +715,11 @@ spec:
                   nodeToNode:
                     description: nodeToNode is the primary node-to-node endpoint.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
@@ -661,6 +735,11 @@ spec:
                   ogmios:
                     description: ogmios is the Ogmios JSON/RPC endpoint.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
