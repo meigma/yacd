@@ -18,6 +18,13 @@ type ogmiosSettings struct {
 	port int32
 	// resources is an optional resource requirements override.
 	resources *corev1.ResourceRequirements
+	// serviceType is the resolved Kubernetes Service type (ClusterIP default).
+	serviceType corev1.ServiceType
+	// nodePort pins the node port when serviceType is NodePort; 0 means the
+	// controller lets Kubernetes auto-assign and preserves the assignment.
+	nodePort int32
+	// externalURL is the operator-asserted external URL mirrored into status.
+	externalURL string
 }
 
 // kupoSettings is the effective kupo sidecar configuration after applying
@@ -32,15 +39,23 @@ type kupoSettings struct {
 	port int32
 	// resources is an optional resource requirements override.
 	resources *corev1.ResourceRequirements
+	// serviceType is the resolved Kubernetes Service type (ClusterIP default).
+	serviceType corev1.ServiceType
+	// nodePort pins the node port when serviceType is NodePort; 0 means the
+	// controller lets Kubernetes auto-assign and preserves the assignment.
+	nodePort int32
+	// externalURL is the operator-asserted external URL mirrored into status.
+	externalURL string
 }
 
 // resolveOgmiosSettings applies the CardanoNetwork spec on top of the package
 // defaults and returns the effective ogmios configuration.
 func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings, error) {
 	settings := ogmiosSettings{
-		enabled: true,
-		image:   defaultOgmiosImage,
-		port:    defaultOgmiosPort,
+		enabled:     true,
+		image:       defaultOgmiosImage,
+		port:        defaultOgmiosPort,
+		serviceType: corev1.ServiceTypeClusterIP,
 	}
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Ogmios == nil {
 		return settings, nil
@@ -63,6 +78,7 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 	if spec.Resources != nil {
 		settings.resources = spec.Resources.DeepCopy()
 	}
+	settings.serviceType, settings.nodePort, settings.externalURL = resolveServiceExposure(spec.Service, spec.ExternalURL)
 
 	return settings, nil
 }
@@ -80,9 +96,10 @@ func resolveOgmiosSettings(network *yacdv1alpha1.CardanoNetwork) (ogmiosSettings
 // single-component decision.
 func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork) (kupoSettings, bool, error) {
 	settings := kupoSettings{
-		enabled: true,
-		image:   defaultKupoImage,
-		port:    defaultKupoPort,
+		enabled:     true,
+		image:       defaultKupoImage,
+		port:        defaultKupoPort,
+		serviceType: corev1.ServiceTypeClusterIP,
 	}
 	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Kupo == nil {
 		return settings, false, nil
@@ -105,8 +122,27 @@ func resolveKupoSettings(network *yacdv1alpha1.CardanoNetwork) (kupoSettings, bo
 	if spec.Resources != nil {
 		settings.resources = spec.Resources.DeepCopy()
 	}
+	settings.serviceType, settings.nodePort, settings.externalURL = resolveServiceExposure(spec.Service, spec.ExternalURL)
 
 	return settings, true, nil
+}
+
+// resolveServiceExposure maps the optional service-exposure block and external
+// URL from a chain API spec onto the resolved settings fields. It is shared by
+// the ogmios and kupo resolvers. The default Service type is ClusterIP; only an
+// explicit NodePort selection flips it. Validation of the resolved values lives
+// in validateChainAPIServiceExposure.
+func resolveServiceExposure(service *yacdv1alpha1.ServiceExposureSpec, externalURL string) (corev1.ServiceType, int32, string) {
+	serviceType := corev1.ServiceTypeClusterIP
+	var nodePort int32
+	if service != nil {
+		if service.Type == yacdv1alpha1.ChainAPIServiceTypeNodePort {
+			serviceType = corev1.ServiceTypeNodePort
+		}
+		nodePort = service.NodePort
+	}
+
+	return serviceType, nodePort, strings.TrimSpace(externalURL)
 }
 
 // applyDependentDefaults encodes cross-component defaults that depend on

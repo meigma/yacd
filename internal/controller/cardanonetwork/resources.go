@@ -262,7 +262,8 @@ func (b primaryWorkloadBuilder) service(network *yacdv1alpha1.CardanoNetwork) (*
 	return service, nil
 }
 
-// ogmiosService builds the optional ogmios ClusterIP Service.
+// ogmiosService builds the optional ogmios Service. It is ClusterIP by default
+// and NodePort when the spec requests it.
 func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwork, settings ogmiosSettings) (*corev1.Service, error) {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -271,7 +272,7 @@ func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwo
 			Labels:    primaryWorkloadLabels(network),
 		},
 		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
+			Type:     settings.serviceType,
 			Selector: primaryWorkloadSelectorLabels(network),
 			Ports: []corev1.ServicePort{
 				{
@@ -279,6 +280,7 @@ func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwo
 					Protocol:   corev1.ProtocolTCP,
 					Port:       settings.port,
 					TargetPort: intstr.FromString(ogmiosPortName),
+					NodePort:   pinnedNodePort(settings.serviceType, settings.nodePort),
 				},
 			},
 		},
@@ -291,7 +293,8 @@ func (b primaryWorkloadBuilder) ogmiosService(network *yacdv1alpha1.CardanoNetwo
 	return service, nil
 }
 
-// kupoService builds the optional kupo ClusterIP Service.
+// kupoService builds the optional kupo Service. It is ClusterIP by default and
+// NodePort when the spec requests it.
 func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork, settings kupoSettings) (*corev1.Service, error) {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -300,7 +303,7 @@ func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork
 			Labels:    primaryWorkloadLabels(network),
 		},
 		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
+			Type:     settings.serviceType,
 			Selector: primaryWorkloadSelectorLabels(network),
 			Ports: []corev1.ServicePort{
 				{
@@ -308,6 +311,7 @@ func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork
 					Protocol:   corev1.ProtocolTCP,
 					Port:       settings.port,
 					TargetPort: intstr.FromString(kupoPortName),
+					NodePort:   pinnedNodePort(settings.serviceType, settings.nodePort),
 				},
 			},
 		},
@@ -318,6 +322,19 @@ func (b primaryWorkloadBuilder) kupoService(network *yacdv1alpha1.CardanoNetwork
 	}
 
 	return service, nil
+}
+
+// pinnedNodePort returns the node port to render on a chain API Service port.
+// It returns the configured value only when the Service is NodePort: a non-zero
+// value pins the node port, while 0 lets Kubernetes auto-assign (MutateService
+// then preserves the assignment across reconciles). ClusterIP Services never
+// carry a node port.
+func pinnedNodePort(serviceType corev1.ServiceType, nodePort int32) int32 {
+	if serviceType == corev1.ServiceTypeNodePort {
+		return nodePort
+	}
+
+	return 0
 }
 
 // artifactsService builds the artifacts ClusterIP Service that exposes the

@@ -53,13 +53,46 @@ func MutateDeployment(current *appsv1.Deployment, desired *appsv1.Deployment, me
 }
 
 // MutateService reconciles the owned fields common to controller-owned
-// ClusterIP Services while preserving Kubernetes-assigned cluster IP fields.
+// Services while preserving Kubernetes-assigned fields. Cluster IP fields are
+// preserved by never being touched; a node port assigned to a NodePort Service
+// is preserved by mergeServicePorts.
 func MutateService(current *corev1.Service, desired *corev1.Service, mergeAnnotations AnnotationMerger) {
 	MutateObjectMetadata(current, desired, mergeAnnotations)
 	current.Spec.Type = desired.Spec.Type
 	current.Spec.Selector = maps.Clone(desired.Spec.Selector)
-	current.Spec.Ports = desired.Spec.Ports
+	current.Spec.Ports = mergeServicePorts(current.Spec.Ports, desired.Spec.Ports, desired.Spec.Type)
 	current.Spec.ExternalName = desired.Spec.ExternalName
+}
+
+// mergeServicePorts overlays the desired ports onto the current ports,
+// preserving a Kubernetes-assigned node port (matched by port name) when the
+// desired Service is NodePort and the desired port leaves NodePort unset (0).
+// A non-zero desired NodePort (an explicit pin) and any non-NodePort Service
+// take the desired ports verbatim, so a ClusterIP Service still strips any
+// tampered node ports.
+func mergeServicePorts(current, desired []corev1.ServicePort, desiredType corev1.ServiceType) []corev1.ServicePort {
+	if desiredType != corev1.ServiceTypeNodePort {
+		return desired
+	}
+
+	assigned := make(map[string]int32, len(current))
+	for _, port := range current {
+		if port.NodePort != 0 {
+			assigned[port.Name] = port.NodePort
+		}
+	}
+
+	merged := make([]corev1.ServicePort, len(desired))
+	copy(merged, desired)
+	for i := range merged {
+		if merged[i].NodePort == 0 {
+			if nodePort, ok := assigned[merged[i].Name]; ok {
+				merged[i].NodePort = nodePort
+			}
+		}
+	}
+
+	return merged
 }
 
 func mergeAnnotationsFor(mergeAnnotations AnnotationMerger, current map[string]string, desired map[string]string) map[string]string {

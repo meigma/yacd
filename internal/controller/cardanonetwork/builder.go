@@ -242,6 +242,18 @@ func (b primaryWorkloadBuilder) chainAPISettings(network *yacdv1alpha1.CardanoNe
 	if err := validateKupoImage(kupo); err != nil {
 		return chainAPISettings{}, err
 	}
+	if chainAPI := network.Spec.ChainAPI; chainAPI != nil {
+		if o := chainAPI.Ogmios; o != nil {
+			if err := validateChainAPIServiceExposure("ogmios", ogmios.enabled, o.Service, o.ExternalURL); err != nil {
+				return chainAPISettings{}, err
+			}
+		}
+		if k := chainAPI.Kupo; k != nil {
+			if err := validateChainAPIServiceExposure("kupo", kupo.enabled, k.Service, k.ExternalURL); err != nil {
+				return chainAPISettings{}, err
+			}
+		}
+	}
 	// The serve sidecar runs (and owns its fixed port) only for LOCAL and
 	// CURATED PUBLIC networks; custom-public has no serve port to reserve.
 	serveEnabled := plan.isLocal() || isCuratedPublicProfile(plan)

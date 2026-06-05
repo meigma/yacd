@@ -1,10 +1,76 @@
 package cardanonetwork
 
 import (
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 )
+
+const (
+	// nodePortRangeMin and nodePortRangeMax bound a pinned chain API node port.
+	// They mirror the Kubernetes default service-node-port-range. The CRD marker
+	// enforces the ceiling; this Go floor check is conditional so that 0 stays
+	// legal as "let Kubernetes auto-assign".
+	nodePortRangeMin int32 = 30000
+	nodePortRangeMax int32 = 32767
+)
+
+// externalURLSchemes is the lenient set of schemes accepted for a chain API
+// externalURL. The CLI probes the URL before trusting it, so this only rejects
+// obviously wrong values rather than pinning a scheme per component.
+var externalURLSchemes = []string{"ws", "wss", "http", "https"}
+
+// validateChainAPIServiceExposure rejects service-exposure and externalURL
+// settings the CRD markers cannot express: the conditional nodePort/type
+// coupling, the nodePort floor, the externalURL shape, and any exposure set on
+// a disabled sidecar. component is "ogmios" or "kupo".
+func validateChainAPIServiceExposure(component string, enabled bool, service *yacdv1alpha1.ServiceExposureSpec, externalURL string) error {
+	externalURL = strings.TrimSpace(externalURL)
+
+	isNodePort := service != nil && service.Type == yacdv1alpha1.ChainAPIServiceTypeNodePort
+	var nodePort int32
+	if service != nil {
+		nodePort = service.NodePort
+	}
+
+	if !enabled {
+		if isNodePort || nodePort != 0 || externalURL != "" {
+			return unsupportedSpec("%s service exposure requires %s to be enabled", component, component)
+		}
+
+		return nil
+	}
+
+	if nodePort != 0 && !isNodePort {
+		return unsupportedSpec("%s service nodePort is only valid when service.type is NodePort", component)
+	}
+	if nodePort != 0 && (nodePort < nodePortRangeMin || nodePort > nodePortRangeMax) {
+		return unsupportedSpec("%s service nodePort must be in the %d-%d range", component, nodePortRangeMin, nodePortRangeMax)
+	}
+
+	return validateExternalURL(component, externalURL)
+}
+
+// validateExternalURL rejects an externalURL that is not an absolute URL with a
+// host or that uses an unsupported scheme. An empty value is allowed.
+func validateExternalURL(component string, externalURL string) error {
+	if externalURL == "" {
+		return nil
+	}
+
+	parsed, err := url.Parse(externalURL)
+	if err != nil || !parsed.IsAbs() || parsed.Host == "" {
+		return unsupportedSpec("%s externalURL must be an absolute URL with a host", component)
+	}
+	if !slices.Contains(externalURLSchemes, parsed.Scheme) {
+		return unsupportedSpec("%s externalURL scheme %q is not supported; supported: %s", component, parsed.Scheme, strings.Join(externalURLSchemes, ", "))
+	}
+
+	return nil
+}
 
 // validateKupoImage rejects kupo images other than the single supported
 // release. Kupo's wire format and chain assumptions are tightly coupled to

@@ -326,6 +326,18 @@ type OgmiosSpec struct {
 	// resources configures the Ogmios container resources.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// service configures how the Ogmios Service is exposed.
+	// +optional
+	Service *ServiceExposureSpec `json:"service,omitempty"`
+
+	// externalURL is the operator-asserted, externally reachable URL for the
+	// Ogmios endpoint, mirrored into status.endpoints.ogmios.externalURL. It
+	// must be an absolute ws/wss/http/https URL with a host. The operator only
+	// advertises this value; making it routable (ingress, NodePort, port-forward)
+	// is the provisioner's responsibility.
+	// +optional
+	ExternalURL string `json:"externalURL,omitempty"`
 }
 
 // KupoSpec configures the Kupo chain index API.
@@ -350,6 +362,50 @@ type KupoSpec struct {
 	// resources configures the Kupo container resources.
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// service configures how the Kupo Service is exposed.
+	// +optional
+	Service *ServiceExposureSpec `json:"service,omitempty"`
+
+	// externalURL is the operator-asserted, externally reachable URL for the
+	// Kupo endpoint, mirrored into status.endpoints.kupo.externalURL. It must be
+	// an absolute ws/wss/http/https URL with a host. The operator only advertises
+	// this value; making it routable (ingress, NodePort, port-forward) is the
+	// provisioner's responsibility.
+	// +optional
+	ExternalURL string `json:"externalURL,omitempty"`
+}
+
+// ChainAPIServiceType selects the Kubernetes Service type for a chain API
+// endpoint.
+// +kubebuilder:validation:Enum=ClusterIP;NodePort
+type ChainAPIServiceType string
+
+const (
+	// ChainAPIServiceTypeClusterIP exposes the endpoint on a cluster-internal IP
+	// only. It is the default.
+	ChainAPIServiceTypeClusterIP ChainAPIServiceType = "ClusterIP"
+
+	// ChainAPIServiceTypeNodePort additionally exposes the endpoint on a static
+	// port on every node, which the local dev stack maps to the host.
+	ChainAPIServiceTypeNodePort ChainAPIServiceType = "NodePort"
+)
+
+// ServiceExposureSpec configures how a chain API Service is exposed.
+type ServiceExposureSpec struct {
+	// type selects the Kubernetes Service type.
+	// +kubebuilder:default=ClusterIP
+	// +optional
+	Type ChainAPIServiceType `json:"type,omitempty"`
+
+	// nodePort pins the node port when type is NodePort. When 0 or omitted,
+	// Kubernetes auto-assigns a port and the controller preserves the
+	// assignment across reconciles. When set, it must be in the 30000-32767
+	// range and is only valid with type NodePort.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=32767
+	// +optional
+	NodePort int32 `json:"nodePort,omitempty"`
 }
 
 // CardanoNetworkStatus defines the observed state of CardanoNetwork.
@@ -527,6 +583,11 @@ type ServiceEndpointStatus struct {
 	// url is a convenience URL for protocols with a stable URL shape.
 	// +optional
 	URL string `json:"url,omitempty"`
+
+	// externalURL is the operator-asserted externally reachable URL, mirrored
+	// from spec when set. It is additive to url (the cluster-local URL).
+	// +optional
+	ExternalURL string `json:"externalURL,omitempty"`
 }
 
 // +kubebuilder:object:root=true

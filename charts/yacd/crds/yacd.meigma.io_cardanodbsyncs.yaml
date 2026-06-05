@@ -770,6 +770,11 @@ spec:
                   metrics:
                     description: metrics is the db-sync Prometheus metrics endpoint.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
@@ -786,6 +791,11 @@ spec:
                     description: postgres is the Postgres endpoint used by db-sync
                       and clients.
                     properties:
+                      externalURL:
+                        description: |-
+                          externalURL is the operator-asserted externally reachable URL, mirrored
+                          from spec when set. It is additive to url (the cluster-local URL).
+                        type: string
                       port:
                         description: port is the Service port.
                         format: int32
