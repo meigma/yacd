@@ -64,3 +64,68 @@ the user, then likely start with P2. Dev stack startup (`moon run root:dev-up`)
 is the implementation-session prerequisite — but P2/P3 want a **k3d** devnet
 (not the Kind/Tilt stack) for live verification; clarify which environment to
 bring up when proceeding.
+
+## 2026-06-05 13:04 — P2 implemented, reviewed, live-proven, PR #114 opened
+
+**P2 is done and up as PR #114** (branch `feat/devnet-external-access-p2`, on
+master `dfa20b8`). Approved plan:
+`~/.claude/plans/please-propose-a-plan-delightful-graham.md`.
+
+### What shipped (10 files, +264/−13, all CLI)
+- `cluster.go`: `PortMapping{HostPort,NodePort}`, exported consts
+  Ogmios 1337/30137 + Kupo 1442/30442, `DefaultPortMappings`, `Spec.PortMappings`
+  populated by `DefaultSpec()`.
+- `k3d/ensure.go` `create()`: renders `--port "H:N@loadbalancer"` per mapping
+  (preallocated slice — lint) + `isHostPortConflict`/`hostPortList` friendly
+  collision error (the bare `"bind:"` marker was dropped in review).
+- `cli/devnet.yaml`: fully-spelled `chainAPI` block (ogmios/kupo
+  enabled+image+port + `service{NodePort,nodePort}` + localhost `externalURL`) —
+  the full spelling is FORCED by `devconfig.validateExplicitFields` (chainAPI
+  present ⇒ enabled/image/port required). `embed.go` comment updated: devnet.yaml
+  now intentionally diverges from `examples/local` (which stays ClusterIP).
+- `cli/devnet.go`: NEW — banner advertises `endpointAddress()` = `externalURL`
+  when set else in-cluster `URL` (this was the review blocker; see below).
+- Tests: `cluster_test.go` (DefaultSpec mappings + nodePort range), `k3d_test.go`
+  (exact `--port` set via `portFlagValues` + collision case), `devnet_test.go`
+  (yaml↔cluster-constant cross-check + banner shows localhost), `testhelpers_test.go`
+  (stub now carries externalURL), `k3d_live_test.go` (gated: real `--port` + dial).
+
+### Adversarial review (workflow `wf_d4ae6b22-ea6`): 7 confirmed findings
+- **BLOCKER (fixed):** `printDevnetUp` printed `endpoint.URL` (in-cluster DNS),
+  not `externalURL` — the whole payoff was invisible. Now uses `endpointAddress`.
+- Fixed: over-broad `"bind:"` collision marker; flimsy `indexOf-1` test →
+  exact-set `portFlagValues`; no `--port` count assertion → exact-set covers it;
+  gated live test now exercises mappings + dials the host ports.
+- Documented (not fixed, approved scope): pre-P2/pre-P1 cluster has NodePort
+  Services but no host mapping → localhost dormant until recreate (P3 probe
+  degrades gracefully). Minor scheme/host literal duplication left as-is (port —
+  the routing-critical number — IS cross-checked to the constant).
+
+### Live k3d proof (real cluster, then torn down)
+- `yacd devnet` came up: cluster + operator + network Ready. Banner showed the
+  **in-cluster** URL, NOT localhost — see the finding below.
+- **Routing PROVEN:** created a standalone NodePort Service on 30137/30442 backed
+  by the real Ogmios/Kupo pods (byte-equivalent to what a P1 operator renders);
+  `curl http://localhost:1337/health` → **HTTP 200 + live chain data**
+  (slot 1508, networkSynchronization 1.0, conway); `localhost:1442/health` →
+  **HTTP 200** (Kupo). The k3d `--port` mapping routes host→NodePort end-to-end.
+- Gated live test (`YACD_CLUSTER_LIVE=1 TestEnsureClusterLive`) **PASS** (35.9s):
+  real k3d v5.9.0 accepts `--port "H:N@loadbalancer"` and the serverlb publishes
+  the host ports (dial succeeds). Devnet torn down, ports 1337/1442 freed.
+
+### ★ KEY FINDING — release ordering (P1 must be RELEASED for the payoff)
+`yacd devnet` installs the operator **by appVersion tag = v0.2.0**, but P1
+(#112) merged AFTER the v0.2.0 release. Live-confirmed: the installed **CRD** (from
+the master-based embedded chart) accepts + stores the NodePort/externalURL spec,
+but the **v0.2.0 operator binary** ignores it → renders ClusterIP, no externalURL
+in status. So P2's devnet payoff is dormant until an operator release containing
+P1 ships (then the CLI installs it and host routing lights up). P2 is
+forward-compatible + harmless to merge meanwhile (banner stays honest via the
+URL fallback; nothing reads the host ports until P3). **Decision owed from user:**
+cut a P1 operator release now, or merge P2 and let the next release activate it.
+TECH_NOTES has no bullet for this yet — add one at close.
+
+### Remaining this session
+- P3 (CLI resolver) not started — depends on status carrying externalURL, which
+  needs a P1 operator at runtime (ties into the release-ordering decision).
+- Await user decision on release ordering; then either P3 or release work.
