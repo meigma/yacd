@@ -50,10 +50,12 @@ func TestVersionFromEmbeddedChartMatchesChartAppVersion(t *testing.T) {
 	version, err := versionFromObjects(objs)
 	require.NoError(t, err)
 
-	// Tracks charts/yacd/Chart.yaml appVersion; bump alongside an operator
-	// release re-sync. This is the tripwire that the embedded chart copy is in
-	// sync with the pinned release.
-	assert.Equal(t, "v0.2.0", version)
+	// The rendered manager version (read from the Deployment's version label,
+	// set by the chart template) must equal the embedded chart's declared
+	// appVersion, so the install advertises the chart it actually ships. Reading
+	// the appVersion instead of a hardcoded literal keeps this green across
+	// releases while still catching template-wiring drift.
+	assert.Equal(t, embeddedChartAppVersion(t), version)
 	assert.True(t, semver.IsValid(version), "embedded version must be valid semver")
 }
 
