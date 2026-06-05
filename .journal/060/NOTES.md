@@ -99,3 +99,41 @@ logically independent of the faucet removal but edits the SAME files
 building on pre-059 master would cause rebase conflicts. Awaiting user's call:
 start now (eat rebase) vs. wait for 059. No worktree created; dev stack not
 started.
+
+## 2026-06-04 19:33 — P1 implemented + green; pre-existing master-red found
+059 landed on master (faucet deleted: #108, wallet verbs #106, #107; release
+0.2.0 #87). Implemented P1 in worktree `.wt/feat-chainapi-external-access` off
+`origin/master`. Dev stack WAIVED for P1 (envtest-only; user-confirmed). Ultracode
+turned off mid-session — implemented directly (no workflow).
+
+Committed `9666ecd` on `feat/chainapi-external-access`:
+- API: `ServiceExposureSpec{type,nodePort}` + `externalURL` on Ogmios/Kupo;
+  `externalURL` on shared `ServiceEndpointStatus` (also surfaces on the dbsync
+  CRD's metrics/postgres endpoints — additive, harmless).
+- settings resolvers map serviceType/nodePort/externalURL (shared
+  `resolveServiceExposure`); builders render Type + `pinnedNodePort`.
+- validation (Go→UnsupportedSpec): `validateChainAPIServiceExposure` +
+  `validateExternalURL` wired into `chainAPISettings`; markers = Enum on type,
+  Maximum=32767 on nodePort (NOT Minimum=30000, to keep 0=auto legal).
+- **MutateService fix** (the landmine): `mergeServicePorts` preserves a
+  k8s-assigned NodePort by name when desired type=NodePort & desired==0; verbatim
+  (clears tampered NodePort) for ClusterIP. Guarded so the 3 existing
+  `...CorrectsService...` tests stay green; no-op for db-sync (ClusterIP).
+- status: mirror trimmed spec externalURL into endpoints inside the
+  service-present branch (nil-guarded helpers; minimal signature, no plumbing).
+- tests: 3 ctrlkit unit tests (the thrash guard — envtest can't reproduce it),
+  6 builder reject-table rows, 2 controller reconcile tests (NodePort render +
+  auto-assign preservation), 1 envtest (externalURL mirror + pinned NodePort +
+  CRD Maximum rejection).
+
+Verification: `moon run root:generate` clean; `moon run root:check` PASS (lint,
+drift guard, helm, chainsaw); `moon run root:test` — `cardanonetwork` +
+`ctrlkit/resources` PASS with all new tests.
+
+**Pre-existing master breakage found:** master CI is RED since the 0.2.0 release
+(#87) — it bumped Chart.yaml appVersion to v0.2.0 but left 6 ssa version
+"tripwire" tests asserting v0.1.1 (`cli/internal/operator/ssa`). Unrelated to P1
+but blocks its CI. User chose a separate fix PR: opened **PR #111**
+(`fix/operator-version-tripwire`, test-only, v0.1.1→v0.2.0, full `root:test`
+green). Next: once #111 merges, rebase `feat/chainapi-external-access` on green
+master and open the P1 PR. P1 not yet pushed.
