@@ -76,9 +76,10 @@ Try:
 ```
 
 !!! note "Keep these handy"
-    The `Wallet` line is a pre-funded developer address, and the network uses
-    network magic `42`. You will use both in the steps below, and the two
-    commands under `Try:` are exactly the next two things you will run.
+    The network uses network magic `42` (you will use it when you query the
+    chain), and the `Wallet` line shows the network's genesis-funded `faucet`
+    wallet, which funds the wallets you create. The two commands under `Try:` are
+    the next two things you will run.
 
 For what the cluster, operator, and network are and how they relate, see
 [Architecture](../concepts/architecture.md).
@@ -120,29 +121,28 @@ The output is a JSON object describing the tip (slot, block, epoch, and sync
 percentage). Run it again after a few seconds and the slot advances, confirming
 the chain is producing blocks.
 
-## 5. Fund an address
+## 5. Fund a wallet
 
-Use the local faucet to send funds to an address. `yacd topup` reaches the
-faucet on its own (it opens a short-lived port-forward), so no `yacd run`
-wrapper is needed. Replace `<address>` with a Cardano testnet address you
-control (the `Wallet` address from step 2 works), and `<lovelace>` with the
-amount to send (1 ADA = 1,000,000 lovelace):
+Every local network is created with a genesis-funded `faucet` wallet. Create a
+new managed wallet and fund it from the faucet in one command, waiting for
+on-chain confirmation:
 
 ```sh
-yacd topup devnet <lovelace> --address <address>
+yacd wallet add devnet --topup 5000000 --await
 ```
 
-`LOVELACE` is a positional argument and `--address` is required. On success the
-faucet submits a funding transaction and `topup` prints the transaction ID. Add
-`--await` to block until the funds are confirmed on-chain.
+This generates a wallet, sends it 5,000,000 lovelace (5 ADA) from the `faucet`
+wallet, and prints the new wallet's address and the funding transaction id.
+`yacd wallet` builds and submits the transaction directly over Ogmios and Kupo;
+there is no separate faucet service.
 
-!!! warning "The faucet is local-only"
-    The faucet and its auth token are part of your local devnet only. Never
-    point `yacd topup` at a shared or public network, and never send the faucet
-    token off your machine.
+!!! note "Wallets fund local development"
+    The `faucet` wallet and the wallets you create exist to fund development on
+    local networks. Public networks have no faucet wallet; fund those from your
+    own keys.
 
-For the full funding workflow, including waiting for on-chain confirmation, see
-the [funding guide](funding.md).
+For the full wallet workflow — funding an existing address, listing, exporting,
+and removing wallets — see the [funding guide](funding.md).
 
 ## 6. Tear it down
 

@@ -29,7 +29,7 @@ Commands:
 | `down NAME` | Delete a YACD environment and wait for clean removal. |
 | `list` | List YACD environments across all namespaces (or one with `-n`). |
 | `info NAME` | Print CardanoNetwork status and connection information. |
-| `topup NAME LOVELACE` | Submit a faucet top-up (self-forwards the faucet). |
+| `wallet <verb> NET` | Manage developer wallets: add, list, topup, export, remove. |
 | `run NAME [-- command ...]` | Run a command (or a shell) on the host with the `YACD_*` environment wired to forwarded endpoints. |
 | `connect NAME` | Forward a network's endpoints and hold them open until interrupted. |
 | `exec NAME -- command ...` | Run a command inside the primary node Pod (for socket-bound tools). |
@@ -120,8 +120,9 @@ current-context; `install` never targets the managed devnet. The global
 `install` reconciles the cluster to the operator version this CLI embeds: it
 installs when absent, upgrades an older same-major install, re-applies an equal
 version to heal drift, and refuses a newer or major-mismatched in-cluster version
-with actionable guidance. The operator image is digest-pinned to the embedded
-version; the supported way to change the operator version is to upgrade the CLI.
+with actionable guidance. The operator image is pinned to the chart's appVersion
+(the version this CLI embeds); the supported way to change the operator version
+is to upgrade the CLI.
 
 | Flag | Short | Type | Default | Meaning |
 | --- | --- | --- | --- | --- |
@@ -135,15 +136,15 @@ version; the supported way to change the operator version is to upgrade the CLI.
 The override flags customize **operational** chart values (replicas, resources,
 scheduling, logging, metrics, and so on), validated against the chart's schema so
 a bad value fails fast (under `--dry-run` too). Precedence, later wins: `-f` files
-(in order) < `--set` < `--set-string`. Because user values deep-merge over the
-defaults, `--set image.tag` is ineffective (the chart renders `repository@digest`
-and the pinned digest wins); `--set image.digest` or `image.repository` do
-repoint the operator image but are not a supported configuration.
+(in order) < `--set` < `--set-string`. The operator `image.*` values are not part
+of the supported surface: a `--set image.tag`, `image.repository`, or
+`image.digest` will repoint the operator image, but the supported way to change
+the operator version is to upgrade the CLI.
 
 `--dry-run` prints the action the next install would take and changes nothing:
 
 ```text
-Plan: install operator (installed none -> v0.1.1) in namespace yacd-system
+Plan: install operator (installed none -> v0.2.0) in namespace yacd-system
 ```
 
 See [Installation](../operator/installation.md) for the full operator-install
@@ -159,9 +160,10 @@ yacd init
 
 Prints a fully-commented developer environment template to stdout and takes no
 arguments or flags beyond the [global flags](#global-flags). The active
-configuration is a ready-to-run local devnet (faucet plus a pre-funded wallet);
-commented blocks document the rest of the API, including chain-API overrides and
-a public/mainnet alternative. Redirect it to a file and apply it:
+configuration is a ready-to-run local devnet; local networks automatically get a
+genesis-funded `faucet` wallet. Commented blocks document the rest of the API,
+including chain-API overrides and a public/mainnet alternative. Redirect it to a
+file and apply it:
 
 ```sh
 yacd init > yacd.yaml
@@ -229,8 +231,8 @@ table by default or JSON with `--json`.
 The table columns are `NAME`, `NAMESPACE`, `MODE`, `READY`, `ENDPOINTS`.
 `READY` reflects a fresh `Ready` condition observed as `True` (a stale status is
 reported as not ready). `ENDPOINTS` is a comma-separated list of published
-endpoint names (`node-to-node`, `ogmios`, `kupo`, `faucet`) or `-` when none are
-published yet.
+endpoint names (`node-to-node`, `ogmios`, `kupo`) or `-` when none are published
+yet.
 
 The `--json` output is an array of objects with fields:
 
@@ -240,7 +242,7 @@ The `--json` output is an array of objects with fields:
 | `namespace` | string | CardanoNetwork namespace. |
 | `mode` | string | Requested network mode (`local` or `public`). |
 | `ready` | bool | Fresh `Ready` condition observed as `True`. |
-| `endpoints` | object | `nodeToNode`, `ogmios`, `kupo`, `faucet` URLs; empty when unpublished. |
+| `endpoints` | object | `nodeToNode`, `ogmios`, `kupo` URLs; empty when unpublished. |
 
 ## info
 
@@ -265,64 +267,91 @@ empty objects.
 | `namespace` | string | CardanoNetwork namespace. |
 | `observedGeneration` | int | Last generation the controller observed. Omitted when 0. |
 | `network` | object | `mode`, `localnetFingerprint`, `networkMagic`, `profile`, `era`. |
-| `endpoints` | object | `nodeToNode`, `ogmios`, `kupo`, `faucet`, each `{serviceName, port, url}` or absent. |
-| `faucet` | object | `{authSecretName}`. Omitted when no faucet is published. |
-| `wallet` | object | `{address, keySecretName, funded}`. Omitted when no developer wallet exists. |
+| `endpoints` | object | `nodeToNode`, `ogmios`, `kupo`, each `{serviceName, port, url}` or absent. |
+| `wallet` | object | `{address, keySecretName}` of the genesis-funded `faucet` wallet. Omitted when the network has none (non-local networks). |
 | `conditions` | array | Each `{type, status, reason, message, observedGeneration, lastTransitionTime}` (RFC3339 timestamp). |
 
-## topup
+## wallet
 
 ```text
-yacd topup NAME LOVELACE [flags]
+yacd wallet <command> NET [args] [flags]
 ```
 
-Submits a faucet top-up. `LOVELACE` is a positional argument: the exact amount to
-send, which must be greater than 0. By default `topup` **self-forwards** — it
-opens a short-lived port-forward to the cluster faucet (and to Kupo when
-`--await` is set), so it works directly from your host with no `yacd run`
-wrapper. It gates token transmission through the trust checks below, fetches the
-auth token from the published Secret, then `POST`s to the faucet's `/v1/topups`
-endpoint.
+Manages developer wallets for a network and funds them by building, signing, and
+submitting transactions directly over the network's Ogmios and Kupo endpoints;
+there is no in-cluster faucet service. Keys are stored as labeled Kubernetes
+Secrets (`<network>-wallet-<name>`) in the network's namespace, and the CLI reads
+them to sign locally.
+
+Every local network has a reserved, operator-owned genesis-funded `faucet` wallet
+that funding spends from by default. The `WALLET` argument of `topup`, `remove`,
+and `export` accepts a managed wallet name, a public key (hex), or a bech32
+`addr_test...` address.
+
+### wallet list
+
+```text
+yacd wallet list NET [flags]
+```
+
+Lists the managed wallets for a network (including `faucet`) with each wallet's
+name, address, and source. `--json` prints a machine-readable array.
+
+### wallet add
+
+```text
+yacd wallet add NET [flags]
+```
+
+Generates a new managed wallet and, with `--topup`, funds it from the `faucet`
+wallet.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `--address` | string | `""` | Destination Cardano testnet address. Required. |
-| `--source` | string | `""` | Faucet source name, for example `utxo1`. Empty lets the faucet pick a default. |
-| `--faucet-url` | string | `""` | Override the faucet URL from CardanoNetwork status. |
-| `--trust-faucet-url` | bool | `false` | Allow sending the faucet auth token to a custom non-loopback URL. |
-| `--allow-insecure-faucet-url` | bool | `false` | Allow trusted custom non-loopback HTTP faucet URLs. |
+| `--name` | string | generated | Wallet name (default: a generated adjective-noun name). |
+| `--topup` | string | `""` | Fund the new wallet with this many lovelace from the faucet. |
+| `--await` | bool | `false` | Wait for the funding transaction to confirm on-chain (requires `--topup`). |
+| `--await-timeout` | duration | `2m0s` | Maximum time to wait for `--await` confirmation. |
 | `--json` | bool | `false` | Print machine-readable JSON. |
-| `--await` | bool | `false` | Wait for the funding transaction to be confirmed on-chain (requires Kupo). |
-| `--await-timeout` | duration | `2m0s` | Maximum time to wait for `--await` confirmation. Must be greater than 0. |
-| `--kupo-url` | string | `""` | Kupo URL for `--await`. Falls back to `YACD_KUPO_URL`. |
 
-The default target requires the CardanoNetwork to be faucet-ready: a fresh
-status with `Ready` and `FaucetReady` conditions `True`, a published faucet
-endpoint, and a published faucet auth Secret.
+### wallet topup
 
-Faucet transport: with no override, `topup` self-forwards the cluster-internal
-faucet Service to a loopback port for the duration of the request. Inside
-[`yacd run`](#run) it instead reuses the ambient `YACD_FAUCET_URL` (and
-`YACD_KUPO_URL` for `--await`) rather than opening a second forward. An explicit
-`--faucet-url` suppresses self-forwarding and targets that URL directly; with an
-override, `--await` needs an explicit `--kupo-url` (or `YACD_KUPO_URL`).
+```text
+yacd wallet topup NET WALLET LOVELACE [flags]
+```
 
-!!! warning "The faucet token leaves the cluster only with explicit acks"
-    By default the token is sent only to a loopback target (the self-forwarded or
-    `run`-inherited faucet URL). An explicit `--faucet-url` at a non-loopback
-    host requires `--trust-faucet-url`; a trusted `http://` (plaintext) host
-    additionally requires `--allow-insecure-faucet-url`. These gates prevent
-    token exfiltration and plaintext eavesdropping.
+Funds `WALLET` with `LOVELACE` (positional, must be greater than 0) from the
+`faucet` wallet, or from another managed wallet with `--from`. It forwards Ogmios
+and Kupo itself, so no `yacd run` wrapper or URL flags are needed.
 
-The `--json` output mirrors the faucet's success envelope:
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--from` | string | `faucet` | Source wallet name to fund from (default: the faucet wallet). |
+| `--await` | bool | `false` | Wait for the funding transaction to confirm on-chain. |
+| `--await-timeout` | duration | `2m0s` | Maximum time to wait for `--await` confirmation. |
+| `--json` | bool | `false` | Print machine-readable JSON. |
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `txId` | string | Funding transaction id. |
-| `source` | string | Faucet source the funds came from. |
-| `sourceAddress` | string | Source address. |
-| `destinationAddress` | string | Address that was funded. |
-| `lovelace` | int | Lovelace sent. |
+### wallet export
+
+```text
+yacd wallet export NET WALLET [flags]
+```
+
+Writes the wallet's `<name>.skey`, `<name>.vkey`, and `<name>.addr` files
+(mode `0600`) to `.yacd/<namespace>/<network>/wallets/<name>/`.
+
+| Flag | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `--out` | string | `.yacd/<ns>/<net>/wallets/<name>` | Directory to write the wallet files into. |
+| `--force` | bool | `false` | Overwrite existing wallet files. |
+
+### wallet remove
+
+```text
+yacd wallet remove NET WALLET
+```
+
+Deletes a managed wallet. The reserved `faucet` wallet cannot be removed.
 
 ## run
 
@@ -369,9 +398,9 @@ re-establish), the endpoints file is removed.
 
 `connect` has no command-specific flags beyond the [global flags](#global-flags).
 
-!!! note "Loopback ports are ephemeral and token-free"
-    The endpoints file never contains the faucet token, and its ports are only
-    live while `connect` is running. See the [endpoints.json schema](#the-endpointsjson-schema).
+!!! note "Loopback ports are ephemeral"
+    The endpoints file holds no secrets, and its ports are only live while
+    `connect` is running. See the [endpoints.json schema](#the-endpointsjson-schema).
 
 ## exec
 
@@ -421,8 +450,6 @@ or removing one is a breaking change to the contract.
 | `YACD_NETWORK_MAGIC` | network magic (integer) | network magic (integer) | when the controller has published the network magic |
 | `YACD_OGMIOS_URL` | loopback URL (scheme preserved, e.g. `ws://`) | published ClusterIP URL | when Ogmios is published and forwarded |
 | `YACD_KUPO_URL` | loopback URL | published ClusterIP URL | when Kupo is published and forwarded |
-| `YACD_FAUCET_URL` | loopback URL | published ClusterIP URL | when the faucet is published and forwarded |
-| `YACD_FAUCET_TOKEN` | faucet auth Bearer token | *not set* | host `run` only, when the token is non-empty |
 | `CARDANO_NODE_SOCKET_PATH` | *not set* | `/ipc/node.socket` | in-pod `exec` only |
 
 Notes:
@@ -436,13 +463,9 @@ Notes:
 - `CARDANO_NODE_SOCKET_PATH` is unprefixed because that is the name
   `cardano-cli` already expects.
 
-!!! warning "`YACD_FAUCET_TOKEN` is host-only"
-    `exec` deliberately omits `YACD_FAUCET_TOKEN`: a Bearer token in the exec
-    argv would land in apiserver audit logs and `/proc`. In-pod tooling does not
-    need it. `yacd topup` reads the token from the cluster directly.
-
-`yacd topup --await` reads `--kupo-url` from `YACD_KUPO_URL` through this
-contract, so it works unchanged when run under `yacd run`.
+`yacd wallet topup --await` forwards Ogmios and Kupo itself, so it confirms
+on-chain without needing these variables; inside `yacd run` it reuses the
+forwards already established.
 
 ## The endpoints.json schema
 
@@ -457,8 +480,7 @@ contract, so it works unchanged when run under `yacd run`.
   "namespace": "my-net",
   "networkMagic": 42,
   "ogmiosUrl": "ws://127.0.0.1:51820",
-  "kupoUrl": "http://127.0.0.1:51821",
-  "faucetUrl": "http://127.0.0.1:51822"
+  "kupoUrl": "http://127.0.0.1:51821"
 }
 ```
 
@@ -469,10 +491,9 @@ contract, so it works unchanged when run under `yacd run`.
 | `networkMagic` | int | Network magic. Omitted until the controller publishes it. |
 | `ogmiosUrl` | string | Loopback Ogmios URL. Omitted when not forwarded. |
 | `kupoUrl` | string | Loopback Kupo URL. Omitted when not forwarded. |
-| `faucetUrl` | string | Loopback faucet URL. Omitted when not forwarded. |
 
-The document deliberately never carries the faucet token, and the ports it lists
-are only live while `connect` is running. The file is removed on disconnect.
+The ports it lists are only live while `connect` is running, and the file is
+removed on disconnect.
 
 ## Install
 

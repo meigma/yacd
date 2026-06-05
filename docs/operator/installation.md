@@ -25,7 +25,7 @@ This page covers installing onto an existing cluster. For a local [k3d](https://
 
 === "Helm"
 
-    Install the chart into a namespace, creating it if it does not exist. Replace `<version>` with the release version you want (for example `0.1.1`) and `<namespace>` with your target namespace.
+    Install the chart into a namespace, creating it if it does not exist. Replace `<version>` with the release version you want (for example `0.2.0`) and `<namespace>` with your target namespace.
 
     ```sh
     helm install yacd oci://ghcr.io/meigma/yacd/chart \
@@ -34,7 +34,7 @@ This page covers installing onto an existing cluster. For a local [k3d](https://
       --create-namespace
     ```
 
-    The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.1.1` ships `appVersion` `v0.1.1`). To inspect the chart metadata before installing:
+    The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.2.0` ships `appVersion` `v0.2.0`). To inspect the chart metadata before installing:
 
     ```sh
     helm show chart oci://ghcr.io/meigma/yacd/chart --version <version>
@@ -98,9 +98,9 @@ The Service is a `ClusterIP` named `yacd-controller-manager-metrics-service`, ex
 
 ## Supply-chain image verification (optional)
 
-The release workflow attests the manager image, faucet image, and Helm chart with GitHub-native (Sigstore keyless) attestations. The chart includes an opt-in [Kyverno](https://kyverno.io) `ClusterPolicy` that verifies those attestations on admission. It is disabled by default (`kyverno.imageVerification.enabled: false`).
+The release workflow attests the manager image and Helm chart with GitHub-native (Sigstore keyless) attestations. The chart includes an opt-in [Kyverno](https://kyverno.io) `ClusterPolicy` that verifies those attestations on admission. It is disabled by default (`kyverno.imageVerification.enabled: false`).
 
-Enabling it requires a running Kyverno installation in the cluster. When enabled with no explicit `imageReferences`, the policy verifies the configured manager and faucet image repositories, requiring a keyless Sigstore attestation from the `meigma/yacd` release workflow. To enable it:
+Enabling it requires a running Kyverno installation in the cluster. When enabled with no explicit `imageReferences`, the policy verifies the configured manager image repository, requiring a keyless Sigstore attestation from the `meigma/yacd` release workflow. To enable it:
 
 === "yacd install"
 

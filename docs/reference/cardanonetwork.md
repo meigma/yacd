@@ -2,9 +2,8 @@
 
 `CardanoNetwork` is the YACD custom resource that declares a single Cardano
 development network: one primary [cardano-node](https://developers.cardano.org)
-workload plus its chain APIs ([Ogmios](https://ogmios.dev),
-[Kupo](https://cardanosolutions.github.io/kupo/), a local faucet, and an
-optional developer wallet).
+workload plus its chain APIs ([Ogmios](https://ogmios.dev) and
+[Kupo](https://cardanosolutions.github.io/kupo/)).
 
 | | |
 | --- | --- |
@@ -175,15 +174,12 @@ The genesis `profile` values control fee and minimum-UTxO behavior:
 ### spec.chainAPI
 
 `chainAPI` configures APIs exposed next to the primary node. Ogmios and Kupo are
-enabled by default. The faucet and wallet are opt-in because they expose a
-spending endpoint.
+enabled by default.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `ogmios` | [OgmiosSpec](#specchainapiogmios) | no | Ogmios sidecar and Service. |
 | `kupo` | [KupoSpec](#specchainapikupo) | no | Kupo sidecar and Service. |
-| `faucet` | [FaucetSpec](#specchainapifaucet) | no | Faucet sidecar and Service. |
-| `wallet` | [WalletSpec](#specchainapiwallet) | no | Pre-funded developer wallet for local networks. |
 
 #### spec.chainAPI.ogmios
 
@@ -203,33 +199,12 @@ spending endpoint.
 | `port` | integer (int32) | yes | `1442` | `1`–`65535` | Kupo service port. |
 | `resources` | [ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.30/#resourcerequirements-v1-core) | no | — | — | Kupo container resources. |
 
-#### spec.chainAPI.faucet
-
-| Field | Type | Required | Default | Constraints | Description |
-| --- | --- | --- | --- | --- | --- |
-| `enabled` | boolean | yes | `false` | — | Whether the faucet sidecar is deployed. |
-| `image` | string | no | — | — | Overrides the faucet image reference. When omitted, the controller uses its configured default. Overrides must use the same repository as the controller's default faucet image; tag or digest may vary. |
-| `port` | integer (int32) | yes | `8080` | `1`–`65535` | Faucet service port. |
-| `defaultSource` | string | yes | `utxo1` | — | Generated cardano-testnet UTxO source used when a request does not select one explicitly. |
-| `minTopUpLovelace` | integer (int64) | yes | `1000000` | minimum `1` | Minimum exact top-up amount. |
-| `maxTopUpLovelace` | integer (int64) | yes | `10000000000` | minimum `1` | Maximum exact top-up amount. |
-| `resources` | [ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.30/#resourcerequirements-v1-core) | no | — | — | Faucet container resources. |
-
-!!! warning "The faucet is local-only and spends funds"
-    The faucet exposes a spending endpoint and is intended for local
-    development networks only. Mutating requests require the bearer token
-    published in `status.faucet.authSecretName`.
-
-#### spec.chainAPI.wallet
-
-`wallet` configures a pre-funded developer wallet that the controller
-bootstraps for local development networks. It requires the faucet and Kupo to be
-enabled and is supported in local mode only.
-
-| Field | Type | Required | Default | Constraints | Description |
-| --- | --- | --- | --- | --- | --- |
-| `enabled` | boolean | yes | `false` | — | Whether the controller bootstraps a developer wallet. |
-| `fundingLovelace` | integer (int64) | yes | `100000000000` | minimum `1` | Amount the controller funds the wallet with on first bring-up, through the faucet. Must not exceed the faucet's `maxTopUpLovelace`. |
+!!! note "No faucet field — funding is CLI-native"
+    There is no `chainAPI.faucet` or `chainAPI.wallet` field. Every local network
+    is created with a genesis-funded `faucet` wallet, stored as a
+    `<network>-wallet-faucet` Secret; fund developer wallets from it with the
+    [`yacd wallet`](cli.md#wallet) verbs. The faucet wallet has no `spec` knobs
+    and no `status` block.
 
 ## status
 
@@ -241,8 +216,6 @@ the controller and are read-only.
 | `observedGeneration` | integer (int64) | Most recent generation observed by the controller. |
 | `network` | [CardanoNetworkIdentityStatus](#statusnetwork) | Resolved network identity once chain material is generated or loaded. |
 | `endpoints` | [CardanoNetworkEndpointsStatus](#statusendpoints) | Cluster-local connection details for clients and supporting controllers. |
-| `faucet` | [FaucetStatus](#statusfaucet) | Faucet-specific runtime details. |
-| `wallet` | [WalletStatus](#statuswallet) | Bootstrapped developer wallet details. |
 | `sync` | [CardanoNetworkSyncStatus](#statussync) | Primary node chain synchronization status inferred from in-cluster sources. |
 | `conditions` | [][Condition](#conditions) | Current state of the resource (list-map keyed by `type`). |
 
@@ -266,7 +239,6 @@ Each endpoint is a [ServiceEndpointStatus](#serviceendpointstatus).
 | `nodeToNode` | ServiceEndpointStatus | Primary node-to-node endpoint. |
 | `ogmios` | ServiceEndpointStatus | Ogmios JSON/RPC endpoint. |
 | `kupo` | ServiceEndpointStatus | Kupo chain index HTTP endpoint. |
-| `faucet` | ServiceEndpointStatus | Local development faucet HTTP endpoint. |
 | `artifacts` | ServiceEndpointStatus | cardano-tools `serve` HTTP endpoint exposing the staged network artifact files and `manifest.json`. |
 
 #### ServiceEndpointStatus
@@ -276,21 +248,6 @@ Each endpoint is a [ServiceEndpointStatus](#serviceendpointstatus).
 | `serviceName` | string | Kubernetes Service name. |
 | `port` | integer (int32) | Service port. |
 | `url` | string | Convenience URL for protocols with a stable URL shape. |
-
-### status.faucet
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `authSecretName` | string | Same-namespace Secret containing the bearer token used by mutating faucet requests. |
-
-### status.wallet
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `address` | string | Wallet's enterprise testnet payment address (`addr_test...`). |
-| `keySecretName` | string | Same-namespace Secret holding the wallet's signing and verification key envelopes. |
-| `funded` | boolean | Whether the wallet's funding has been confirmed on-chain. |
-| `fundedTxID` | string | Faucet transaction that funded the wallet. |
 
 ### status.sync
 
@@ -334,7 +291,5 @@ entries, keyed by a unique `type`. Each condition `status` is one of `True`,
 | `ArtifactsReady` | The network artifact bundle is staged and served over HTTP. |
 | `OgmiosReady` | Ogmios is enabled and connected to the primary node. |
 | `KupoReady` | Kupo is enabled and synchronized enough to serve its API. |
-| `FaucetReady` | The faucet is enabled and available through its Service. |
-| `WalletReady` | The developer wallet is bootstrapped and funded on-chain. |
 | `Progressing` | The resource is being created or updated. |
 | `Degraded` | The resource failed to reach or maintain its desired state. |

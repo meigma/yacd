@@ -109,7 +109,6 @@ spec.network.node.port must be set explicitly in developer config
 | `spec.network.local.genesis` | `spec.network.local.genesis.profile` |
 | `spec.network.chainAPI.ogmios` | `...ogmios.enabled`, `...ogmios.image`, `...ogmios.port` |
 | `spec.network.chainAPI.kupo` | `...kupo.enabled`, `...kupo.image`, `...kupo.port` |
-| `spec.network.chainAPI.faucet` | `...faucet.enabled`, `...faucet.port`, `...faucet.defaultSource`, `...faucet.minTopUpLovelace`, `...faucet.maxTopUpLovelace` |
 
 These rules cover only *presence* in the source. The accepted values, types,
 and defaults for each field are documented in the

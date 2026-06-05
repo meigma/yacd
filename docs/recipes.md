@@ -27,14 +27,14 @@ see [CLI reference](reference/cli.md).
 
 ## Local networks
 
-A local network runs a self-contained devnet with a fast block schedule, an
-optional faucet, and an optional pre-funded developer wallet. See the
+A local network runs a self-contained devnet with a fast block schedule. Every
+local network is created with a genesis-funded `faucet` wallet that you fund
+developer wallets from with [`yacd wallet`](developer/funding.md). See the
 [Environment file reference](reference/environment.md) for every field.
 
 ### Single-pool local devnet
 
-Use when you want an isolated, fast local Cardano network with a funded
-developer wallet and a faucet for top-ups.
+Use when you want an isolated, fast local Cardano network.
 
 ```yaml
 apiVersion: yacd.meigma.io/devconfig/v1alpha1
@@ -47,18 +47,9 @@ spec:
       port: 3001
       storage:
         size: 2Gi
-    chainAPI:
-      faucet:
-        enabled: true
-        port: 8080
-        defaultSource: utxo1
-        minTopUpLovelace: 1000000
-        # Raised so the operator can fund the developer wallet (100,000 ADA)
-        # through the faucet within the per-request maximum.
-        maxTopUpLovelace: 100000000000
-      wallet:
-        enabled: true
-        fundingLovelace: 100000000000
+    # Ogmios and Kupo are enabled by default. A local network is automatically
+    # given a genesis-funded `faucet` wallet — the network's funded wallet and
+    # the default source for `yacd wallet topup`.
     local:
       networkMagic: 42
       era: conway
@@ -69,10 +60,6 @@ spec:
         pools:
           count: 1
 ```
-
-!!! warning "The faucet is local-only"
-    The faucet and the pre-funded developer wallet exist only on local
-    networks. They are never provisioned for public profiles.
 
 ## Public networks
 

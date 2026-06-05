@@ -88,11 +88,6 @@ stream without a TTY:
 yacd exec my-net -- sh
 ```
 
-!!! warning "The faucet token is host-only"
-    `YACD_FAUCET_TOKEN` is never set in the `exec` environment. A Bearer token
-    on the in-pod command line would leak into apiserver audit logs. Tools that
-    need the token must run on the host under `run` or `connect`.
-
 ## Hold forwards open
 
 Use `yacd connect NAME` when several host processes need the endpoints at once,
@@ -124,27 +119,27 @@ with the same name in different namespaces do not collide:
 ```
 
 Read the loopback URLs from that file in any host process. The file is created
-`0600` under `0700` directories, its ports are only live while `connect` is
-running, and it **never contains the faucet token**. For the document's field
-names and shape, see the [endpoints.json schema](../reference/cli.md).
+`0600` under `0700` directories, holds no secrets, and its ports are only live
+while `connect` is running. For the document's field names and shape, see the
+[endpoints.json schema](../reference/cli.md).
 
-## Fund an address from a test
+## Fund a wallet from a test
 
-`yacd topup NAME LOVELACE --address ADDR --await` funds `ADDR` through the faucet
-and polls Kupo until the funding transaction's output appears, so a test never
-races chain inclusion. `topup` self-forwards the faucet and Kupo on its own, so
-it needs no `yacd run` wrapper and no URL flags:
+`yacd wallet topup NET WALLET LOVELACE --await` funds a target and polls Kupo
+until the funding transaction's output appears, so a test never races chain
+inclusion. The `WALLET` argument is a managed wallet name or a bech32
+`addr_test...` address, and `topup` forwards Ogmios and Kupo itself — no `yacd
+run` wrapper and no URL flags:
 
 ```sh
 export ADDR=addr_test1... # the address your test funds
-yacd topup my-net 1000000 --address "$ADDR" --await
+yacd wallet topup my-net "$ADDR" 1000000 --await
 ```
 
-Run inside `yacd run`, `topup` instead inherits the ambient `YACD_FAUCET_URL`
-and `YACD_KUPO_URL` and reuses those forwards rather than opening a second one.
-Either way the loopback faucet URL is exempt from the `topup` trust gate, so no
-`--trust-faucet-url` is needed. See the [CLI reference](../reference/cli.md) for
-all `topup` flags.
+Funds come from the network's genesis `faucet` wallet by default; `--from`
+selects another managed wallet. See the
+[CLI reference](../reference/cli.md#wallet) for all `wallet` flags and the
+[funding guide](funding.md) for the full wallet workflow.
 
 ## See also
 

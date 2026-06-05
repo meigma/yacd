@@ -52,8 +52,8 @@ the services exposed next to the node. The controller reconciles the node into a
 workload backed by a PVC for the node database, publishes resolved network
 identity and cluster-local Service endpoints into status, and tracks health
 through a set of `metav1.Condition` entries (`Ready`, `NodeReady`,
-`NodeSynchronized`, `OgmiosReady`, `KupoReady`, `FaucetReady`, `WalletReady`,
-`ArtifactsReady`, and others). Status reports only what the controller can
+`NodeSynchronized`, `OgmiosReady`, `KupoReady`, `ArtifactsReady`, and others).
+Status reports only what the controller can
 observe in-cluster, so consumers do not trust stale or hand-edited values.
 
 Two chain-access services are enabled by default, because a raw `cardano-node`
@@ -61,9 +61,10 @@ is not enough to build against. [Ogmios](https://ogmios.dev) is the default
 chain-access API: it gives YACD and developers a JSON/RPC interface for query,
 submit, and evaluate without every client having to share the node's Unix
 socket. [Kupo](https://cardanosolutions.github.io/kupo/) is the default chain
-index. A local-only faucet is also available but is **opt-in**, because it
-exposes a spending endpoint; it must be explicitly enabled. For the exact
-defaults, ports, and images, see the
+index. Funding is CLI-native: every local network is created with a
+genesis-funded `faucet` wallet, and the `yacd wallet` verbs build and submit
+funding transactions directly over Ogmios and Kupo — there is no in-cluster
+faucet service. For the exact defaults, ports, and images, see the
 [CardanoNetwork reference](../reference/cardanonetwork.md).
 
 ## Supporting-service CRDs: CardanoDBSync
@@ -174,11 +175,11 @@ table, and the `endpoints.json` schema, see the
 [CLI reference](../reference/cli.md) and the
 [connecting tools guide](../developer/connecting-tools.md).
 
-!!! warning "The faucet is local-only and host-gated"
-    The faucet funds addresses on local development networks only. The CLI
-    forwards it to loopback and exempts the loopback URL from its trust gate;
-    targeting a custom non-loopback faucet URL from the host requires explicit
-    trust flags so the bearer token is never sent to an unexpected host. See the
+!!! note "Funding is CLI-native"
+    Local networks are created with a genesis-funded `faucet` wallet. The `yacd
+    wallet` verbs spend from it by building and signing transactions on the host
+    and submitting them over Ogmios and Kupo; wallet keys live in labeled
+    Kubernetes Secrets and never leave for a server-side signer. See the
     [funding guide](../developer/funding.md) and the
     [security model](security.md).
 

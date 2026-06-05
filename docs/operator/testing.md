@@ -45,9 +45,8 @@ yacd run my-net -- go test ./e2e/...
 
 Always put `--` before the test command so its own flags are passed through to
 it rather than parsed by `yacd`. Inside the command, the runner reads endpoints
-from `YACD_OGMIOS_URL`, `YACD_KUPO_URL`, and `YACD_FAUCET_URL` (loopback URLs on
-the host) plus `YACD_FAUCET_TOKEN` for the host-only faucet. The variable names
-and the loopback/faucet-token details are documented once in
+from `YACD_OGMIOS_URL` and `YACD_KUPO_URL` (loopback URLs on the host). The
+variable names and loopback details are documented once in
 [Host access and the `YACD_*` contract](../developer/connecting-tools.md).
 
 !!! warning "Use `exec`, not `run`, for `cardano-cli`"

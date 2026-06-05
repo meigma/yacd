@@ -9,8 +9,8 @@ yacd ships as two surfaces:
 - A **Kubernetes operator** that owns declarative cluster state. The
   `CardanoNetwork` CRD reconciles a Cardano node with [Ogmios](https://ogmios.dev)
   as the default chain API, [Kupo](https://cardanosolutions.github.io/kupo/) as
-  the default chain index, and an opt-in token-protected faucet for local
-  top-ups.
+  the default chain index. Local networks also get a genesis-funded `faucet`
+  wallet for funding development.
 - A companion **`yacd` CLI** that owns local developer workflow: standing up a
   devnet, applying a checked-in config, waiting for readiness, printing
   connection details, forwarding endpoints to your host, and funding wallets.

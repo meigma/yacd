@@ -12,10 +12,10 @@ Reference for configuring the YACD operator. There are two layers:
    directly only when running the manager binary outside the chart.
 
 !!! note "Operator image with `yacd install`"
-    With `yacd install`, the operator image is digest-pinned to the CLI build, so
-    `image.tag` is inert and the supported way to change the operator version is
-    to upgrade the CLI. The other operational values behave the same across both
-    install methods.
+    With `yacd install`, the operator image is pinned to the chart's `appVersion`
+    (the version the CLI embeds). Changing `image.*` is not the supported way to
+    move the operator version — upgrade the CLI instead. The other operational
+    values behave the same across both install methods.
 
 This page documents the operator's own configuration. For the `yacd` CLI flags,
 environment variables, and `endpoints.json` schema, see
@@ -36,10 +36,7 @@ listed.
 | `image.tag` | `""` | Manager image tag. Empty uses the chart `appVersion`. |
 | `image.digest` | `""` | Manager image digest (`sha256:...`). When set, it takes precedence over `image.tag`. |
 | `image.pullPolicy` | `IfNotPresent` | Manager image pull policy. |
-| `faucet.image.repository` | `ghcr.io/meigma/yacd/faucet` | Faucet image used for CardanoNetwork faucet sidecars. |
-| `faucet.image.tag` | `""` | Faucet image tag. Empty uses the chart `appVersion`. |
-| `faucet.image.digest` | `""` | Faucet image digest. When set, it takes precedence over the tag. |
-| `cardanoTestnet.image.repository` | `""` | Overrides the cardano-testnet tools image (create-env init container, faucet source-address init container, and the primary cardano-node container when `spec.node.image` is unset). Empty uses the operator's built-in versioned reference. |
+| `cardanoTestnet.image.repository` | `""` | Overrides the cardano-testnet tools image (the create-env init container and the primary cardano-node container when `spec.node.image` is unset). Empty uses the operator's built-in versioned reference. |
 | `cardanoTestnet.image.tag` | `""` | Tag for the cardano-testnet override. Applied only when `repository` is set. |
 | `cardanoTestnet.image.digest` | `""` | Digest for the cardano-testnet override. When set, it takes precedence over the tag. |
 | `cardanoTools.image.repository` | `""` | Overrides the cardano-tools utility image used for artifact staging containers. Empty uses the operator's built-in versioned reference. |
@@ -153,7 +150,7 @@ requires Kyverno to be installed in the cluster.
 | `kyverno.imageVerification.name` | `""` | Policy name. Empty derives the name from the release. |
 | `kyverno.imageVerification.validationFailureAction` | `Enforce` | Policy action when verification fails (`Enforce` or `Audit`). |
 | `kyverno.imageVerification.webhookTimeoutSeconds` | `30` | Admission webhook timeout for the policy. |
-| `kyverno.imageVerification.imageReferences` | `[]` | Image reference globs the policy applies to. Empty falls back to the manager and faucet repositories (each with `:*` and `@*`). |
+| `kyverno.imageVerification.imageReferences` | `[]` | Image reference globs the policy applies to. Empty falls back to the manager repository (with `:*` and `@*`). |
 | `kyverno.imageVerification.attestor.issuer` | `https://token.actions.githubusercontent.com` | Keyless OIDC issuer for the signing identity. |
 | `kyverno.imageVerification.attestor.subject` | `""` | Exact OIDC subject (certificate identity). |
 | `kyverno.imageVerification.attestor.subjectRegExp` | `^https://github\.com/meigma/yacd/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$` | OIDC subject regular expression. |
@@ -182,6 +179,5 @@ outside the chart.
 | `--webhook-cert-path` | `""` (unset) | Directory holding the webhook server certificate material. Empty disables the certificate watcher. |
 | `--webhook-cert-name` | `tls.crt` | Webhook certificate filename within `--webhook-cert-path`. |
 | `--webhook-cert-key` | `tls.key` | Webhook private key filename within `--webhook-cert-path`. |
-| `--default-faucet-image` | `ghcr.io/meigma/yacd/faucet:dev` | Faucet image used when a CardanoNetwork does not set `spec.chainAPI.faucet.image`. The chart renders this from `faucet.image.*`. |
-| `--default-cardano-testnet-image` | `""` | Override the cardano-testnet image used for the create-env init container, the faucet source-address init container, and the default cardano-node container. Empty uses the built-in versioned reference. |
+| `--default-cardano-testnet-image` | `""` | Override the cardano-testnet image used for the create-env init container and the default cardano-node container. Empty uses the built-in versioned reference. |
 | `--default-cardano-tools-image` | `""` | Override the cardano-tools image used for artifact staging containers. Empty uses the built-in versioned reference. |

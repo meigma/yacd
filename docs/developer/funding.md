@@ -1,117 +1,67 @@
 # Fund an account on a local network
 
-Get test ADA into an address on a local network in three steps: enable the
-faucet on the Environment, find the address and faucet details with `yacd info`,
-then send lovelace with `yacd topup`.
+Every local YACD network is created with a genesis-funded `faucet` wallet. You
+spend from it to fund developer wallets (or any testnet address) with the `yacd
+wallet` verbs, which build, sign, and submit transactions directly against the
+network's Ogmios and Kupo endpoints. There is no in-cluster faucet service.
 
-!!! warning "The faucet is local-only"
-    The faucet exposes a spending endpoint, so it is opt-in and intended for
-    local development networks. The faucet auth token is host-only and is never
-    placed in the in-pod environment. See
-    [Security](../concepts/security.md) for the trust model.
+!!! note "Local networks only"
+    The genesis-funded `faucet` wallet is created only for `local` networks; it
+    is funded at genesis from the localnet's initial UTxOs. Public networks
+    (preview/preprod/mainnet) have no faucet wallet — fund those from your own
+    funded keys.
 
-## 1. Enable the faucet
+## Create and fund a wallet
 
-The faucet is off by default. Turn it on in the network's `chainAPI`. Optionally
-enable the pre-funded developer wallet too, so you have a funded address from day
-zero (the wallet requires the faucet and Kupo, and is local-mode only):
-
-```yaml
-spec:
-  network:
-    chainAPI:
-      faucet:
-        enabled: true
-      wallet:
-        enabled: true
-```
-
-Apply the manifest and wait for the network to become `Ready`. The faucet and
-wallet defaults (sources, per-request lovelace bounds, wallet funding amount)
-are documented in
-[the CardanoNetwork reference](../reference/cardanonetwork.md). A complete
-copy-paste manifest lives in the [recipes](../recipes.md).
-
-`topup` refuses to run until the network publishes a faucet: it requires the
-`Ready` and `FaucetReady` conditions to be `True` and fresh, and it reads the
-faucet endpoint and auth Secret straight from status.
-
-## 2. Find the address and faucet details
-
-Print the network's status and connection information:
+The quickest path is `yacd wallet add`, which generates a managed wallet and,
+with `--topup`, funds it from the `faucet` wallet in one step. Add `--await` to
+block until the funding transaction is confirmed on-chain:
 
 ```sh
-yacd info my-net
+yacd wallet add my-net --topup 5000000 --await
 ```
 
-The text output includes an `Endpoints` section with the `faucet` URL, a
-`Faucet` section with the auth Secret name, and — when the developer wallet is
-enabled — a `Wallet` section with its `addr_test...` address and funded state:
+This prints the new wallet's name and `addr_test...` address, the funding
+transaction id, and `Confirmed on-chain.` once Kupo sees the output. Omit
+`--topup` to create an unfunded wallet, and pass `--name` to choose the name
+instead of the generated adjective-noun default.
 
-```text
-Wallet:
-  Address: addr_test1...
-  Key Secret: my-net-wallet-keys
-  Funded: true
-```
+Managed wallet keys are stored as labeled Kubernetes Secrets
+(`<network>-wallet-<name>`) in the network's namespace; the CLI reads them to
+sign locally. See [Security](../concepts/security.md) for the custody model.
 
-Use that wallet `Address` as your funding target, or supply any other testnet
-address you control. Add `--json` for machine-readable output:
+## Fund an existing wallet or address
+
+`yacd wallet topup` funds an existing target with an exact lovelace amount. The
+`WALLET` argument is a managed wallet name, a public key, or a bech32
+`addr_test...` address, so you can also fund an address you do not manage:
 
 ```sh
-yacd info my-net --json
+yacd wallet topup my-net bright-sun 1000000 --await
+yacd wallet topup my-net addr_test1... 1000000
 ```
 
-## 3. Send lovelace
+By default the funds come from the `faucet` wallet; pass `--from <wallet>` to
+spend from another managed wallet instead. `topup` forwards Ogmios and Kupo
+itself, so no `yacd run` wrapper or URL flags are needed. Add `--json` for a
+machine-readable result.
 
-Fund an address with an exact lovelace amount. `topup` reaches the faucet on its
-own — with no `--faucet-url` it opens a short-lived port-forward, POSTs, and
-tears it down — so it works directly from your host with no `yacd run` wrapper:
+## List, export, and remove wallets
 
 ```sh
-yacd topup my-net 1000000 --address addr_test1...
+yacd wallet list my-net
+yacd wallet export my-net bright-sun
+yacd wallet remove my-net bright-sun
 ```
 
-`LOVELACE` is a positional argument, `--address` is required, and the amount must
-be greater than zero and within the faucet's configured min/max bounds. `topup`
-reads the auth token from the published Secret automatically, and the
-self-forwarded loopback URL is exempt from the
-[trust gate](../concepts/security.md). On success it prints the transaction ID,
-source, lovelace, and destination. Add `--json` for a machine-readable result.
-
-!!! note "Inside `yacd run`, or with an override"
-    `topup` honors an ambient `YACD_FAUCET_URL` (set inside `yacd run`), so it
-    works unchanged there without opening a second forward. An explicit
-    `--faucet-url` suppresses self-forwarding; a custom non-loopback value then
-    requires `--trust-faucet-url` (and `--allow-insecure-faucet-url` for
-    `http://`).
-
-The full `topup` flag set — including `--source`, `--faucet-url`, the
-`--trust-faucet-url` / `--allow-insecure-faucet-url` trust gates, and the
-`--await` options — is documented in
-[the CLI reference](../reference/cli.md).
-
-## Confirm on-chain
-
-By default `topup` returns as soon as the faucet accepts the request. To block
-until the funding transaction is actually confirmed on-chain, add `--await`,
-which polls [Kupo](https://cardanosolutions.github.io/kupo/) for the new output:
-
-```sh
-yacd topup my-net 1000000 --address addr_test1... --await
-```
-
-When `topup` self-forwards it reuses that same session's Kupo, so `--await`
-needs no extra flags. When the output appears, `topup` prints `Confirmed
-on-chain.` and exits. If you override the faucet with `--faucet-url`, supply a
-matching `--kupo-url` for `--await`. See
-[Connecting tools and tests](connecting-tools.md) for how `run` bridges
-cluster-internal endpoints to your host.
+`list` shows each managed wallet's name, address, and source (the genesis
+`faucet` wallet is included). `export` writes the wallet's `.skey`, `.vkey`, and
+`.addr` files to `.yacd/<namespace>/<network>/wallets/<name>/` (override with
+`--out`). The `faucet` wallet is reserved and operator-owned, so the CLI will not
+remove it.
 
 ## See also
 
-- [CLI reference](../reference/cli.md) — every `topup` flag and default.
-- [CardanoNetwork reference](../reference/cardanonetwork.md) — faucet and wallet
-  spec fields and defaults.
-- [Security](../concepts/security.md) — the faucet trust gate and host-only
-  token rationale.
+- [CLI reference](../reference/cli.md#wallet) — every `yacd wallet` flag and default.
+- [Security](../concepts/security.md) — wallet key custody and local signing.
+- [Connecting tools & tests](connecting-tools.md) — funding a wallet from a test run.

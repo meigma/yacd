@@ -38,8 +38,8 @@ The per-component conditions a `CardanoNetwork` publishes are `NodeReady`
 (primary node container running), `NodeSynchronized` (caught up to the inferred
 network tip), `NodeProgressing` (tip advancing or already synchronized),
 `ArtifactsReady` (artifact bundle staged and served over HTTP), `OgmiosReady`,
-`KupoReady`, `FaucetReady`, `WalletReady`, and `DBSyncAttachmentReady` (a
-primary-sidecar db-sync attachment is not blocking the primary Pod). See the
+`KupoReady`, and `DBSyncAttachmentReady` (a primary-sidecar db-sync attachment
+is not blocking the primary Pod). See the
 [CardanoNetwork reference](reference/cardanonetwork.md) for the full list.
 
 For machine-readable status, including the `reason` and `message` of every
@@ -186,53 +186,31 @@ setting both, or neither, is rejected at admission with
 `exactly one of database.external or database.managed must be set`. See the
 [CardanoDBSync reference](reference/cardanodbsync.md) for the database fields.
 
-## Faucet on a public network or faucet without Kupo
+## Wallet funding fails
 
-!!! warning "The faucet is local-only"
-    The faucet spends from generated devnet UTxOs, so it only makes sense on a
-    `local` network. Its top-up endpoint and the bearer token it requires are
-    host-only.
+**Symptom.** `yacd wallet add --topup` or `yacd wallet topup` fails to build,
+submit, or confirm a funding transaction.
 
-**Symptom.** A network with `spec.chainAPI.faucet.enabled: true` never publishes
-a faucet endpoint (`yacd info` shows `faucet: unavailable`), `FaucetReady` does
-not become `True`, or `WalletReady: False` for a network that enables the
-developer wallet.
+**Cause and fix.**
 
-**Cause.** Two related misconfigurations:
+- **No `faucet` wallet to fund from.** Only `local` networks get a
+  genesis-funded `faucet` wallet. On a public network there is nothing to spend
+  from by default — fund the target with `--from` a wallet you have funded
+  yourself.
+- **The source wallet has insufficient funds.** Funding spends real UTxOs. Check
+  the source with `yacd wallet list <network>`, then top it up (or use `--from` a
+  funded wallet) before funding others.
+- **`--await` times out.** Confirmation polls Kupo. If the network is still
+  syncing or `KupoReady` is `False`, the output may not appear in time; raise
+  `--await-timeout` or retry once the network is Ready.
 
-- The faucet is enabled on a `public` network. The faucet has no generated
-  source UTxOs to spend on a public profile, so it cannot serve top-ups.
-- The developer wallet is enabled without the faucet (and Kupo). The wallet is
-  bootstrapped by funding it through the faucet, so `spec.chainAPI.wallet`
-  requires both `spec.chainAPI.faucet` and `spec.chainAPI.kupo` to be enabled,
-  and is supported in local mode only. `wallet.fundingLovelace` must also not
-  exceed the faucet's `maxTopUpLovelace` (default `10000000000`).
-
-**Fix.** Use the faucet and wallet only on a local network, and enable Kupo
-alongside the wallet:
-
-```yaml
-spec:
-  mode: local
-  chainAPI:
-    kupo:
-      enabled: true
-    faucet:
-      enabled: true
-    wallet:
-      enabled: true
-      fundingLovelace: 100000000000
-```
-
-To submit a top-up against a running local faucet, use
-[`yacd topup NAME LOVELACE --address ADDR`](reference/cli.md); it self-forwards
-the faucet, so no `yacd run` wrapper is needed. Add `--await` to wait for
-on-chain confirmation (this needs Kupo, which is enabled by default).
+See the [funding guide](developer/funding.md) and the
+[`yacd wallet` reference](reference/cli.md#wallet).
 
 ## Image pull issues
 
 **Symptom.** A Pod is stuck `ImagePullBackOff` or `ErrImagePull`, and the owning
-condition (`NodeReady`, `OgmiosReady`, `KupoReady`, `FaucetReady`, or
+condition (`NodeReady`, `OgmiosReady`, `KupoReady`, or
 `PostgresReady`/`DBSyncReady`) stays `False`.
 
 **Cause.** Kubernetes could not pull a container image. The reference is wrong,
@@ -251,9 +229,6 @@ so a pull failure usually means a custom override is wrong:
 - `spec.node.image` / `spec.node.version` (the controller derives the node image
   from `version`, default `11.0.1`, when `image` is unset).
 - `spec.chainAPI.ogmios.image` and `spec.chainAPI.kupo.image` (pinned defaults).
-- `spec.chainAPI.faucet.image` — an override must use the **same repository** as
-  the controller's configured default faucet image; only the tag or digest may
-  vary.
 - `spec.public.bootstrap.mithril.image` for the Mithril client.
 - For db-sync: `spec.image` and `spec.database.managed.image` (default
   `postgres:17.2-alpine`).
