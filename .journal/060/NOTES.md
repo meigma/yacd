@@ -151,3 +151,10 @@ State: P1 = PR #112 open. Design + plan banked (`EXTERNAL_ACCESS_DESIGN.md`,
 `PHASE1_PLAN.md`). Remaining phases: P2 (devnet k3d --port + pinned NodePort +
 localhost externalURL) and P3 (CLI shared resolver: flag > YACD_* env > probed
 status.externalURL > port-forward fallback).
+
+## 2026-06-04 19:46 — P1 merged
+#112 CI green (ci, e2e, cardano-tools-image, Kusari), squash-merged to master
+(`dfa20b8`). Removed the feat worktree, deleted its remote branch. **P1 (API +
+operator) is landed.** Dev stack was never started (waived for P1) — nothing to
+tear down. Remaining: P2 (devnet) and P3 (CLI resolver); both will need the dev
+stack / a k3d run for live verification.
