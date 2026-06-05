@@ -294,8 +294,9 @@ and `export` accepts a managed wallet name, a public key (hex), or a bech32
 yacd wallet list NET [flags]
 ```
 
-Lists the managed wallets for a network (including `faucet`) with each wallet's
-name, address, and source. `--json` prints a machine-readable array.
+Lists the CLI-managed wallets for a network (name, address, and the
+`managed-by-cli` source); the operator-owned `faucet` wallet is not listed.
+`--json` prints a machine-readable array.
 
 ### wallet add
 

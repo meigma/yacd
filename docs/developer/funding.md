@@ -54,8 +54,9 @@ yacd wallet export my-net bright-sun
 yacd wallet remove my-net bright-sun
 ```
 
-`list` shows each managed wallet's name, address, and source (the genesis
-`faucet` wallet is included). `export` writes the wallet's `.skey`, `.vkey`, and
+`list` shows the wallets you created (name, address, and the `managed-by-cli`
+source); the operator-owned `faucet` wallet is not listed. `export` writes the
+wallet's `.skey`, `.vkey`, and
 `.addr` files to `.yacd/<namespace>/<network>/wallets/<name>/` (override with
 `--out`). The `faucet` wallet is reserved and operator-owned, so the CLI will not
 remove it.
