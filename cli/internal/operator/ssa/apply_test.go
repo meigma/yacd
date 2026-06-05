@@ -53,7 +53,7 @@ func TestVersionFromEmbeddedChartMatchesChartAppVersion(t *testing.T) {
 	// Tracks charts/yacd/Chart.yaml appVersion; bump alongside an operator
 	// release re-sync. This is the tripwire that the embedded chart copy is in
 	// sync with the pinned release.
-	assert.Equal(t, "v0.1.1", version)
+	assert.Equal(t, "v0.2.0", version)
 	assert.True(t, semver.IsValid(version), "embedded version must be valid semver")
 }
 
