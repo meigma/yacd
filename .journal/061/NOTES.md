@@ -169,3 +169,48 @@ this is a user decision — surfaced at the review pause.
 Next: push branch + open PR-4b, PAUSE for human review before merge (standing
 instruction). Then P5 (faucet-free operator release → re-pin CLI embedded
 manager digest → CLI release → docs PR #91).
+
+## 2026-06-05 ~00:00 — P5 release DONE + devnet validated (Phases A–C)
+
+PR-4b merged (squash `1652ac6`, PR #108). P5 planned (ultracode research
+workflow `wf_f948275b-42b`); plan approved with a key decision: **tag/appVersion
+pinning** instead of digest pinning, because operator+CLI are ONE coupled
+release-please component (`.` = `yacd`), so a v0.2.0 CLI can't digest-pin its own
+v0.2.0 operator (digest doesn't exist until the release builds).
+
+**Phase A — PR #109 (merged `6a290bd`):** `refactor(cli):` drop
+`defaultManagerDigest`; `Default()` sets only `Repository` so the chart's
+`yacd.image` helper renders `repository:appVersion`. Since operator+CLI release
+together, the appVersion tag always resolves to the matching published image.
+Behavior change: `--set image.digest` still pins; `--set image.tag` now REPOINTS
+(was shadowed by the old digest). Rewrote operator render/values + install tests
+(version-agnostic: expected tag derived from the embedded chart's appVersion) and
+install help/comment. root:check + root:test green.
+
+**Phase B — v0.2.0 released:** release-please PR #87 (`chore(master): release
+0.2.0`) merged (`aecf7ef`) → root + Chart.yaml version/appVersion → 0.2.0. Note:
+release-please did NOT rebase #87 after #109, so the v0.2.0 changelog omits the
+#109 tag-pin line (cosmetic; #109's code IS in v0.2.0 since it's on master and
+the release commit squashes on top — user chose "merge as-is"). `release.yml`
+succeeded; published the draft. Live: `ghcr.io/meigma/yacd:v0.2.0` (multi-arch)
++ OCI `chart:0.2.0` + CLI binaries; v0.2.0 is Latest.
+
+**Phase C — devnet validated end-to-end** with the RELEASED CLI v0.2.0 binary
+(`yacd 0.2.0 (aecf7ef)`, darwin/arm64) on k3d: `yacd devnet` → "Operator v0.2.0
+ready" (operator Deployment image = `ghcr.io/meigma/yacd:v0.2.0`, confirming the
+tag-pin), network ready, devnet output shows the genesis faucet **Wallet:**
+address (empty with the old v0.1.1 operator). `yacd wallet add devnet --name
+alice --topup 5000000 --await --from faucet` → tx `8eb5e791…` **Confirmed
+on-chain**. `wallet list` shows alice (managed-by-cli), faucet excluded.
+`yacd devnet down` cleaned up the k3d cluster. The ogmigo ws-1006 genesis-config
+warning still prints (non-fatal; the documented durable follow-up).
+
+Remaining: **Phase D docs** — README.md + DESIGN.md faucet/dev-wallet/`yacd
+topup --address` prose is stale (fix on master; not in #91). PR #91 (jmgilman's
+MkDocs site, 17 pages) is OPEN but predates P4b and modifies host-access.md +
+adds developer/{funding,connecting-tools}.md + reference/{cli,cardanonetwork}.md
+— the site docs should be fixed WITHIN #91 (rebase on v0.2.0 + rewrite the stale
+wallet pages), not duplicated on master. **Phase E housekeeping** — proto-*.log
+gitignore+delete, remove merged 4a/4b worktrees, dev-down (dev stack still on 4a)
+at session close, optional publish of cardano-tools/testnet drafts, file the
+ogmigo ws-1006 follow-up issue.
