@@ -129,3 +129,33 @@ TECH_NOTES has no bullet for this yet — add one at close.
 - P3 (CLI resolver) not started — depends on status carrying externalURL, which
   needs a P1 operator at runtime (ties into the release-ordering decision).
 - Await user decision on release ordering; then either P3 or release work.
+
+## 2026-06-05 15:55 — Cutting v0.2.1 (P1+P2 operator release)
+
+User chose **"cut a P1+P2 operator release"** (so `yacd devnet` installs a
+P1-containing operator) and the **root-cause** tripwire fix.
+
+- **PR #114 (P2)** squash-merged to master (`ca0a049`); all CI green.
+- **release-please PR #113** = `chore(master): release 0.2.1` (root component):
+  bumps Chart.yaml `version`/`appVersion` → v0.2.1, CHANGELOG lists #112 (P1) +
+  #114 (P2). Merging it tags v0.2.1 → release.yml publishes operator image +
+  chart + CLI binaries; the embedded chart's appVersion becomes v0.2.1 so the
+  CLI installs `ghcr.io/meigma/yacd:v0.2.1`.
+- **Tripwire papercut (session 060 recurrence):** 6 ssa version assertions
+  hardcoded `v0.2.0` and would red master at the appVersion bump. Fixed at the
+  ROOT in **PR #115** (`test(operator): track chart appVersion in operator-install
+  version tripwires`, merged `13122b6`): the 6 assertions now read
+  `embeddedChartAppVersion(t)` (helper already in render_test.go), so releases
+  never re-break them. Scenario literals (v0.9.9 refuse case) untouched.
+- **Stale-base gotcha:** release-please did NOT rebase #113 onto #115 (test:
+  commits don't trigger regeneration), so #113's `ci` was failing (v0.2.1 chart +
+  old v0.2.0 tripwire). Fixed by rebasing #113's branch onto master (now incl.
+  #115) and force-pushing (`e0cbed5`) — clean rebase, release commit replays on
+  top. Auto-merge (squash) armed on #113; watching CI → merge → release.yml.
+- **TECH_NOTES to add at close:** (1) the release-ordering rule — `yacd devnet`
+  installs the operator by appVersion tag, so a feature touching BOTH the operator
+  and the devnet path only works end-to-end once a release carrying the operator
+  half ships; (2) prefer the dynamic appVersion tripwire (PR #115) over hardcoded
+  re-syncs; (3) when a `test:`/non-releasable commit lands after a release PR is
+  open, rebase the release-please branch onto master before merge or its CI is
+  stale-red.
