@@ -119,6 +119,31 @@
   not feed aggregate `Ready`. Ogmios health HTTP 500 can still carry a useful
   disconnected body; `lastKnownTip`, `lastTipUpdate`, and
   `networkSynchronization` may be null during startup or unknown-tip states.
+- **FAUCET REMOVAL COMPLETE + v0.2.0 (sessions 059–061) — this SUPERSEDES the
+  faucet-service, developer-wallet, and v0.1.x release/digest-pin bullets
+  elsewhere in this file; treat those as historical.** The in-cluster faucet HTTP
+  SERVICE is gone: no `spec.chainAPI.faucet`, no `status.faucet`/faucet endpoint,
+  no `FaucetReady`, no `<net>-faucet-auth` Secret, no faucet sidecar / source-
+  address init, no `--default-faucet-image` / faucet image / faucet-image Tilt
+  resource, no `revokePrimaryFaucetExposure` / `faucetSecretRepairRequeueAfter`.
+  Also removed: the old `yacd topup` + `topup_trust.go` trust gate +
+  `YACD_FAUCET_URL/TOKEN` funding role + `kube.ConditionFaucetReady`, and the
+  `spec.chainAPI.wallet` developer wallet (`status.wallet`, `WalletReady`). NEW
+  model: the controller generates a genesis-funded `faucet` WALLET (owned Secret
+  `<net>-wallet-faucet`: ed25519 `payment.skey`/`payment.vkey` + `address`,
+  funded at genesis via a `cardano-tools fund-genesis` init container) for LOCAL
+  networks only (gated on `Spec.Mode == Local` alone). It is create-once (deleting
+  it strands genesis funds) and intentionally NOT watched. Host-side funding is
+  `yacd wallet {add,topup,list,export,remove}`, building/signing/submitting txns
+  directly against Ogmios/Kupo (`internal/cardano/tx`), default source
+  `--from faucet`; the faucet wallet is shown in `devnet`/`info` but excluded from
+  `wallet list`. Released as **v0.2.0** (PRs #107/#108/#109/#87). The CLI now
+  installs the operator by **appVersion tag** (`ghcr.io/meigma/yacd:vX`), NOT a
+  pinned digest, because operator+CLI are one coupled release-please root
+  component — `cli/internal/operator/values.go` `Default()` sets only the
+  repository; `--set image.digest` still pins, `--set image.tag` repoints. The
+  ogmigo/Apollo ws-1006 genesis-config warning during funding is non-fatal
+  (issue #110). See `.journal/061/SUMMARY.md`.
 - The faucet/topup path should stay narrow and use Ogmios for chain
   interaction. Avoid turning it into a general wallet platform.
 - `CardanoNetwork` owns the primary faucet auth Secret when faucet is enabled

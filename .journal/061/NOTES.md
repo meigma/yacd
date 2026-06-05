@@ -214,3 +214,24 @@ wallet pages), not duplicated on master. **Phase E housekeeping** — proto-*.lo
 gitignore+delete, remove merged 4a/4b worktrees, dev-down (dev stack still on 4a)
 at session close, optional publish of cardano-tools/testnet drafts, file the
 ogmigo ws-1006 follow-up issue.
+
+## 2026-06-05 00:35 — Close
+
+Session closed via `session-close`. All P4 + P5-release work landed; dev stack down.
+
+- **Merged (squash):** PR #107 (4a — controller dev-wallet cutover), #108 (4b —
+  delete faucet service + re-gate), #109 (CLI installs operator by appVersion
+  tag), #87 (release **v0.2.0**). Published + Latest: `ghcr.io/meigma/yacd:v0.2.0`
+  (multi-arch), OCI `chart:0.2.0`, CLI binaries.
+- **Validated** end-to-end with the released CLI v0.2.0 on k3d (operator v0.2.0,
+  genesis faucet wallet funded, `wallet add --topup --from faucet --await` tx
+  `8eb5e791…` confirmed on-chain), then `yacd devnet down`.
+- **Housekeeping:** `root:dev-down` (Tilt + `kind-yacd-dev` + registry gone);
+  merged worktrees (4a/4b/p5) + local & remote branches removed; stray
+  `proto-*.log` cleared; ogmigo ws-1006 filed as **issue #110**; primary `master`
+  fast-forwarded to `dfa20b8`.
+- **Deferred:** P5 docs (README/DESIGN on master + rebase/rewrite PR #91) and the
+  `proto-*-install.log` `.gitignore` chore — see `SUMMARY.md` Open Threads.
+
+Handoff: the faucet service is fully removed; `yacd devnet` works end-to-end on
+v0.2.0 with the genesis-funded faucet wallet. Next session: docs.
