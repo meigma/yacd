@@ -187,3 +187,51 @@ bf7fd98→b6bb381 pushed to PR #91 (branch now also carries #94+#96 via the merg
 
 Note for next docs sync: `yacd uninstall` does NOT exist yet (058 PR3 deferred);
 docs say so and give the manual removal path. Revisit when PR3 lands.
+
+## 2026-06-04 — Document faucet removal (sessions 059 + 061) + 0.2.0 / appVersion install
+Reviewed 059 (CLI-native wallets + faucet removal P1–P3) and — after I flagged the
+P4/P5-pending risk in a scoping question — the user said 061 finished the remaining
+bits, so I documented the FINAL faucet-free state (not the transitional one). The
+scoping AskUserQuestion was rejected because its premise (faucet-removal pending)
+was already moot.
+
+Scope landed (merged): 059 #106 (`yacd wallet` verbs, `topup` removed) +
+061 #107 (remove controller dev wallet, surface genesis faucet wallet) / #108
+(delete the in-cluster faucet service) / #109 (install by appVersion tag, not
+digest) / #87 (release 0.2.0). Synced master into the docs branch (clean merge
+28e340d).
+
+Grounded the final state with one Explore agent + direct reads: `chainAPI` is
+ogmios+kupo only (FaucetSpec/WalletSpec deleted); conditions drop FaucetReady/
+WalletReady; YACD_FAUCET_URL/TOKEN + endpoints.json faucetUrl removed; every LOCAL
+network auto-gets a `<net>-wallet-faucet` genesis wallet (Secret, labels
+wallet-name=faucet / wallet-source=genesis-funded; NO status field); `yacd info`
+surfaces it as `wallet`. `yacd wallet {list,add,topup,export,remove}` funds via
+self-forwarded Ogmios/Kupo + local signing; keys in `<net>-wallet-<name>` Secrets;
+`faucet` is a reserved well-known name. Install: operator pinned by chart
+appVersion (v0.2.0), `--set image.*` all repoint now (was digest-pinned/inert).
+
+Edited 14 docs files: funding.md (full rewrite around `yacd wallet`),
+getting-started step 5, connecting-tools, testing, troubleshooting, recipes,
+index, concepts/{architecture,security} (security now = wallet key custody +
+local signing, not the deleted topup trust gate), reference/cli.md (topup section
+→ wallet section; stripped faucet from YACD_* table / endpoints.json / list /
+info), reference/cardanonetwork.md (removed faucet/wallet spec+status+conditions),
+environment.md, configuration.md + operator/installation.md (digest→appVersion,
+0.1.1→0.2.0, dropped faucet image/flag).
+
+Verified: residual-reference sweep clean (no yacd topup / YACD_FAUCET / FaucetReady
+/ chainAPI.faucet / digest-pinned / 0.1.1 left); mkdocs build --strict clean; CLI
+`wallet`/`install` --help match. **Live smoke on a fresh k3d devnet**: operator
+**v0.2.0**; `wallet add --name dw --topup --await` + `wallet topup dw --await` both
+"Confirmed on-chain"; `info` Wallet = `devnet-wallet-faucet`; clean teardown. Smoke
+caught one doc bug — `wallet list` does NOT include the genesis faucet wallet (only
+`managed-by-cli` wallets) — fixed in funding.md + cli.md. Commits 105870c→5248816
+pushed to PR #91. (Harmless ogmigo `GenesisParams ... websocket close 1006` warning
+on stderr during funding is the known 059 issue, redirected to stderr; not a doc
+concern.)
+
+Carried: session 060 (external-access URLs for chain APIs) is designed but not
+implemented — when it lands it adds `service.{type,nodePort}` + `externalURL` to
+the ogmios/kupo spec/status and a CLI URL resolver; will need cli.md +
+cardanonetwork.md + connecting-tools updates.
