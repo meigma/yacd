@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	"github.com/meigma/yacd/cli/internal/devconfig"
 	"github.com/meigma/yacd/cli/internal/lifecycle"
 	"github.com/spf13/cobra"
@@ -201,10 +202,10 @@ func printDevnetUp(out io.Writer, result lifecycle.Result, bare bool) error {
 	network := result.Network
 	if network.Status.Endpoints != nil {
 		if endpoint := network.Status.Endpoints.Ogmios; endpoint != nil {
-			w.printf("  Ogmios:   %s\n", endpoint.URL)
+			w.printf("  Ogmios:   %s\n", endpointAddress(endpoint))
 		}
 		if endpoint := network.Status.Endpoints.Kupo; endpoint != nil {
-			w.printf("  Kupo:     %s\n", endpoint.URL)
+			w.printf("  Kupo:     %s\n", endpointAddress(endpoint))
 		}
 	}
 	if result.WalletAddress != "" {
@@ -220,6 +221,18 @@ func printDevnetUp(out io.Writer, result lifecycle.Result, bare bool) error {
 	w.printf("  yacd devnet down\n")
 
 	return w.err
+}
+
+// endpointAddress is the address to advertise for a chain API endpoint: the
+// operator-asserted externalURL — the host-reachable address, which for a devnet
+// is the localhost URL the cluster maps to — when set, otherwise the in-cluster
+// URL. This is what makes the devnet host ports the user sees match where the
+// cluster actually answers.
+func endpointAddress(endpoint *yacdv1alpha1.ServiceEndpointStatus) string {
+	if endpoint.ExternalURL != "" {
+		return endpoint.ExternalURL
+	}
+	return endpoint.URL
 }
 
 // printDevnetStatus renders the unified status report to out (stdout). When no

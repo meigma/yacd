@@ -8,9 +8,32 @@ spec:
       port: 3001
       storage:
         size: 2Gi
-    # Ogmios and Kupo are enabled by default. A local network is automatically
-    # given a genesis-funded `faucet` wallet — the network's funded wallet and
-    # the default source for `yacd wallet topup`.
+    # A local network is automatically given a genesis-funded `faucet` wallet —
+    # the network's funded wallet and the default source for `yacd wallet topup`.
+    #
+    # Ogmios and Kupo are exposed as NodePort Services on the pinned node ports
+    # the `yacd devnet` cluster maps to the host (Ogmios host 1337 -> node 30137,
+    # Kupo host 1442 -> node 30442; see cli/internal/cluster). externalURL
+    # advertises the resulting host URL so the CLI can reach them directly. The
+    # enabled/image/port fields must be spelled out explicitly because the
+    # developer config rejects a partially-specified chainAPI block.
+    chainAPI:
+      ogmios:
+        enabled: true
+        image: "cardanosolutions/ogmios:v6.14.0"
+        port: 1337
+        service:
+          type: NodePort
+          nodePort: 30137
+        externalURL: "ws://localhost:1337"
+      kupo:
+        enabled: true
+        image: "cardanosolutions/kupo:v2.11.0"
+        port: 1442
+        service:
+          type: NodePort
+          nodePort: 30442
+        externalURL: "http://localhost:1442"
     local:
       networkMagic: 42
       era: conway

@@ -4,9 +4,13 @@ import _ "embed"
 
 // defaultDevnetEnvYAML is the developer environment `yacd devnet` applies by
 // default: a local network with Ogmios and Kupo. The controller automatically
-// generates a genesis-funded faucet wallet for local networks. It is a byte copy
-// of examples/local/yacd.yaml (go:embed cannot reach outside the package
-// directory); devnet_test.go guards the copy against drift.
+// generates a genesis-funded faucet wallet for local networks. It started as a
+// copy of examples/local/yacd.yaml but intentionally diverges: devnet owns the
+// k3d cluster and maps host ports to it, so it exposes Ogmios/Kupo as NodePort
+// Services with localhost externalURLs (the pinned nodePorts match
+// cluster.DefaultPortMappings). examples/local stays ClusterIP so `yacd up -f`
+// deploys correctly on any cluster. devnet_test.go validates structure (not a
+// byte copy) and cross-checks the pinned ports against the cluster constants.
 //
 //go:embed devnet.yaml
 var defaultDevnetEnvYAML []byte
