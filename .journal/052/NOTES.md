@@ -235,3 +235,44 @@ Carried: session 060 (external-access URLs for chain APIs) is designed but not
 implemented — when it lands it adds `service.{type,nodePort}` + `externalURL` to
 the ogmios/kupo spec/status and a CLI URL resolver; will need cli.md +
 cardanonetwork.md + connecting-tools updates.
+
+## 2026-06-05 — Document external-access URLs (sessions 060 + 062) + v0.2.1
+Session 060 designed + shipped P1, session 062 finished P2+P3 and released v0.2.1,
+of ONE feature: external-access URLs for chain APIs (CLI reaches Ogmios/Kupo over
+a directly-reachable URL instead of always port-forwarding). The 060 carry-note I
+left last time predicted exactly this. Synced master (clean merge 4c0b79a;
+6 commits: #112 P1, #111/#115 tripwire tests-internal, #114 P2, #113 release, #116 P3).
+
+Grounded surface (origin/master): CRD adds `spec.chainAPI.{ogmios,kupo}.service`
+(ServiceExposureSpec: type ClusterIP|NodePort default ClusterIP; nodePort int32
+max 32767, 0=auto, NodePort-only) + `.externalURL` (lenient ws/wss/http/https,
+mirrored to status.endpoints.*.externalURL on the shared ServiceEndpointStatus).
+CLI: `--ogmios-url`/`--kupo-url` on `wallet add`+`topup`; resolver order (run +
+funding) = flag > YACD_OGMIOS_URL/YACD_KUPO_URL env > probed externalURL (~2s TCP
+dial) > port-forward; `connect` stays forward-only; `run` gains no flags. devnet:
+k3d --port 1337:30137 / 1442:30442, NodePort 30137/30442, externalURL
+ws://localhost:1337 / http://localhost:1442, banner advertises them (devnet.yaml
+diverges from examples/local which stays ClusterIP). validateExplicitFields still
+requires only enabled/image/port for ogmios/kupo (service/externalURL optional).
+Release v0.2.1 (chart 0.2.1, image v0.2.1).
+
+Edited 8 docs: cardanonetwork.md (service/externalURL spec rows + ServiceExposureSpec
++ External-access explainer + status externalURL), cli.md (wallet add/topup flags;
+new "Chain access resolution" #chain-access-resolution section; run intro; devnet
+host-port note; YACD_* env-as-inputs note; Plan example v0.2.1), environment.md
+(optional service/externalURL note), connecting-tools.md (resolver narrative +
+dropped a STALE "faucet" from the run-forwards list that the 059 sweep missed),
+getting-started.md (localhost-reachable devnet tip), architecture.md (host-access
+externalURL path), troubleshooting.md (devnet host-port collision + unreachable-
+externalURL), installation.md (0.2.0→0.2.1).
+
+Verified: residual sweep clean (no 0.2.0, no faucet-as-forwarded-service); mkdocs
+build --strict clean (new anchors resolve); wallet add|topup --help show the URL
+flags. **Live smoke on fresh devnet**: operator **v0.2.1**; banner shows
+ws://localhost:1337 / http://localhost:1442; both reachable directly from the host
+(Ogmios /health live tip, Kupo /health metrics — NO port-forward); `wallet add
+--topup --await` Confirmed on-chain; clean teardown. Commit 9a7291a pushed to PR #91.
+
+Skipped (deliberate): a Recipes NodePort recipe — the page mirrors examples/
+verbatim and examples/local stays ClusterIP, so a hand-authored recipe would break
+that invariant; the External-access reference + troubleshooting cover it instead.
