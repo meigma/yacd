@@ -535,9 +535,49 @@
   routable is the provisioner's job. Validation is Go→`UnsupportedSpec`/Degraded
   (`validateChainAPIServiceExposure`/`validateExternalURL` in
   `internal/controller/cardanonetwork/validate.go`). This is P1 of a 3-phase design
-  (`.journal/060/EXTERNAL_ACCESS_DESIGN.md`); P2 (devnet k3d `--port` + pinned
-  NodePort + localhost externalURL) and P3 (CLI resolver: flag > YACD_* env >
-  probed status.externalURL > port-forward fallback) remain.
+  (`.journal/060/EXTERNAL_ACCESS_DESIGN.md`).
+- **External-access P2+P3 COMPLETE, released v0.2.1 (session 062).** P2 (#114):
+  `yacd devnet`'s k3d cluster is created with host→node `--port
+  "1337:30137@loadbalancer"` / `"1442:30442@loadbalancer"` mappings
+  (`cli/internal/cluster`: `PortMapping` + `DefaultPortMappings` on `Spec`/
+  `DefaultSpec`; rendered in `cluster/k3d/ensure.go`), and the embedded
+  `cli/internal/cli/devnet.yaml` exposes Ogmios/Kupo as NodePort (30137/30442) with
+  localhost externalURLs — a FULLY-SPELLED chainAPI block (enabled/image/port) is
+  required by `devconfig.validateExplicitFields`, so devnet.yaml pins the
+  ogmios/kupo images and INTENTIONALLY diverges from `examples/local` (which stays
+  ClusterIP). The devnet banner advertises `endpointAddress()` = externalURL else
+  in-cluster URL. P3 (#116): `cli/internal/cli/forward_resolve.go`
+  `resolveChainAccess` resolves Ogmios/Kupo INDEPENDENTLY by precedence — explicit
+  `--ogmios-url`/`--kupo-url` flag (funding only) > ambient `YACD_*_URL` env >
+  probed `status.externalURL` (injected `endpointProber`, default 2s scheme-agnostic
+  TCP dial honoring ctx) > port-forward — forwarding ONLY the fall-through subset.
+  `chainAccess` (replaces `connectedSession`) has a NILLABLE session + nil-safe
+  `Close/Done/Err` (`Done()`→nil channel, so `run` reports no false "lost
+  connection" when nothing is forwarded). `run` + funding use the resolver;
+  **`connect` stays forward-only** (`connectNetwork`→`forwardAll`); exec/`podEnv`
+  unchanged. The funding override needs **NO trust gate** (funding submits a
+  locally-signed tx — the signing key never leaves the CLI — and Kupo is read-only;
+  do not reintroduce the deleted faucet gate). envcontract builders are URL-based
+  (`hostEnvFromURLs`/`documentFromURLs` + `loopbackURLs`); `chainEndpoints` always
+  returns both entries (endpoint nil when unpublished) so the override/env rungs are
+  independent of published status.
+- **RELEASE-ORDERING RULE (learned session 062): a feature spanning BOTH the
+  operator and the CLI's `yacd devnet` path only works end-to-end once the operator
+  half is RELEASED**, because `yacd devnet` installs the operator by **appVersion
+  tag** (not master). P1 was merged but unreleased, so a devnet from master
+  installed the *v0.2.0* operator and silently rendered ClusterIP + no externalURL —
+  the devnet CRD (from the embedded master chart) accepted the spec, but the old
+  binary ignored it. Always verify such features against the RELEASED operator and
+  sequence the release before declaring the CLI half done. Session 062 cut **v0.2.1**
+  (#113, bundling P1+P2) to make `yacd devnet` install a P1 operator.
+- **Operator-install version tripwires now track the chart appVersion (#115,
+  session 062).** The six `cli/internal/operator/ssa` assertions read
+  `embeddedChartAppVersion(t)` instead of a hardcoded `vX.Y.Z`, so a release no
+  longer red-lights master (v0.2.0 did; v0.2.1 would have). NOTE: release-please does
+  NOT rebase its open release PR for non-releasable (`test:`) commits, so after
+  landing a fix like this you must rebase the release-please branch onto master or
+  its CI stays stale-red and it can't merge green (the squash-merge still tags
+  correctly).
 - `ctrlkit/resources.MutateService` now PRESERVES a Kubernetes-assigned NodePort
   (session 060): it matches desired ports to current by name and keeps the live
   NodePort when the desired Service is NodePort and the desired port leaves

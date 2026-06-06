@@ -242,3 +242,25 @@ P1 (v0.2.1), P2 (v0.2.1), P3 (#116). At session-close add TECH_NOTES: P3 resolve
 + precedence + the no-trust-gate rationale + chainAccess nillable-session
 contract. Optional follow-up: the ogmigo ws-1006 genesis-config warning (issue
 #110) still prints during funding (non-fatal).
+
+## 2026-06-05 18:25 — Close
+
+Session 062 closed. The external-access 3-phase design is COMPLETE.
+
+**Merged (all squash-merged to master):**
+- #114 — P2 (devnet host-port mappings + NodePort devnet spec + externalURL banner)
+- #115 — operator-install version tripwires track chart appVersion (papercut fix)
+- #113 — release **v0.2.1** (P1 + P2; `ghcr.io/meigma/yacd:v0.2.1` + chart + CLI)
+- #116 — P3 (CLI resolver: flag > YACD_* env > probed externalURL > port-forward),
+  squash `f2501b7`
+
+**Handoff state:** master at `f2501b7`; local master fast-forwarded; all session
+worktrees removed (P2/tripwire/release/P3). No Kind/Tilt dev stack was started
+(used k3d devnet, torn down). SUMMARY.md + INDEX (062→complete) + TECH_NOTES
+(external-access P2/P3 + release-ordering rule + dynamic tripwires) written.
+
+**Open for a future session:** publish the v0.2.1 GitHub draft release if desired;
+ship a CLI release for the P3 resolver (optional, separate decision); ogmigo
+ws-1006 funding warning (issue #110); docs still describe the pre-faucet model
+(README/DESIGN + MkDocs #91). Stale in-progress INDEX rows 051/052 predate this
+session (052 = docs #91) — left untouched.
