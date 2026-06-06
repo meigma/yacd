@@ -15,7 +15,27 @@ import (
 	walletstore "github.com/meigma/yacd/cli/internal/wallet"
 	domainwallet "github.com/meigma/yacd/internal/cardano/wallet"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
+
+// addChainOverrideFlags registers the funding endpoint overrides shared by the
+// funding verbs (`wallet add --topup` and `wallet topup`). They are the
+// resolver's highest-precedence rung. No token trust gate is needed: funding
+// submits a locally-signed transaction (the signing key never leaves the CLI)
+// and Kupo is read-only.
+func addChainOverrideFlags(cmd *cobra.Command) {
+	cmd.Flags().String("ogmios-url", "", "Ogmios URL to use for funding (default: the network's reachable endpoint)")
+	cmd.Flags().String("kupo-url", "", "Kupo URL to use for funding (default: the network's reachable endpoint)")
+}
+
+// chainOverridesFromViper reads the funding endpoint overrides bound from the
+// --ogmios-url / --kupo-url flags.
+func chainOverridesFromViper(v *viper.Viper) chainOverrides {
+	return chainOverrides{
+		OgmiosURL: strings.TrimSpace(v.GetString("ogmios-url")),
+		KupoURL:   strings.TrimSpace(v.GetString("kupo-url")),
+	}
+}
 
 // newWalletCommand wires the `yacd wallet` subtree: the developer-wallet verbs
 // for a CardanoNetwork. Each verb takes the network NET as its first positional
@@ -169,11 +189,14 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 
 			result := walletAddResult{Name: created.Name, Address: created.Address}
 			if topupRequested {
+				overrides := chainOverridesFromViper(commandContext.viper)
 				funded, err := commandContext.fundWallet(cmd.Context(), walletCtx.kubeClient, walletCtx.store, walletCtx.network, walletCtx.namespace, walletCtx.name, fundRequest{
 					destinationAddress: created.Address,
 					lovelace:           lovelace,
 					await:              await,
 					awaitTimeout:       awaitTimeout,
+					ogmiosURL:          overrides.OgmiosURL,
+					kupoURL:            overrides.KupoURL,
 				})
 				if err != nil {
 					return err
@@ -193,6 +216,7 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Bool("await", false, "Wait for the funding transaction to confirm on-chain (requires --topup)")
 	cmd.Flags().Duration("await-timeout", 2*time.Minute, "Maximum time to wait for --await confirmation")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
+	addChainOverrideFlags(cmd)
 
 	return cmd
 }
@@ -229,12 +253,15 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
+			overrides := chainOverridesFromViper(commandContext.viper)
 			result, err := commandContext.fundWallet(cmd.Context(), walletCtx.kubeClient, walletCtx.store, walletCtx.network, walletCtx.namespace, walletCtx.name, fundRequest{
 				destinationAddress: destinationAddress,
 				lovelace:           lovelace,
 				sourceName:         source,
 				await:              await,
 				awaitTimeout:       awaitTimeout,
+				ogmiosURL:          overrides.OgmiosURL,
+				kupoURL:            overrides.KupoURL,
 			})
 			if err != nil {
 				return err
@@ -251,6 +278,7 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().Bool("await", false, "Wait for the funding transaction to confirm on-chain")
 	cmd.Flags().Duration("await-timeout", 2*time.Minute, "Maximum time to wait for --await confirmation")
 	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
+	addChainOverrideFlags(cmd)
 
 	return cmd
 }

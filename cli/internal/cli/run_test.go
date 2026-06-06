@@ -75,6 +75,30 @@ func TestRunInjectsYacdEnvironment(t *testing.T) {
 	assert.Equal(t, "devnet|ws://127.0.0.1:40001", stdout)
 }
 
+func TestRunUsesReachableExternalURLWithoutForwarding(t *testing.T) {
+	t.Parallel()
+
+	network := networkWithExternalURLs()
+	client := newKubeMock(t)
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").Return(network, nil)
+	// No PrimaryPodName/Forward expectations: a reachable externalURL is used
+	// directly, so run holds no port-forward.
+
+	var stdout, stderr bytes.Buffer
+	root := NewRootCommand(Options{
+		In:                bytes.NewReader(nil),
+		Out:               &stdout,
+		Err:               &stderr,
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+		EndpointProber:    reachableProber,
+	})
+	root.SetArgs([]string{"run", "devnet", "--", "sh", "-c", `printf '%s' "$YACD_OGMIOS_URL"`})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.Equal(t, "ws://localhost:1337", stdout.String())
+}
+
 func TestRunPropagatesChildExitCode(t *testing.T) {
 	t.Parallel()
 

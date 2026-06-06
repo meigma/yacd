@@ -74,6 +74,13 @@ type UTxOConfirmerFactory func(kupoURL string) UTxOConfirmer
 // at run time, after the wallet command forwards Ogmios and Kupo.
 type TxSubmitterFactory func(ogmiosURL string, kupoURL string) tx.Submitter
 
+// EndpointProber reports whether a published externalURL is reachable, returning
+// nil when it is. The endpoint resolver consults it before trusting an
+// operator-asserted externalURL: a stale or wrong URL fails the probe and the
+// resolver falls back to a port-forward. The default (set in NewRootCommand) does
+// a short scheme-agnostic TCP dial to the URL's host:port; tests inject a stub.
+type EndpointProber func(ctx context.Context, rawURL string) error
+
 // ClusterProvisionerFactory constructs the managed-cluster provisioner. The
 // default factory (set in NewRootCommand) resolves the pinned k3d binary and
 // wires the k3d adapter; tests inject a factory that returns a mock. It is a
@@ -121,6 +128,11 @@ type Options struct {
 	// returns a mock so funding never touches a live chain.
 	TxSubmitterFactory TxSubmitterFactory
 
+	// EndpointProber decides whether a published externalURL is reachable, used
+	// by the endpoint resolver to prefer a direct URL over a port-forward. Tests
+	// inject a stub to drive the probe verdict.
+	EndpointProber EndpointProber
+
 	// ClusterProvisionerFactory constructs the managed-cluster provisioner
 	// used by `devnet`. Tests inject a factory that returns a mock.
 	ClusterProvisionerFactory ClusterProvisionerFactory
@@ -146,6 +158,7 @@ type commandContext struct {
 	kubeClientFactory    KubeClientFactory
 	utxoConfirmerFactory UTxOConfirmerFactory
 	txSubmitterFactory   TxSubmitterFactory
+	endpointProber       EndpointProber
 	clusterProvisioner   ClusterProvisionerFactory
 	operatorInstaller    OperatorInstallerFactory
 	clusterState         ClusterStateFactory

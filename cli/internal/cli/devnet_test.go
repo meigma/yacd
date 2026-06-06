@@ -68,7 +68,13 @@ var devnetInfo = cluster.Info{
 }
 
 func fundedNetwork() *yacdv1alpha1.CardanoNetwork {
-	return readyNetwork(devnetNetworkName)
+	network := readyNetwork(devnetNetworkName)
+	// devnet maps host ports to the cluster, so its operator mirrors localhost
+	// externalURLs into status; the banner advertises those.
+	network.Status.Endpoints.Ogmios.ExternalURL = "ws://localhost:1337"
+	network.Status.Endpoints.Kupo.ExternalURL = "http://localhost:1442"
+
+	return network
 }
 
 // faucetWalletSecret stubs the genesis-funded faucet wallet Secret the devnet
