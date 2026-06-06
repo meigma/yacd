@@ -10,32 +10,60 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// connectedSession is a live host-access session shared by run and connect: the
-// chain-API port-forwards, the YACD_* environment a host process consumes (env),
-// and the document connect writes and prints (endpoints). The caller owns its
+// chainAccess is a resolved host-access handle for a network's Ogmios/Kupo: the
+// host-usable URLs, the YACD_* environment a host process consumes (env), and
+// the document connect writes and prints (endpoints). It carries a port-forward
+// session only when an endpoint fell through to the forward fallback; session is
+// nil when every endpoint resolved to a directly-reachable URL (a probed
+// externalURL, an override, or an ambient YACD_* value). The caller owns its
 // lifetime and must Close it.
-type connectedSession struct {
+type chainAccess struct {
 	session   kube.ForwardSession
 	env       []string
 	endpoints endpointsDocument
+	ogmiosURL string
+	kupoURL   string
 }
 
-// Close tears down the forwards and blocks until they stop.
-func (c *connectedSession) Close() error { return c.session.Close() }
+// Close tears down any forwards and blocks until they stop. It is a no-op when
+// nothing was forwarded.
+func (c *chainAccess) Close() error {
+	if c.session == nil {
+		return nil
+	}
+
+	return c.session.Close()
+}
 
 // Done is closed when the forwards stop for any reason (used by connect's
-// supervision and run's lost-forward handling).
-func (c *connectedSession) Done() <-chan struct{} { return c.session.Done() }
+// supervision and run's lost-forward handling). With no forward it returns a nil
+// channel, which never fires — so run does not report a lost connection for an
+// access that holds nothing to lose.
+func (c *chainAccess) Done() <-chan struct{} {
+	if c.session == nil {
+		return nil
+	}
 
-// Err reports why the forwards stopped; valid only after Done has fired.
-func (c *connectedSession) Err() error { return c.session.Err() }
+	return c.session.Done()
+}
 
-// connectNetwork establishes the shared host-access session for a ready
-// network: it gates on readiness so callers get a clear "not ready" message
-// instead of opaque forward errors, resolves the primary Pod, forwards the
-// published chain-API endpoints, and builds the loopback YACD_* environment.
-// The returned session is live; the caller closes it.
-func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace string, name string) (*connectedSession, error) {
+// Err reports why the forwards stopped; valid only after Done has fired. It is
+// nil when nothing was forwarded.
+func (c *chainAccess) Err() error {
+	if c.session == nil {
+		return nil
+	}
+
+	return c.session.Err()
+}
+
+// connectNetwork establishes the always-forward host-access handle connect uses:
+// it gates on readiness so callers get a clear "not ready" message instead of
+// opaque forward errors, resolves the primary Pod, forwards every published
+// chain-API endpoint, and builds the loopback YACD_* environment. The returned
+// handle is live; the caller closes it. run and the funding path instead go
+// through resolveChainAccess, which prefers a directly-reachable URL.
+func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace string, name string) (*chainAccess, error) {
 	network, err := kubeClient.GetCardanoNetwork(ctx, namespace, name)
 	if err != nil {
 		return nil, err
@@ -44,48 +72,42 @@ func connectNetwork(ctx context.Context, kubeClient kube.Client, namespace strin
 		return nil, err
 	}
 
-	session, endpoints, err := forwardEndpoints(ctx, kubeClient, network, namespace, name)
-	if err != nil {
-		return nil, err
-	}
-
-	env, err := hostEnv(network, session.LocalPort)
-	if err != nil {
-		_ = session.Close()
-		return nil, err
-	}
-
-	return &connectedSession{session: session, env: env, endpoints: endpoints}, nil
+	return forwardAll(ctx, kubeClient, network, namespace, name)
 }
 
-// forwardEndpoints forwards a ready network's published chain-API endpoints and
-// returns the live session plus the token-free loopback endpoints document. It
-// reads no Secret, so callers (notably topup) can run their trust gate before
-// fetching any token. The caller owns the returned session and must Close it;
-// forwardEndpoints closes it itself only when a later step here fails.
-func forwardEndpoints(ctx context.Context, kubeClient kube.Client, network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (kube.ForwardSession, endpointsDocument, error) {
+// forwardAll forwards a ready network's published chain-API endpoints and returns
+// the live handle with loopback URLs. It reads no Secret. The caller owns the
+// returned session and must Close it; forwardAll closes it itself only when a
+// later step here fails.
+func forwardAll(ctx context.Context, kubeClient kube.Client, network *yacdv1alpha1.CardanoNetwork, namespace string, name string) (*chainAccess, error) {
 	specs := forwardSpecs(network)
 	if len(specs) == 0 {
-		return nil, endpointsDocument{}, fmt.Errorf("cardanonetwork %s/%s publishes no chain-API endpoints to forward", namespace, name)
+		return nil, fmt.Errorf("cardanonetwork %s/%s publishes no chain-API endpoints to forward", namespace, name)
 	}
 
 	podName, err := kubeClient.PrimaryPodName(ctx, namespace, name)
 	if err != nil {
-		return nil, endpointsDocument{}, err
+		return nil, err
 	}
 
 	session, err := kubeClient.Forward(ctx, namespace, podName, specs)
 	if err != nil {
-		return nil, endpointsDocument{}, err
+		return nil, err
 	}
 
-	endpoints, err := newEndpointsDocument(network, session.LocalPort)
+	ogmiosURL, kupoURL, err := loopbackURLs(network, session.LocalPort)
 	if err != nil {
 		_ = session.Close()
-		return nil, endpointsDocument{}, err
+		return nil, err
 	}
 
-	return session, endpoints, nil
+	return &chainAccess{
+		session:   session,
+		env:       hostEnvFromURLs(network, ogmiosURL, kupoURL),
+		endpoints: documentFromURLs(network, ogmiosURL, kupoURL),
+		ogmiosURL: ogmiosURL,
+		kupoURL:   kupoURL,
+	}, nil
 }
 
 // forwardSpecs returns the port-forward specs for a network's published

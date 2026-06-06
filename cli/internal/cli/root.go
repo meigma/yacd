@@ -53,6 +53,9 @@ func NewRootCommand(options Options) *cobra.Command {
 			return tx.Apollo{OgmiosURL: ogmiosURL, KupoURL: kupoURL}
 		}
 	}
+	if options.EndpointProber == nil {
+		options.EndpointProber = probeEndpointReachable
+	}
 	if options.ClusterProvisionerFactory == nil {
 		options.ClusterProvisionerFactory = func() (cluster.Provisioner, error) {
 			dir, err := toolbin.DefaultDir()
@@ -87,6 +90,7 @@ func NewRootCommand(options Options) *cobra.Command {
 		kubeClientFactory:    options.KubeClientFactory,
 		utxoConfirmerFactory: options.UTxOConfirmerFactory,
 		txSubmitterFactory:   options.TxSubmitterFactory,
+		endpointProber:       options.EndpointProber,
 		clusterProvisioner:   options.ClusterProvisionerFactory,
 		operatorInstaller:    options.OperatorInstallerFactory,
 		clusterState:         options.ClusterStateFactory,

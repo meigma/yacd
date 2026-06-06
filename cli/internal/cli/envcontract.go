@@ -37,69 +37,41 @@ type chainEndpoint struct {
 	endpoint *yacdv1alpha1.ServiceEndpointStatus
 }
 
-// chainEndpoints returns the published Ogmios/Kupo endpoints paired with their
-// env keys and short names. node-to-node is excluded: it is a TCP peer
-// protocol, not something host or in-pod test tooling speaks.
+// chainEndpoints returns the Ogmios/Kupo endpoints paired with their env keys
+// and short names, always in the fixed contract order. The endpoint is nil when
+// the controller has not published it (including when Status.Endpoints itself is
+// nil), so the resolver's override and ambient-env rungs — which do not depend on
+// published status — still run; consumers that need a published endpoint guard on
+// endpoint == nil. node-to-node is excluded: it is a TCP peer protocol, not
+// something host or in-pod test tooling speaks.
 func chainEndpoints(network *yacdv1alpha1.CardanoNetwork) []chainEndpoint {
-	if network.Status.Endpoints == nil {
-		return nil
+	var ogmios, kupo *yacdv1alpha1.ServiceEndpointStatus
+	if network.Status.Endpoints != nil {
+		ogmios = network.Status.Endpoints.Ogmios
+		kupo = network.Status.Endpoints.Kupo
 	}
-	endpoints := network.Status.Endpoints
 
 	return []chainEndpoint{
-		{key: envOgmiosURL, name: "ogmios", endpoint: endpoints.Ogmios},
-		{key: envKupoURL, name: "kupo", endpoint: endpoints.Kupo},
+		{key: envOgmiosURL, name: "ogmios", endpoint: ogmios},
+		{key: envKupoURL, name: "kupo", endpoint: kupo},
 	}
 }
 
-// hostBinding is one forwarded chain endpoint exposed to the host: its contract
-// env key, short name, and the loopback URL on the assigned local port.
-type hostBinding struct {
-	key  string
-	name string
-	url  string
-}
-
-// hostBindings builds the loopback bindings for the published chain endpoints
-// that were forwarded, preserving each published scheme so a WebSocket endpoint
-// keeps ws://. It is the single place the loopback rewrite happens, shared by
-// the host env (run/connect) and the connect endpoints document. localPort
-// reports the local port assigned to a remote container port, and whether that
-// port was forwarded; unforwarded endpoints are skipped.
-func hostBindings(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool)) ([]hostBinding, error) {
-	var bindings []hostBinding
-	for _, chain := range chainEndpoints(network) {
-		if chain.endpoint == nil || strings.TrimSpace(chain.endpoint.URL) == "" {
-			continue
-		}
-		local, ok := localPort(chain.endpoint.Port)
-		if !ok {
-			continue
-		}
-		loopback, err := loopbackURL(chain.endpoint.URL, local)
-		if err != nil {
-			return nil, err
-		}
-		bindings = append(bindings, hostBinding{key: chain.key, name: chain.name, url: loopback})
-	}
-
-	return bindings, nil
-}
-
-// hostEnv assembles the YACD_* environment for a host process (run/connect):
-// the identity variables and a loopback URL per forwarded chain endpoint.
-func hostEnv(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool)) ([]string, error) {
-	bindings, err := hostBindings(network, localPort)
-	if err != nil {
-		return nil, err
-	}
-
+// hostEnvFromURLs assembles the YACD_* environment for a host process
+// (run/connect) from the already-resolved Ogmios and Kupo URLs: the identity
+// variables plus one chain-URL variable per non-empty URL, in the fixed contract
+// order. The resolver decides each URL (a probed externalURL, an override, or a
+// loopback port-forward), so this builder is transport-agnostic.
+func hostEnvFromURLs(network *yacdv1alpha1.CardanoNetwork, ogmiosURL string, kupoURL string) []string {
 	env := identityEnv(network)
-	for _, binding := range bindings {
-		env = append(env, binding.key+"="+binding.url)
+	if strings.TrimSpace(ogmiosURL) != "" {
+		env = append(env, envOgmiosURL+"="+ogmiosURL)
+	}
+	if strings.TrimSpace(kupoURL) != "" {
+		env = append(env, envKupoURL+"="+kupoURL)
 	}
 
-	return env, nil
+	return env
 }
 
 // endpointsDocument is the connection info connect writes to
@@ -113,28 +85,50 @@ type endpointsDocument struct {
 	KupoURL      string `json:"kupoUrl,omitempty"`
 }
 
-// newEndpointsDocument builds the token-free connect document from the forwarded
-// loopback bindings, reusing the same hostBindings rewrite as the host env.
-func newEndpointsDocument(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool)) (endpointsDocument, error) {
-	bindings, err := hostBindings(network, localPort)
-	if err != nil {
-		return endpointsDocument{}, err
+// documentFromURLs builds the token-free connect document from the already-
+// resolved Ogmios and Kupo URLs, the same values the host env carries.
+func documentFromURLs(network *yacdv1alpha1.CardanoNetwork, ogmiosURL string, kupoURL string) endpointsDocument {
+	doc := endpointsDocument{
+		Network:   network.Name,
+		Namespace: network.Namespace,
+		OgmiosURL: strings.TrimSpace(ogmiosURL),
+		KupoURL:   strings.TrimSpace(kupoURL),
 	}
-
-	doc := endpointsDocument{Network: network.Name, Namespace: network.Namespace}
 	if network.Status.Network != nil {
 		doc.NetworkMagic = network.Status.Network.NetworkMagic
 	}
-	for _, binding := range bindings {
-		switch binding.name {
+
+	return doc
+}
+
+// loopbackURLs rewrites each forwarded chain endpoint's published URL onto its
+// assigned local port, preserving each published scheme so a WebSocket endpoint
+// keeps ws://. localPort reports the local port assigned to a remote container
+// port and whether it was forwarded; an unforwarded or unpublished endpoint
+// yields an empty string for that service. It is the forward path's adapter onto
+// the URL-based builders.
+func loopbackURLs(network *yacdv1alpha1.CardanoNetwork, localPort func(remote int32) (int, bool)) (ogmiosURL string, kupoURL string, err error) {
+	for _, chain := range chainEndpoints(network) {
+		if chain.endpoint == nil || strings.TrimSpace(chain.endpoint.URL) == "" {
+			continue
+		}
+		local, ok := localPort(chain.endpoint.Port)
+		if !ok {
+			continue
+		}
+		loopback, err := loopbackURL(chain.endpoint.URL, local)
+		if err != nil {
+			return "", "", err
+		}
+		switch chain.name {
 		case "ogmios":
-			doc.OgmiosURL = binding.url
+			ogmiosURL = loopback
 		case "kupo":
-			doc.KupoURL = binding.url
+			kupoURL = loopback
 		}
 	}
 
-	return doc, nil
+	return ogmiosURL, kupoURL, nil
 }
 
 // podEnv assembles the YACD_* environment for an in-pod process (exec): the

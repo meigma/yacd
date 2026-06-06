@@ -119,13 +119,11 @@ func readyNetwork(namespace string) *yacdv1alpha1.CardanoNetwork {
 					ServiceName: name + "-ogmios",
 					Port:        1337,
 					URL:         "ws://" + name + "-ogmios." + namespace + ".svc.cluster.local:1337",
-					ExternalURL: "ws://localhost:1337",
 				},
 				Kupo: &yacdv1alpha1.ServiceEndpointStatus{
 					ServiceName: name + "-kupo",
 					Port:        1442,
 					URL:         "http://" + name + "-kupo." + namespace + ".svc.cluster.local:1442",
-					ExternalURL: "http://localhost:1442",
 				},
 			},
 			Conditions: []metav1.Condition{

@@ -10,16 +10,21 @@
 //
 // The host-access verbs share two building blocks. The YACD_* environment
 // contract (envcontract.go) is the stable integration surface tests consume;
-// hostEnv builds loopback URLs over port-forwards while podEnv builds in-pod
-// ClusterIP URLs, with identical variable names. connectNetwork (forward.go)
-// gates on readiness, resolves the primary Pod, forwards the published
-// chain-API endpoints, and returns a live session carrying that host
-// environment. run (run.go) execs a host command or shell with that
-// environment and propagates the command's exit code. exec (exec.go) runs a
-// command inside the primary node Pod instead, for socket-bound tools that
-// cannot use a forwarded TCP port. connect (connect.go) holds the forwards open
-// in the foreground, writing the token-free loopback URLs to
-// .yacd/<network>/endpoints.json and re-establishing them if they drop.
+// hostEnvFromURLs builds the env from resolved URLs while podEnv builds in-pod
+// ClusterIP URLs, with identical variable names. resolveChainAccess
+// (forward_resolve.go) is the shared endpoint resolver: per endpoint it prefers
+// an explicit override, then an ambient YACD_* value, then the operator-asserted
+// status.externalURL when a probe finds it reachable, and only otherwise opens an
+// ephemeral port-forward — so on a co-located devnet no forward is established.
+// run (run.go) resolves chain access and execs a host command or shell with that
+// environment, propagating the command's exit code. The funding path
+// (wallet_fund.go) resolves the same way and submits a locally-signed
+// transaction. exec (exec.go) runs a command inside the primary node Pod instead,
+// for socket-bound tools that cannot use a forwarded TCP port. connect
+// (connect.go) is deliberately forward-only — the remote-cluster tool — using
+// connectNetwork to hold the forwards open in the foreground, writing the
+// token-free loopback URLs to .yacd/<network>/endpoints.json and re-establishing
+// them if they drop.
 //
 // The package exports an Options struct for construction-time injection
 // (test seams for the kube client, the chain-index confirmer, and the
