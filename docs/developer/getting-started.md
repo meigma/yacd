@@ -103,6 +103,12 @@ yacd info devnet
 connect to. Keep this command handy while you work; it is the quickest way to
 check what a network is exposing.
 
+!!! tip "devnet is reachable on localhost"
+    `yacd devnet` maps Ogmios and Kupo to fixed host ports, so you can point a
+    tool straight at `ws://localhost:1337` (Ogmios) and `http://localhost:1442`
+    (Kupo) — no port-forward. `yacd run` and the wallet commands use these
+    automatically.
+
 ## 4. Query the chain tip
 
 Run `cardano-cli` *inside* the node Pod to query the current chain tip. This is

@@ -115,3 +115,8 @@ and defaults for each field are documented in the
 [CardanoNetwork reference](cardanonetwork.md). Chain-API blocks you omit
 entirely keep their network-spec defaults; you opt into explicit-field
 enforcement for a block only by including that block.
+
+An ogmios or kupo block may also carry the optional `service` (ClusterIP or
+NodePort) and `externalURL` fields to make the endpoint reachable from outside
+the cluster; these are not required-explicit. See
+[external access](cardanonetwork.md#external-access).

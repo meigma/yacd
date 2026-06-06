@@ -16,20 +16,23 @@ Pick the verb by how your tool reaches the node and how long you need access:
 
 | You want to… | Use | Why |
 |---|---|---|
-| Run a test suite or one-off command against Ogmios, Kupo, or the faucet | [`yacd run`](#run-a-test-runner) | Forwards the TCP Services to loopback ports, injects `YACD_*`, runs your command, then tears the forwards down. |
+| Run a test suite or one-off command against Ogmios or Kupo | [`yacd run`](#run-a-test-runner) | Resolves a host-usable URL per endpoint (a reachable `externalURL` or a loopback port-forward), injects `YACD_*`, runs your command, then tears any forwards down. |
 | Run `cardano-cli` or any tool that needs the node's Unix socket | [`yacd exec`](#run-a-socket-bound-tool) | Runs the command inside the node Pod, where the socket is local. A port-forward cannot expose a Unix socket. |
 | Keep endpoints open for a dev server, REPL, or repeated IDE test runs | [`yacd connect`](#hold-forwards-open) | Holds supervised forwards open in one terminal and writes the loopback URLs to `endpoints.json` for other processes to read. |
 
-The deciding factor between `run` and `exec` is the transport: **`run` forwards
-TCP** (Ogmios, Kupo, faucet) to loopback ports; **`exec` runs in the Pod** for
-anything that speaks to the node over its local Unix socket.
+The deciding factor between `run` and `exec` is the transport: **`run` reaches
+the TCP chain APIs** (Ogmios and Kupo) from the host; **`exec` runs in the Pod**
+for anything that speaks to the node over its local Unix socket.
 
 ## Run a test runner
 
-Use `yacd run NAME -- <cmd>` for the primary test/CI path. It establishes scoped
-port-forwards, injects the `YACD_*` environment, runs `<cmd>` on the host, and
-tears the forwards down when it exits. The command's exit code is propagated, so
-a test failure survives the wrapper.
+Use `yacd run NAME -- <cmd>` for the primary test/CI path. It resolves a
+host-usable URL for Ogmios and Kupo — preferring a reachable `externalURL` (for
+example `yacd devnet`'s `localhost` ports) and falling back to a scoped
+port-forward — injects the `YACD_*` environment, runs `<cmd>` on the host, and
+tears any forwards down when it exits. The command's exit code is propagated, so
+a test failure survives the wrapper. The full resolution order is in the
+[CLI reference](../reference/cli.md#chain-access-resolution).
 
 Put `--` before any command that takes its own flags so they pass through to the
 command instead of being parsed by `yacd`:
@@ -41,8 +44,8 @@ yacd run my-net -- go test ./e2e/...
 Your test code reads the loopback URLs from the environment:
 
 ```go
-ogmios := os.Getenv("YACD_OGMIOS_URL") // ws://127.0.0.1:<port>
-kupo := os.Getenv("YACD_KUPO_URL")     // http://127.0.0.1:<port>
+ogmios := os.Getenv("YACD_OGMIOS_URL") // reachable ws:// URL (externalURL or loopback forward)
+kupo := os.Getenv("YACD_KUPO_URL")     // reachable http:// URL
 ```
 
 With no command, `run` drops into your `$SHELL` (falling back to `/bin/sh`) with
@@ -128,8 +131,9 @@ while `connect` is running. For the document's field names and shape, see the
 `yacd wallet topup NET WALLET LOVELACE --await` funds a target and polls Kupo
 until the funding transaction's output appears, so a test never races chain
 inclusion. The `WALLET` argument is a managed wallet name or a bech32
-`addr_test...` address, and `topup` forwards Ogmios and Kupo itself — no `yacd
-run` wrapper and no URL flags:
+`addr_test...` address, and `topup` reaches Ogmios and Kupo on its own (a
+reachable `externalURL` or a port-forward), so no `yacd run` wrapper is needed.
+Pass `--ogmios-url` / `--kupo-url` to point it at specific endpoints:
 
 ```sh
 export ADDR=addr_test1... # the address your test funds

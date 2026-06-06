@@ -155,14 +155,21 @@ That is correct for in-cluster consumers and for supporting controllers, but a
 developer's tests and tools usually run on the host. The CLI's host-access verbs
 bridge that gap.
 
-`run`, `connect`, and `exec` are the three ways across the boundary. `run` and
-`connect` both establish supervised port-forwards from the cluster's chain-API
-Services to loopback on your host, but they surface those loopback URLs
-differently. `run` wraps a single command (the primary CI path), exposing the
-loopback URLs through a small `YACD_*` environment contract so tests read
-ordinary environment variables instead of parsing a YACD file. `connect` holds
-the forwards open in one terminal while you work in another, writing the
-loopback URLs to an `endpoints.json` file instead of wiring an environment.
+`run`, `connect`, and `exec` are the three ways across the boundary. `run` wraps
+a single command (the primary CI path), exposing host-usable Ogmios/Kupo URLs
+through a small `YACD_*` environment contract so tests read ordinary environment
+variables instead of parsing a YACD file. `connect` holds supervised
+port-forwards open in one terminal while you work in another, writing the URLs to
+an `endpoints.json` file instead of wiring an environment.
+
+`run` and the wallet funding commands do not always port-forward. A
+CardanoNetwork can advertise a directly reachable `externalURL` for Ogmios and
+Kupo — `yacd devnet` pins one on `localhost` (a NodePort mapped to a host port),
+and a platform team can front a shared cluster with an ingress and declare its
+URL once. The CLI probes that URL and uses it when reachable, falling back to an
+ephemeral port-forward otherwise; `connect` always forwards. Port-forwarding
+stays the universal transport because it assumes nothing about how the cluster is
+reached.
 
 `exec` is different, and it exists because of the socket constraint above. Tools
 that speak a network protocol can be forwarded, but `cardano-cli` reaches the

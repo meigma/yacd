@@ -188,6 +188,8 @@ enabled by default.
 | `enabled` | boolean | yes | `true` | — | Whether the Ogmios sidecar is deployed. |
 | `image` | string | yes | `cardanosolutions/ogmios:v6.14.0` | — | Ogmios image reference. |
 | `port` | integer (int32) | yes | `1337` | `1`–`65535` | Ogmios service port. |
+| `service` | [ServiceExposureSpec](#serviceexposurespec) | no | — | — | How the Ogmios Service is exposed (ClusterIP or NodePort). |
+| `externalURL` | string | no | — | — | Operator-asserted externally reachable URL, mirrored to `status.endpoints.ogmios.externalURL`. See [external access](#external-access). |
 | `resources` | [ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.30/#resourcerequirements-v1-core) | no | — | — | Ogmios container resources. |
 
 #### spec.chainAPI.kupo
@@ -197,7 +199,28 @@ enabled by default.
 | `enabled` | boolean | yes | `true` | — | Whether the Kupo sidecar is deployed. |
 | `image` | string | yes | `cardanosolutions/kupo:v2.11.0` | — | Kupo image reference. |
 | `port` | integer (int32) | yes | `1442` | `1`–`65535` | Kupo service port. |
+| `service` | [ServiceExposureSpec](#serviceexposurespec) | no | — | — | How the Kupo Service is exposed (ClusterIP or NodePort). |
+| `externalURL` | string | no | — | — | Operator-asserted externally reachable URL, mirrored to `status.endpoints.kupo.externalURL`. See [external access](#external-access). |
 | `resources` | [ResourceRequirements](https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.30/#resourcerequirements-v1-core) | no | — | — | Kupo container resources. |
+
+#### ServiceExposureSpec
+
+| Field | Type | Required | Default | Constraints | Description |
+| --- | --- | --- | --- | --- | --- |
+| `type` | string enum | no | `ClusterIP` | `ClusterIP`, `NodePort` | Kubernetes Service type for the endpoint. `NodePort` additionally exposes it on a static node port. |
+| `nodePort` | integer (int32) | no | — | `≤ 32767` | Pins the node port when `type` is `NodePort`. `0` or omitted auto-assigns from the node-port range (30000–32767); a pinned value is valid only with `NodePort`. |
+
+#### External access
+
+`service` and `externalURL` let a network advertise a directly reachable address so
+the CLI can skip the per-command port-forward (see
+[Connecting tools](../developer/connecting-tools.md)). They are an
+**advertisement**: the operator publishes `externalURL`, but making it routable is
+the provisioner's job — `NodePort` plus a host-port mapping for `yacd devnet`, or an
+ingress for a shared cluster. `externalURL` is validated leniently (an absolute URL
+with a host and a `ws`, `wss`, `http`, or `https` scheme) because the CLI probes it
+for reachability before trusting it. The in-cluster `url` in status is unchanged;
+`externalURL` is an additive peer.
 
 !!! note "No faucet field — funding is CLI-native"
     There is no `chainAPI.faucet` or `chainAPI.wallet` field. Every local network
@@ -247,7 +270,8 @@ Each endpoint is a [ServiceEndpointStatus](#serviceendpointstatus).
 | --- | --- | --- |
 | `serviceName` | string | Kubernetes Service name. |
 | `port` | integer (int32) | Service port. |
-| `url` | string | Convenience URL for protocols with a stable URL shape. |
+| `url` | string | In-cluster convenience URL for protocols with a stable URL shape. |
+| `externalURL` | string | Operator-asserted externally reachable URL, mirrored from the spec. Empty unless the network sets `chainAPI.<endpoint>.externalURL`. |
 
 ### status.sync
 

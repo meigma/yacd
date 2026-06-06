@@ -82,6 +82,13 @@ On success it prints the cluster context, the operator version, and (unless
 `--bare`) the Ogmios and Kupo endpoints, the funded wallet address, and a
 copy-pasteable `yacd exec` tip-query hint.
 
+`devnet` exposes Ogmios and Kupo as NodePort Services mapped to fixed host ports,
+so they are reachable from your machine at `ws://localhost:1337` (Ogmios) and
+`http://localhost:1442` (Kupo) without a port-forward. The printed endpoints
+advertise those host URLs, and the CLI uses them automatically (see
+[chain access resolution](#chain-access-resolution)). If port 1337 or 1442 is
+already in use, `devnet` fails with a clear collision error.
+
 ### devnet down
 
 ```text
@@ -144,7 +151,7 @@ the operator version is to upgrade the CLI.
 `--dry-run` prints the action the next install would take and changes nothing:
 
 ```text
-Plan: install operator (installed none -> v0.2.0) in namespace yacd-system
+Plan: install operator (installed none -> v0.2.1) in namespace yacd-system
 ```
 
 See [Installation](../operator/installation.md) for the full operator-install
@@ -313,6 +320,8 @@ wallet.
 | `--topup` | string | `""` | Fund the new wallet with this many lovelace from the faucet. |
 | `--await` | bool | `false` | Wait for the funding transaction to confirm on-chain (requires `--topup`). |
 | `--await-timeout` | duration | `2m0s` | Maximum time to wait for `--await` confirmation. |
+| `--ogmios-url` | string | `""` | Ogmios URL to use for funding; overrides the [resolved endpoint](#chain-access-resolution). |
+| `--kupo-url` | string | `""` | Kupo URL to use for funding; overrides the [resolved endpoint](#chain-access-resolution). |
 | `--json` | bool | `false` | Print machine-readable JSON. |
 
 ### wallet topup
@@ -322,14 +331,17 @@ yacd wallet topup NET WALLET LOVELACE [flags]
 ```
 
 Funds `WALLET` with `LOVELACE` (positional, must be greater than 0) from the
-`faucet` wallet, or from another managed wallet with `--from`. It forwards Ogmios
-and Kupo itself, so no `yacd run` wrapper or URL flags are needed.
+`faucet` wallet, or from another managed wallet with `--from`. It reaches Ogmios
+and Kupo on its own (see [chain access resolution](#chain-access-resolution)), so
+no `yacd run` wrapper is needed.
 
 | Flag | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `--from` | string | `faucet` | Source wallet name to fund from (default: the faucet wallet). |
 | `--await` | bool | `false` | Wait for the funding transaction to confirm on-chain. |
 | `--await-timeout` | duration | `2m0s` | Maximum time to wait for `--await` confirmation. |
+| `--ogmios-url` | string | `""` | Ogmios URL to use for funding; overrides the [resolved endpoint](#chain-access-resolution). |
+| `--kupo-url` | string | `""` | Kupo URL to use for funding; overrides the [resolved endpoint](#chain-access-resolution). |
 | `--json` | bool | `false` | Print machine-readable JSON. |
 
 ### wallet export
@@ -354,16 +366,35 @@ yacd wallet remove NET WALLET
 
 Deletes a managed wallet. The reserved `faucet` wallet cannot be removed.
 
+## Chain access resolution
+
+`yacd run` and the wallet funding commands resolve a host-usable URL for each of
+Ogmios and Kupo, preferring a directly reachable endpoint over an ephemeral
+port-forward. Per endpoint, the first available rung wins:
+
+1. An explicit `--ogmios-url` / `--kupo-url` flag (funding commands only).
+2. An ambient `YACD_OGMIOS_URL` / `YACD_KUPO_URL` (set inside `yacd run`).
+3. The network's `status.endpoints.<endpoint>.externalURL`, when a short
+   reachability probe (a ~2s TCP dial) succeeds.
+4. An ephemeral `kubectl` port-forward — the universal fallback.
+
+So a network that advertises a reachable `externalURL` — `yacd devnet` pins one on
+`localhost`, and a shared cluster can front one with an ingress — is reached
+without a port-forward. `yacd connect` always forwards; it is the remote-access
+tool.
+
 ## run
 
 ```text
 yacd run NAME [-- command [args...]] [flags]
 ```
 
-Establishes scoped port-forwards to the network's chain-API endpoints, injects
-the [`YACD_*` environment](#the-yacd-environment-contract), and execs the command
-(or your `$SHELL`, falling back to `/bin/sh`, when none is given) on the host
-with that environment. The forwards are torn down when the command exits.
+Resolves a host-usable URL for each chain-API endpoint (see
+[chain access resolution](#chain-access-resolution)) — using a reachable
+`externalURL` when one exists and otherwise a scoped port-forward — injects the
+[`YACD_*` environment](#the-yacd-environment-contract), and execs the command (or
+your `$SHELL`, falling back to `/bin/sh`, when none is given) on the host with
+that environment. Any forwards are torn down when the command exits.
 
 Put `--` before any command that takes its own flags so they are passed through
 to the command instead of being parsed by `yacd`.
@@ -440,9 +471,14 @@ CardanoNetwork to be Ready.
 `run`, `connect`, and `exec` publish a stable, versioned set of `YACD_*`
 variables (contract version 1). Tests and tooling read these instead of parsing
 any YACD file. The variable names are identical whether a command runs on the
-host (`run`, over port-forwards) or inside the primary Pod (`exec`, over cluster
-DNS); only the values adapt. Adding a variable is backward compatible; renaming
-or removing one is a breaking change to the contract.
+host (`run`, over the resolved chain access) or inside the primary Pod (`exec`,
+over cluster DNS); only the values adapt. Adding a variable is backward
+compatible; renaming or removing one is a breaking change to the contract.
+
+`YACD_OGMIOS_URL` and `YACD_KUPO_URL` are also **inputs**: the funding commands
+and a nested `yacd run` read them during
+[chain access resolution](#chain-access-resolution), so a tool launched inside
+`yacd run` reuses its already-resolved endpoints instead of opening its own.
 
 | Variable | Host (`run`) value | In-pod (`exec`) value | Present when |
 | --- | --- | --- | --- |

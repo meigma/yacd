@@ -25,7 +25,7 @@ This page covers installing onto an existing cluster. For a local [k3d](https://
 
 === "Helm"
 
-    Install the chart into a namespace, creating it if it does not exist. Replace `<version>` with the release version you want (for example `0.2.0`) and `<namespace>` with your target namespace.
+    Install the chart into a namespace, creating it if it does not exist. Replace `<version>` with the release version you want (for example `0.2.1`) and `<namespace>` with your target namespace.
 
     ```sh
     helm install yacd oci://ghcr.io/meigma/yacd/chart \
@@ -34,7 +34,7 @@ This page covers installing onto an existing cluster. For a local [k3d](https://
       --create-namespace
     ```
 
-    The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.2.0` ships `appVersion` `v0.2.0`). To inspect the chart metadata before installing:
+    The chart name is `chart` and its version tracks the release version without the leading `v` (the published chart `0.2.1` ships `appVersion` `v0.2.1`). To inspect the chart metadata before installing:
 
     ```sh
     helm show chart oci://ghcr.io/meigma/yacd/chart --version <version>

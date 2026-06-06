@@ -207,6 +207,26 @@ submit, or confirm a funding transaction.
 See the [funding guide](developer/funding.md) and the
 [`yacd wallet` reference](reference/cli.md#wallet).
 
+## devnet host port already in use
+
+**Symptom.** `yacd devnet` fails to create its cluster with a host-port collision
+error naming port `1337` or `1442`.
+
+**Cause.** `yacd devnet` maps Ogmios to host port `1337` and Kupo to `1442` so
+they are reachable on `localhost` without a port-forward. If another process
+(another devnet, a local Ogmios/Kupo, or anything else) already holds one of
+those ports, k3d cannot bind it.
+
+**Fix.** Free the port — stop the other process, or `yacd devnet down` a previous
+devnet — then re-run `yacd devnet`.
+
+!!! note "An advertised `externalURL` that is not reachable"
+    `run` and the wallet commands probe a network's `externalURL` before using
+    it and fall back to a port-forward when the probe fails, so an unreachable
+    `externalURL` only adds a brief delay, never an error. To force a specific
+    endpoint, pass `--ogmios-url` / `--kupo-url` (funding) or set
+    `YACD_OGMIOS_URL` / `YACD_KUPO_URL`.
+
 ## Image pull issues
 
 **Symptom.** A Pod is stuck `ImagePullBackOff` or `ErrImagePull`, and the owning
