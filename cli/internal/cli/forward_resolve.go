@@ -70,6 +70,14 @@ func (commandContext *commandContext) resolveChainAccess(
 
 	ogmiosURL := resolved["ogmios"]
 	kupoURL := resolved["kupo"]
+	if ogmiosURL == "" && kupoURL == "" {
+		// Nothing reachable: no override, no ambient value, no reachable
+		// externalURL, and nothing forwardable. Fail fast with a clear message
+		// rather than running a host command with an empty chain environment.
+		// (forwardSubset returned a nil session in this case, so there is nothing
+		// to close.)
+		return nil, fmt.Errorf("cardanonetwork %s/%s publishes no chain-API endpoints to reach", namespace, name)
+	}
 
 	return &chainAccess{
 		session:   session,

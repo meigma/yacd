@@ -37,18 +37,23 @@ type chainEndpoint struct {
 	endpoint *yacdv1alpha1.ServiceEndpointStatus
 }
 
-// chainEndpoints returns the published Ogmios/Kupo endpoints paired with their
-// env keys and short names. node-to-node is excluded: it is a TCP peer
-// protocol, not something host or in-pod test tooling speaks.
+// chainEndpoints returns the Ogmios/Kupo endpoints paired with their env keys
+// and short names, always in the fixed contract order. The endpoint is nil when
+// the controller has not published it (including when Status.Endpoints itself is
+// nil), so the resolver's override and ambient-env rungs — which do not depend on
+// published status — still run; consumers that need a published endpoint guard on
+// endpoint == nil. node-to-node is excluded: it is a TCP peer protocol, not
+// something host or in-pod test tooling speaks.
 func chainEndpoints(network *yacdv1alpha1.CardanoNetwork) []chainEndpoint {
-	if network.Status.Endpoints == nil {
-		return nil
+	var ogmios, kupo *yacdv1alpha1.ServiceEndpointStatus
+	if network.Status.Endpoints != nil {
+		ogmios = network.Status.Endpoints.Ogmios
+		kupo = network.Status.Endpoints.Kupo
 	}
-	endpoints := network.Status.Endpoints
 
 	return []chainEndpoint{
-		{key: envOgmiosURL, name: "ogmios", endpoint: endpoints.Ogmios},
-		{key: envKupoURL, name: "kupo", endpoint: endpoints.Kupo},
+		{key: envOgmiosURL, name: "ogmios", endpoint: ogmios},
+		{key: envKupoURL, name: "kupo", endpoint: kupo},
 	}
 }
 

@@ -143,6 +143,7 @@ func TestResolveChainAccessPrefersOverride(t *testing.T) {
 func TestResolveChainAccessPrefersAmbientEnv(t *testing.T) {
 	// No t.Parallel: t.Setenv is incompatible with parallel tests.
 	t.Setenv(envOgmiosURL, "ws://ambient-ogmios:8888")
+	t.Setenv(envKupoURL, "") // isolate from any YACD_KUPO_URL in the host/CI shell
 
 	network := networkWithExternalURLs()
 	client := newKubeMock(t)
@@ -183,6 +184,50 @@ func TestResolveChainAccessForwardsWhenNoExternalURL(t *testing.T) {
 
 	assert.Equal(t, "ws://127.0.0.1:40001", access.ogmiosURL)
 	assert.Equal(t, "http://127.0.0.1:40002", access.kupoURL)
+}
+
+func TestResolveChainAccessAppliesOverrideWithoutPublishedEndpoints(t *testing.T) {
+	t.Parallel()
+
+	// A Ready network that publishes no endpoints yet: the override and ambient
+	// rungs do not depend on published status, so an explicit override must still
+	// resolve (and open no forward).
+	network := readyNetwork("devnet")
+	network.Status.Endpoints = nil
+
+	client := newKubeMock(t)
+	cc := &commandContext{endpointProber: func(context.Context, string) error {
+		t.Error("an explicit override must not probe")
+
+		return nil
+	}}
+
+	access, err := cc.resolveChainAccess(context.Background(), client, network, "devnet", "devnet", chainOverrides{
+		OgmiosURL: "ws://custom-ogmios:9999",
+		KupoURL:   "http://custom-kupo:8888",
+	})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, access.Close()) }()
+
+	assert.Nil(t, access.session, "an override opens no forward")
+	assert.Equal(t, "ws://custom-ogmios:9999", access.ogmiosURL)
+	assert.Equal(t, "http://custom-kupo:8888", access.kupoURL)
+}
+
+func TestResolveChainAccessErrorsWhenNothingResolves(t *testing.T) {
+	t.Parallel()
+
+	// Ready but nothing published and no override: there is nothing to reach, so
+	// the resolver fails fast rather than handing back an empty environment.
+	network := readyNetwork("devnet")
+	network.Status.Endpoints = nil
+
+	client := newKubeMock(t)
+	cc := &commandContext{endpointProber: unreachableProber}
+
+	_, err := cc.resolveChainAccess(context.Background(), client, network, "devnet", "devnet", chainOverrides{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no chain-API endpoints")
 }
 
 func TestProbeEndpointReachableRejectsUnparseableURL(t *testing.T) {
