@@ -190,3 +190,55 @@ add TECH_NOTES bullets: (1) external-access P2 shipped in v0.2.1 (devnet host
 mappings + NodePort devnet spec + externalURL banner); (2) the operator-by-
 appVersion release-ordering rule; (3) dynamic appVersion tripwires (#115) + the
 rebase-the-release-PR-on-late-test-commits gotcha.
+
+## 2026-06-05 17:53 — P3 (CLI resolver) implemented, reviewed, live-proven, PR #116
+
+External-access **P3 is done and up as PR #116** (branch
+`feat/external-access-p3-resolver`, base master `d5c0b92` = v0.2.1). Approved
+plan covers the design. This COMPLETES the external-access 3-phase design.
+
+### What shipped (15 files, +835/−151, all CLI)
+- **`forward_resolve.go` (new):** `resolveChainAccess` — per-endpoint precedence
+  (explicit flag > ambient `YACD_*_URL` env > probed `status.externalURL` >
+  port-forward), forwarding ONLY the fall-through subset (one `Forward` call).
+  Injected `endpointProber` (default: 2s scheme-agnostic TCP dial honoring ctx);
+  `chainOverrides`; `connectChain` (run's fetch+gate+resolve entry).
+- **`forward.go`:** `chainAccess` replaces `connectedSession` — NILLABLE session,
+  nil-safe `Close/Done/Err` (`Done()`→nil channel so run reports no false "lost
+  connection"). `forwardAll` is connect's forward-all path.
+- **`envcontract.go`:** URL-based `hostEnvFromURLs`/`documentFromURLs` +
+  `loopbackURLs` (forward adapter); dropped the localPort-based
+  hostEnv/hostBindings/newEndpointsDocument. `chainEndpoints` now always returns
+  both entries (endpoint nil when unpublished) so rungs 1–2 are independent of
+  status.
+- **run.go / wallet_fund.go / wallet.go:** run + funding use the resolver;
+  `--ogmios-url`/`--kupo-url` flags on `wallet add`/`topup`. **No trust gate** —
+  funding submits a locally-signed tx (key never leaves CLI), Kupo read-only.
+- **connect stays forward-only** (connectNetwork→forwardAll); exec/podEnv
+  untouched.
+- Test determinism: removed externalURL from the shared `readyNetwork` stub (so
+  forward-path tests don't flake on the real prober); set it only in
+  `fundedNetwork` (banner) + `networkWithExternalURLs` (resolver tests).
+
+### Adversarial review (`wf_6c4ec7de-af2`): 3 confirmed MINOR findings, all fixed
+Root cause: `chainEndpoints` returned nil when `Status.Endpoints==nil`, so the
+resolver loop skipped rungs 1–3 in that edge (operator never produces it). Fixed:
+chainEndpoints always returns both entries; `resolveChainAccess` fails fast
+("no chain-API endpoints to reach") when nothing resolves (restores run's
+guard); pinned `YACD_KUPO_URL` in the ambient-env test. No blockers. 2nd commit
+`1769949`.
+
+### Live proof (k3d, v0.2.1 operator, torn down)
+- `yacd run devnet` → `YACD_OGMIOS_URL=ws://localhost:1337` / `…:1442`, **NO
+  forward**; both route HTTP 200 from inside run.
+- `wallet add --topup --await` (externalURL) + `wallet topup --ogmios-url
+  --kupo-url` (explicit override) → both **confirmed on-chain**.
+- 2nd ClusterIP network (`examples/local`, no externalURL) → `run` falls back to
+  port-forward (`ws://127.0.0.1:50407`). Full precedence matrix proven.
+- CI on #116 pending at journal time.
+
+### External-access design COMPLETE
+P1 (v0.2.1), P2 (v0.2.1), P3 (#116). At session-close add TECH_NOTES: P3 resolver
++ precedence + the no-trust-gate rationale + chainAccess nillable-session
+contract. Optional follow-up: the ogmigo ws-1006 genesis-config warning (issue
+#110) still prints during funding (non-fatal).
