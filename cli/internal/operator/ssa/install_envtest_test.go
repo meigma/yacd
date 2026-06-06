@@ -51,7 +51,7 @@ func TestEnsureOperatorInstallsFromEmbeddedChart(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, state.Installed, "manager Deployment should exist")
-	assert.Equal(t, "v0.1.1", state.Version, "version read from the manager Deployment label")
+	assert.Equal(t, embeddedChartAppVersion(t), state.Version, "version read from the manager Deployment label")
 	// envtest has no kube-controller-manager, so the Deployment never becomes
 	// Available; live readiness is proven by the P6 k3d e2e, not here.
 	assert.False(t, state.Ready, "envtest cannot make a Deployment Available")
@@ -86,7 +86,7 @@ func TestEnsureOperatorIsIdempotent(t *testing.T) {
 	state, err := inst.EnsureOperator(ctx, operator.InstallSpec{})
 	require.NoError(t, err, "re-apply of an equal version must be a no-op")
 	assert.True(t, state.Installed)
-	assert.Equal(t, "v0.1.1", state.Version)
+	assert.Equal(t, embeddedChartAppVersion(t), state.Version)
 }
 
 func TestEnsureOperatorPrunesStrayManagedObject(t *testing.T) {
@@ -144,7 +144,7 @@ func TestPlanOnEmptyClusterReportsInstallAndMutatesNothing(t *testing.T) {
 	decision, err := inst.Plan(ctx, operator.InstallSpec{})
 	require.NoError(t, err)
 	assert.Equal(t, operator.ActionInstall, decision.Action)
-	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+	assert.Equal(t, embeddedChartAppVersion(t), decision.TargetVersion)
 	assert.Empty(t, decision.InstalledVersion, "nothing is installed yet")
 
 	// And it applied nothing: no manager Deployment and no CRD exist afterward.
@@ -173,7 +173,7 @@ func TestPlanRefusesNewerInstalledVersionWithoutMutating(t *testing.T) {
 	require.ErrorIs(t, err, operator.ErrNewerOperator)
 	assert.Equal(t, operator.ActionRefuse, decision.Action)
 	assert.Equal(t, "v0.9.9", decision.InstalledVersion)
-	assert.Equal(t, "v0.1.1", decision.TargetVersion)
+	assert.Equal(t, embeddedChartAppVersion(t), decision.TargetVersion)
 
 	// Plan did not touch the seeded Deployment: its version label still reads the
 	// newer value, proving Plan never re-applied the embedded manifest set.
@@ -227,7 +227,7 @@ func TestEnsureOperatorNamespaceFlexibility(t *testing.T) {
 	state, err := inst.EnsureOperator(ctx, operator.InstallSpec{Namespace: ns})
 	require.NoError(t, err)
 	assert.True(t, state.Installed)
-	assert.Equal(t, "v0.1.1", state.Version)
+	assert.Equal(t, embeddedChartAppVersion(t), state.Version)
 
 	// Namespaced objects land in the requested namespace.
 	deployment := &appsv1.Deployment{}

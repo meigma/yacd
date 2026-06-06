@@ -64,7 +64,7 @@ func proberThatPanics(context.Context, string, string) error {
 const runningClusterJSON = `[{"name":"yacd","serversRunning":1,"serversCount":1,"agentsRunning":0,"agentsCount":0}]`
 
 func devSpec() cluster.Spec {
-	return cluster.Spec{Name: "yacd", K3sImage: cluster.K3sImage, Timeout: 2 * time.Minute}
+	return cluster.Spec{Name: "yacd", K3sImage: cluster.K3sImage, Timeout: 2 * time.Minute, PortMappings: cluster.DefaultPortMappings}
 }
 
 func TestEnsureClusterCreatesWhenAbsent(t *testing.T) {
@@ -86,6 +86,41 @@ func TestEnsureClusterCreatesWhenAbsent(t *testing.T) {
 	assert.Contains(t, createArgs, cluster.K3sImage)
 	assert.Contains(t, createArgs, "--wait")
 	assert.Contains(t, createArgs, "--timeout")
+	// Each port mapping is published as a "--port HOST:NODEPORT@loadbalancer"
+	// pair, in order. Assert the exact set so a dropped, duplicated, or malformed
+	// mapping fails rather than slipping past a presence-only check.
+	assert.Equal(t, []string{"1337:30137@loadbalancer", "1442:30442@loadbalancer"}, portFlagValues(createArgs))
+}
+
+// portFlagValues returns the value following each "--port" flag in args, in
+// order, so a test can assert the exact set of published port mappings.
+func portFlagValues(args []string) []string {
+	var values []string
+	for i, a := range args {
+		if a == "--port" && i+1 < len(args) {
+			values = append(values, args[i+1])
+		}
+	}
+	return values
+}
+
+func TestEnsureClusterReportsHostPortConflict(t *testing.T) {
+	runner := &fakeRunner{responses: map[string]scriptedResponse{
+		"list": {stdout: []byte("[]")},
+		"create": {err: errors.New(
+			"exec k3d: exit status 1: Error response from daemon: " +
+				"Ports are not available: exposing port TCP 0.0.0.0:1337: " +
+				"listen tcp 0.0.0.0:1337: bind: address already in use")},
+		"delete": {},
+	}}
+	prov := newProvisioner(runner, proberThatPanics)
+
+	_, err := prov.EnsureCluster(context.Background(), devSpec())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already in use")
+	assert.Contains(t, err.Error(), "1337, 1442")
+	// The partial cluster is still rolled back.
+	assert.Contains(t, runner.subcommands(), "delete")
 }
 
 func TestEnsureClusterNoOpWhenHealthy(t *testing.T) {

@@ -148,3 +148,65 @@ func TestMutateServicePreservesClusterIP(t *testing.T) {
 	assert.Equal(t, map[string]string{"app": "test"}, current.Spec.Selector)
 	assert.Equal(t, []corev1.ServicePort{{Name: "http", Port: 80}}, current.Spec.Ports)
 }
+
+func TestMutateServicePreservesAssignedNodePort(t *testing.T) {
+	current := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337, NodePort: 31234}},
+		},
+	}
+	desired := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337, NodePort: 0}},
+		},
+	}
+
+	MutateService(current, desired, nil)
+
+	// A Kubernetes-assigned node port (desired leaves it 0 for auto-assign) must
+	// survive the mutate so the Service does not thrash on every reconcile.
+	assert.Equal(t, int32(31234), current.Spec.Ports[0].NodePort)
+}
+
+func TestMutateServiceAppliesPinnedNodePort(t *testing.T) {
+	current := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337, NodePort: 31234}},
+		},
+	}
+	desired := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337, NodePort: 30500}},
+		},
+	}
+
+	MutateService(current, desired, nil)
+
+	// An explicitly pinned node port wins so the user can change the pin.
+	assert.Equal(t, int32(30500), current.Spec.Ports[0].NodePort)
+}
+
+func TestMutateServiceClusterIPDropsNodePort(t *testing.T) {
+	current := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeNodePort,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337, NodePort: 31234}},
+		},
+	}
+	desired := &corev1.Service{
+		Spec: corev1.ServiceSpec{
+			Type:  corev1.ServiceTypeClusterIP,
+			Ports: []corev1.ServicePort{{Name: "ogmios", Port: 1337}},
+		},
+	}
+
+	MutateService(current, desired, nil)
+
+	// Reverting to ClusterIP takes the desired ports verbatim, clearing the
+	// node port (the API server releases it on the type change).
+	assert.Equal(t, int32(0), current.Spec.Ports[0].NodePort)
+}

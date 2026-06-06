@@ -57,7 +57,7 @@ func TestLoopbackURLRejectsSchemelessURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "no scheme")
 }
 
-func TestHostEnvBuildsLoopbackContract(t *testing.T) {
+func TestLoopbackURLsRewriteForwardedEndpoints(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
@@ -68,18 +68,13 @@ func TestHostEnvBuildsLoopbackContract(t *testing.T) {
 		return port, ok
 	}
 
-	env, err := hostEnv(network, lookup)
+	ogmiosURL, kupoURL, err := loopbackURLs(network, lookup)
 	require.NoError(t, err)
-	assert.Equal(t, []string{
-		"YACD_NETWORK=devnet",
-		"YACD_NAMESPACE=devnet",
-		"YACD_NETWORK_MAGIC=42",
-		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
-		"YACD_KUPO_URL=http://127.0.0.1:40002",
-	}, env)
+	assert.Equal(t, "ws://127.0.0.1:40001", ogmiosURL)
+	assert.Equal(t, "http://127.0.0.1:40002", kupoURL)
 }
 
-func TestHostEnvSkipsUnforwardedEndpoints(t *testing.T) {
+func TestLoopbackURLsSkipsUnforwardedEndpoints(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
@@ -92,8 +87,33 @@ func TestHostEnvSkipsUnforwardedEndpoints(t *testing.T) {
 		return 0, false
 	}
 
-	env, err := hostEnv(network, lookup)
+	ogmiosURL, kupoURL, err := loopbackURLs(network, lookup)
 	require.NoError(t, err)
+	assert.Equal(t, "ws://127.0.0.1:40001", ogmiosURL)
+	assert.Empty(t, kupoURL)
+}
+
+func TestHostEnvFromURLsBuildsContract(t *testing.T) {
+	t.Parallel()
+
+	network := readyNetwork("devnet")
+
+	env := hostEnvFromURLs(network, "ws://127.0.0.1:40001", "http://127.0.0.1:40002")
+	assert.Equal(t, []string{
+		"YACD_NETWORK=devnet",
+		"YACD_NAMESPACE=devnet",
+		"YACD_NETWORK_MAGIC=42",
+		"YACD_OGMIOS_URL=ws://127.0.0.1:40001",
+		"YACD_KUPO_URL=http://127.0.0.1:40002",
+	}, env)
+}
+
+func TestHostEnvFromURLsSkipsEmptyURLs(t *testing.T) {
+	t.Parallel()
+
+	network := readyNetwork("devnet")
+
+	env := hostEnvFromURLs(network, "ws://127.0.0.1:40001", "")
 	assert.Equal(t, []string{
 		"YACD_NETWORK=devnet",
 		"YACD_NAMESPACE=devnet",
@@ -102,19 +122,12 @@ func TestHostEnvSkipsUnforwardedEndpoints(t *testing.T) {
 	}, env)
 }
 
-func TestNewEndpointsDocumentIsTokenFree(t *testing.T) {
+func TestDocumentFromURLsIsTokenFree(t *testing.T) {
 	t.Parallel()
 
 	network := readyNetwork("devnet")
-	local := map[int32]int{1337: 40001, 1442: 40002}
-	lookup := func(remote int32) (int, bool) {
-		port, ok := local[remote]
 
-		return port, ok
-	}
-
-	doc, err := newEndpointsDocument(network, lookup)
-	require.NoError(t, err)
+	doc := documentFromURLs(network, "ws://127.0.0.1:40001", "http://127.0.0.1:40002")
 	assert.Equal(t, "devnet", doc.Network)
 	assert.Equal(t, "devnet", doc.Namespace)
 	require.NotNil(t, doc.NetworkMagic)

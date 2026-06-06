@@ -32,6 +32,12 @@ type fundRequest struct {
 
 	// awaitTimeout bounds the on-chain confirmation wait when await is set.
 	awaitTimeout time.Duration
+
+	// ogmiosURL and kupoURL are optional explicit endpoint overrides (the
+	// resolver's highest-precedence rung). Empty means resolve normally: an
+	// ambient YACD_* value, a probed externalURL, then a port-forward.
+	ogmiosURL string
+	kupoURL   string
 }
 
 // fundResult is the outcome of a submitted funding transfer.
@@ -54,15 +60,19 @@ type fundResult struct {
 }
 
 // fundWallet funds destinationAddress from a managed source wallet by building
-// and submitting a transaction over self-managed Ogmios/Kupo port-forwards.
+// and submitting a transaction over the resolved Ogmios/Kupo endpoints.
 //
 // The faucet wallet (the default source) signs from its Secret; there is no
 // faucet HTTP service in the funding path. fundWallet gates on the network being
 // ready (so Ogmios and Kupo are published) and on the source wallet Secret
-// existing, reads and decodes the source key pair, forwards the chain APIs to
-// loopback, and submits through the injected tx.Submitter so the funding verbs
-// are testable without a live chain. When request.await is set it then polls the
-// chain index until the destination output appears.
+// existing, reads and decodes the source key pair, resolves the chain APIs
+// (preferring an override, an ambient YACD_* value, or a reachable externalURL
+// before falling back to a port-forward), and submits through the injected
+// tx.Submitter so the funding verbs are testable without a live chain. The
+// signing key never leaves the CLI — only the signed transaction reaches Ogmios —
+// so an --ogmios-url/--kupo-url override needs no token trust gate. When
+// request.await is set it then polls the chain index until the destination output
+// appears.
 func (commandContext *commandContext) fundWallet(
 	ctx context.Context,
 	kubeClient kube.Client,
@@ -89,17 +99,20 @@ func (commandContext *commandContext) fundWallet(
 		return fundResult{}, err
 	}
 
-	session, endpoints, err := forwardEndpoints(ctx, kubeClient, network, namespace, name)
+	access, err := commandContext.resolveChainAccess(ctx, kubeClient, network, namespace, name, chainOverrides{
+		OgmiosURL: request.ogmiosURL,
+		KupoURL:   request.kupoURL,
+	})
 	if err != nil {
 		return fundResult{}, err
 	}
-	defer func() { _ = session.Close() }()
+	defer func() { _ = access.Close() }()
 
-	if strings.TrimSpace(endpoints.OgmiosURL) == "" || strings.TrimSpace(endpoints.KupoURL) == "" {
+	if strings.TrimSpace(access.ogmiosURL) == "" || strings.TrimSpace(access.kupoURL) == "" {
 		return fundResult{}, fmt.Errorf("cardanonetwork %s/%s does not publish both Ogmios and Kupo endpoints required for funding", namespace, name)
 	}
 
-	submitter := commandContext.txSubmitterFactory(endpoints.OgmiosURL, endpoints.KupoURL)
+	submitter := commandContext.txSubmitterFactory(access.ogmiosURL, access.kupoURL)
 	// Apollo's OgmiosChainContext logs a non-fatal genesis-config fetch warning
 	// with a hardcoded fmt.Printf to stdout during chain-context init. Point the
 	// process stdout at stderr across submission/confirmation so that third-party
@@ -126,7 +139,7 @@ func (commandContext *commandContext) fundWallet(
 	}
 
 	if request.await {
-		confirmer := commandContext.utxoConfirmerFactory(endpoints.KupoURL)
+		confirmer := commandContext.utxoConfirmerFactory(access.kupoURL)
 		// One-time notice to stderr so the otherwise-silent poll does not look
 		// hung; it stays off stdout to keep --json output clean and is
 		// best-effort because the transfer is already submitted.

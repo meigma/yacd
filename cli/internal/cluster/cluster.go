@@ -20,6 +20,44 @@ const (
 	K3sImage = "docker.io/rancher/k3s:v1.32.5-k3s1"
 )
 
+// Host and node ports for the managed cluster's chain API exposure. The managed
+// cluster is created with host->node port mappings (see DefaultPortMappings) so
+// the devnet network's NodePort Ogmios/Kupo Services answer on stable host
+// ports. These node ports MUST match the nodePorts the devnet default network
+// spec pins, and these host ports MUST match its externalURLs; a CLI test
+// cross-checks the two sides against these constants. The host ports mirror the
+// in-cluster service ports for a familiar localhost:<port> URL.
+const (
+	// OgmiosHostPort is the host port the managed cluster maps to Ogmios.
+	OgmiosHostPort int32 = 1337
+	// OgmiosNodePort is the NodePort the devnet Ogmios Service pins; the
+	// serverlb forwards OgmiosHostPort to this same node port.
+	OgmiosNodePort int32 = 30137
+
+	// KupoHostPort is the host port the managed cluster maps to Kupo.
+	KupoHostPort int32 = 1442
+	// KupoNodePort is the NodePort the devnet Kupo Service pins; the serverlb
+	// forwards KupoHostPort to this same node port.
+	KupoNodePort int32 = 30442
+)
+
+// PortMapping is a host-port to node-port mapping for the managed cluster. It is
+// provisioner-agnostic; the adapter renders it into its own flag syntax (k3d's
+// "--port HOST:NODEPORT@loadbalancer").
+type PortMapping struct {
+	// HostPort is the port published on the host.
+	HostPort int32
+	// NodePort is the NodePort the host port forwards to on the cluster nodes.
+	NodePort int32
+}
+
+// DefaultPortMappings is the managed cluster's host->node port mappings: the
+// stable host ports devnet's Ogmios/Kupo NodePort Services are reachable on.
+var DefaultPortMappings = []PortMapping{
+	{HostPort: OgmiosHostPort, NodePort: OgmiosNodePort},
+	{HostPort: KupoHostPort, NodePort: KupoNodePort},
+}
+
 // Spec describes a managed-cluster provisioning request.
 type Spec struct {
 	// Name is the cluster name; the kubeconfig context is "k3d-<Name>".
@@ -38,11 +76,22 @@ type Spec struct {
 	// current ambient kubeconfig no longer references its context. Empty uses
 	// the standard loading rules.
 	KubeconfigPath string
+
+	// PortMappings are host->node port mappings applied at cluster-create time
+	// so NodePort Services answer on stable host ports. They are create-time
+	// only (k3d's mutating "cluster edit --port-add" is experimental, and a
+	// healthy cluster takes the EnsureCluster no-op path): a cluster created
+	// before these mappings existed keeps its NodePort Services but no host
+	// mapping, so its advertised localhost URLs do not route until it is
+	// recreated (yacd devnet down && yacd devnet). The chain data is ephemeral,
+	// so recreation is cheap, and the CLI resolver probes the advertised URL and
+	// falls back to port-forwarding when it does not answer.
+	PortMappings []PortMapping
 }
 
 // DefaultSpec returns the spec for the singleton managed cluster.
 func DefaultSpec(timeout time.Duration) Spec {
-	return Spec{Name: ManagedName, K3sImage: K3sImage, Timeout: timeout}
+	return Spec{Name: ManagedName, K3sImage: K3sImage, Timeout: timeout, PortMappings: DefaultPortMappings}
 }
 
 // Info describes a provisioned cluster.

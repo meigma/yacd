@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/meigma/yacd/cli/internal/cluster"
@@ -52,13 +53,20 @@ func (p *Provisioner) EnsureCluster(ctx context.Context, spec cluster.Spec) (clu
 // create runs "k3d cluster create" and rolls back a partial cluster on any
 // error, returning the original create error.
 func (p *Provisioner) create(ctx context.Context, bin string, spec cluster.Spec) (cluster.Info, error) {
-	args := []string{
+	args := make([]string, 0, 10+2*len(spec.PortMappings))
+	args = append(args,
 		"cluster", "create", spec.Name,
 		"--image", spec.K3sImage,
 		"--wait",
 		"--timeout", spec.Timeout.String(),
 		"--kubeconfig-update-default",
 		"--kubeconfig-switch-context",
+	)
+	// Publish each host->node port mapping through the serverlb so NodePort
+	// Services answer on stable host ports. The loadbalancer forwards the host
+	// port to the same node port, so the mapping target must be a NodePort.
+	for _, m := range spec.PortMappings {
+		args = append(args, "--port", fmt.Sprintf("%d:%d@loadbalancer", m.HostPort, m.NodePort))
 	}
 
 	if _, err := p.run(ctx, bin, args...); err != nil {
@@ -73,6 +81,11 @@ func (p *Provisioner) create(ctx context.Context, bin string, spec cluster.Spec)
 			return cluster.Info{}, fmt.Errorf("create cluster %s: timed out after %s", spec.Name, spec.Timeout)
 		case errors.Is(ctx.Err(), context.Canceled):
 			return cluster.Info{}, fmt.Errorf("create cluster %s: cancelled", spec.Name)
+		case isHostPortConflict(err):
+			// A mapped host port is already bound on this machine. Surface a
+			// clear cause rather than the raw docker bind error; automatic
+			// fallback-port selection is left to local-lifecycle hardening.
+			return cluster.Info{}, fmt.Errorf("create cluster %s: a mapped host port (%s) is already in use; free it and retry: %w", spec.Name, hostPortList(spec.PortMappings), err)
 		default:
 			return cluster.Info{}, fmt.Errorf("create cluster %s: %w", spec.Name, err)
 		}
@@ -131,4 +144,33 @@ func (p *Provisioner) deleteCluster(ctx context.Context, bin string, name string
 // exist, which the idempotent delete path tolerates.
 func isNoClusterFound(stderr []byte) bool {
 	return strings.Contains(strings.ToLower(string(stderr)), "no cluster")
+}
+
+// isHostPortConflict reports whether a create error looks like a published host
+// port already being bound on the machine. The runner wraps k3d/docker stderr
+// into the error, so the bind failure is matchable on the message. The markers
+// are the docker port-allocation phrases on both Linux and macOS; the bare
+// "bind:" prefix is intentionally NOT matched, since other bind failures (e.g.
+// "bind: permission denied") are not host-port conflicts.
+func isHostPortConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{"address already in use", "port is already allocated", "ports are not available"} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// hostPortList formats the mappings' host ports for an error message, e.g.
+// "1337, 1442".
+func hostPortList(mappings []cluster.PortMapping) string {
+	ports := make([]string, 0, len(mappings))
+	for _, m := range mappings {
+		ports = append(ports, strconv.Itoa(int(m.HostPort)))
+	}
+	return strings.Join(ports, ", ")
 }

@@ -51,7 +51,7 @@ to the command instead of being parsed by yacd.`,
 				return err
 			}
 
-			connected, err := connectNetwork(cmd.Context(), kubeClient, namespace, name)
+			connected, err := commandContext.connectChain(cmd.Context(), kubeClient, namespace, name, chainOverrides{})
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func runCommandLine(args []string) []string {
 // the rare tie where the child succeeds at the same instant the forward drops,
 // the drop is still reported — a conservative bias toward surfacing the lost
 // connection.
-func runChild(ctx context.Context, commandContext *commandContext, connected *connectedSession, command []string, namespace string, name string) error {
+func runChild(ctx context.Context, commandContext *commandContext, connected *chainAccess, command []string, namespace string, name string) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {

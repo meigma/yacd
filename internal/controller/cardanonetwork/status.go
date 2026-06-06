@@ -3,6 +3,7 @@ package cardanonetwork
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
 	ctrlstatus "github.com/meigma/yacd/internal/ctrlkit/status"
@@ -191,6 +192,7 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 			ServiceName: ogmiosService.Name,
 			Port:        ogmiosService.Spec.Ports[0].Port,
 			URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", ogmiosServiceURLType, ogmiosService.Name, ogmiosService.Namespace, ogmiosService.Spec.Ports[0].Port),
+			ExternalURL: ogmiosExternalURL(network),
 		}
 	}
 	if kupoService == nil {
@@ -200,6 +202,7 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 			ServiceName: kupoService.Name,
 			Port:        kupoService.Spec.Ports[0].Port,
 			URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", kupoServiceURLType, kupoService.Name, kupoService.Namespace, kupoService.Spec.Ports[0].Port),
+			ExternalURL: kupoExternalURL(network),
 		}
 	}
 
@@ -213,4 +216,25 @@ func setEndpointStatus(network *yacdv1alpha1.CardanoNetwork, nodeService *corev1
 		Port:        artifactsService.Spec.Ports[0].Port,
 		URL:         fmt.Sprintf("%s://%s.%s.svc.cluster.local:%d", serveServiceURLType, artifactsService.Name, artifactsService.Namespace, artifactsService.Spec.Ports[0].Port),
 	}
+}
+
+// ogmiosExternalURL returns the operator-asserted ogmios externalURL from spec,
+// trimmed, or "" when unset. It is mirrored into the ogmios endpoint status
+// only inside the enabled (service-present) branch of setEndpointStatus.
+func ogmiosExternalURL(network *yacdv1alpha1.CardanoNetwork) string {
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Ogmios == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(network.Spec.ChainAPI.Ogmios.ExternalURL)
+}
+
+// kupoExternalURL returns the operator-asserted kupo externalURL from spec,
+// trimmed, or "" when unset.
+func kupoExternalURL(network *yacdv1alpha1.CardanoNetwork) string {
+	if network.Spec.ChainAPI == nil || network.Spec.ChainAPI.Kupo == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(network.Spec.ChainAPI.Kupo.ExternalURL)
 }

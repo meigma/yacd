@@ -233,6 +233,87 @@ func TestWalletTopUpFundsResolvedDestinationFromFaucet(t *testing.T) {
 	assert.Contains(t, stdout.String(), "feedface")
 }
 
+func TestWalletTopUpUsesReachableExternalURL(t *testing.T) {
+	t.Parallel()
+
+	faucet := newWalletFixture(t, walletstore.FaucetWalletName, walletstore.SourceGenesisFunded, 0x01)
+	bob := newWalletFixture(t, "bob", walletstore.SourceManagedByCLI, 0x02)
+
+	// No walletForwardMock: a reachable externalURL means the funding path opens
+	// no port-forward, so PrimaryPodName/Forward must never be called.
+	client := newKubeMock(t)
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").
+		Return(networkWithExternalURLs(), nil)
+	client.EXPECT().ListSecrets(mock.Anything, "devnet", walletNetworkSelector()).
+		Return([]corev1.Secret{faucet.secret, bob.secret}, nil)
+	client.EXPECT().GetSecret(mock.Anything, "devnet", faucet.secret.Name).Return(&faucet.secret, nil)
+
+	var gotOgmios, gotKupo string
+	submitter := mocks.NewSubmitter(t)
+	submitter.EXPECT().Submit(mock.Anything, mock.Anything).Return(tx.Result{TxID: "feedface"}, nil)
+
+	root := NewRootCommand(Options{
+		Out:               &bytes.Buffer{},
+		Err:               &bytes.Buffer{},
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+		EndpointProber:    reachableProber,
+		TxSubmitterFactory: func(ogmiosURL string, kupoURL string) tx.Submitter {
+			gotOgmios, gotKupo = ogmiosURL, kupoURL
+			return submitter
+		},
+	})
+	root.SetArgs([]string{"wallet", "topup", "devnet", "bob", "2000000"})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.Equal(t, "ws://localhost:1337", gotOgmios, "funding submits over the reachable externalURL")
+	assert.Equal(t, "http://localhost:1442", gotKupo)
+}
+
+func TestWalletTopUpHonorsURLOverrides(t *testing.T) {
+	t.Parallel()
+
+	faucet := newWalletFixture(t, walletstore.FaucetWalletName, walletstore.SourceGenesisFunded, 0x01)
+	bob := newWalletFixture(t, "bob", walletstore.SourceManagedByCLI, 0x02)
+
+	client := newKubeMock(t)
+	client.EXPECT().GetCardanoNetwork(mock.Anything, "devnet", "devnet").
+		Return(networkWithExternalURLs(), nil)
+	client.EXPECT().ListSecrets(mock.Anything, "devnet", walletNetworkSelector()).
+		Return([]corev1.Secret{faucet.secret, bob.secret}, nil)
+	client.EXPECT().GetSecret(mock.Anything, "devnet", faucet.secret.Name).Return(&faucet.secret, nil)
+
+	var gotOgmios, gotKupo string
+	submitter := mocks.NewSubmitter(t)
+	submitter.EXPECT().Submit(mock.Anything, mock.Anything).Return(tx.Result{TxID: "feedface"}, nil)
+
+	root := NewRootCommand(Options{
+		Out:               &bytes.Buffer{},
+		Err:               &bytes.Buffer{},
+		Viper:             viper.New(),
+		KubeClientFactory: kubeClientFactory(client),
+		// The override outranks every other rung, so the prober must not run.
+		EndpointProber: func(context.Context, string) error {
+			t.Error("an explicit --ogmios-url/--kupo-url override must not probe")
+
+			return nil
+		},
+		TxSubmitterFactory: func(ogmiosURL string, kupoURL string) tx.Submitter {
+			gotOgmios, gotKupo = ogmiosURL, kupoURL
+			return submitter
+		},
+	})
+	root.SetArgs([]string{
+		"wallet", "topup", "devnet", "bob", "2000000",
+		"--ogmios-url", "ws://custom-ogmios:9999",
+		"--kupo-url", "http://custom-kupo:8888",
+	})
+
+	require.NoError(t, root.ExecuteContext(context.Background()))
+	assert.Equal(t, "ws://custom-ogmios:9999", gotOgmios)
+	assert.Equal(t, "http://custom-kupo:8888", gotKupo)
+}
+
 func TestWalletTopUpFundsFromNamedManagedWallet(t *testing.T) {
 	t.Parallel()
 

@@ -134,6 +134,97 @@ func TestPrimaryWorkloadBuilderRejectsUnsupportedInput(t *testing.T) {
 			wantErr: "kupo port must be between 1 and 65535",
 		},
 		{
+			name: "ogmios nodePort without NodePort type",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   defaultOgmiosImage,
+						Port:    defaultOgmiosPort,
+						Service: &yacdv1alpha1.ServiceExposureSpec{
+							Type:     yacdv1alpha1.ChainAPIServiceTypeClusterIP,
+							NodePort: 30500,
+						},
+					},
+				}
+			},
+			wantErr: "ogmios service nodePort is only valid when service.type is NodePort",
+		},
+		{
+			name: "ogmios nodePort out of range",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled: true,
+						Image:   defaultOgmiosImage,
+						Port:    defaultOgmiosPort,
+						Service: &yacdv1alpha1.ServiceExposureSpec{
+							Type:     yacdv1alpha1.ChainAPIServiceTypeNodePort,
+							NodePort: 100,
+						},
+					},
+				}
+			},
+			wantErr: "ogmios service nodePort must be in the 30000-32767 range",
+		},
+		{
+			name: "ogmios externalURL not absolute",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled:     true,
+						Image:       defaultOgmiosImage,
+						Port:        defaultOgmiosPort,
+						ExternalURL: "ogmios.example.com",
+					},
+				}
+			},
+			wantErr: "ogmios externalURL must be an absolute URL with a host",
+		},
+		{
+			name: "ogmios externalURL unsupported scheme",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled:     true,
+						Image:       defaultOgmiosImage,
+						Port:        defaultOgmiosPort,
+						ExternalURL: "ftp://ogmios.example.com",
+					},
+				}
+			},
+			wantErr: `ogmios externalURL scheme "ftp" is not supported`,
+		},
+		{
+			name: "ogmios externalURL set while disabled",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Ogmios: &yacdv1alpha1.OgmiosSpec{
+						Enabled:     false,
+						ExternalURL: "ws://ogmios.example.com",
+					},
+				}
+			},
+			wantErr: "ogmios service exposure requires ogmios to be enabled",
+		},
+		{
+			name: "kupo nodePort without NodePort type",
+			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
+				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{
+					Kupo: &yacdv1alpha1.KupoSpec{
+						Enabled: true,
+						Image:   defaultKupoImage,
+						Port:    defaultKupoPort,
+						Service: &yacdv1alpha1.ServiceExposureSpec{
+							Type:     yacdv1alpha1.ChainAPIServiceTypeClusterIP,
+							NodePort: 30500,
+						},
+					},
+				}
+			},
+			wantErr: "kupo service nodePort is only valid when service.type is NodePort",
+		},
+		{
 			name: "explicit kupo with ogmios disabled",
 			mutate: func(network *yacdv1alpha1.CardanoNetwork) {
 				network.Spec.ChainAPI = &yacdv1alpha1.ChainAPISpec{

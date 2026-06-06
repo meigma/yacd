@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -67,7 +68,13 @@ var devnetInfo = cluster.Info{
 }
 
 func fundedNetwork() *yacdv1alpha1.CardanoNetwork {
-	return readyNetwork(devnetNetworkName)
+	network := readyNetwork(devnetNetworkName)
+	// devnet maps host ports to the cluster, so its operator mirrors localhost
+	// externalURLs into status; the banner advertises those.
+	network.Status.Endpoints.Ogmios.ExternalURL = "ws://localhost:1337"
+	network.Status.Endpoints.Kupo.ExternalURL = "http://localhost:1442"
+
+	return network
 }
 
 // faucetWalletSecret stubs the genesis-funded faucet wallet Secret the devnet
@@ -97,7 +104,11 @@ func TestDevnetUp(t *testing.T) {
 	assert.Contains(t, out, "devnet is ready.")
 	assert.Contains(t, out, "v0.1.1")
 	assert.Contains(t, out, "addr_test1funded")
-	assert.Contains(t, out, "ws://devnet-ogmios.devnet.svc.cluster.local:1337")
+	// The banner advertises the host-reachable externalURL (localhost), not the
+	// in-cluster DNS URL, so the printed address is one the user can actually use.
+	assert.Contains(t, out, "ws://localhost:1337")
+	assert.Contains(t, out, "http://localhost:1442")
+	assert.NotContains(t, out, "svc.cluster.local")
 	assert.Contains(t, out, "cardano-cli query tip --testnet-magic 42")
 }
 
@@ -223,4 +234,31 @@ func TestDefaultDevnetEnvIsValid(t *testing.T) {
 	assert.Equal(t, yacdv1alpha1.CardanoNetworkModeLocal, env.Spec.Network.Mode)
 	require.NotNil(t, env.Spec.Network.Local)
 	assert.Equal(t, int64(42), env.Spec.Network.Local.NetworkMagic)
+}
+
+// TestDefaultDevnetEnvExposesChainAPIOnPinnedPorts guards the coupling between
+// the devnet default network spec and the managed cluster's host port mappings:
+// Ogmios/Kupo must be NodePort Services pinned to the node ports
+// cluster.DefaultPortMappings forwards from the host, with externalURLs that name
+// the matching host ports. If these drift apart the localhost URLs stop routing,
+// so the constants are the single source of truth both sides are checked against.
+func TestDefaultDevnetEnvExposesChainAPIOnPinnedPorts(t *testing.T) {
+	env, err := devconfig.Load(bytes.NewReader(defaultDevnetEnvYAML))
+	require.NoError(t, err)
+
+	require.NotNil(t, env.Spec.Network.ChainAPI)
+
+	ogmios := env.Spec.Network.ChainAPI.Ogmios
+	require.NotNil(t, ogmios)
+	require.NotNil(t, ogmios.Service)
+	assert.Equal(t, yacdv1alpha1.ChainAPIServiceTypeNodePort, ogmios.Service.Type)
+	assert.Equal(t, cluster.OgmiosNodePort, ogmios.Service.NodePort)
+	assert.Equal(t, fmt.Sprintf("ws://localhost:%d", cluster.OgmiosHostPort), ogmios.ExternalURL)
+
+	kupo := env.Spec.Network.ChainAPI.Kupo
+	require.NotNil(t, kupo)
+	require.NotNil(t, kupo.Service)
+	assert.Equal(t, yacdv1alpha1.ChainAPIServiceTypeNodePort, kupo.Service.Type)
+	assert.Equal(t, cluster.KupoNodePort, kupo.Service.NodePort)
+	assert.Equal(t, fmt.Sprintf("http://localhost:%d", cluster.KupoHostPort), kupo.ExternalURL)
 }
