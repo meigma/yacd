@@ -31,3 +31,62 @@ Current state of the world:
 
 Plan: await the user's request, then load task-relevant skills and set up an
 implementation worktree + dev stack if the work calls for it.
+
+## 2026-06-06 17:04 — CLI UX overhaul: plan produced (design-only, no code)
+
+Goal received: a full UX overhaul of the `yacd` CLI against 8 stated goals
+(consistent UX; default color/interactive + `--non-interactive`/`--quiet`;
+default long-running status display; loading bars/icons; `-vvv` verbosity
+logging default info; stdout=data / stderr=everything-else; `--json` everywhere
+sensible; clean consistent command architecture). User asked for a multi-stream,
+adversarially-verified, multi-phase/multi-PR PLAN using the `charmbracelet`,
+`cli`, and `cobra-viper-cli` skills, with the journal as scratchpad.
+
+Approach: loaded the three skills + `git`/`worktrunk`; scouted the CLI
+(`cli/internal/cli`, single root module, factory-per-command, `commandContext`
+with slog logger, persistent `--kubeconfig/--context/-n/--log-level/--log-format`,
+per-command `--json` only on list/info/wallet, progress only via `stepReporter`
+→ stderr, no TTY detection/color/spinners/quiet/non-interactive/-v). Then ran a
+dynamic Workflow (`wf_0641bf73-f55`, 46 agents, ~3.56M tok, ~30m): Understand
+(6 parallel auditors) → Design→Verify→Revise (6 concerns × 4-lens adversarial
+panel: cli-scriptability / charm-correctness / cobra-viper / scope-regression)
+→ completeness Critic → Synthesize (audit + design + phased plan).
+
+Adversarial value: the panel + critic caught that the per-concern designs
+genuinely contradicted each other — dominant find was a FALSE claim that `-v`
+was free (cobra auto-binds `-v`→`--version` when `Version` is set, so `yacd -v`
+prints version today). Also: two incompatible JSON-flag designs, three
+incompatible `cli/internal/ui` package shapes, `--quiet`-vs-logger disagreement,
+the `connect` stdout-pollution mislabel, and the wallet `--ogmios-url`/`--kupo-url`
++ `timeout`/`wait` `YACD_*` env-bleed (real, verified). The synthesis reconciled
+ALL of them into one authoritative contract.
+
+Artifacts written to `.journal/063/`:
+- `CLI_UX_AUDIT.md` — current-state findings (command/flag inventory, stdout/stderr
+  violations, cobra-viper gaps, long-running ops, deps/module boundary, tests).
+- `CLI_UX_DESIGN.md` — the single authoritative design: §2.1 flag table, §2.2 the
+  three conflict resolutions (reassign `-v` from `--version` w/ test+CHANGELOG;
+  `--output`/`-o` not `--json`; `--quiet` doesn't touch the logger), §2.4
+  interaction matrix, §3–4 one `ui` pkg + merged `commandContext`/`RuntimeConfig`,
+  §5 Reporter widening, §6 logging, §7 JSON per-command table, §8 command-arch
+  standard + routing table §8.4 + DoD, §9 boundary guards, §10 phasing, §11
+  rejected alternatives.
+- `CLI_UX_PLAN.md` — phased multi-PR plan: P0 Reporter widening → P1 Foundation
+  (flags+ui+merged ctx+verbose logging+collision fixes+CI guards) → P2 RunE
+  thinning → P3 routing + additive JSON → P4 spinners+charm styling+destructive
+  gating → P5 (optional) completion. Goal→phase matrix, dependency graph,
+  per-PR files/tests/risks/DoD, named moving test assertions, and §6 the 8
+  maintainer decisions.
+- `CLI_UX_CRITIQUE.json` — completeness critic output (per-goal coverage,
+  boundary risks, gaps, conflicts) — the rationale record for the design's calls.
+
+Boundaries enforced throughout: charm deps confined to `cli/internal/ui`, kept
+out of `./cmd` via a `go list -deps` guard; `run`/`exec` byte-transparency +
+`exitError` passthrough; stable `list`/`info` JSON shapes; `YACD_*` host-access
+env contract not shadowed/leaked; deterministic tests (non-TTY buffers, no ESC
+bytes); no Bubble Tea full-screen TUI.
+
+Next: get maintainer decisions on `CLI_UX_PLAN.md` §6 (esp. the breaking `-v`
+reassignment and `--json`→`--output` deprecation), then start implementation at
+P0/P1 in an implementation worktree (dev stack not needed for plan; will be for
+implementation). No code changed yet; master untouched.
