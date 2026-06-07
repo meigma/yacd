@@ -25,7 +25,7 @@ The prompt's suggested order is `(P0) IO/UX core + flags + determinism + import-
 
 1. **Split the prompt's P0 into P0 (Reporter widening) + P1 (foundation).** The foundation is large and must reconcile three contradictory concern-specs into one flag table, one `ui` package, one merged `commandContext`. Landing the charm-free `Reporter.Run` widening **first** (no flags, no deps, byte-neutral) shrinks the foundation diff and lets the foundation's `Reporter()` selector return real types. This is the design's Phase 0 and is uncontroversially independent.
 
-2. **Fold logging INTO the foundation, not after it (deviation from prompt's P1).** Verbosity is not separable from the flag table: `-v` ownership requires reassigning `--version`'s shorthand, `effectiveLevel = raise(resolve(log-level), verbose-count)` is computed in `loadRuntimeConfig`, and the logger is built in the one `PersistentPreRunE`. Shipping logging as a later phase would mean wiring `-v`/`raise()` twice. The design (§6, §10) puts slog-based verbose logging in the foundation; I follow it. Charm `log/v2` styling is deferred to the styling phase.
+2. **Fold logging INTO the foundation, not after it (deviation from prompt's P1).** Verbosity is not separable from the flag table: `-v` ownership requires moving version to a `yacd version` subcommand (dropping cobra's `Version:`/`--version`), `effectiveLevel = raise(resolve(log-level), verbose-count)` is computed in `loadRuntimeConfig`, and the logger is built in the one `PersistentPreRunE`. Shipping logging as a later phase would mean wiring `-v`/`raise()` twice. The design (§6, §10) puts slog-based verbose logging in the foundation; I follow it. Charm `log/v2` styling is deferred to the styling phase.
 
 3. **Architecture sweep (RunE thinning) comes BEFORE routing/JSON (deviation from prompt's P5-last).** The design (§8, §10) makes RunE-thinning Phase 2, before routing (Phase 3). Reason: routing and JSON edits land in `runX` orchestrators; doing the thinning first means the routing/JSON phases touch one clean seam per command instead of editing fat `RunE` closures twice. The prompt's "consistency sweep last" would force routing edits into un-refactored closures, then re-touch them. The design's order is lower-blast-radius. The "sweep" is therefore split: the **structural** sweep (thin RunE, shared registrars, validators, collision fixes already done in foundation) is P2; the **routing/output** sweep is P3.
 
@@ -33,7 +33,7 @@ The prompt's suggested order is `(P0) IO/UX core + flags + determinism + import-
 
 5. **Spinners + styling + destructive gating last (prompt's P3, but after routing/JSON).** This is the first PR to add `lipgloss`/`huh`/`log/v2` to the import graph. Deferring it keeps "the first charm PR" coherent and means the import-guard regex (shipped in foundation) is already proven green on a charm-free graph before charm enters. Spinners need the routing already correct (success lines via `Done` after `Run`, stderr-only) — so they come after P3.
 
-**Resulting order:** P0 Reporter widening → P1 Foundation (flags + ui package + merged context + verbose logging on slog + collision fixes + all CI guards) → P2 RunE thinning + skeleton → P3 Routing + additive JSON → P4 Spinners + charm styling + destructive gating → P5 (optional) completion. Logging-as-a-distinct-phase and a separate stdout-routing-cleanup phase from the prompt are **absorbed** (logging into P1, routing into P3) for the reasons above.
+**Resulting order:** P0 Reporter widening → P1 Foundation (flags + ui package + merged context + verbose logging on slog + collision fixes + all CI guards) → P2 RunE thinning + skeleton → P3 Routing + additive JSON → P4 Spinners + charm styling + destructive gating. Logging-as-a-distinct-phase and a separate stdout-routing-cleanup phase from the prompt are **absorbed** (logging into P1, routing into P3) for the reasons above. (The prompt's Phase 5 / shell completion is **DROPPED** per maintainer decision — the plan ends at P4.)
 
 ---
 
@@ -59,7 +59,7 @@ P1 (Foundation: flag table, ui pkg, merged commandContext/RuntimeConfig,
                       lipgloss palette + huh confirm + flagYes destructive gate)
                    │   needs P3 routing correct (Done-after-Run, stderr-only)
                    ▼
-                  P5 (optional: hang-safe ValidArgsFunction completion) — not a goal
+                  (P5 / shell completion DROPPED — not a goal, out of scope)
 ```
 
 Edges that are HARD (compile/contract): P1→{P2,P3,P4}, P3→P4 (spinner success-line contract), P2→P3 (soft: cleanliness/blast-radius, not compile). P0 is a leaf prerequisite with no upstream.
@@ -74,9 +74,9 @@ Edges that are HARD (compile/contract): P1→{P2,P3,P4}, P3→P4 (spinner succes
 | 2 | Default color/interactive; `--non-interactive`/`--quiet` disable rich output | P1 (flags + `resolveUX` + `ui.IO` color model), P4 (animation gating) | PR-1.1, PR-1.4, PR-4.1 |
 | 3 | Default status display on long-running commands | P0 (Reporter.Run), P3 (Done-after-Run lines), P4 (rich) | PR-0.1, PR-3.2, PR-4.2 |
 | 4 | Loading bars/icons for long-running commands | P4 (huh spinner, indeterminate-only) | PR-4.2 |
-| 5 | Verbose logging debug/info/warn/error with `-vvv`, default info | P1 (`-v`↔`--version` reassign, `raise()`, slog logger), P4 (charm/log styling swap) | PR-1.2, PR-1.5, PR-4.3 |
+| 5 | Verbose logging debug/info/warn/error with `-vvv`, default info | P1 (`version` subcommand, `-v` always verbose, `raise()`, slog logger), P4 (charm/log styling swap) | PR-1.2, PR-1.5, PR-4.3 |
 | 6 | Non-copyable output to stderr; only script-useful to stdout | P1 (`ui.IO` data/human split + stdout-purity guard), P3 (routing table) | PR-1.1, PR-1.6, PR-3.1 |
-| 7 | JSON output where it makes sense | P1 (`--output`/`-o` + `--json`/`YACD_JSON` alias + `Encode`), P3 (additive shapes) | PR-1.3, PR-3.3 |
+| 7 | JSON output where it makes sense | P1 (`--output`/`-o` + `Encode`; `--json`/`YACD_JSON` removed), P3 (additive shapes) | PR-1.3, PR-3.3 |
 | 8 | Clean, consistent code/architecture | P0, P1 (merged context, dedupe), P2 (runX skeleton), all guards | PR-0.1, PR-1.4, PR-2.1, PR-2.2 |
 
 ---
@@ -115,8 +115,9 @@ This is the mandatory reconciliation pass (design §1 single-ownership, §2 flag
 **Goals addressed:** 1, 2, 5, 6 (the data/human split + purity guard), 7 (the flag surface), 8.
 
 **Contract changes (user-visible / test-visible) — called out explicitly:**
-- **`-v` is reassigned from `--version` to `--verbose` (additive count).** `yacd --version` still prints to stdout + exit 0; `yacd -v` now increments verbosity. CHANGELOG note required. `root_test.go` gains an explicit guard for both.
-- **`--json` and `YACD_JSON` are deprecated** (hidden alias → `--output json` + one-line stderr warning); `--output`/`-o` (`text|json`, env `YACD_OUTPUT`) is the new surface. Existing `--json` byte output is unchanged via the alias for one release.
+- **Version becomes a `yacd version` subcommand; cobra's `Version:` field and the `--version` flag are removed.** `-v`/`--verbose` is verbosity, always (additive count). `root_test.go` guards `yacd version` (stdout, exit 0) and `-v` (verbosity); asserts no `--version` flag exists.
+- **`--json` and `YACD_JSON` are removed outright (pre-1.0 clean cut — no alias, no warning).** `--output`/`-o` (`text|json`, env `YACD_OUTPUT`) is the only surface; existing JSON byte shapes are unchanged (only the toggle moves).
+- **`-q`/`--quiet` is a global mute** — suppresses info/warn/progress/spinners and forces the logger off (overrides `-v`/`--log-level`); data (incl. `-o json`) and the final returned error reason still print.
 - **`YACD_OGMIOS_URL`/`YACD_KUPO_URL` no longer shadow wallet `--ogmios-url`/`--kupo-url` flags;** `YACD_TIMEOUT`/`YACD_WAIT` no longer bleed across commands. (Bug fix; new tests assert non-shadowing.)
 
 **PRs (in landing order):**
@@ -127,16 +128,16 @@ This is the mandatory reconciliation pass (design §1 single-ownership, §2 flag
   - Files: new `cli/internal/ui/*`. New deps: **none** (charm deferred). Guard: the import-graph guard test ships in PR-1.6, but PR-1.1 keeps `ui` charm-free so the graph stays clean.
   - Tests: `ui` unit tests — `Encode` byte-matches `json.MarshalIndent(v,"","  ")+"\n"` with `SetEscapeHTML(true)`; no-ESC-byte assertion on every human helper into a `bytes.Buffer`; `Data()` is stdout, helpers are stderr; `Interactive()` false for non-TTY streams.
 
-- **PR-1.2 — `-v`↔`--version` reassignment + `--verbose`/`--quiet`/`--non-interactive`/`--color`/`--no-color` persistent flags + `raise()` + verbose logging on slog.**
-  - `root.go`: register version without `-v` shorthand; add persistent `--verbose -v` (count), `--quiet -q` (bool), `--non-interactive` (bool), `--color` (`auto|always|never`), `--no-color` (bool). `config.go`: `raise(base, count)`, `resolveUX(rc, errOut, in)`.
+- **PR-1.2 — `version` subcommand (drop cobra `Version:`/`--version`; `-v` claims verbosity) + `--verbose`/`--quiet`/`--non-interactive`/`--color`/`--no-color` persistent flags + `raise()` + verbose logging on slog.**
+  - `root.go`: do NOT set cobra's `Version:` field and do NOT register a `--version` flag (so `-v` is free); add a `yacd version` subcommand (prints the version template to stdout, exit 0); add persistent `--verbose -v` (count), `--quiet -q` (bool), `--non-interactive` (bool), `--color` (`auto|always|never`), `--no-color` (bool). `config.go`: `raise(base, count)`, `resolveUX(rc, errOut, in)`.
   - `loadRuntimeConfig` signature changes to `loadRuntimeConfig(cmd, vp)` (needs `cmd.Flags().Changed/Count`); `LogLevel = raise(resolve(log-level), verboseCount)`.
-  - Files: `cli/internal/cli/root.go`, `cli/internal/cli/config.go`, `cli/internal/cli/config_test.go`, `cli/internal/cli/root_test.go`.
-  - New deps: none. Tests: **new** `root_test.go` cases — `--version`→stdout+exit0 (preserved), `-v` increments verbosity (and bare-root `-v` → help); `raise()` table incl. env-base rows (`YACD_LOG_LEVEL=warn yacd up -v` → debug; `-vvv` → debug; never lowers); `YACD_LOG_LEVEL` without `-v` respected. `--quiet` does NOT change slog level (assert a debug line still emits under `-q`).
+  - Files: `cli/internal/cli/root.go`, new `cli/internal/cli/version.go`, `cli/internal/cli/config.go`, `cli/internal/cli/config_test.go`, `cli/internal/cli/root_test.go`.
+  - New deps: none. Tests: **new** `root_test.go` cases — `yacd version`→stdout+exit0; no `--version` flag exists (asserts unknown-flag error); `-v` increments verbosity (and bare-root `-v` → help); `raise()` table incl. env-base rows (`YACD_LOG_LEVEL=warn yacd up -v` → debug; `-vvv` → debug; never lowers); `YACD_LOG_LEVEL` without `-v` respected. `-q` global mute: assert NO debug/info/warn line emits under `-q` even with `-vvv`, and that a returned error reason still prints under `-q`.
 
-- **PR-1.3 — `--output`/`-o` enum + `--json`/`YACD_JSON` deprecation alias + `Encode` adoption.**
-  - Add persistent `--output -o` (`text|json`, bound to viper key `output`/`YACD_OUTPUT`, **not** `SetDefault` so `Changed` stays meaningful). Register hidden persistent `--json` bool: when `Changed` → maps to `output=json` + one-line stderr deprecation warn. `YACD_JSON` (when `YACD_OUTPUT` unset) → `output=json` + warn. Remove the per-command `--json` flags from `list.go:65`/`info.go:62`/wallet; route their JSON branch through `cc.io.JSON()`.
-  - Files: `cli/internal/cli/root.go`, `config.go`, `list.go`, `info.go`, `wallet.go`, new `output_alias_test.go`.
-  - Tests: `list --json` and `list -o json` produce byte-identical frozen `[]listItem`; `info --json`/`info -o json` byte-identical `infoOutput`; deprecation warning lands on **stderr** only; `YACD_OUTPUT`/`YACD_JSON` precedence. **Moving assertion:** none of the existing `list_test.go`/`info_test.go` JSON byte assertions change (alias preserves bytes); the warning is a new stderr-only assertion.
+- **PR-1.3 — `--output`/`-o` enum + clean removal of `--json`/`YACD_JSON` + `Encode` adoption.**
+  - Add persistent `--output -o` (`text|json`, bound to viper key `output`/`YACD_OUTPUT`, **not** `SetDefault` so `Changed` stays meaningful). **Remove** the per-command `--json` flags from `list.go:65`/`info.go:62`/wallet and all `YACD_JSON` handling outright (no alias, no warning); route their JSON branch through `cc.io.JSON()`.
+  - Files: `cli/internal/cli/root.go`, `config.go`, `list.go`, `info.go`, `wallet.go`, new `output_test.go`.
+  - Tests: `list -o json` produces the frozen `[]listItem` byte-identical to today's `--json` output; `info -o json` the frozen `infoOutput`; `YACD_OUTPUT` precedence; `--json` is no longer registered (asserts unknown-flag error). **Moving assertion:** existing `list_test.go`/`info_test.go` tests that invoke `--json` are rewritten to `-o json` (same bytes). Chainsaw's `info --json` step moves to `info -o json`.
 
 - **PR-1.4 — Merge `commandContext`/`RuntimeConfig`; single `PersistentPreRunE` resolution; delete the 10 re-calls.**
   - `options.go`: add `runtimeConfig RuntimeConfig`, `io ui.IO`, `outputExplicit bool` to `commandContext` (keep `logger *slog.Logger`). `config.go`: extend `RuntimeConfig` with `Verbosity,Quiet,NonInteractive,Color (ui.ColorMode),OutputFormat`.
@@ -160,11 +161,11 @@ This is the mandatory reconciliation pass (design §1 single-ownership, §2 flag
 
 **New deps added in P1:** none (charm deferred to P4). **Guard keeping deps out of `./cmd`:** PR-1.6 import-graph test (the structural enforcement) — it is green on a charm-free graph in P1 and stays the tripwire when P4 adds charm.
 
-**Test strategy / determinism harness:** All tests use `NewRootCommand(Options{In,Out:&bytes.Buffer{},Err:&bytes.Buffer{}, Viper: viper.New()})`. Buffers are non-TTY → `resolveUX` yields `color=false`, `nonInteractive=true` → plain, deterministic output. The `ui` no-ESC-byte test is the determinism backstop. **Assertions that move in P1:** none of the existing golden/substring assertions move (P1 is flag/plumbing/guard work, byte-neutral on stdout for existing commands); the deprecation warning and collision/bleed tests are **net-new** stderr assertions.
+**Test strategy / determinism harness:** All tests use `NewRootCommand(Options{In,Out:&bytes.Buffer{},Err:&bytes.Buffer{}, Viper: viper.New()})`. Buffers are non-TTY → `resolveUX` yields `color=false`, `nonInteractive=true` → plain, deterministic output. The `ui` no-ESC-byte test is the determinism backstop. **Assertions that move in P1:** none of the existing golden/substring assertions move (P1 is flag/plumbing/guard work, byte-neutral on stdout for existing commands); the collision/bleed tests are **net-new** stderr assertions.
 
-**Risk/rollback:** Highest-blast phase. Top risk = the `-v`↔`--version` reassignment (user-visible). Mitigated by explicit `root_test.go` guards + CHANGELOG. Second risk = `loadRuntimeConfig` signature change rippling through 10 sites — mitigated by landing PR-1.4 atomically with all call-site edits. Rollback = each PR is independently revertible; PR-1.2 (the breaking `-v` change) can be held while the rest lands if needed.
+**Risk/rollback:** Highest-blast phase. Top risk = removing the `--version` flag and claiming `-v` for verbosity (user-visible). Mitigated by explicit `root_test.go` guards + CHANGELOG. Second risk = `loadRuntimeConfig` signature change rippling through 10 sites — mitigated by landing PR-1.4 atomically with all call-site edits. Rollback = each PR is independently revertible; PR-1.2 (the breaking `-v` change) can be held while the rest lands if needed.
 
-**DoD:** single flag table live; one `ui` package, one `Config`, one `New`, one merged `commandContext`/`RuntimeConfig`; resolution happens once in `PersistentPreRunE`; `-v`→verbose with `--version` preserved+tested; `--output`/`-o` live with `--json`/`YACD_JSON` aliased+warned; wallet URL + timeout/wait collisions fixed+tested; child-env guard green; import-graph/v2-path/stdout-purity guards green and charm-free; `moon run root:test` + `root:test-e2e` green; Chainsaw `info --json` unchanged.
+**DoD:** single flag table live; one `ui` package, one `Config`, one `New`, one merged `commandContext`/`RuntimeConfig`; resolution happens once in `PersistentPreRunE`; `yacd version` subcommand live (no `--version` flag), `-v` always verbose, tested; `--output`/`-o` live with `--json`/`YACD_JSON` removed; `-q` global-mute (logger off, error reason preserved) tested; wallet URL + timeout/wait collisions fixed+tested; child-env guard green; import-graph/v2-path/stdout-purity guards green and charm-free; `moon run root:test` + `root:test-e2e` green; Chainsaw migrated to `info -o json` (byte-clean).
 
 ---
 
@@ -238,15 +239,11 @@ This is the mandatory reconciliation pass (design §1 single-ownership, §2 flag
 
 ---
 
-### P5 — (Optional) hang-safe completion
+### P5 — DROPPED (maintainer decision)
 
-**Goals addressed:** none of 1–8 directly (explicitly out of the goal set; included only because the design lists it).
+Shell completion is **out of scope** for this overhaul; it addresses none of goals 1–8. The plan ends at P4. (Original sketch retained below for reference only, should it ever be revisited as separate work.)
 
-**PRs:** **PR-5.1** — live-kube `ValidArgsFunction`s with hang-safe rules (timeout-bounded, no-op logger during `__complete`, `NoFileComp` on error). Files: per-command constructors. New deps: none.
-
-**Test strategy:** completion-request unit tests with a stubbed client; assert timeout-bounded and `NoFileComp` on error. No golden moves.
-
-**Risk/rollback:** Low; isolated. Rollback = revert single PR. **Recommendation:** ship only if a maintainer wants it; it is not required by goals 1–8.
+> ~~**PR-5.1** — live-kube `ValidArgsFunction`s with hang-safe rules (timeout-bounded, no-op logger during `__complete`, `NoFileComp` on error). Per-command constructors. No new deps. Completion-request unit tests with a stubbed client.~~
 
 ---
 
@@ -259,20 +256,18 @@ This is the mandatory reconciliation pass (design §1 single-ownership, §2 flag
 
 ---
 
-## 6. Open questions / decisions for the maintainer
+## 6. Locked decisions (2026-06-06)
 
-1. **`-v` reassignment timing.** Reassigning `-v` from `--version` to `--verbose` is a deliberate breaking change shipped in P1/PR-1.2. Confirm this is acceptable in a pre-1.0 minor (current `0.2.1`) with a CHANGELOG note, or whether you'd rather concede goal 5's literal `-vvv` and keep `-v`=`--version` (the design rejects this in §11.1, but it is your call).
+The maintainer answered all eight open questions. These are authoritative and OVERRIDE any conflicting text above (pre-1.0: clean cuts, no shims / deprecations / aliases):
 
-2. **`--json`/`YACD_JSON` deprecation window.** Design says "hidden alias for one release, removed next minor." Confirm the exact release that removes them, and whether the one-line stderr deprecation warning is acceptable noise for current `--json` users (it lands on stderr, not stdout, so scripts parsing stdout are unaffected).
+1. **Version → subcommand only.** Add a `yacd version` leaf command; do NOT set cobra's `Version:` field and do NOT register a `--version` flag. `-v`/`--verbose` is verbosity, always. (PR-1.2.)
+2. **JSON → clean cut.** Remove the per-command `--json` flags and all `YACD_JSON` handling outright — no alias, no deprecation warning. `--output`/`-o` (`YACD_OUTPUT`) is the only surface; existing JSON byte shapes unchanged. (PR-1.3.)
+3. **`list` empty-state stays on stdout.** As designed. (PR-3.1.)
+4. **Tests / Chainsaw assertions move as needed.** Approved; P3 adjusts banner assertions and the `info` JSON invocation. (PR-1.3 / PR-3.1 / PR-3.3.)
+5. **`connect` excluded from JSON.** `endpoints.json` is its machine surface. As designed.
+6. **`-q`/`--quiet` is a global mute** — suppresses info/warn/progress/spinners AND forces the logger off (overrides `-v`/`--log-level`). Data (incl. `-o json`) still prints; the final returned error reason still prints via `ResolveExit`/main.go (not the logger). (PR-1.2.)
+7. **JSON shapes** — approved as designed (design §7.1). (PR-3.3.)
+8. **Shell completion (Phase 5) — DROPPED.** Plan ends at P4.
 
-3. **`list` empty-state on stdout.** The design keeps "No CardanoNetworks found." on **stdout** as the text-mode result (JSON mode emits `[]`). Confirm no downstream script greps stderr for this line. (Verified `list_test.go:134/152` assert stdout today; this preserves them.)
-
-4. **Chainsaw stdout/stderr coupling.** P3 moves `install`/`devnet`/`connect` banners to stderr. If any Chainsaw step (beyond the verified `info --json` stdout parse) asserts those banners on stdout, that step must move to stderr in PR-3.1. Maintainer should confirm the Chainsaw suite's banner assertions, or accept that P3 will adjust them.
-
-5. **`connect` JSON exclusion.** `connect` is excluded from `--output json` (it is a long-running supervisor writing interleaved `KEY=URL` + banners; `endpoints.json` is its machine interface). Confirm `endpoints.json` is the contract you want documented as the connect machine surface (design §11.12).
-
-6. **`--quiet` does not touch the logger.** A `--quiet` run still emits diagnostics per `--log-level`/`-v`. Confirm you want the diagnostic stream owned solely by verbosity (design §2.2 / §11.4), rather than `-q` also silencing logs.
-
-7. **charm module path.** The design uses `charm.land/lipgloss/v2` etc. (the charmbracelet skill's v2 paths). Confirm these resolve in your module proxy / `go.mod` at implementation time; if the canonical path is still `github.com/charmbracelet/lipgloss/v2`, the v2-path guard regex in PR-1.6 must be authored to the actual path you adopt (the guard's intent — v2-only, charm-confined — is unchanged either way).
-
-8. **P5 scope.** Shell completion (P5) is outside goals 1–8. Decide whether to ship it at all; if not, the plan ends cleanly at P4.
+The remaining residual decisions are implementation-time confirmations, not blockers:
+- **charm module path.** The design uses `charm.land/lipgloss/v2` etc. (the charmbracelet skill's v2 paths). If the canonical path is still `github.com/charmbracelet/lipgloss/v2` at implementation time, author the PR-1.6 v2-path guard regex to the path actually adopted (the guard's intent — v2-only, charm-confined — is unchanged either way).

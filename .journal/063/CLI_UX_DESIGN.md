@@ -1,5 +1,30 @@
 # yacd CLI UX Design
 
+> **Locked maintainer decisions — 2026-06-06.** Authoritative; they OVERRIDE any
+> conflicting text below (kept for rationale). The repo is pre-1.0: clean cuts,
+> no shims / deprecations / aliases.
+>
+> 1. **Version is a subcommand only.** Add a `yacd version` leaf command (prints
+>    the version template to stdout, exit 0). Do NOT set cobra's `Version:` field
+>    and do NOT register a `--version` flag, so `-v` is never auto-captured.
+>    `-v`/`--verbose` is verbosity, always. (Supersedes the "reassign
+>    `--version`'s shorthand" framing in §2.2/§10/§11.1.)
+> 2. **Clean cut on JSON output — no alias.** Delete the per-command `--json`
+>    flags and all `YACD_JSON` handling outright. `--output`/`-o` (`text|json`,
+>    `YACD_OUTPUT`) is the ONLY surface; no hidden alias, no deprecation warning.
+>    Existing JSON byte shapes are unchanged (only the toggle moves).
+>    (Supersedes the deprecation-alias text in §2.2/§7/§9/§10/§11.3.)
+> 3. **`-q`/`--quiet` is a global mute.** It suppresses the human/progress plane,
+>    spinners, AND forces the logger off (overriding `-v`/`--log-level`). Data
+>    (stdout, incl. `-o json`) still prints, and the final returned error reason
+>    still prints via `ResolveExit`/main.go (not the logger). Warnings are
+>    suppressed. (INVERTS "`--quiet` does not change the logger level" in
+>    §2.2/§2.4/§6/§11.4.)
+> 4. **Shell completion (Phase 5) is DROPPED** from scope.
+> 5. Confirmed as-designed: `list` empty-state stays on stdout (§8.4); tests /
+>    Chainsaw assertions move as needed (§9); `connect` excluded from JSON with
+>    `endpoints.json` as its machine surface (§7, §11.12).
+
 ## 1. Overview & principles
 
 This document is the single, authoritative contract for the `yacd` CLI's user experience. It collapses five per-concern designs (global UX flags, IO/UX core package, long-running status/progress, verbose logging, JSON output) plus the command-architecture standard into one coherent specification, resolving every cross-concern conflict the critic raised. Where two concerns disagreed, exactly one decision is made here and the rejected option is recorded in section 11.
@@ -47,12 +72,12 @@ This is the single reconciled flag table. It supersedes every per-concern flag c
 
 **`-v` ownership and semantics (resolves the `-v` vs `--version` collision and the additive-vs-floor split).** Goal 5 explicitly requests `-vvv`. The only model that delivers it is the **additive** one. We therefore:
 
-1. **Reassign the `--version` shorthand.** Cobra auto-binds `-v` to `--version` when `Version` is set (verified: `yacd -v` prints version + exit 0 today). The foundation phase explicitly frees `-v` by registering version without a shorthand and claiming `-v` for `--verbose`. This is a deliberate, tested breaking change: `root_test.go` asserts (a) `yacd --version` still prints version to stdout and exits 0 (the exact `root_test.go:28` string), and (b) `yacd -v` now increments verbosity (and, alone, runs the bare root → help, since no subcommand). A CHANGELOG note records the reassignment.
+1. **Version is a dedicated `yacd version` subcommand.** Cobra auto-binds `-v` to `--version` when `Version` is set (verified: `yacd -v` prints version + exit 0 today), so we do NOT set cobra's `Version:` field and do NOT register a `--version` flag — `-v` is therefore never auto-captured and is always `--verbose`. A `yacd version` leaf command prints the version template to stdout (exit 0). `root_test.go` asserts (a) `yacd version` prints the version to stdout and exits 0, and (b) `yacd -v` increments verbosity (and, alone, runs the bare root → help). Pre-1.0 clean cut: there is no `--version` flag.
 2. **`-v` is additive over the resolved `--log-level`** along `error < warn < info < debug`; it never lowers. `--verbose` is flag-only (a count has no sane env representation), so no `YACD_VERBOSE` exists and nothing leaks into the child env.
 
-**`--output`/`-o`, not `--json` (resolves goal 7's two-flag conflict).** A separate `--json` boolean cannot be made env-inert under the repo's `SetEnvPrefix("YACD") + AutomaticEnv()`: binding key `json` exposes `YACD_JSON` on every command, making machine output vary with ambient environment (a boundary-A violation) and injecting `YACD_JSON` into children via `run.go:109`. We ship a single persistent `--output`/`-o` enum (`text|json`) bound to one key (`output`) / one env (`YACD_OUTPUT`). The legacy `YACD_JSON` and the per-command `--json` flags are **retired with a one-release deprecation alias**: `--json` is registered as a hidden persistent boolean that, when `Changed`, maps to `--output json` and prints a one-line stderr deprecation warning; `YACD_JSON` (when `YACD_OUTPUT` is unset) maps to `output=json` with the same warning. Both are removed in the next minor. `-o` is free (only `-n`, `-f`, `-v`, `-q` are claimed).
+**`--output`/`-o`, not `--json` (resolves goal 7's two-flag conflict).** A separate `--json` boolean cannot be made env-inert under the repo's `SetEnvPrefix("YACD") + AutomaticEnv()`: binding key `json` exposes `YACD_JSON` on every command, making machine output vary with ambient environment (a boundary-A violation) and injecting `YACD_JSON` into children via `run.go:109`. We ship a single persistent `--output`/`-o` enum (`text|json`) bound to one key (`output`) / one env (`YACD_OUTPUT`). Pre-1.0 clean cut: the legacy `YACD_JSON` and the per-command `--json` flags are **removed outright — no alias, no deprecation warning.** Existing JSON byte shapes are unchanged (only the toggle moves). `-o` is free (only `-n`, `-f`, `-v`, `-q` are claimed).
 
-**`--quiet` does not touch the logger (resolves the `-q` logger-effect conflict).** `--quiet` suppresses `ui.IO`'s human/progress channel (Info/Status/Reporter spinners) on stderr. It does **not** raise the slog level: a `--quiet` pipeline still emits diagnostics per `--log-level`/`-v`. This keeps the diagnostic stream a single-writer concern owned only by verbosity. Warnings and errors are always shown; data is always shown.
+**`--quiet` is a global mute (resolves the `-q` logger-effect conflict).** `-q`/`--quiet` suppresses `ui.IO`'s human/progress channel (Info/Status/Reporter spinners) on stderr **and forces the logger off, overriding `-v`/`--log-level`.** Warnings are suppressed. What still prints: data on stdout (incl. `-o json`) and the final returned error reason on stderr (emitted by `ResolveExit`/main.go — that path is not the logger). `--quiet` is not `--non-interactive`; TTY prompts are still allowed under `-q`.
 
 ### 2.3 Precedence
 
@@ -68,7 +93,7 @@ There is no config-file reading today (`ReadInConfig` is absent); the config-fil
 |---|---|---|---|---|---|---|
 | **default, TTY** | data | shown | shown | per level | allowed | animated + color |
 | **`--output json`** | one JSON doc, byte-clean | suppressed | shown | per level | n/a (no prompt path) | none on stdout, ever |
-| **`--quiet` / `-q`** | data | **suppressed** | shown | **unchanged** | allowed | per color |
+| **`--quiet` / `-q`** | data | **suppressed** | **errors only** | **off (overrides `-v`/level)** | allowed | none |
 | **`--non-interactive`** | data | shown (plain) | shown | per level | **disabled** | **no animation; plain** |
 | **non-TTY (piped)** | data | shown (plain) | shown (plain) | per level | **disabled** (latch) | **none (auto)** |
 | **`NO_COLOR` / `--no-color` / `--color=never`** | data | shown (plain) | shown (plain) | per level | allowed | **no color, no animation** |
@@ -322,7 +347,7 @@ func resolveUX(rc RuntimeConfig, errOut io.Writer, in io.Reader) (color, nonInte
 
 The **11** existing `loadRuntimeConfig(commandContext.viper)` re-calls (`connect.go:50`, `down.go:21`, `exec.go:69`, `info.go:22`, `install.go:52`, `list.go:26`, `run.go:39`, `target.go:70`, `up.go:28`, `wallet.go:79`) are deleted; each reads `cc.runtimeConfig`. `root.go:111` stays the one caller.
 
-`-v`↔`--version` reassignment and the `--output` registration both land here. `initializeConfig` is extended only to `bindFlag(vp, "output", …)`; it does **not** bind `verbose`/`quiet`/`non-interactive`/`color`/`no-color` (flag-only by design).
+The `version` subcommand (dropping cobra `Version:`/`--version`; `-v` claims verbosity) and the `--output` registration both land here. `initializeConfig` is extended only to `bindFlag(vp, "output", …)`; it does **not** bind `verbose`/`quiet`/`non-interactive`/`color`/`no-color` (flag-only by design).
 
 ---
 
@@ -383,7 +408,7 @@ Logging stays on `log/slog` for the foundation phase (no color needed for level 
 - **Levels:** `debug|info|warn|error`, default `info`, on stderr.
 - **`-vvv`:** `--verbose` is a count; effective level = `raise(resolve(--log-level), verbose-count)`. Additive, never lowers. `-v`→debug, and a higher base (e.g. `--log-level=warn`) steps `warn→info→debug`.
 - **Precedence:** a typed `--log-level` flag (`Changed`) is authoritative over `-v`; an ambient `YACD_LOG_LEVEL` env does **not** outrank the `-v` flag (so `YACD_LOG_LEVEL=warn yacd up -v` → debug). `YACD_LOG_LEVEL` without `-v` is respected.
-- **`--quiet`:** does not change the logger level (see 2.2).
+- **`--quiet`:** is a global mute — it forces the logger OFF (overriding `-v`/`--log-level`); see 2.2. The final returned error still prints via `ResolveExit`/main.go (not the logger).
 - **`--output json` vs logs:** orthogonal. Logs stay on stderr always; `--output json` changes only stdout data. Structured logs are an independent opt-in via `--log-format=json` (stderr). The logger never writes to stdout.
 - **No `ReportCaller`/`file:line`** (nondeterministic) and **no `logfmt`** format (gold-plating; enum stays `text|json`).
 - **The single existing structured log call** (`up.go:96` `logger.Debug(...)`) is unchanged.
@@ -393,7 +418,7 @@ Logging stays on `log/slog` for the foundation phase (no color needed for level 
 | default | data / `--output json` payload | plain text, level=info |
 | `--output json` | stable JSON | unchanged plain text logs |
 | `--log-format=json` | unchanged | structured JSON logs |
-| `-v` / `-q` / `NO_COLOR` / TTY | **byte-identical** | level threshold only (logs); `-q` does not change level |
+| `-v` / `-q` / `NO_COLOR` / TTY | **byte-identical** | `-v` raises level; `-q` forces logs off (overrides level); `NO_COLOR`/TTY affect styling only |
 
 ---
 
@@ -573,7 +598,7 @@ A new command is done when: it follows the skeleton (8.7 fully checked); it has 
 - **Manager-import guard (repo invariant D):** charm confined to `cli/internal/ui`. Net-new CI tripwire (`cli/internal/ui/guard_test.go::TestManagerImportGraphHasNoCharm`) fails if `go list -deps ./cmd` matches `charm|lipgloss|huh|bubble|ultraviolet|colorprofile|charmbracelet|ogmigo|kugo|internal/cardano/tx`. A v2-path grep fails on any `github.com/charmbracelet/(lipgloss|huh|log)` v0/v1 import under `cli/`. Ships in the foundation PR that first adds charm to `go.mod`. The slog→charm/log swap is deferred to the styling phase so the "first charm PR" story stays coherent.
 - **JSON stability (repo invariant):** `Encode` reproduces `MarshalIndent` byte-for-byte (`SetEscapeHTML(true)`); `listItem`/`infoOutput`/wallet shapes untouched; Chainsaw `info --json` (`chainsaw-test.yaml:545`) and `list_test.go:177`/`info_test.go` stay byte-clean. New shapes are additive.
 - **Env contract (repo invariant D):** only `--output` is env-bound among the new flags (`YACD_OUTPUT`), no host-access collision; `--verbose`/`--quiet`/`--color`/`--non-interactive` are flag-only (no `YACD_*`, no child leak). `run`/`exec` keep `append(os.Environ(), connected.env...)`; a guard test asserts the CLI-injected set (`connected.env`) contains only the documented host-access keys even when `YACD_OUTPUT`/`YACD_VERBOSE`/etc. are exported in the test process. `--ogmios-url`/`--kupo-url` read off `cmd.Flags()` so injected `YACD_OGMIOS_URL`/`YACD_KUPO_URL` no longer shadow them.
-- **Test determinism (repo invariant E):** buffers → non-TTY → color off → plain; `ui` no-ESC-byte test; `plainReporter` keeps `"==> "`/`"    "` prefixes so live + Chainsaw phrase asserts hold. **Named moving assertions:** `install_test.go:159-162,183-186,259-260` → stderr (`285-289,306-309` stay stdout); `devnet_test.go:104,128,142,159,172,186` → stderr; `devnet_live_test.go:48,49,67,73` → stderr; `connect_test.go` banners → stderr (`KEY=URL` stay stdout); `wallet_test.go` remove line → stderr; `exec_test.go:79` reworded to the `requireNameAndCommand` message; `list_test.go:134/152` and `up_test.go`/`down_test.go` unchanged. **New tests:** `-v`↔`--version` reassignment guard; `--color`×`--no-color`×`NO_COLOR` precedence; `raise()` verbosity table incl. env-base rows; `YACD_JSON`/`YACD_OUTPUT` deprecation-alias behavior; `YACD_OGMIOS_URL`/`YACD_KUPO_URL`/`YACD_TIMEOUT` non-bleed; child-env guard; destructive TTY-refuse + `--yes`-bypass.
+- **Test determinism (repo invariant E):** buffers → non-TTY → color off → plain; `ui` no-ESC-byte test; `plainReporter` keeps `"==> "`/`"    "` prefixes so live + Chainsaw phrase asserts hold. **Named moving assertions:** `install_test.go:159-162,183-186,259-260` → stderr (`285-289,306-309` stay stdout); `devnet_test.go:104,128,142,159,172,186` → stderr; `devnet_live_test.go:48,49,67,73` → stderr; `connect_test.go` banners → stderr (`KEY=URL` stay stdout); `wallet_test.go` remove line → stderr; `exec_test.go:79` reworded to the `requireNameAndCommand` message; `list_test.go:134/152` and `up_test.go`/`down_test.go` unchanged. **New tests:** `yacd version` subcommand + `-v`-always-verbose guard (no `--version` flag); `--color`×`--no-color`×`NO_COLOR` precedence; `raise()` verbosity table incl. env-base rows; `-q` global-mute (logger off, error reason still printed); `YACD_OUTPUT` precedence (no `--json`/`YACD_JSON`); `YACD_OGMIOS_URL`/`YACD_KUPO_URL`/`YACD_TIMEOUT` non-bleed; child-env guard; destructive TTY-refuse + `--yes`-bypass.
 
 ---
 
@@ -582,20 +607,20 @@ A new command is done when: it follows the skeleton (8.7 fully checked); it has 
 Sequenced so each phase is independently shippable with CI green and minimal blast radius (resolves the inconsistent cross-concern sequencing).
 
 - **Phase 0 — charm-free Reporter widening (independent, first, byte-neutral):** widen `lifecycle.Reporter` with `Run`; add `Run` to `NopReporter`, `stepReporter`, and test doubles; change `runInstall`'s parameter to `lifecycle.Reporter`. No flags, no deps, no behavior change.
-- **Phase 1 — foundation (the mandatory reconciliation pass):** the single `cli/internal/ui` package (one `Config`, one `New`, one `Reporter`, `Encode`, slog logger); the merged `commandContext`/`RuntimeConfig`; the single flag table incl. `-v`↔`--version` reassignment, `--output`/`-o` (+ `--json`/`YACD_JSON` deprecation alias), `--verbose`/`--quiet`/`--non-interactive`/`--color`/`--no-color`; `resolveUX`/`raise`; the 11 `loadRuntimeConfig` re-call deletions + caching; the YACD_* collision fixes (wallet URLs, per-command timeout/wait); the import-graph + v2-path + stdout-purity CI guards. Verbose logging ships here on slog (interim, no charm).
+- **Phase 1 — foundation (the mandatory reconciliation pass):** the single `cli/internal/ui` package (one `Config`, one `New`, one `Reporter`, `Encode`, slog logger); the merged `commandContext`/`RuntimeConfig`; the single flag table incl. the `yacd version` subcommand (no `--version` flag/`Version:`), `--output`/`-o` (per-command `--json`/`YACD_JSON` removed outright), `--verbose`/`--quiet` (global mute)/`--non-interactive`/`--color`/`--no-color`; `resolveUX`/`raise`; the 11 `loadRuntimeConfig` re-call deletions + caching; the YACD_* collision fixes (wallet URLs, per-command timeout/wait); the import-graph + v2-path + stdout-purity CI guards. Verbose logging ships here on slog (interim, no charm).
 - **Phase 2 — RunE thinning + skeleton:** extract `runX` orchestrators, shared flag registrars, Args validators (incl. `requireNameAndCommand`), help text. Byte-neutral except the exec arity error (named test).
 - **Phase 3 — routing + additive JSON:** apply the single routing table (8.4) with all named assertion moves; route everything through `cc.io`; add `up`/`down`/`install`/`devnet status` JSON shapes via `emit`. The deferred JSON shapes (`devnet up/down`, `wallet remove/export`) land here once their text moves to stderr.
 - **Phase 4 — spinners + styling + destructive gating:** `richReporter` huh spinner; charm/log v2 swap (text path) — the first introduction of `log/v2`; lipgloss palette; huh confirm + `flagYes` for `down`/`devnet down`.
-- **Phase 5 (optional) — completion:** live-kube `ValidArgsFunction`s with hang-safe rules (timeout-bounded, no-op logger during `__complete`, `NoFileComp` on error). Not part of goals 1–8; its own PR.
+- **Phase 5 — DROPPED (maintainer decision).** Shell completion is out of scope for this overhaul; the plan ends at Phase 4.
 
 ---
 
 ## 11. Rejected alternatives
 
-1. **Keep `-v` bound to `--version`; ship `--verbose` shorthand-less.** Rejected: goal 5 demands `-vvv`, deliverable only via an additive count on `-v`. We reassign `--version`'s shorthand with explicit tests instead.
+1. **Keep `-v` bound to `--version`.** Rejected: goal 5 demands `-vvv`, deliverable only via an additive count on `-v`. Version is a dedicated `yacd version` subcommand and cobra's `Version:` field / `--version` flag are not used, so `-v` is always verbosity.
 2. **Binary "floor to debug" `-v` semantics.** Rejected: no `-vvv` stepping from a higher base; goal 5 asks for it. Additive `raise()` chosen.
-3. **Separate `--json` boolean (local or persistent).** Rejected: cannot be env-inert under `AutomaticEnv`+`BindPFlags` (`YACD_JSON` flips it on every command — boundary-A violation and child-env leak). One `--output`/`-o` enum bound to `YACD_OUTPUT`; `--json`/`YACD_JSON` retired via one-release alias.
-4. **`--quiet` raises the slog level to warn.** Rejected: makes the diagnostic stream depend on a cosmetic flag and adds a second writer of the level. `--quiet` gates only the human/progress channel.
+3. **Separate `--json` boolean (local or persistent).** Rejected: cannot be env-inert under `AutomaticEnv`+`BindPFlags` (`YACD_JSON` flips it on every command — boundary-A violation and child-env leak). One `--output`/`-o` enum bound to `YACD_OUTPUT`; `--json`/`YACD_JSON` removed outright (pre-1.0 clean cut — no alias).
+4. **`--quiet` leaves the logger on (gates only the human/progress channel).** Rejected per maintainer decision: `-q` is a global mute that also forces the logger OFF (overriding `-v`/`--log-level`); only data on stdout and the final returned error reason survive.
 5. **Three `cli/internal/ui` package designs (`ui.UI`/`ui.IO`/`ui.Policy`, three `New()` signatures).** Rejected: would not compile as a union and contradicts goal 8. Collapsed into one `ui.IO` + one `New` + one `Reporter`.
 6. **Per-style "disable when Color==false" lipgloss mechanism.** Rejected: does not exist in v2; `Render()` always emits ANSI. Strip at the `colorprofile.Writer` boundary.
 7. **Derive TTY/color from global `os.Stdout`.** Rejected: tests inject buffers and `wallet_fund` swaps `os.Stdout`. Derive from the raw injected writers captured before any swap.

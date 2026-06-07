@@ -90,3 +90,43 @@ Next: get maintainer decisions on `CLI_UX_PLAN.md` §6 (esp. the breaking `-v`
 reassignment and `--json`→`--output` deprecation), then start implementation at
 P0/P1 in an implementation worktree (dev stack not needed for plan; will be for
 implementation). No code changed yet; master untouched.
+
+## 2026-06-06 17:20 — Maintainer decisions locked; design+plan revised
+
+User answered all 8 §6 questions. Locked decisions (pre-1.0 = clean cuts, no
+shims/deprecations/aliases):
+1. **Version → `yacd version` SUBCOMMAND ONLY.** Drop cobra's `Version:` field
+   AND the `--version` flag entirely; `-v` is always verbosity. (Stronger than
+   the doc's original "reassign the shorthand, keep `--version`".)
+2. **JSON → CLEAN CUT.** Remove per-command `--json` + all `YACD_JSON` handling
+   outright — no alias, no deprecation warning. `--output`/`-o` (`YACD_OUTPUT`)
+   is the only surface; existing JSON byte shapes unchanged.
+3. `list` empty-state stays on stdout. (as designed)
+4. Tests/Chainsaw assertions move as needed (incl. `info --json` → `info -o json`).
+5. `connect` excluded from JSON; `endpoints.json` is its machine surface.
+6. **`-q`/`--quiet` = GLOBAL MUTE** — silences info/warn/progress/spinners AND
+   forces the logger off (overrides `-v`/`--log-level`). Data (incl. `-o json`)
+   still prints; the final returned error reason still prints via
+   `ResolveExit`/main.go (not the logger). Errors are NOT suppressed (user
+   confirmed "keep error reason"). (INVERTS the doc's original "`-q` does not
+   touch the logger".)
+7. JSON shapes approved as designed (§7.1).
+8. **Phase 5 (shell completion) DROPPED** — plan ends at P4.
+
+Revised `CLI_UX_DESIGN.md` + `CLI_UX_PLAN.md` in place to match: added a
+"Locked decisions" override block atop the design; rewrote §2.2 (the three
+conflict resolutions), the §2.4 quiet row, §6 logging quiet lines, §7/§9/§10/§11
+JSON+quiet+phasing text, the PLAN P1 contract bullets, PR-1.2 (version
+subcommand + `version.go`), PR-1.3 (clean `--json`/`YACD_JSON` removal), the DoD,
+the goal matrix, dropped P5, and replaced PLAN §6 with the locked decisions.
+Grepped both docs for stale `deprecat|alias|reassign|--version|does not touch the
+logger|P5 (optional)` — remaining hits are either the new correct text, the
+override/rejected-alternatives rationale, or factual current-state notes.
+
+Only residual implementation-time confirmation: the charm v2 module path
+(`charm.land/*` per the skill vs `github.com/charmbracelet/*`) — author the
+PR-1.6 v2-path guard regex to whichever resolves; intent unchanged.
+
+Ready to implement: P0 (charm-free `Reporter.Run` widening) → P1 (foundation).
+Will branch an implementation worktree off fetched master and (for P1+) start the
+dev stack when implementation begins. Still no product code changed.
