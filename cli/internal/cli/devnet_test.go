@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -261,4 +262,34 @@ func TestDefaultDevnetEnvExposesChainAPIOnPinnedPorts(t *testing.T) {
 	assert.Equal(t, yacdv1alpha1.ChainAPIServiceTypeNodePort, kupo.Service.Type)
 	assert.Equal(t, cluster.KupoNodePort, kupo.Service.NodePort)
 	assert.Equal(t, fmt.Sprintf("http://localhost:%d", cluster.KupoHostPort), kupo.ExternalURL)
+}
+
+func TestStepReporterRun(t *testing.T) {
+	t.Run("runs the action and writes nothing", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := &stepReporter{w: &buf}
+		called := false
+
+		err := r.Run(context.Background(), "any title", func(context.Context) error {
+			called = true
+			return nil
+		})
+
+		require.NoError(t, err)
+		assert.True(t, called, "action must run")
+		assert.Empty(t, buf.String(), "Run must emit no output; the caller reports completion with Done")
+	})
+
+	t.Run("propagates the action error", func(t *testing.T) {
+		var buf bytes.Buffer
+		r := &stepReporter{w: &buf}
+		sentinel := errors.New("boom")
+
+		err := r.Run(context.Background(), "any title", func(context.Context) error {
+			return sentinel
+		})
+
+		assert.ErrorIs(t, err, sentinel)
+		assert.Empty(t, buf.String())
+	})
 }
