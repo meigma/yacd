@@ -935,3 +935,27 @@
     feature ever needs genesis constants. Root cause = the SundaeSwap ogmigo client on the
     discontinued Gorilla WebSocket toolkit (Kusari-flagged); the durable fix is to move off
     ogmigo / use Ogmios HTTP queries, folded into P4/P5.
+- **CLI UX overhaul is DESIGNED + PLANNED but NOT STARTED (session 063).** A full
+  `yacd` CLI UX overhaul (consistent UX; default color/interactive +
+  `--non-interactive`/`-q`; long-running status + spinners; `-vvv` verbosity
+  logging default info; stdout=data / stderr=everything-else; `--output`/`-o`
+  JSON; clean command architecture) is fully specced in `.journal/063/`:
+  `CLI_UX_PLAN.md` (the execution playbook — phases **P0** Reporter.Run widening →
+  **P1** foundation: flag table + new `cli/internal/ui` pkg + merged
+  `commandContext`/`RuntimeConfig` + verbose logging on slog + `YACD_*` collision
+  fixes + CI guards → **P2** RunE thinning → **P3** routing + additive JSON shapes
+  → **P4** spinners + charm v2 styling + destructive gating; each PR independently
+  shippable), `CLI_UX_DESIGN.md` (the authoritative contract: flag table,
+  interaction matrix, `ui` pkg signatures, per-command JSON table, routing table
+  §8.4, boundary guards), `CLI_UX_AUDIT.md` (current-state map with file:line),
+  `CLI_UX_CRITIQUE.json` (rationale). **Locked maintainer decisions** (pre-1.0
+  clean cuts): version → `yacd version` SUBCOMMAND only (drop cobra `Version:` +
+  the `--version` flag; `-v` is always verbosity); `--json`/`YACD_JSON` REMOVED
+  outright for a single `--output`/`-o` (`YACD_OUTPUT`) enum (no alias); `-q` is a
+  GLOBAL MUTE that also forces the logger off but still prints the final error
+  reason; Phase 5 (shell completion) DROPPED. Hard boundaries the
+  implementation must keep: charm (`charm.land/{lipgloss,huh,log}/v2`) confined to
+  `cli/internal/ui` and OUT of the `./cmd` manager import graph (CI guard);
+  `run`/`exec` byte-transparency + `exitError`/`ResolveExit` passthrough; stable
+  `list`/`info` JSON shapes; deterministic non-TTY tests. A future session
+  executes P0→P4 PR-by-PR; re-verify any cited file:line first (master moves).
