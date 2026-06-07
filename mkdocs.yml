@@ -1,5 +1,6 @@
 site_name: yacd
 site_description: Kubernetes-native Cardano development environments
+site_url: https://meigma.github.io/yacd/
 repo_url: https://github.com/meigma/yacd
 repo_name: meigma/yacd
 docs_dir: docs
