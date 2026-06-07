@@ -276,3 +276,29 @@ ws://localhost:1337 / http://localhost:1442; both reachable directly from the ho
 Skipped (deliberate): a Recipes NodePort recipe — the page mirrors examples/
 verbatim and examples/local stays ClusterIP, so a hand-authored recipe would break
 that invariant; the External-access reference + troubleshooting cover it instead.
+
+## 2026-06-06/07 — PR #91 review pass: CI green + GitHub Pages enabled
+User reviewed the served docs (LGTM), then asked to stop the server, ensure a PR
+exists, and verify CI. PR #91 already existed (the docs site PR). CI was green
+EXCEPT **Kusari Inspector**, which flagged the docs Pages workflow
+(`.github/workflows/docs.yml`) for pinning its 5 GitHub Actions to mutable tags
+instead of commit SHAs — high-risk given the deploy job's pages:write/id-token:write.
+NOT a pre-existing finding (it was MY workflow from the 052 build). Pinned all five
+to immutable SHAs (commit 406dabf): actions/checkout@de0fac2e (v6.0.2, reused the
+repo's existing pin), astral-sh/setup-uv@d4b2f3b6 (v5), upload-pages-artifact@56afc609
+(v3), configure-pages@983d7736 (v5), deploy-pages@d6db9016 (v4). Resolved SHAs via
+`gh api repos/<a>/commits/<tag>`. CI then fully green (build/ci/e2e/cardano-tools-image/
+Kusari all pass; dry-runs skip).
+
+Then user asked for "a dedicated docs workflow that builds and publishes to Pages."
+docs.yml ALREADY does this (build on PR + deploy on push-to-master). Confirmed with
+the user (AskUserQuestion) → they chose "keep it; enable Pages." Enabled Pages via
+`gh api -X POST repos/meigma/yacd/pages -f build_type=workflow` (was 404/disabled) →
+site will publish at https://meigma.github.io/yacd/ on merge to master. Added
+`site_url: https://meigma.github.io/yacd/` to mkdocs.yml for correct canonical
+links/sitemap on the subpath site (commit d0f9b44). Note: the github-pages
+environment auto-creates on first deploy; the deploy job only runs post-merge, so
+the actual publish is verifiable only after PR #91 merges.
+
+PR #91 head d0f9b44, open + mergeable. Worktree .wt/docs-mkdocs-site still in place
+pending merge (then `wt remove`).
