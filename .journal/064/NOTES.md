@@ -34,3 +34,41 @@ Plan:
    when ready to continue).
 2. On the user's go-ahead: re-fetch master, create an implementation worktree,
    `moon run root:dev-up` from P1 onward, execute P0 first PR-by-PR.
+
+## 2026-06-07 11:55 — P0 reviewed, planned, implemented → PR #118
+
+Reviewed the 063 artifacts in depth (PLAN + DESIGN read in full; AUDIT/CRITIQUE
+spot-checked) and verified the plan's load-bearing file:line claims against live
+master (`f2501b7`, unchanged since 063): `Version:` IS set at root.go:104 (the
+`-v`→`--version` auto-bind risk is real); `loadRuntimeConfig` called in exactly
+11 places; per-command `--json` in info/list/wallet. Plan is accurate +
+execution-ready. Reported readiness; user switched to **ultracode** and asked
+for a P0 plan.
+
+**P0 plan** (approved, `~/.claude/plans/please-propose-aplan-for-buzzing-clock.md`):
+widen `lifecycle.Reporter` with `Run(ctx,title,action) error`, implement as a
+**silent pass-through** on `NopReporter` + `stepReporter`, change `runInstall`'s
+param to the interface. Two parallel Explore agents + one Plan agent confirmed:
+only 2 implementers, NO mockery mock (Reporter absent from `.mockery.yml`), NO
+test doubles, NO test asserts the `"==> "`/`"    "` format → provably
+byte-neutral. Resolved the one judgment call (silent vs title-echo) against
+DESIGN §5.3: completion line is owned by the caller's `Done`, so plain/nop `Run`
+must be output-free or P3 would gain a new line.
+
+**Implemented on `feat/cli-ux-p0-reporter-run`** (worktree
+`.wt/feat-cli-ux-p0-reporter-run`, off `origin/master`):
+- `lifecycle.go` — `context` import, `Run` on the interface, `NopReporter.Run`.
+- `devnet.go` — `context` import, `stepReporter.Run` (silent).
+- `install.go` — `lifecycle` import, `runInstall` param → `lifecycle.Reporter`.
+- new `reporter_test.go` (`TestNopReporterRun`) + `TestStepReporterRun` in
+  `devnet_test.go` (asserts writer empty = byte-neutrality lock).
+- 5 files, +91/-1. gofmt/vet/build clean; targeted tests + **`moon run root:test`
+  (full envtest gate) green**; `git diff --check` clean. Master unchanged at push
+  (no rebase needed).
+- **PR #118** open: https://github.com/meigma/yacd/pull/118 — CI running
+  (ci/e2e/cardano-tools-image pending) at checkpoint time.
+
+No dev stack started (P0 is compile/test-only; dev-up deferred to P1 per plan).
+
+Next: confirm PR #118 CI green → merge (user's call); then P1 (Foundation) is the
+large reconciliation phase — bring up `moon run root:dev-up` before P1 work.
