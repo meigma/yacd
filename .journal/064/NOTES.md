@@ -91,3 +91,62 @@ package; merged `commandContext`/`RuntimeConfig` resolved once in
 `PersistentPreRunE` (delete the 11 `loadRuntimeConfig` re-calls); verbose logging
 on slog; `YACD_*` collision fixes; import-graph/v2-path/stdout-purity CI guards).
 See `.journal/063/CLI_UX_PLAN.md` §4 P1 (PR-1.1…PR-1.6) + `CLI_UX_DESIGN.md`.
+
+## 2026-06-08 — P1 Foundation COMPLETE (PRs #119–#124 merged)
+
+All six P1 PRs landed on master (each adversarially gated by full CI: ci + e2e +
+cardano-tools-image + Kusari, all green; squash-merged in order). master at
+`f9dbf7c`. Drove autonomously (user chose "merge & continue").
+
+- **PR-1.1 #119** (`be193b1`) — charm-free `cli/internal/ui` package (IO/Config/
+  RuntimeView/Data/Encode/message helpers/NewSlogLogger/plainReporter/IsTerminal).
+  Additive; nothing imports it yet.
+- **PR-1.2 #120** (`3044a61`) — `yacd version` subcommand; drop cobra `Version:`/
+  `--version`; `-v`=verbosity count; `--quiet -q`/`--non-interactive`/`--color`/
+  `--no-color` persistent flags; `raise()`; `-q` logger-off. BREAKING (pre-1.0).
+- **PR-1.3 #121** (`dbfcc2e`) — `--output -o` (text|json, YACD_OUTPUT) replaces the
+  per-command `--json`/YACD_JSON (clean cut). `formatText`/`formatJSON` consts.
+- **PR-1.4 #122** (`915bf7d`) — the merge pass: resolve once in PersistentPreRunE,
+  cache `runtimeConfig`/`io`/`outputExplicit`, delete the 10 re-calls,
+  `loadRuntimeConfig(cmd,vp)`, `resolveUX`, `view()`, ui.NewSlogLogger replaces
+  newLogger, `cc.io.JSON()` replaces outputJSON. Byte-neutral.
+- **PR-1.5 #123** (`652a766`) — read ogmios/kupo-url + timeout/wait/dry-run/bare
+  off `cmd.Flags()` (not viper) → no YACD_* shadow/bleed; child-env guard.
+- **PR-1.6 #124** (`f9dbf7c`) — import-graph + v2-path + stdout-purity CI guards;
+  24 raw-write sites tagged `// ui-passthrough-ok` (interim; P3 removes as it routes).
+
+**Deviations from the 063 plan (all forced/correct, documented in PR bodies):**
+1. `loadRuntimeConfig` signature change moved PR-1.2→1.4 (atomic w/ re-call deletes;
+   wallet.go/target.go have no `cmd`). PR-1.2 reads -v/-q off cmd.Flags() in
+   PersistentPreRunE without the sig change.
+2. PR-1.3 routed JSON via `viper.GetString("output")` (cc.io doesn't exist till 1.4);
+   1.4 converted to `cc.io.JSON()`.
+3. `ConfigFromRuntime` takes a ui-local `RuntimeView` (ui can't import cli → cycle).
+4. purity guard scoped to cli/internal/cli; import-graph `./cmd` = operator manager.
+5. `Warn` gated under `-q` (locked decision #3 overrides §3.3 "always shown").
+
+**Lessons (CI-only failures caught + fixed):**
+- **CI sets NO_COLOR** → a `resolveUX(ColorAlways)` test that asserted color=true
+  passed locally but failed CI. resolveUX correctly makes NO_COLOR supreme. Fix:
+  color/UX tests must `t.Setenv("NO_COLOR","")` to neutralize the ambient var (and
+  add an explicit NO_COLOR-is-supreme test). Saved as memory.
+- **goconst**: adding the OutputFormat enum pushed "text"/"json" over the
+  3-occurrence threshold → `formatText`/`formatJSON` consts.
+- **revive comment-spacings**: the pragma needs a space → `// ui-passthrough-ok`;
+  the guard matches the bare token so spacing doesn't matter.
+- **modernize/stringsseq**: a `strings.Split` loop that ignores the index must use
+  `strings.SplitSeq` (Go 1.24+); indexed loops (need line numbers) keep `Split`.
+- **The 063 design's `raise()` prose is self-inconsistent** (warn+-v→debug example
+  vs additive stepping); implemented additive-by-one (raise("warn",1)=="info") — the
+  only model delivering goal-5 graduated `-vvv`.
+- **`moon setup` flaked once** on PR-1.4 (toolchain download) — transient infra;
+  `gh run rerun --failed` cleared it. **GPG signing also cancelled once** when the
+  user went AFK; retried fine.
+
+**No dev stack was started for P1** — it's all CLI code (operator untouched); the
+Kind/Tilt stack is operator-only and would sit idle. Verified by unit tests +
+`moon run root:test` + Chainsaw e2e in CI.
+
+Next: P1 done. **P2 (RunE thinning + skeleton)** is the next phase but is NOT
+planned/approved yet — needs its own `/session-new`-style plan before execution.
+Session 064 remains open.
