@@ -72,3 +72,22 @@ No dev stack started (P0 is compile/test-only; dev-up deferred to P1 per plan).
 
 Next: confirm PR #118 CI green → merge (user's call); then P1 (Foundation) is the
 large reconciliation phase — bring up `moon run root:dev-up` before P1 work.
+
+## 2026-06-07 11:58 — P0 merged (#118); starting P1 planning
+
+CI all green (ci 1m51s, e2e 5m56s, cardano-tools-image 1m28s, Kusari pass).
+Squash-merged PR #118 → master `9732d92`. Removed the `feat/cli-ux-p0-reporter-run`
+worktree (tree matched origin/master); local master pulled to `9732d92`. The
+`gh pr merge --delete-branch` printed a harmless `'master' is already used by
+worktree` error (gh tried to switch the primary checkout) — merge itself
+succeeded (verified state=MERGED).
+
+User: "LGTM, merge, then switch to plan mode and propose a plan for the next
+phase." → entering plan mode for **P1 (Foundation)** — the large reconciliation
+pass (single flag table incl. `yacd version` subcommand dropping `--version`,
+`--output`/`-o` clean-cutting `--json`/`YACD_JSON`, `-q` global mute,
+`--verbose`/`--non-interactive`/`--color`/`--no-color`; new `cli/internal/ui`
+package; merged `commandContext`/`RuntimeConfig` resolved once in
+`PersistentPreRunE` (delete the 11 `loadRuntimeConfig` re-calls); verbose logging
+on slog; `YACD_*` collision fixes; import-graph/v2-path/stdout-purity CI guards).
+See `.journal/063/CLI_UX_PLAN.md` §4 P1 (PR-1.1…PR-1.6) + `CLI_UX_DESIGN.md`.
