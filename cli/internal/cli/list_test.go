@@ -169,7 +169,7 @@ func TestListJSONOutputShape(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 	})
-	root.SetArgs([]string{"list", "-n", "team-a", "--json"})
+	root.SetArgs([]string{"list", "-n", "team-a", "-o", "json"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 

@@ -542,7 +542,7 @@ spec:
             content: |
               set -eu
               export KUBECTL_KUBERC="${KUBECTL_KUBERC:-false}"
-              info_json="$(go run ./cli/cmd/yacd --namespace yacd-smoke info phase4-smoke --json)"
+              info_json="$(go run ./cli/cmd/yacd --namespace yacd-smoke info phase4-smoke -o json)"
               printf '%s\n' "$info_json"
               INFO_JSON="$info_json" python3 - <<'PY'
               import json

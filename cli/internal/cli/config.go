@@ -11,6 +11,13 @@ import (
 	"github.com/spf13/viper"
 )
 
+// formatText and formatJSON are the shared values for the --log-format and
+// --output enums.
+const (
+	formatText = "text"
+	formatJSON = "json"
+)
+
 // RuntimeConfig is the resolved persistent-flag payload. Each field is the
 // trimmed, validated value of the corresponding root flag, with the viper
 // precedence (flag > env > default) already applied.
@@ -32,6 +39,10 @@ type RuntimeConfig struct {
 
 	// LogFormat is text or json.
 	LogFormat string
+
+	// OutputFormat is the data-plane format: text or json. It is the sole
+	// machine-output toggle (the per-command --json flags are removed).
+	OutputFormat string
 }
 
 // initializeConfig wires viper to the root persistent flags. It is called
@@ -39,7 +50,7 @@ type RuntimeConfig struct {
 // once per execution before any RunE.
 func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 	vp.SetDefault("log-level", "info")
-	vp.SetDefault("log-format", "text")
+	vp.SetDefault("log-format", formatText)
 	vp.SetEnvPrefix("YACD")
 	// Environment variable names cannot contain "-" or ".", so the replacer
 	// canonicalises both to "_". Flag and viper-key names already use "-".
@@ -60,6 +71,9 @@ func initializeConfig(cmd *cobra.Command, vp *viper.Viper) error {
 		return err
 	}
 	if err := bindFlag(vp, "log-format", rootFlags.Lookup("log-format")); err != nil {
+		return err
+	}
+	if err := bindFlag(vp, "output", rootFlags.Lookup("output")); err != nil {
 		return err
 	}
 	if err := vp.BindPFlags(cmd.Flags()); err != nil {
@@ -89,17 +103,21 @@ func bindFlag(vp *viper.Viper, key string, flag *pflag.Flag) error {
 // directly.
 func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	config := RuntimeConfig{
-		Kubeconfig:  strings.TrimSpace(vp.GetString("kubeconfig")),
-		KubeContext: strings.TrimSpace(vp.GetString("kube-context")),
-		Namespace:   strings.TrimSpace(vp.GetString("namespace")),
-		LogLevel:    strings.TrimSpace(vp.GetString("log-level")),
-		LogFormat:   strings.TrimSpace(vp.GetString("log-format")),
+		Kubeconfig:   strings.TrimSpace(vp.GetString("kubeconfig")),
+		KubeContext:  strings.TrimSpace(vp.GetString("kube-context")),
+		Namespace:    strings.TrimSpace(vp.GetString("namespace")),
+		LogLevel:     strings.TrimSpace(vp.GetString("log-level")),
+		LogFormat:    strings.TrimSpace(vp.GetString("log-format")),
+		OutputFormat: strings.TrimSpace(vp.GetString("output")),
 	}
 	if config.LogLevel == "" {
 		config.LogLevel = "info"
 	}
 	if config.LogFormat == "" {
-		config.LogFormat = "text"
+		config.LogFormat = formatText
+	}
+	if config.OutputFormat == "" {
+		config.OutputFormat = formatText
 	}
 
 	switch config.LogLevel {
@@ -108,12 +126,24 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 		return RuntimeConfig{}, fmt.Errorf("unsupported log level %q", config.LogLevel)
 	}
 	switch config.LogFormat {
-	case "text", "json":
+	case formatText, formatJSON:
 	default:
 		return RuntimeConfig{}, fmt.Errorf("unsupported log format %q", config.LogFormat)
 	}
+	switch config.OutputFormat {
+	case formatText, formatJSON:
+	default:
+		return RuntimeConfig{}, fmt.Errorf("unsupported output format %q", config.OutputFormat)
+	}
 
 	return config, nil
+}
+
+// outputJSON reports whether the resolved --output format is json. The format
+// is validated once in PersistentPreRunE, so this read is safe; it is the sole
+// machine-output toggle now that the per-command --json flags are gone.
+func (commandContext *commandContext) outputJSON() bool {
+	return strings.EqualFold(strings.TrimSpace(commandContext.viper.GetString("output")), formatJSON)
 }
 
 // raise lifts the base log level by verbose steps along the ordering
@@ -164,7 +194,7 @@ func newLogger(config RuntimeConfig, out io.Writer, quiet bool) *slog.Logger {
 	}
 
 	handlerOptions := &slog.HandlerOptions{Level: level}
-	if config.LogFormat == "json" {
+	if config.LogFormat == formatJSON {
 		return slog.New(slog.NewJSONHandler(out, handlerOptions))
 	}
 

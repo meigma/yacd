@@ -136,7 +136,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.PersistentFlags().String("context", "", "Kubeconfig context to use")
 	root.PersistentFlags().StringP("namespace", "n", "", "Kubernetes namespace")
 	root.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
-	root.PersistentFlags().String("log-format", "text", "Log format: text, json")
+	root.PersistentFlags().String("log-format", formatText, "Log format: text, json")
 	// Session/TTY decisions. These are flag-only (no env tier by design) and are
 	// read directly off cmd.Flags() wherever they are consumed, so no ambient
 	// YACD_* can drive them or leak into a child environment.
@@ -145,6 +145,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.PersistentFlags().Bool("non-interactive", false, "Never prompt; fail instead of waiting for input")
 	root.PersistentFlags().String("color", "auto", "Color output: auto, always, never")
 	root.PersistentFlags().Bool("no-color", false, "Disable color output")
+	root.PersistentFlags().StringP("output", "o", formatText, "Output format: text, json")
 
 	// The network verbs resolve their target through the shared resolver, so
 	// each is wrapped to clear a stale managed-cluster record when it targeted

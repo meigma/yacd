@@ -45,7 +45,7 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 			if faucetWallet, walletErr := walletstore.NewStore(kubeClient, namespace, name).Faucet(cmd.Context()); walletErr == nil {
 				info.Wallet = &walletOutput{Address: faucetWallet.Address, KeySecretName: faucetWallet.SecretName}
 			}
-			if commandContext.viper.GetBool("json") {
+			if commandContext.outputJSON() {
 				encoded, err := json.MarshalIndent(info, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshal info JSON: %w", err)
@@ -59,7 +59,6 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 			return printInfo(commandContext.out, info)
 		},
 	}
-	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
 }

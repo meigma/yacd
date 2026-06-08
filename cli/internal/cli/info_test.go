@@ -39,7 +39,7 @@ func TestInfoReadsGlobalKubeEnvironment(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: factory,
 	})
-	root.SetArgs([]string{"info", "devnet", "--json"})
+	root.SetArgs([]string{"info", "devnet", "-o", "json"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	assert.Equal(t, "dev-context", capturedConfig.Context)
@@ -75,7 +75,7 @@ func TestInfoDefaultsNamespaceToName(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 	})
-	root.SetArgs([]string{"info", "devnet", "--json"})
+	root.SetArgs([]string{"info", "devnet", "-o", "json"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	assert.Contains(t, stdout.String(), `"namespace": "devnet"`)
@@ -101,7 +101,7 @@ func TestInfoOmitsWalletWhenFaucetWalletAbsent(t *testing.T) {
 		Viper:             viper.New(),
 		KubeClientFactory: kubeClientFactory(client),
 	})
-	root.SetArgs([]string{"info", "devnet", "--json"})
+	root.SetArgs([]string{"info", "devnet", "-o", "json"})
 
 	require.NoError(t, root.ExecuteContext(context.Background()))
 	assert.NotContains(t, stdout.String(), `"wallet"`)
