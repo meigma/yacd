@@ -61,11 +61,13 @@ func (i IO) ErrIsTTY() bool { return i.errIsTTY }
 // NonInteractive and both stdin and the human stream are terminals. It is false
 // whenever a prompt could hang a script.
 func (i IO) Interactive() bool {
-	return !i.cfg.NonInteractive && i.errIsTTY && isTerminalReader(i.in)
+	return !i.cfg.NonInteractive && i.errIsTTY && IsTerminalReader(i.in)
 }
 
-// isTerminalReader reports whether r is backed by a terminal file descriptor.
-func isTerminalReader(r io.Reader) bool {
+// IsTerminalReader reports whether r is backed by a terminal file descriptor.
+// It is the input-stream counterpart to IsTerminal; the command layer's
+// interactivity latch consults it before an IO is constructed.
+func IsTerminalReader(r io.Reader) bool {
 	file, ok := r.(*os.File)
 	return ok && term.IsTerminal(int(file.Fd()))
 }

@@ -66,10 +66,7 @@ piped or non-terminal invocations (CI) stream without a TTY.`,
   yacd exec my-net -- sh`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err

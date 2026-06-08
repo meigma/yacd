@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 
+	"github.com/meigma/yacd/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -18,9 +20,10 @@ const (
 	formatJSON = "json"
 )
 
-// RuntimeConfig is the resolved persistent-flag payload. Each field is the
-// trimmed, validated value of the corresponding root flag, with the viper
-// precedence (flag > env > default) already applied.
+// RuntimeConfig is the resolved persistent-flag payload, computed once in the
+// root PersistentPreRunE and cached on commandContext. Precedence-bearing
+// fields come from viper (flag > env > default); the session/TTY knobs come
+// straight off cmd.Flags() so no ambient YACD_* can drive them.
 type RuntimeConfig struct {
 	// Kubeconfig is the optional kubeconfig path; empty defers to standard
 	// loading rules.
@@ -34,7 +37,7 @@ type RuntimeConfig struct {
 	// defers to environment or kubeconfig defaults.
 	Namespace string
 
-	// LogLevel is one of debug, info, warn, error.
+	// LogLevel is one of debug, info, warn, error, after the -v raise.
 	LogLevel string
 
 	// LogFormat is text or json.
@@ -43,6 +46,18 @@ type RuntimeConfig struct {
 	// OutputFormat is the data-plane format: text or json. It is the sole
 	// machine-output toggle (the per-command --json flags are removed).
 	OutputFormat string
+
+	// Verbosity is the raw -v count.
+	Verbosity int
+
+	// Quiet is -q: the global mute (human plane, progress, warnings, logger).
+	Quiet bool
+
+	// NonInteractive disables prompts (the requested half of the latch).
+	NonInteractive bool
+
+	// Color is the requested color policy before NO_COLOR and TTY folding.
+	Color ui.ColorMode
 }
 
 // initializeConfig wires viper to the root persistent flags. It is called
@@ -97,11 +112,12 @@ func bindFlag(vp *viper.Viper, key string, flag *pflag.Flag) error {
 	return nil
 }
 
-// loadRuntimeConfig reads the trimmed runtime values from viper and
-// validates the log-level/format enums. The empty-string defaults are
-// applied here so callers can compare against the package-known set
-// directly.
-func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
+// loadRuntimeConfig resolves the full runtime payload once. The precedence
+// values are read through viper; the flag-only session knobs (-v/-q/
+// --non-interactive/--color/--no-color) are read straight off cmd.Flags() so an
+// ambient YACD_* cannot drive them or leak into a child environment. -v is
+// additive over the resolved --log-level. All enums are validated here.
+func loadRuntimeConfig(cmd *cobra.Command, vp *viper.Viper) (RuntimeConfig, error) {
 	config := RuntimeConfig{
 		Kubeconfig:   strings.TrimSpace(vp.GetString("kubeconfig")),
 		KubeContext:  strings.TrimSpace(vp.GetString("kube-context")),
@@ -120,11 +136,39 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 		config.OutputFormat = formatText
 	}
 
+	flags := cmd.Flags()
+	verbosity, err := flags.GetCount("verbose")
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	quiet, err := flags.GetBool("quiet")
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	nonInteractive, err := flags.GetBool("non-interactive")
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	noColor, err := flags.GetBool("no-color")
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	colorValue, err := flags.GetString("color")
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+
+	config.Verbosity = verbosity
+	config.Quiet = quiet
+	config.NonInteractive = nonInteractive
+
 	switch config.LogLevel {
 	case "debug", "info", "warn", "error":
 	default:
 		return RuntimeConfig{}, fmt.Errorf("unsupported log level %q", config.LogLevel)
 	}
+	config.LogLevel = raise(config.LogLevel, verbosity)
+
 	switch config.LogFormat {
 	case formatText, formatJSON:
 	default:
@@ -136,14 +180,67 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 		return RuntimeConfig{}, fmt.Errorf("unsupported output format %q", config.OutputFormat)
 	}
 
+	color, err := resolveColorMode(colorValue, noColor, flags.Changed("color"))
+	if err != nil {
+		return RuntimeConfig{}, err
+	}
+	config.Color = color
+
 	return config, nil
 }
 
-// outputJSON reports whether the resolved --output format is json. The format
-// is validated once in PersistentPreRunE, so this read is safe; it is the sole
-// machine-output toggle now that the per-command --json flags are gone.
-func (commandContext *commandContext) outputJSON() bool {
-	return strings.EqualFold(strings.TrimSpace(commandContext.viper.GetString("output")), formatJSON)
+// resolveColorMode folds --color and --no-color into a single requested policy.
+// An explicit --color wins over --no-color; otherwise --no-color forces never.
+// NO_COLOR is applied later, in resolveUX, where it is supreme.
+func resolveColorMode(value string, noColor, colorChanged bool) (ui.ColorMode, error) {
+	if noColor && !colorChanged {
+		return ui.ColorNever, nil
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return ui.ColorAuto, nil
+	case "always":
+		return ui.ColorAlways, nil
+	case "never":
+		return ui.ColorNever, nil
+	default:
+		return ui.ColorAuto, fmt.Errorf("unsupported color mode %q", value)
+	}
+}
+
+// resolveUX turns the requested color policy and interactivity into final
+// verdicts from the raw injected streams. NO_COLOR is supreme over
+// --color=always; the non-interactive latch is one-way (any non-TTY stream or
+// the flag disables prompts).
+func resolveUX(config RuntimeConfig, errOut io.Writer, in io.Reader) (color, nonInteractive bool) {
+	errTTY := ui.IsTerminal(errOut)
+	inTTY := ui.IsTerminalReader(in)
+
+	switch {
+	case os.Getenv("NO_COLOR") != "":
+		color = false
+	case config.Color == ui.ColorAlways:
+		color = true
+	case config.Color == ui.ColorNever:
+		color = false
+	default: // ColorAuto
+		color = errTTY
+	}
+
+	nonInteractive = config.NonInteractive || !errTTY || !inTTY
+	return color, nonInteractive
+}
+
+// view adapts the command-layer RuntimeConfig into the ui package's input
+// shape, keeping ui free of any dependency on this package.
+func (config RuntimeConfig) view() ui.RuntimeView {
+	return ui.RuntimeView{
+		OutputJSON: config.OutputFormat == formatJSON,
+		Quiet:      config.Quiet,
+		Verbosity:  config.Verbosity,
+		LogLevel:   config.LogLevel,
+		LogFormat:  config.LogFormat,
+	}
 }
 
 // raise lifts the base log level by verbose steps along the ordering
@@ -172,31 +269,17 @@ func raise(base string, verbose int) string {
 	return order[len(order)-1]
 }
 
-// newLogger constructs the slog logger for the active command from the
-// resolved RuntimeConfig. When quiet is set the logger is forced off (the
-// global mute overrides -v/--log-level); the final returned error still prints
-// through the exit handler, which is not the logger. JSON format is selected
-// explicitly; everything else falls back to text.
-func newLogger(config RuntimeConfig, out io.Writer, quiet bool) *slog.Logger {
-	if quiet {
-		return slog.New(slog.DiscardHandler)
-	}
-	var level slog.Level
-	switch config.LogLevel {
+// slogLevel maps the resolved log-level string to a slog.Level. Unknown values
+// (already rejected by loadRuntimeConfig) fall back to info.
+func slogLevel(level string) slog.Level {
+	switch level {
 	case "debug":
-		level = slog.LevelDebug
+		return slog.LevelDebug
 	case "warn":
-		level = slog.LevelWarn
+		return slog.LevelWarn
 	case "error":
-		level = slog.LevelError
+		return slog.LevelError
 	default:
-		level = slog.LevelInfo
+		return slog.LevelInfo
 	}
-
-	handlerOptions := &slog.HandlerOptions{Level: level}
-	if config.LogFormat == formatJSON {
-		return slog.New(slog.NewJSONHandler(out, handlerOptions))
-	}
-
-	return slog.New(slog.NewTextHandler(out, handlerOptions))
 }

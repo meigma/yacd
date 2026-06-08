@@ -23,11 +23,8 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 		Short: "List YACD environments across all namespaces (or one with -n)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
-			jsonOutput := commandContext.outputJSON()
+			runtimeConfig := commandContext.runtimeConfig
+			jsonOutput := commandContext.io.JSON()
 
 			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {

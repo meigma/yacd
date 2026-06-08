@@ -10,6 +10,7 @@ import (
 	"github.com/meigma/yacd/cli/internal/clusterstate"
 	"github.com/meigma/yacd/cli/internal/kube"
 	"github.com/meigma/yacd/cli/internal/operator"
+	"github.com/meigma/yacd/cli/internal/ui"
 	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/spf13/viper"
 )
@@ -170,4 +171,11 @@ type commandContext struct {
 	// failure warrants an orphaned-state check.
 	managedEngaged bool
 	logger         *slog.Logger
+
+	// runtimeConfig, io, and outputExplicit are resolved once in the root
+	// PersistentPreRunE and read by every command, replacing the former
+	// per-command loadRuntimeConfig re-calls.
+	runtimeConfig  RuntimeConfig
+	io             ui.IO
+	outputExplicit bool
 }

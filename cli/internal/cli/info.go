@@ -19,10 +19,7 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Print CardanoNetwork status and connection information",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err
@@ -45,7 +42,7 @@ func newInfoCommand(commandContext *commandContext) *cobra.Command {
 			if faucetWallet, walletErr := walletstore.NewStore(kubeClient, namespace, name).Faucet(cmd.Context()); walletErr == nil {
 				info.Wallet = &walletOutput{Address: faucetWallet.Address, KeySecretName: faucetWallet.SecretName}
 			}
-			if commandContext.outputJSON() {
+			if commandContext.io.JSON() {
 				encoded, err := json.MarshalIndent(info, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshal info JSON: %w", err)
