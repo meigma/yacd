@@ -116,10 +116,41 @@ func loadRuntimeConfig(vp *viper.Viper) (RuntimeConfig, error) {
 	return config, nil
 }
 
+// raise lifts the base log level by verbose steps along the ordering
+// error < warn < info < debug. It never lowers the level and caps at debug; a
+// base outside the known set (already rejected by loadRuntimeConfig) is
+// returned unchanged. This is the one two-key composition: -v is additive over
+// the resolved --log-level.
+func raise(base string, verbose int) string {
+	if verbose <= 0 {
+		return base
+	}
+	order := []string{"error", "warn", "info", "debug"}
+	index := -1
+	for i, level := range order {
+		if level == base {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return base
+	}
+	if raised := index + verbose; raised < len(order) {
+		return order[raised]
+	}
+	return order[len(order)-1]
+}
+
 // newLogger constructs the slog logger for the active command from the
-// resolved RuntimeConfig. JSON format is selected explicitly; everything
-// else falls back to text.
-func newLogger(config RuntimeConfig, out io.Writer) *slog.Logger {
+// resolved RuntimeConfig. When quiet is set the logger is forced off (the
+// global mute overrides -v/--log-level); the final returned error still prints
+// through the exit handler, which is not the logger. JSON format is selected
+// explicitly; everything else falls back to text.
+func newLogger(config RuntimeConfig, out io.Writer, quiet bool) *slog.Logger {
+	if quiet {
+		return slog.New(slog.DiscardHandler)
+	}
 	var level slog.Level
 	switch config.LogLevel {
 	case "debug":
