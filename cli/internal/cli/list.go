@@ -27,7 +27,7 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			jsonOutput := commandContext.viper.GetBool("json")
+			jsonOutput := commandContext.outputJSON()
 
 			kubeClient, _, err := commandContext.resolveKubeClient(runtimeConfig)
 			if err != nil {
@@ -61,8 +61,6 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 			return printList(commandContext.out, items, namespace)
 		},
 	}
-
-	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
 }

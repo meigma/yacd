@@ -126,14 +126,13 @@ func newWalletListCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			if commandContext.viper.GetBool("json") {
+			if commandContext.outputJSON() {
 				return writeJSON(commandContext.out, newWalletListItems(wallets))
 			}
 
 			return printWalletList(commandContext.out, wallets)
 		},
 	}
-	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 
 	return cmd
 }
@@ -152,7 +151,7 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 			topup := strings.TrimSpace(commandContext.viper.GetString("topup"))
 			await := commandContext.viper.GetBool("await")
 			awaitTimeout := commandContext.viper.GetDuration("await-timeout")
-			jsonOutput := commandContext.viper.GetBool("json")
+			jsonOutput := commandContext.outputJSON()
 
 			lovelace, topupRequested, err := parseOptionalLovelace(topup)
 			if err != nil {
@@ -215,7 +214,6 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().String("topup", "", "Fund the new wallet with this many lovelace from the faucet")
 	cmd.Flags().Bool("await", false, "Wait for the funding transaction to confirm on-chain (requires --topup)")
 	cmd.Flags().Duration("await-timeout", 2*time.Minute, "Maximum time to wait for --await confirmation")
-	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 	addChainOverrideFlags(cmd)
 
 	return cmd
@@ -238,7 +236,7 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 			source := strings.TrimSpace(commandContext.viper.GetString("from"))
 			await := commandContext.viper.GetBool("await")
 			awaitTimeout := commandContext.viper.GetDuration("await-timeout")
-			jsonOutput := commandContext.viper.GetBool("json")
+			jsonOutput := commandContext.outputJSON()
 			if err := requireAwaitTimeout(await, awaitTimeout); err != nil {
 				return err
 			}
@@ -277,7 +275,6 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 	cmd.Flags().String("from", "", "Source wallet name to fund from (default: the faucet wallet)")
 	cmd.Flags().Bool("await", false, "Wait for the funding transaction to confirm on-chain")
 	cmd.Flags().Duration("await-timeout", 2*time.Minute, "Maximum time to wait for --await confirmation")
-	cmd.Flags().Bool("json", false, "Print machine-readable JSON")
 	addChainOverrideFlags(cmd)
 
 	return cmd
