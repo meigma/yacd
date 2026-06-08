@@ -35,10 +35,19 @@ func newUpCommand(commandContext *commandContext) *cobra.Command {
 			if file == "" {
 				return fmt.Errorf("--file is required")
 			}
-			timeout := commandContext.viper.GetDuration("timeout")
-			dryRun := commandContext.viper.GetBool("dry-run")
+			timeout, err := cmd.Flags().GetDuration("timeout")
+			if err != nil {
+				return err
+			}
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return err
+			}
 			allowMainnet := commandContext.viper.GetBool("allow-mainnet")
-			waitReady := commandContext.viper.GetBool("wait")
+			waitReady, err := cmd.Flags().GetBool("wait")
+			if err != nil {
+				return err
+			}
 			if waitReady && timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0 when --wait is set")
 			}

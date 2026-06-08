@@ -15,7 +15,6 @@ import (
 	walletstore "github.com/meigma/yacd/cli/internal/wallet"
 	domainwallet "github.com/meigma/yacd/internal/cardano/wallet"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 // addChainOverrideFlags registers the funding endpoint overrides shared by the
@@ -28,13 +27,23 @@ func addChainOverrideFlags(cmd *cobra.Command) {
 	cmd.Flags().String("kupo-url", "", "Kupo URL to use for funding (default: the network's reachable endpoint)")
 }
 
-// chainOverridesFromViper reads the funding endpoint overrides bound from the
-// --ogmios-url / --kupo-url flags.
-func chainOverridesFromViper(v *viper.Viper) chainOverrides {
-	return chainOverrides{
-		OgmiosURL: strings.TrimSpace(v.GetString("ogmios-url")),
-		KupoURL:   strings.TrimSpace(v.GetString("kupo-url")),
+// chainOverridesFromFlags reads the funding endpoint overrides directly off the
+// command flags. Reading them from the flags rather than viper keeps an ambient
+// YACD_OGMIOS_URL / YACD_KUPO_URL from shadowing the --ogmios-url / --kupo-url
+// the user passed (or deliberately left unset).
+func chainOverridesFromFlags(cmd *cobra.Command) (chainOverrides, error) {
+	ogmiosURL, err := cmd.Flags().GetString("ogmios-url")
+	if err != nil {
+		return chainOverrides{}, err
 	}
+	kupoURL, err := cmd.Flags().GetString("kupo-url")
+	if err != nil {
+		return chainOverrides{}, err
+	}
+	return chainOverrides{
+		OgmiosURL: strings.TrimSpace(ogmiosURL),
+		KupoURL:   strings.TrimSpace(kupoURL),
+	}, nil
 }
 
 // newWalletCommand wires the `yacd wallet` subtree: the developer-wallet verbs
@@ -185,7 +194,10 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 
 			result := walletAddResult{Name: created.Name, Address: created.Address}
 			if topupRequested {
-				overrides := chainOverridesFromViper(commandContext.viper)
+				overrides, err := chainOverridesFromFlags(cmd)
+				if err != nil {
+					return err
+				}
 				funded, err := commandContext.fundWallet(cmd.Context(), walletCtx.kubeClient, walletCtx.store, walletCtx.network, walletCtx.namespace, walletCtx.name, fundRequest{
 					destinationAddress: created.Address,
 					lovelace:           lovelace,
@@ -248,7 +260,10 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			overrides := chainOverridesFromViper(commandContext.viper)
+			overrides, err := chainOverridesFromFlags(cmd)
+			if err != nil {
+				return err
+			}
 			result, err := commandContext.fundWallet(cmd.Context(), walletCtx.kubeClient, walletCtx.store, walletCtx.network, walletCtx.namespace, walletCtx.name, fundRequest{
 				destinationAddress: destinationAddress,
 				lovelace:           lovelace,
