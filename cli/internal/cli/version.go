@@ -16,7 +16,7 @@ func newVersionCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Print the yacd version",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := fmt.Fprintf(commandContext.out, "yacd %s (%s) built %s\n",
+			_, err := fmt.Fprintf(commandContext.out, "yacd %s (%s) built %s\n", // ui-passthrough-ok
 				commandContext.build.Version, commandContext.build.Commit, commandContext.build.Date)
 			return err
 		},

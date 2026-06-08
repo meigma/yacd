@@ -324,7 +324,7 @@ func newWalletRemoveCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(commandContext.out, "Removed wallet %q from %s/%s.\n", name, walletCtx.namespace, walletCtx.name)
+			_, err = fmt.Fprintf(commandContext.out, "Removed wallet %q from %s/%s.\n", name, walletCtx.namespace, walletCtx.name) // ui-passthrough-ok
 			return err
 		},
 	}

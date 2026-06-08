@@ -49,7 +49,7 @@ func newListCommand(commandContext *commandContext) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("marshal list JSON: %w", err)
 				}
-				if _, err := fmt.Fprintf(commandContext.out, "%s\n", encoded); err != nil {
+				if _, err := fmt.Fprintf(commandContext.out, "%s\n", encoded); err != nil { // ui-passthrough-ok
 					return fmt.Errorf("write list JSON: %w", err)
 				}
 				return nil

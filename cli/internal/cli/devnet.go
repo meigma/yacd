@@ -111,7 +111,7 @@ func newDevnetDownCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintln(commandContext.out, "devnet cluster removed.")
+			_, err = fmt.Fprintln(commandContext.out, "devnet cluster removed.") // ui-passthrough-ok
 			return err
 		},
 	}

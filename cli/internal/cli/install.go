@@ -160,7 +160,7 @@ func runInstallPlan(ctx context.Context, commandContext *commandContext, install
 	if installed == "" {
 		installed = "none"
 	}
-	_, err = fmt.Fprintf(commandContext.out, "Plan: %s operator (installed %s -> %s) in namespace %s\n",
+	_, err = fmt.Fprintf(commandContext.out, "Plan: %s operator (installed %s -> %s) in namespace %s\n", // ui-passthrough-ok
 		actionVerb(decision.Action), installed, decision.TargetVersion, namespace)
 	return err
 }
@@ -196,11 +196,11 @@ func runInstall(ctx context.Context, commandContext *commandContext, report life
 	}
 
 	if waitReady {
-		_, err = fmt.Fprintf(commandContext.out, "Operator %s ready in namespace %s\n", state.Version, namespace)
+		_, err = fmt.Fprintf(commandContext.out, "Operator %s ready in namespace %s\n", state.Version, namespace) // ui-passthrough-ok
 		return err
 	}
 
-	_, err = fmt.Fprintf(commandContext.out, "Operator %s installed in namespace %s (not waiting for readiness)\n", state.Version, namespace)
+	_, err = fmt.Fprintf(commandContext.out, "Operator %s installed in namespace %s (not waiting for readiness)\n", state.Version, namespace) // ui-passthrough-ok
 	return err
 }
 

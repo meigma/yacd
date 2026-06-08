@@ -74,5 +74,5 @@ func (commandContext *commandContext) clearManagedStateRecord() {
 	if err := store.Clear(); err != nil {
 		return
 	}
-	_, _ = fmt.Fprintln(commandContext.err, orphanedStateMessage)
+	_, _ = fmt.Fprintln(commandContext.err, orphanedStateMessage) // ui-passthrough-ok
 }

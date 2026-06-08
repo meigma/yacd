@@ -56,7 +56,7 @@ to the command instead of being parsed by yacd.`,
 				_ = connected.Close()
 			}()
 
-			if _, err := fmt.Fprintf(commandContext.err, "Connected to %s/%s; running %s\n", namespace, name, strings.Join(command, " ")); err != nil {
+			if _, err := fmt.Fprintf(commandContext.err, "Connected to %s/%s; running %s\n", namespace, name, strings.Join(command, " ")); err != nil { // ui-passthrough-ok
 				return fmt.Errorf("write run status: %w", err)
 			}
 

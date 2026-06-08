@@ -86,7 +86,7 @@ func runConnect(ctx context.Context, commandContext *commandContext, kubeClient 
 			if !connectedBefore || kube.IsNotFound(err) {
 				return err
 			}
-			if _, werr := fmt.Fprintf(commandContext.err, "Reconnect to %s/%s failed: %v; retrying in %s...\n", namespace, name, err, backoff); werr != nil {
+			if _, werr := fmt.Fprintf(commandContext.err, "Reconnect to %s/%s failed: %v; retrying in %s...\n", namespace, name, err, backoff); werr != nil { // ui-passthrough-ok
 				return werr
 			}
 			select {
@@ -117,14 +117,14 @@ func runConnect(ctx context.Context, commandContext *commandContext, kubeClient 
 			warnRemoveEndpointsFile(commandContext.err, path)
 			// Best-effort status: a clean interrupt must not become a failure
 			// exit code over a stderr write hiccup.
-			_, _ = fmt.Fprintf(commandContext.err, "Disconnecting from %s/%s.\n", namespace, name)
+			_, _ = fmt.Fprintf(commandContext.err, "Disconnecting from %s/%s.\n", namespace, name) // ui-passthrough-ok
 
 			return nil
 		case <-connected.Done():
 			reason := connected.Err()
 			_ = connected.Close()
 			warnRemoveEndpointsFile(commandContext.err, path)
-			if _, err := fmt.Fprintf(commandContext.err, "Forwards to %s/%s dropped (%v); re-establishing...\n", namespace, name, reason); err != nil {
+			if _, err := fmt.Fprintf(commandContext.err, "Forwards to %s/%s dropped (%v); re-establishing...\n", namespace, name, reason); err != nil { // ui-passthrough-ok
 				return err
 			}
 		}
