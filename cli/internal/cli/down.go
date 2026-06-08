@@ -43,7 +43,7 @@ func newDownCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			if _, err := fmt.Fprintf(commandContext.err, "Deleting CardanoNetwork %s/%s...\n", namespace, name); err != nil {
+			if _, err := fmt.Fprintf(commandContext.err, "Deleting CardanoNetwork %s/%s...\n", namespace, name); err != nil { // ui-passthrough-ok
 				return fmt.Errorf("write delete status: %w", err)
 			}
 			if err := kubeClient.DeleteCardanoNetwork(cmd.Context(), namespace, name); err != nil {
@@ -54,7 +54,7 @@ func newDownCommand(commandContext *commandContext) *cobra.Command {
 				if err := kube.WaitGone(cmd.Context(), kubeClient, namespace, name, timeout); err != nil {
 					return err
 				}
-				if _, err := fmt.Fprintf(commandContext.err, "CardanoNetwork %s/%s is gone.\n", namespace, name); err != nil {
+				if _, err := fmt.Fprintf(commandContext.err, "CardanoNetwork %s/%s is gone.\n", namespace, name); err != nil { // ui-passthrough-ok
 					return fmt.Errorf("write gone status: %w", err)
 				}
 			}

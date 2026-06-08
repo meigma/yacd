@@ -77,11 +77,11 @@ func newUpCommand(commandContext *commandContext) *cobra.Command {
 					return fmt.Errorf("write manifest: %w", err)
 				}
 				if len(manifest) == 0 || manifest[len(manifest)-1] != '\n' {
-					if _, err := fmt.Fprintln(commandContext.out); err != nil {
+					if _, err := fmt.Fprintln(commandContext.out); err != nil { // ui-passthrough-ok
 						return fmt.Errorf("write manifest newline: %w", err)
 					}
 				}
-				_, err = fmt.Fprintf(commandContext.err, "Dry run: rendered CardanoNetwork %s/%s; no resources applied.\n", network.Namespace, network.Name)
+				_, err = fmt.Fprintf(commandContext.err, "Dry run: rendered CardanoNetwork %s/%s; no resources applied.\n", network.Namespace, network.Name) // ui-passthrough-ok
 				return err
 			}
 
@@ -100,18 +100,18 @@ func newUpCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 			commandContext.logger.Debug("Applied CardanoNetwork", "namespace", network.Namespace, "name", network.Name)
-			if _, err := fmt.Fprintf(commandContext.err, "Applied CardanoNetwork %s/%s.\n", network.Namespace, network.Name); err != nil {
+			if _, err := fmt.Fprintf(commandContext.err, "Applied CardanoNetwork %s/%s.\n", network.Namespace, network.Name); err != nil { // ui-passthrough-ok
 				return fmt.Errorf("write apply status: %w", err)
 			}
 
 			if waitReady {
-				if _, err := fmt.Fprintf(commandContext.err, "Waiting for CardanoNetwork %s/%s to become ready...\n", network.Namespace, network.Name); err != nil {
+				if _, err := fmt.Fprintf(commandContext.err, "Waiting for CardanoNetwork %s/%s to become ready...\n", network.Namespace, network.Name); err != nil { // ui-passthrough-ok
 					return fmt.Errorf("write wait status: %w", err)
 				}
 				if _, err := kube.WaitReady(cmd.Context(), kubeClient, network.Namespace, network.Name, timeout); err != nil {
 					return err
 				}
-				if _, err := fmt.Fprintf(commandContext.err, "CardanoNetwork %s/%s is ready.\n", network.Namespace, network.Name); err != nil {
+				if _, err := fmt.Fprintf(commandContext.err, "CardanoNetwork %s/%s is ready.\n", network.Namespace, network.Name); err != nil { // ui-passthrough-ok
 					return fmt.Errorf("write ready status: %w", err)
 				}
 			}

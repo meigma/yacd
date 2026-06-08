@@ -143,7 +143,7 @@ func (commandContext *commandContext) fundWallet(
 		// One-time notice to stderr so the otherwise-silent poll does not look
 		// hung; it stays off stdout to keep --json output clean and is
 		// best-effort because the transfer is already submitted.
-		_, _ = fmt.Fprintf(commandContext.err, "Waiting up to %s for %s to confirm on-chain...\n", request.awaitTimeout, result.TxID)
+		_, _ = fmt.Fprintf(commandContext.err, "Waiting up to %s for %s to confirm on-chain...\n", request.awaitTimeout, result.TxID) // ui-passthrough-ok
 		if err := awaitConfirmation(ctx, confirmer, request.destinationAddress, result.TxID, request.awaitTimeout); err != nil {
 			return fundResult{}, err
 		}
@@ -191,8 +191,8 @@ func sourceKeyMaterial(ctx context.Context, kubeClient kube.Client, namespace st
 // which retain the original streams, so its own output is unaffected. It is
 // safe because the CLI runs a single command synchronously.
 func redirectStdoutToStderr() func() {
-	original := os.Stdout
-	os.Stdout = os.Stderr
+	original := os.Stdout // ui-passthrough-ok
+	os.Stdout = os.Stderr // ui-passthrough-ok
 
-	return func() { os.Stdout = original }
+	return func() { os.Stdout = original } // ui-passthrough-ok
 }
