@@ -50,10 +50,7 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 			"image and is not a supported configuration.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 
 			waitReady := commandContext.viper.GetBool("wait")
 			timeout := commandContext.viper.GetDuration("timeout")

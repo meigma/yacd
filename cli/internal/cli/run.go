@@ -36,10 +36,7 @@ to the command instead of being parsed by yacd.`,
   yacd run my-net`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err

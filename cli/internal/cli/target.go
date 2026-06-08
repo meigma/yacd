@@ -67,10 +67,7 @@ func (commandContext *commandContext) resolveKubeClient(cfg RuntimeConfig) (kube
 // silently ignoring them while mutating the ambient kubeconfig would be
 // surprising. They remain supported on the network verbs (up, info, ...).
 func rejectExplicitTarget(commandContext *commandContext) error {
-	runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-	if err != nil {
-		return err
-	}
+	runtimeConfig := commandContext.runtimeConfig
 	if runtimeConfig.Kubeconfig != "" || runtimeConfig.KubeContext != "" {
 		return fmt.Errorf(
 			"devnet manages its own cluster and kubeconfig; --kubeconfig/--context " +

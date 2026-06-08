@@ -25,10 +25,7 @@ func newUpCommand(commandContext *commandContext) *cobra.Command {
 		Short: "Create or update a YACD environment and wait for readiness",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err

@@ -16,8 +16,10 @@ import (
 	"github.com/meigma/yacd/cli/internal/operator/ssa"
 	"github.com/meigma/yacd/cli/internal/toolbin"
 	"github.com/meigma/yacd/cli/internal/toolbin/ghrelease"
+	"github.com/meigma/yacd/cli/internal/ui"
 	"github.com/meigma/yacd/internal/cardano/tx"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
 
@@ -107,24 +109,19 @@ func NewRootCommand(options Options) *cobra.Command {
 			if err := initializeConfig(cmd, ctx.viper); err != nil {
 				return err
 			}
-			runtimeConfig, err := loadRuntimeConfig(ctx.viper)
+			runtimeConfig, err := loadRuntimeConfig(cmd, ctx.viper)
 			if err != nil {
 				return err
 			}
-			// -v/-q are flag-only knobs read straight off cmd.Flags() so an
-			// ambient YACD_VERBOSE/YACD_QUIET cannot raise verbosity or mute a
-			// scripted run. -v is additive over the resolved --log-level; -q
-			// forces the logger off entirely.
-			verbosity, err := cmd.Flags().GetCount("verbose")
-			if err != nil {
-				return err
-			}
-			quiet, err := cmd.Flags().GetBool("quiet")
-			if err != nil {
-				return err
-			}
-			runtimeConfig.LogLevel = raise(runtimeConfig.LogLevel, verbosity)
-			ctx.logger = newLogger(runtimeConfig, ctx.err, quiet)
+			// Resolve once: cache the config, build the single ui.IO from the
+			// raw injected writers (before any os.Stdout swap), and derive the
+			// logger from it. Every command reads ctx.runtimeConfig/ctx.io
+			// instead of re-resolving.
+			ctx.runtimeConfig = runtimeConfig
+			color, nonInteractive := resolveUX(runtimeConfig, ctx.err, ctx.in)
+			ctx.io = ui.New(ui.ConfigFromRuntime(runtimeConfig.view(), color, nonInteractive), ctx.in, ctx.out, ctx.err)
+			ctx.logger = ctx.io.NewSlogLogger(slogLevel(runtimeConfig.LogLevel), runtimeConfig.LogFormat == formatJSON)
+			ctx.outputExplicit = cmd.Flags().Changed("output")
 			return nil
 		},
 	}
@@ -132,20 +129,7 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.SetOut(options.Out)
 	root.SetErr(options.Err)
 
-	root.PersistentFlags().String("kubeconfig", "", "Path to the kubeconfig file")
-	root.PersistentFlags().String("context", "", "Kubeconfig context to use")
-	root.PersistentFlags().StringP("namespace", "n", "", "Kubernetes namespace")
-	root.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
-	root.PersistentFlags().String("log-format", formatText, "Log format: text, json")
-	// Session/TTY decisions. These are flag-only (no env tier by design) and are
-	// read directly off cmd.Flags() wherever they are consumed, so no ambient
-	// YACD_* can drive them or leak into a child environment.
-	root.PersistentFlags().CountP("verbose", "v", "Increase log verbosity (-v, -vv, -vvv)")
-	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress progress, logs, and warnings; print only data and errors")
-	root.PersistentFlags().Bool("non-interactive", false, "Never prompt; fail instead of waiting for input")
-	root.PersistentFlags().String("color", "auto", "Color output: auto, always, never")
-	root.PersistentFlags().Bool("no-color", false, "Disable color output")
-	root.PersistentFlags().StringP("output", "o", formatText, "Output format: text, json")
+	addGlobalFlags(root.PersistentFlags())
 
 	// The network verbs resolve their target through the shared resolver, so
 	// each is wrapped to clear a stale managed-cluster record when it targeted
@@ -172,4 +156,24 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newInstallCommand(ctx))
 
 	return root
+}
+
+// addGlobalFlags registers the persistent flags shared by every command. It is
+// called on the root's persistent flag set and reused by tests that exercise
+// loadRuntimeConfig directly. The session/TTY knobs (--verbose/--quiet/
+// --non-interactive/--color/--no-color) are flag-only by design: they have no
+// env tier and are read straight off cmd.Flags() so no ambient YACD_* can drive
+// them or leak into a child environment.
+func addGlobalFlags(flags *pflag.FlagSet) {
+	flags.String("kubeconfig", "", "Path to the kubeconfig file")
+	flags.String("context", "", "Kubeconfig context to use")
+	flags.StringP("namespace", "n", "", "Kubernetes namespace")
+	flags.String("log-level", "info", "Log level: debug, info, warn, error")
+	flags.String("log-format", formatText, "Log format: text, json")
+	flags.CountP("verbose", "v", "Increase log verbosity (-v, -vv, -vvv)")
+	flags.BoolP("quiet", "q", false, "Suppress progress, logs, and warnings; print only data and errors")
+	flags.Bool("non-interactive", false, "Never prompt; fail instead of waiting for input")
+	flags.String("color", "auto", "Color output: auto, always, never")
+	flags.Bool("no-color", false, "Disable color output")
+	flags.StringP("output", "o", formatText, "Output format: text, json")
 }

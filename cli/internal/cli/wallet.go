@@ -76,10 +76,7 @@ type walletContext struct {
 // store (no live network) still get a fetched network, which doubles as an
 // existence check so a typo names a clear not-found rather than an empty list.
 func (commandContext *commandContext) resolveWallet(ctx context.Context, net string) (*walletContext, error) {
-	runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-	if err != nil {
-		return nil, err
-	}
+	runtimeConfig := commandContext.runtimeConfig
 	name, namespace, err := resolveIdentity(net, runtimeConfig)
 	if err != nil {
 		return nil, err
@@ -126,7 +123,7 @@ func newWalletListCommand(commandContext *commandContext) *cobra.Command {
 				return err
 			}
 
-			if commandContext.outputJSON() {
+			if commandContext.io.JSON() {
 				return writeJSON(commandContext.out, newWalletListItems(wallets))
 			}
 
@@ -151,7 +148,7 @@ func newWalletAddCommand(commandContext *commandContext) *cobra.Command {
 			topup := strings.TrimSpace(commandContext.viper.GetString("topup"))
 			await := commandContext.viper.GetBool("await")
 			awaitTimeout := commandContext.viper.GetDuration("await-timeout")
-			jsonOutput := commandContext.outputJSON()
+			jsonOutput := commandContext.io.JSON()
 
 			lovelace, topupRequested, err := parseOptionalLovelace(topup)
 			if err != nil {
@@ -236,7 +233,7 @@ func newWalletTopUpCommand(commandContext *commandContext) *cobra.Command {
 			source := strings.TrimSpace(commandContext.viper.GetString("from"))
 			await := commandContext.viper.GetBool("await")
 			awaitTimeout := commandContext.viper.GetDuration("await-timeout")
-			jsonOutput := commandContext.outputJSON()
+			jsonOutput := commandContext.io.JSON()
 			if err := requireAwaitTimeout(await, awaitTimeout); err != nil {
 				return err
 			}

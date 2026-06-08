@@ -47,10 +47,7 @@ another. Dropped forwards are re-established automatically. The endpoints file's
 ports are only live while connect is running.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			runtimeConfig, err := loadRuntimeConfig(commandContext.viper)
-			if err != nil {
-				return err
-			}
+			runtimeConfig := commandContext.runtimeConfig
 			name, namespace, err := resolveIdentity(args[0], runtimeConfig)
 			if err != nil {
 				return err
