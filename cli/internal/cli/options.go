@@ -163,6 +163,7 @@ type commandContext struct {
 	operatorInstaller    OperatorInstallerFactory
 	clusterState         ClusterStateFactory
 	k3dVersion           string
+	build                BuildInfo
 	// managedEngaged records, for the duration of one command, whether the
 	// shared target resolver fell through to the tracked managed devnet
 	// cluster. The managed-reconcile wrapper reads it to decide whether a

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -95,13 +94,13 @@ func NewRootCommand(options Options) *cobra.Command {
 		operatorInstaller:    options.OperatorInstallerFactory,
 		clusterState:         options.ClusterStateFactory,
 		k3dVersion:           ghrelease.DefaultK3dPin.Version,
+		build:                options.Build,
 		logger:               slog.New(slog.NewTextHandler(options.Err, &slog.HandlerOptions{Level: slog.LevelInfo})),
 	}
 
 	root := &cobra.Command{
 		Use:           "yacd",
 		Short:         "YACD developer CLI",
-		Version:       options.Build.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -112,11 +111,23 @@ func NewRootCommand(options Options) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx.logger = newLogger(runtimeConfig, ctx.err)
+			// -v/-q are flag-only knobs read straight off cmd.Flags() so an
+			// ambient YACD_VERBOSE/YACD_QUIET cannot raise verbosity or mute a
+			// scripted run. -v is additive over the resolved --log-level; -q
+			// forces the logger off entirely.
+			verbosity, err := cmd.Flags().GetCount("verbose")
+			if err != nil {
+				return err
+			}
+			quiet, err := cmd.Flags().GetBool("quiet")
+			if err != nil {
+				return err
+			}
+			runtimeConfig.LogLevel = raise(runtimeConfig.LogLevel, verbosity)
+			ctx.logger = newLogger(runtimeConfig, ctx.err, quiet)
 			return nil
 		},
 	}
-	root.SetVersionTemplate(fmt.Sprintf("yacd %s (%s) built %s\n", options.Build.Version, options.Build.Commit, options.Build.Date))
 	root.SetIn(options.In)
 	root.SetOut(options.Out)
 	root.SetErr(options.Err)
@@ -126,6 +137,14 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.PersistentFlags().StringP("namespace", "n", "", "Kubernetes namespace")
 	root.PersistentFlags().String("log-level", "info", "Log level: debug, info, warn, error")
 	root.PersistentFlags().String("log-format", "text", "Log format: text, json")
+	// Session/TTY decisions. These are flag-only (no env tier by design) and are
+	// read directly off cmd.Flags() wherever they are consumed, so no ambient
+	// YACD_* can drive them or leak into a child environment.
+	root.PersistentFlags().CountP("verbose", "v", "Increase log verbosity (-v, -vv, -vvv)")
+	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress progress, logs, and warnings; print only data and errors")
+	root.PersistentFlags().Bool("non-interactive", false, "Never prompt; fail instead of waiting for input")
+	root.PersistentFlags().String("color", "auto", "Color output: auto, always, never")
+	root.PersistentFlags().Bool("no-color", false, "Disable color output")
 
 	// The network verbs resolve their target through the shared resolver, so
 	// each is wrapped to clear a stale managed-cluster record when it targeted
@@ -142,6 +161,9 @@ func NewRootCommand(options Options) *cobra.Command {
 	root.AddCommand(newDevnetCommand(ctx))
 	// init only prints an embedded template — no cluster contact, so no reconcile.
 	root.AddCommand(newInitCommand(ctx))
+	// version replaces cobra's removed --version flag (dropped so -v is free for
+	// verbosity); it prints build metadata to stdout and contacts nothing.
+	root.AddCommand(newVersionCommand(ctx))
 	// install targets an arbitrary cluster by explicit-or-ambient kubeconfig; it
 	// deliberately accepts --kubeconfig/--context and never consults the managed
 	// devnet record, so it is neither wrapped in withManagedReconcile nor gated
