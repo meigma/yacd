@@ -37,7 +37,10 @@ func newDevnetCommand(commandContext *commandContext) *cobra.Command {
 			if err := rejectExplicitTarget(commandContext); err != nil {
 				return err
 			}
-			timeout := commandContext.viper.GetDuration("timeout")
+			timeout, err := cmd.Flags().GetDuration("timeout")
+			if err != nil {
+				return err
+			}
 			if timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0")
 			}
@@ -52,7 +55,10 @@ func newDevnetCommand(commandContext *commandContext) *cobra.Command {
 				return fmt.Errorf("load default devnet environment: %w", err)
 			}
 
-			bare := commandContext.viper.GetBool("bare")
+			bare, err := cmd.Flags().GetBool("bare")
+			if err != nil {
+				return err
+			}
 			result, err := manager.Up(cmd.Context(), lifecycle.UpOptions{
 				Bare:        bare,
 				Env:         *environment,
@@ -87,7 +93,10 @@ func newDevnetDownCommand(commandContext *commandContext) *cobra.Command {
 			if err := rejectExplicitTarget(commandContext); err != nil {
 				return err
 			}
-			timeout := commandContext.viper.GetDuration("timeout")
+			timeout, err := cmd.Flags().GetDuration("timeout")
+			if err != nil {
+				return err
+			}
 			if timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0")
 			}

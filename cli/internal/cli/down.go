@@ -23,8 +23,14 @@ func newDownCommand(commandContext *commandContext) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			timeout := commandContext.viper.GetDuration("timeout")
-			waitGone := commandContext.viper.GetBool("wait")
+			timeout, err := cmd.Flags().GetDuration("timeout")
+			if err != nil {
+				return err
+			}
+			waitGone, err := cmd.Flags().GetBool("wait")
+			if err != nil {
+				return err
+			}
 			if waitGone && timeout <= 0 {
 				return fmt.Errorf("--timeout must be greater than 0 when --wait is set")
 			}

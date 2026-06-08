@@ -52,9 +52,18 @@ func newInstallCommand(commandContext *commandContext) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeConfig := commandContext.runtimeConfig
 
-			waitReady := commandContext.viper.GetBool("wait")
-			timeout := commandContext.viper.GetDuration("timeout")
-			dryRun := commandContext.viper.GetBool("dry-run")
+			waitReady, err := cmd.Flags().GetBool("wait")
+			if err != nil {
+				return err
+			}
+			timeout, err := cmd.Flags().GetDuration("timeout")
+			if err != nil {
+				return err
+			}
+			dryRun, err := cmd.Flags().GetBool("dry-run")
+			if err != nil {
+				return err
+			}
 
 			// Read the value-override flags straight off the command rather than
 			// through viper: viper's StringArray binding mangles the Helm --set comma
