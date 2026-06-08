@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"time"
 
 	yacdv1alpha1 "github.com/meigma/yacd/api/v1alpha1"
@@ -130,6 +131,11 @@ type Reporter interface {
 
 	// Done announces the completion of the current step.
 	Done(format string, args ...any)
+
+	// Run executes action under the given title, returning its error. The
+	// reporter may surface the title and a spinner while action runs; it emits
+	// no completion line, so the caller reports success with Done.
+	Run(ctx context.Context, title string, action func(context.Context) error) error
 }
 
 // NopReporter is a Reporter that discards all progress.
@@ -143,3 +149,9 @@ func (NopReporter) Substep(string, ...any) {}
 
 // Done implements Reporter.
 func (NopReporter) Done(string, ...any) {}
+
+// Run implements Reporter; it runs action and returns its error, discarding
+// the title.
+func (NopReporter) Run(ctx context.Context, _ string, action func(context.Context) error) error {
+	return action(ctx)
+}

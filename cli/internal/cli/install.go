@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/meigma/yacd/cli/internal/lifecycle"
 	"github.com/meigma/yacd/cli/internal/operator"
 	"github.com/spf13/cobra"
 )
@@ -164,7 +165,7 @@ func runInstallPlan(ctx context.Context, commandContext *commandContext, install
 // operation (the apply and, when set, the readiness poll) is bounded by timeout
 // when positive, mirroring lifecycle.Manager, so a stuck API server cannot
 // stall the apply past the advertised maximum even with --wait=false.
-func runInstall(ctx context.Context, commandContext *commandContext, report *stepReporter, installer operator.Installer, spec operator.InstallSpec, namespace string, waitReady bool, timeout time.Duration) error {
+func runInstall(ctx context.Context, commandContext *commandContext, report lifecycle.Reporter, installer operator.Installer, spec operator.InstallSpec, namespace string, waitReady bool, timeout time.Duration) error {
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)

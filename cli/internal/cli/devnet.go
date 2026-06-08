@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"time"
@@ -182,6 +183,12 @@ func (r *stepReporter) Substep(format string, args ...any) {
 
 func (r *stepReporter) Done(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.w, "    "+format+"\n", args...)
+}
+
+// Run runs action and returns its error, writing nothing and discarding the
+// title; the command layer reports completion with Done.
+func (r *stepReporter) Run(ctx context.Context, _ string, action func(context.Context) error) error {
+	return action(ctx)
 }
 
 // printDevnetUp renders a successful bring-up to out (stdout): the cluster and
