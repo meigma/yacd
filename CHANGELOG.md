@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.2](https://github.com/meigma/yacd/compare/v0.2.1...v0.2.2) (2026-06-08)
+
+
+### Features
+
+* **cli:** add charm-free ui IO package ([#119](https://github.com/meigma/yacd/issues/119)) ([be193b1](https://github.com/meigma/yacd/commit/be193b1b683903f825be0e416edbbd862db7bd8e))
+* **cli:** move version to a subcommand and make -v verbosity ([#120](https://github.com/meigma/yacd/issues/120)) ([3044a61](https://github.com/meigma/yacd/commit/3044a6125981507dcdcdadcde5ebd3524d453bf8))
+* **cli:** prefer reachable external URLs over port-forwards ([#116](https://github.com/meigma/yacd/issues/116)) ([f2501b7](https://github.com/meigma/yacd/commit/f2501b7e29999ab0ef1d3ddd69f7523b2162d223))
+* **cli:** replace per-command --json with a global --output/-o ([#121](https://github.com/meigma/yacd/issues/121)) ([dbfcc2e](https://github.com/meigma/yacd/commit/dbfcc2e759312a0f7020a1a4a10395e202eb7d6f))
+
+
+### Bug Fixes
+
+* **cli:** stop YACD_* env from shadowing wallet URLs and bleeding timeout/wait ([#123](https://github.com/meigma/yacd/issues/123)) ([652a766](https://github.com/meigma/yacd/commit/652a7665d7405ef59c9f81e9a3ba802a91a73ab6))
+
 ## [0.2.1](https://github.com/meigma/yacd/compare/v0.2.0...v0.2.1) (2026-06-05)
 
 
